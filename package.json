@@ -1,0 +1,22 @@
+{
+  "name": "jonnys-woodland",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A cozy three.js woodland world portfolio — woodworking, bikes, interior design and software.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "shots": "node scripts/shots.mjs"
+  },
+  "dependencies": {
+    "@fontsource/fredoka": "^5.3.0",
+    "@fontsource/patrick-hand": "^5.3.0",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1",
+    "vite": "^8.0.0"
+  }
+}

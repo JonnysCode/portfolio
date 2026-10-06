@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#2f4a2b" />
+    <title>Jonny's Woodland</title>
+    <meta
+      name="description"
+      content="A tiny woodland world to explore: woodworking (Schreiner EFZ), bike building, interior design and software engineering by Jonny."
+    />
+    <meta property="og:title" content="Jonny's Woodland" />
+    <meta
+      property="og:description"
+      content="Explore a cozy mushroom village full of furniture, bikes, interiors and code."
+    />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <canvas id="world" aria-label="Interactive 3D woodland village" tabindex="0"></canvas>
+    <div id="ui" aria-live="polite"></div>
+    <noscript>
+      <div class="noscript">
+        <h1>Jonny's Woodland</h1>
+        <p>
+          This portfolio is a little 3D world and needs JavaScript. You can still find me on
+          <a href="https://github.com/JonnysCode">GitHub</a>.
+        </p>
+      </div>
+    </noscript>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
