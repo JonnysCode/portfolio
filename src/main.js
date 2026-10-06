@@ -62,6 +62,8 @@ async function boot() {
 
   const engine = createEngine(canvas);
   Object.assign(ctx, { engine, scene: engine.scene, camera: engine.camera, quality: engine.quality });
+  // Procedural textures are baked on the GPU; give the material factory the renderer up front.
+  materials.setRenderer?.(engine.renderer, engine.quality);
   ctx.colliders = createColliders();
   ctx.env = createEnv(engine);
   ctx.ui = createUI(ctx);
