@@ -52,7 +52,8 @@ const timeout = Number(opt('timeout', 120000));
 let server = null;
 let url = opt('url', null);
 if (!url) {
-  server = await createServer({ root, logLevel: 'error', server: { port: 0, host: '127.0.0.1', strictPort: false } });
+  // No HMR / file watching: other people editing files must not reload the page mid-run.
+  server = await createServer({ root, logLevel: 'error', server: { port: 0, host: '127.0.0.1', strictPort: false, hmr: false, watch: null } });
   await server.listen();
   const addr = server.httpServer.address();
   url = `http://127.0.0.1:${addr.port}/`;
