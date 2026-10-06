@@ -5,6 +5,8 @@
 //
 //   ctx.audio.play('click' | 'open' | 'close' | 'horn' | 'pop' | 'step' | 'chirp' | 'whoosh')
 //   ctx.audio.enabled / ctx.audio.setEnabled(bool) / ctx.audio.unlock()
+//   ctx.audio.playMusic('record') / ctx.audio.stopMusic()   (record player tune)
+//   ctx.audio.startAmbience()                                (birds by day, crickets by night)
 // ─────────────────────────────────────────────────────────────────────────────
 export function createAudio() {
   let ac = null;
@@ -27,6 +29,9 @@ export function createAudio() {
       if (on) audio.unlock();
       if (ac) ac[on ? 'resume' : 'suspend']?.();
     },
+    playMusic() {},
+    stopMusic() {},
+    startAmbience() {},
     play(name) {
       if (!audio.enabled || !ac) return;
       const t = ac.currentTime;

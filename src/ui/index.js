@@ -11,6 +11,10 @@
 //   ui.toast(text)                 ui.showAreaBanner(areaId)
 //   ui.speech(text, worldPos, {duration})   (speech bubble over a villager)
 //   ui.isPanelOpen                 ui.showFallback(reason)
+//   ui.showPrompt(text, hotspot)   ui.hidePrompt()     (proximity "press E" prompt)
+//   ui.showRideHUD({ from, to, onSkip })  ui.hideRideHUD()   (during snail rides)
+//   ui.fade(true|false) → Promise  (fade to/from a soft overlay, for cuts/teleports)
+//   ui.showMap()
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { AREAS, AREA_BY_ID } from '../world/layout.js';
@@ -93,6 +97,14 @@ export function createUI(ctx) {
     panelBody
   );
   root.append(panel);
+
+  // ── proximity prompt, ride HUD, fader ──
+  const prompt = h('div', { class: 'prompt' });
+  prompt.hidden = true;
+  const rideHud = h('div', { class: 'ride-hud' });
+  rideHud.hidden = true;
+  const fader = h('div', { class: 'fader' });
+  root.append(prompt, rideHud, fader);
 
   // ── modal (guidebook / destinations) ──
   const modalBody = h('div', { class: 'modal__body' });
@@ -262,6 +274,30 @@ export function createUI(ctx) {
         el.style.opacity = v.z < 1 ? '1' : '0';
       }, 95);
       setTimeout(() => { stop(); el.remove(); }, duration);
+    },
+    showPrompt(text) {
+      prompt.textContent = text;
+      prompt.hidden = false;
+    },
+    hidePrompt() {
+      prompt.hidden = true;
+    },
+    showRideHUD({ from, to, onSkip } = {}) {
+      rideHud.replaceChildren(
+        h('span', {}, `🐌 ${AREA_BY_ID[from]?.title ?? ''} → ${AREA_BY_ID[to]?.title ?? ''}`),
+        onSkip && h('button', { type: 'button', class: 'btn', onclick: onSkip }, 'Skip ⏩')
+      );
+      rideHud.hidden = false;
+    },
+    hideRideHUD() {
+      rideHud.hidden = true;
+    },
+    fade(on) {
+      fader.classList.toggle('is-on', !!on);
+      return new Promise((r) => setTimeout(r, 450));
+    },
+    showMap() {
+      ui.showDestinations(ctx.player?.area ?? 'plaza');
     },
     showFallback(reason) {
       loader.remove();

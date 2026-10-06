@@ -24,6 +24,7 @@ export const WORLD_MODULES = [
   ['water', () => import('./water.js')],
   ['vegetation', () => import('./vegetation.js')],
   ['ambient', () => import('./ambient.js')],
+  ['post', () => import('./post.js')],
 ];
 
 export const DISTRICT_MODULES = {
@@ -104,10 +105,17 @@ export function createSite(ctx, area) {
 }
 
 export async function buildWorld(ctx, onProgress = () => {}) {
-  const tasks = [
+  let tasks = [
     ...WORLD_MODULES.map(([id, load]) => ({ kind: 'world', id, load })),
     ...AREAS.map((a) => ({ kind: 'district', id: a.id, area: a, load: DISTRICT_MODULES[a.id] })),
   ];
+  // ?scene=showcase renders only lighting, sky and the props showcase (for prop development).
+  if (ctx.engine.params.get('scene') === 'showcase') {
+    tasks = [
+      ...tasks.filter((t) => t.id === 'lighting' || t.id === 'sky' || t.id === 'post'),
+      { kind: 'world', id: 'showcase', load: () => import('../props/showcase.js') },
+    ];
+  }
   const report = { ok: [], failed: [] };
   let done = 0;
   for (const task of tasks) {

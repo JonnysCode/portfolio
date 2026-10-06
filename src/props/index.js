@@ -28,3 +28,10 @@ export {
   makeSmallMushroom,
   makeLogPile,
 } from './decor.js';
+
+/**
+ * Per-frame animation hook for animated props (chimney smoke, blinking eyes …).
+ * main.js calls this every frame; props register themselves internally so
+ * district code never has to wire prop animations by hand.
+ */
+export { tickProps } from './ticker.js';

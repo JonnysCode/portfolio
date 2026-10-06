@@ -75,3 +75,9 @@ button { font: inherit; color: inherit; }
 .speech { position: fixed; left: 0; top: 0; background: #fff; padding: 8px 12px; border-radius: 14px; box-shadow: var(--shadow); font-family: var(--font-hand); font-size: 17px; pointer-events: none !important; max-width: 240px; }
 .noscript { color: var(--paper); text-align: center; padding: 40px; }
 .noscript a { color: var(--post); }
+
+.prompt { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%); background: var(--paper); padding: 8px 16px; border-radius: 99px; box-shadow: var(--shadow); }
+.prompt[hidden], .ride-hud[hidden] { display: none; }
+.ride-hud { position: fixed; left: 50%; top: 80px; transform: translateX(-50%); background: var(--post); padding: 8px 10px 8px 18px; border-radius: 99px; box-shadow: var(--shadow); display: flex; gap: 12px; align-items: center; }
+.fader { position: fixed; inset: 0; background: #f7efdf; opacity: 0; transition: opacity .4s; pointer-events: none !important; z-index: 8; }
+.fader.is-on { opacity: 1; }

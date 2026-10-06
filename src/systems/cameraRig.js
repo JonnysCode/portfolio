@@ -7,6 +7,7 @@
 //   rig.focus(point|object3d, { distance, height, duration })
 //   rig.release()
 //   rig.setOverride(position, lookAt) / rig.clearOverride()   (debug & cut-scenes)
+//   rig.playIntro() → Promise     cinematic fly-in after the visitor clicks "Enter"
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { damp, clamp } from '../core/rng.js';
@@ -104,6 +105,11 @@ export function createCameraRig(ctx) {
     },
     get overridden() {
       return !!override;
+    },
+    /** Cinematic fly-in from above to the player (called by the intro). Resolves when done. */
+    playIntro() {
+      first = true;
+      return Promise.resolve();
     },
     /** Snap immediately (no easing) on the next update. */
     snap() {

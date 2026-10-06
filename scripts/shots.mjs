@@ -7,6 +7,7 @@
 //   npm run shots -- --views spawn --ui --panel dining-table
 //   npm run shots -- --custom "bench:2,3,-30:0,1,-36" --size 1600x900
 //   npm run shots -- --eval "__woodland.debug.teleportToArea('bikes')" --views free
+//   npm run shots -- --param scene=showcase --custom "props:0,3,9:0,1,0"   # props showcase scene
 //
 // Starts a Vite dev server on a free port (or uses --url), loads the page in
 // headless Chromium (SwiftShader WebGL) with ?shots, waits for the world to be
@@ -73,6 +74,10 @@ page.on('requestfailed', (r) => problems.push(`[requestfailed] ${r.url()} ${r.fa
 
 const q = new URLSearchParams({ shots: '1', q: String(quality) });
 q.set('night', night ? '1' : '0');
+for (const kv of all('param')) {
+  const [k, v = '1'] = String(kv).split('=');
+  q.set(k, v);
+}
 const t0 = Date.now();
 let exitCode = 0;
 try {

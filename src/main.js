@@ -94,6 +94,7 @@ async function boot() {
   const report = await buildWorld(ctx, (p, id) => ctx.ui.setProgress(0.05 + p * 0.85, labels[id]));
   if (report.failed.length) console.warn('[boot] some modules failed:', report.failed.map((f) => f.id));
 
+  engine.addUpdate(props.tickProps, 25);
   ctx.player = createPlayer(ctx);
   ctx.cameraRig = createCameraRig(ctx);
   ctx.transport = createTransport(ctx);
