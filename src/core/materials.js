@@ -3,12 +3,22 @@
 // re-used (fewer shader programs, fewer state changes) and so day/night & wind
 // stay in sync across the whole world.
 //
-//   materials.toon('#e2553f')                       → soft cel-shaded look (default)
-//   materials.toon(palette.leaf, { wind: { strength: 0.08, base: 0.5 } })
-//   materials.wood('walnut')                        → toon + subtle procedural grain
+//   materials.surface('bark')                         → painterly PBR surface (see surface())
+//   materials.surface('stone', { mossy: 0.5 })        → … with moss creeping over the top
+//   materials.surface('wood', { species: 'walnut', planks: true })
+//   materials.foliage({ variant: 'fern', wind: { strength: 0.08, base: 0 } })
+//   materials.glow(palette.windowGlow)                → emissive, brighter at night (blooms)
+//   materials.toon('#e2553f')                         → soft cel-shaded look (characters & props)
 //   materials.standard(palette.metal, { metalness: 0.6, roughness: 0.35 })
-//   materials.glow(palette.windowGlow)              → emissive, brighter at night
-//   materials.basic('#fff')                         → unlit
+//   materials.basic('#fff')                           → unlit
+//
+// Geometry helpers for the textured surfaces:
+//   materials.boxUV(geometry, 'shingles', { grain: 'x' })  world-sized box-projected UVs
+//   materials.foliageNormals(geometry, center)            soft volumetric normals for leaf cards
+//
+// Surface textures are procedural and baked on the GPU (src/core/textures/).
+// Call materials.setRenderer(renderer) once at boot; otherwise the first
+// surface drawn hands its renderer to the bakery.
 //
 // Cached materials are SHARED: never mutate a material you got from here
 // (colour, emissive, opacity …). Ask for a different key instead, or call
@@ -17,6 +27,8 @@
 import * as THREE from 'three';
 import { palette } from './palette.js';
 import { createRng } from './rng.js';
+import { KINDS, WOOD_SPECIES, FOLIAGE_VARIANTS, surfaceMaps, foliageMap, setBakeRenderer, hasBakeRenderer, bakeStats, measureMean } from './textures/index.js';
+import { patchSurface, patchFoliage } from './textures/surfaceShader.js';
 
 /** Uniforms shared by every material that opts into wind / time effects. */
 export const sharedUniforms = {
@@ -222,18 +234,46 @@ export const materials = {
 
   /**
    * Painterly physically-based SURFACES for the detailed glen. Builders ask for
-   * a surface by KIND and get a cached material; the atmosphere/look-dev builder
-   * owns how each kind looks (procedural textures, triplanar mapping, moss on
-   * up-facing faces, colour breakup …). Kinds:
-   *   bark, wood (planks/joinery; opts.species = oak|walnut|spruce|ash|cherry|maple),
-   *   timber (weathered structural beams), shingles, plaster, stone, cobble,
-   *   rock (big mossy boulders/cliffs), moss, soil, mushroomCap (opts.color),
-   *   mushroomStem, gills, leaf (solid leaves/ivy), fabric (opts.color), rope,
-   *   metal (opts.color), glass, paper, thatch, clay (pots, roof tiles; opts.color)
-   * opts: { color, species, mossy (0..1 amount of moss creeping on top faces),
-   *         side, transparent, opacity }
-   * Geometry needs UVs for wood/shingles/plaster; organic kinds (bark, rock,
-   * stone, moss, soil) work without (triplanar).
+   * a surface by KIND and get a cached material with baked procedural maps
+   * (albedo, normal, roughness, AO), painterly colour breakup and optional moss.
+   *
+   * Kinds (mapping in brackets — triplanar needs no UVs, it is WORLD space, so
+   * use it for static things; uv kinds need UVs, see boxUV()):
+   *   bark [tri]      deep vertical furrows, fibrous plates, lichen
+   *   wood [uv]       opts.species = oak|walnut|spruce|ash|cherry|maple; opts.planks → boards with seams.
+   *                   Grain runs along U (opts.grain = 'v' to run along V)
+   *   timber [uv]     weathered, silvered beams with drying checks (grain along U)
+   *   shingles [uv]   wooden shakes in rows, V = up the roof (U around a cone)
+   *   thatch [uv]     straw layers, V = up the roof
+   *   plaster [uv]    mottled lime plaster, hairline cracks, stones peeking through
+   *   stone [tri]     fieldstone wall with recessed mortar
+   *   cobble [tri]    rounded cobbles, soil & moss in the joints
+   *   rock [tri]      layered mossy boulders/cliffs (mossy 0.35 by default)
+   *   moss [tri]      velvety cushions          soil [tri]  humus, pebbles, twigs, fallen leaves
+   *   mushroomCap [uv] velvety cap; opts.color tints. U = around, V = 0 at the RIM → 1 at the APEX
+   *                   (ConeGeometry already works; for a Lathe list the profile from rim to apex)
+   *   mushroomStem [uv] fibrous cream with snakeskin scales; U around, V up
+   *   gills [uv]      radial lamellae. Default expects DISC UVs (CircleGeometry / RingGeometry);
+   *                   opts.gills = 'cone' for a ConeGeometry underside (U = angle, apex = stem)
+   *   leaf [uv]       one leaf over the UV square (base V=0, tip V=1, midrib U=0.5)
+   *   fabric [uv]     plain weave (opts.color)   rope [uv] twisted strands (TubeGeometry UVs)
+   *   metal [tri]     forged iron with rust (opts.color)   glass [uv] old crown glass (transparent)
+   *   paper [uv]      clay [uv] terracotta with throwing rings (opts.color)
+   *
+   * opts: {
+   *   color      tint: for colorize kinds (wood, mushroomCap, fabric, metal, clay) the base colour;
+   *              for the others the texture's average colour is shifted to this colour
+   *   species    wood species          planks  boards with seams (wood)
+   *   mossy      0..1 moss creeping over up-facing surfaces, filling crevices first
+   *   triplanar  force (true) or disable (false) world-space triplanar mapping
+   *   scale      texture scale multiplier (2 = features twice as big)
+   *   repeat     uv kinds: number or [u, v] repeats over the UV range (for 0..1 primitive UVs)
+   *   grain      'u' (default) | 'v' — which UV axis the wood grain / fibres follow
+   *   vertexColors  multiply by vertex colours (the texture is normalised to average white)
+   *   side, transparent, opacity, wind: { strength, base, speed }, roughness (multiplier)
+   * }
+   * Note: triplanar kinds sample WORLD space — an object that moves will swim
+   * through its texture (pass triplanar: false and give it UVs instead).
    */
   surface(kind = 'stone', opts = {}) {
     const key = keyOf('surface:' + kind, opts.color ?? '#ffffff', opts);
@@ -246,8 +286,17 @@ export const materials = {
 
   /**
    * Foliage for leaf-card clusters (alpha-tested leaf textures on quads):
-   * opts { color, variant: 'oak'|'fern'|'ivy'|'grass'|'needle'|'blossom', wind: { strength, base } }.
-   * Owned by the look-dev builder (alpha test, two-sided, soft translucency).
+   * opts { color, variant: 'oak'|'fern'|'ivy'|'grass'|'needle'|'blossom',
+   *        wind: { strength, base, speed }, translucency (0..1.5, default 0.8),
+   *        volume (default true: keep geometry normals on back faces — use with
+   *        foliageNormals()), alphaTest (0.5), vertexColors }
+   *
+   * CARD CONVENTION: every card texture has its stem at the BOTTOM CENTRE of the
+   * UV square (u 0.5, v 0) and grows towards +V. Build cards as quads whose
+   * bottom edge sits at the branch, tilt them outwards/upwards, cross 2–3
+   * cards per tuft, and call materials.foliageNormals(geometry, clusterCentre)
+   * so the whole cluster shades like one soft volume. Leaves glow when lit from
+   * behind (sun and lantern point lights), shadow-aware.
    */
   foliage(opts = {}) {
     const key = keyOf('foliage', opts.color ?? palette.leaf, opts);
@@ -255,6 +304,67 @@ export const materials = {
     const m = makeFoliage(opts);
     cache.set(key, m);
     return m;
+  },
+
+  /**
+   * Give the texture bakery the renderer (call once at boot, right after the
+   * engine exists). Without it, the first surface drawn bakes everything then.
+   */
+  setRenderer(renderer) {
+    setBakeRenderer(renderer);
+  },
+
+  /** Request (and bake, if a renderer is known) the maps of these kinds up front. */
+  prewarm(kinds = Object.keys(KINDS)) {
+    for (const k of kinds) surfaceMaps(k);
+  },
+
+  /** Raw baked maps of a kind for custom shaders: { map (albedo+height), detail (normal.xy, rough, ao) }. */
+  surfaceMaps(kind) {
+    const e = surfaceMaps(kind);
+    return { map: e.map, detail: e.detail, tile: KINDS[kind]?.tile ?? 1, colorize: KINDS[kind]?.mode === 'colorize' };
+  },
+
+  /** Alpha card texture of a foliage variant (sRGB + alpha) for custom shaders. */
+  foliageMap(variant = 'oak') {
+    return foliageMap(variant);
+  },
+
+  /** Natural tile size (world units per texture repeat) of a kind. */
+  tileOf(kind) {
+    return KINDS[kind]?.tile ?? 1;
+  },
+
+  /**
+   * Box-project world-sized UVs onto a geometry (in its own object space):
+   * each vertex is projected along its dominant normal axis and divided by the
+   * tile size, so textures keep the same density on every face and every box
+   * size. `tile` is a number or a surface kind ('shingles' → its natural tile).
+   * opts.grain: 'x' | 'y' | 'z' | 'auto' (longest bbox axis) — the axis the
+   * texture's U (wood grain, shingle rows' run) follows wherever possible.
+   * Returns the geometry. Apply before merging/transforming parts.
+   */
+  boxUV(geometry, tile = 1, { grain = 'auto', offset = [0, 0] } = {}) {
+    return boxUV(geometry, typeof tile === 'string' ? KINDS[tile]?.tile ?? 1 : tile, grain, offset);
+  },
+
+  /**
+   * Soft volumetric normals for foliage cards: blends each vertex normal
+   * towards the direction from `center` (default: bbox centre) — the cluster
+   * then shades like one fluffy volume instead of flat planes.
+   */
+  foliageNormals(geometry, center = null, blend = 0.85) {
+    return foliageNormals(geometry, center, blend);
+  },
+
+  /** Bake statistics: { bakes, ms, mb, maps, programs, pending }. */
+  textureStats() {
+    return bakeStats();
+  },
+
+  /** Look-dev: average sRGB colour of a kind's baked albedo. */
+  measureMean(kind) {
+    return measureMean(`surface:${kind}`);
   },
 
   /** Called every frame by the environment system. */
@@ -273,53 +383,223 @@ export const materials = {
   },
 };
 
-// ─── PLACEHOLDER surface / foliage implementations ──────────────────────────
-// Flat-coloured stand-ins so builders can work before the look-dev pass.
-const SURFACE_DEFAULTS = {
-  bark: { color: '#6e4f3a', roughness: 0.95 },
-  wood: { color: palette.oak, roughness: 0.75 },
-  timber: { color: '#7a5a40', roughness: 0.9 },
-  shingles: { color: '#8a5a3b', roughness: 0.9 },
-  plaster: { color: '#efe2c4', roughness: 0.95 },
-  stone: { color: '#a9a296', roughness: 0.95 },
-  cobble: { color: '#9d968a', roughness: 0.95 },
-  rock: { color: '#8c877c', roughness: 1 },
-  moss: { color: '#6f8f3a', roughness: 1 },
-  soil: { color: '#7a5b3e', roughness: 1 },
-  mushroomCap: { color: '#c9352a', roughness: 0.6 },
-  mushroomStem: { color: '#efe4cc', roughness: 0.85 },
-  gills: { color: '#e6d3b0', roughness: 0.9 },
-  leaf: { color: '#4f7f36', roughness: 0.8 },
-  fabric: { color: '#c9b79a', roughness: 1 },
-  rope: { color: '#b89b6a', roughness: 1 },
-  metal: { color: '#6b6f73', roughness: 0.45, metalness: 0.8 },
-  glass: { color: '#cfe8f0', roughness: 0.1, transparent: true, opacity: 0.35 },
-  paper: { color: '#f3ead6', roughness: 1 },
-  thatch: { color: '#b9955a', roughness: 1 },
-  clay: { color: '#b8653f', roughness: 0.85 },
-};
+// ─── surface / foliage implementations ──────────────────────────────────────
+const WHITE = new THREE.Color(1, 1, 1);
 
-function makeSurface(kind, opts) {
-  const d = SURFACE_DEFAULTS[kind] ?? SURFACE_DEFAULTS.stone;
-  const color = opts.color ?? (kind === 'wood' && opts.species ? palette[opts.species] ?? d.color : d.color);
-  return new THREE.MeshStandardMaterial({
-    color: new THREE.Color(color),
-    roughness: d.roughness,
-    metalness: d.metalness ?? 0,
-    transparent: opts.transparent ?? d.transparent ?? false,
-    opacity: opts.opacity ?? d.opacity ?? 1,
+/** First surface/foliage material drawn hands its renderer to the bakery (unless setRenderer was called). */
+function captureRenderer(renderer) {
+  if (!hasBakeRenderer()) setBakeRenderer(renderer);
+}
+
+function lin(hex) {
+  return new THREE.Color(hex);
+}
+
+/** Per-channel ratio target/mean (linear), clamped — re-tints an rgb texture towards a colour. */
+function tintFor(color, mean) {
+  const t = new THREE.Color(color);
+  const m = new THREE.Color(mean);
+  return new THREE.Color(
+    THREE.MathUtils.clamp(t.r / Math.max(m.r, 0.004), 0, 4),
+    THREE.MathUtils.clamp(t.g / Math.max(m.g, 0.004), 0, 4),
+    THREE.MathUtils.clamp(t.b / Math.max(m.b, 0.004), 0, 4),
+  );
+}
+
+/** Colorize presets: { a: light, b: dark, c: accent } as linear Colors. */
+function colorizeColors(kind, opts) {
+  if (kind === 'wood' || kind === 'woodPlanks') {
+    const sp = WOOD_SPECIES[opts.species] ?? null;
+    if (sp && opts.color === undefined) return { a: lin(sp.a), b: lin(sp.b), c: lin(sp.c) };
+    const base = lin(opts.color ?? palette[opts.species] ?? WOOD_SPECIES.oak.a);
+    return { a: base.clone().multiplyScalar(1.05), b: base.clone().multiplyScalar(0.55), c: base.clone().multiplyScalar(0.25) };
+  }
+  if (kind === 'mushroomCap') {
+    const base = lin(opts.color ?? '#c4301f');
+    const a = base.clone().lerp(lin('#ff9a48'), 0.22).multiplyScalar(1.12);
+    const b = base.clone().multiplyScalar(0.42).lerp(lin('#3a0c08'), 0.25);
+    return { a, b, c: lin(opts.accent ?? '#efe2c6') };
+  }
+  if (kind === 'metal') {
+    const base = lin(opts.color ?? '#55595e');
+    return { a: base, b: base.clone().multiplyScalar(0.45), c: lin('#8a4a22') };
+  }
+  if (kind === 'clay') {
+    const base = lin(opts.color ?? '#b5633e');
+    return { a: base, b: base.clone().multiplyScalar(0.62).lerp(lin('#6a2e1a'), 0.2), c: base.clone().lerp(lin('#e8c8a8'), 0.55) };
+  }
+  // fabric & anything else
+  const base = lin(opts.color ?? '#c9b79a');
+  return { a: base, b: base.clone().multiplyScalar(0.55), c: base.clone().lerp(WHITE, 0.35) };
+}
+
+let _mossMaps = null;
+
+function makeSurface(kindIn, opts) {
+  let kind = KINDS[kindIn] && kindIn !== 'woodPlanks' ? kindIn : 'stone';
+  if (kind === 'wood' && opts.planks) kind = 'woodPlanks';
+  const kd = KINDS[kind];
+  const maps = surfaceMaps(kind);
+  const triplanar = opts.triplanar ?? kd.mapping === 'triplanar';
+  const colorize = kd.mode === 'colorize';
+  const mossy = THREE.MathUtils.clamp(opts.mossy ?? kd.mossy ?? 0, 0, 1);
+  const moss = mossy > 0 && kind !== 'moss';
+  const scale = opts.scale ?? 1;
+
+  let colA, colB, colC;
+  if (colorize) {
+    ({ a: colA, b: colB, c: colC } = colorizeColors(kind, opts));
+    if (opts.vertexColors) {
+      // normalise so the texture averages to white and the vertex colour sets the hue
+      const mean = (colA.r + colA.g + colA.b + colB.r + colB.g + colB.b) / 6 || 1;
+      colA.multiplyScalar(1 / mean); colB.multiplyScalar(1 / mean); colC.multiplyScalar(1 / mean);
+    }
+  } else {
+    colA = opts.vertexColors ? tintFor('#ffffff', kd.mean) : opts.color !== undefined ? tintFor(opts.color, kd.mean) : WHITE.clone();
+    colB = WHITE.clone();
+    colC = WHITE.clone();
+  }
+
+  const rep = opts.repeat ?? 1;
+  const tile = triplanar
+    ? new THREE.Vector2(1 / (kd.tile * scale), 0)
+    : new THREE.Vector2(...(Array.isArray(rep) ? rep : [rep, rep])).multiplyScalar(1 / scale);
+
+  const u = {
+    sfMap: { value: maps.map },
+    sfDetail: { value: maps.detail },
+    sfColA: { value: colA },
+    sfColB: { value: colB },
+    sfColC: { value: colC },
+    sfTile: { value: tile },
+    sfP: { value: new THREE.Vector4(kd.normal ?? 1, kd.ao ?? 1, opts.roughness ?? 1, opts.breakup ?? kd.breakup ?? 1) },
+    sfQ: { value: new THREE.Vector4(mossy, 1 / (KINDS.moss.tile * 0.9), kd.velvet ?? 0, kd.metalRust ?? 0) },
+    sfR: { value: new THREE.Vector4(opts.grain === 'v' ? 1 : 0, kd.polar ? (opts.gills === 'cone' ? 2 : 1) : 0, opts.metalness ?? kd.metalness ?? 0, 0) },
+    sfLight: { value: new THREE.Vector4(opts.wrap ?? kd.wrap ?? 0, 0, 0, 0) },
+  };
+  if (moss) {
+    _mossMaps ??= surfaceMaps('moss');
+    u.sfMossMap = { value: _mossMaps.map };
+    u.sfMossDetail = { value: _mossMaps.detail };
+  }
+
+  const m = new THREE.MeshStandardMaterial({
+    color: WHITE.clone(),
+    roughness: 1,
+    metalness: 0,
+    vertexColors: !!opts.vertexColors,
+    transparent: opts.transparent ?? kd.transparent ?? false,
+    opacity: opts.opacity ?? kd.opacity ?? 1,
     side: opts.side ?? THREE.FrontSide,
+    depthWrite: !(opts.transparent ?? kd.transparent ?? false),
   });
+  const defines = {};
+  if (triplanar) defines.SF_TRIPLANAR = '';
+  else defines.USE_UV = '';
+  if (colorize) defines.SF_COLORIZE = '';
+  if (moss) defines.SF_MOSS = '';
+  m.defines = defines;
+  m.userData.surface = { kind, uniforms: u };
+  const progKey = `sf|${triplanar ? 't' : 'u'}${colorize ? 'c' : ''}${moss ? 'm' : ''}`;
+  m.onBeforeCompile = (shader) => patchSurface(shader, u);
+  m.onBeforeRender = captureRenderer;
+  if (opts.wind) applyWind(m, opts.wind);
+  const windKey = opts.wind ? m.customProgramCacheKey() : '';
+  m.customProgramCacheKey = () => progKey + windKey;
+  return m;
 }
 
 function makeFoliage(opts) {
+  const variant = FOLIAGE_VARIANTS[opts.variant] ? opts.variant : 'oak';
+  const ref = FOLIAGE_VARIANTS[variant].ref;
+  const map = foliageMap(variant);
+  const tint = opts.vertexColors ? tintFor('#ffffff', ref) : opts.color !== undefined ? tintFor(opts.color, ref) : WHITE.clone();
   const m = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(opts.color ?? palette.leaf),
-    roughness: 0.85,
+    map,
+    color: tint,
+    roughness: opts.roughness ?? 0.78,
+    metalness: 0,
     side: THREE.DoubleSide,
+    alphaTest: opts.alphaTest ?? 0.5,
+    alphaToCoverage: true,
+    vertexColors: !!opts.vertexColors,
   });
+  m.shadowSide = THREE.DoubleSide;
+  const u = {
+    sfLight: { value: new THREE.Vector4(opts.wrap ?? 0.6, opts.translucency ?? 0.8, 0, 0) },
+    sfFol: { value: new THREE.Vector4(opts.volume === false ? 0 : 1, opts.breakup ?? 1, 0, 0) },
+  };
+  m.userData.foliage = { variant, uniforms: u };
+  m.name = `foliage-${variant}`;
+  m.onBeforeCompile = (shader) => patchFoliage(shader, u);
+  m.onBeforeRender = captureRenderer;
   if (opts.wind) applyWind(m, opts.wind);
+  const windKey = opts.wind ? m.customProgramCacheKey() : '';
+  m.customProgramCacheKey = () => 'foliage|' + windKey;
   return m;
+}
+
+// ─── geometry helpers ───────────────────────────────────────────────────────
+const AXES = ['x', 'y', 'z'];
+
+function boxUV(geometry, tile, grain, offset) {
+  const pos = geometry.attributes.position;
+  if (!geometry.attributes.normal) geometry.computeVertexNormals();
+  const nrm = geometry.attributes.normal;
+  geometry.computeBoundingBox();
+  const size = new THREE.Vector3();
+  geometry.boundingBox.getSize(size);
+  let g = grain;
+  if (g === 'auto' || !AXES.includes(g)) g = size.x >= size.y && size.x >= size.z ? 'x' : size.y >= size.z ? 'y' : 'z';
+  const gi = AXES.indexOf(g);
+  const uv = new Float32Array(pos.count * 2);
+  const p = [0, 0, 0];
+  const n = [0, 0, 0];
+  for (let i = 0; i < pos.count; i++) {
+    p[0] = pos.getX(i); p[1] = pos.getY(i); p[2] = pos.getZ(i);
+    n[0] = Math.abs(nrm.getX(i)); n[1] = Math.abs(nrm.getY(i)); n[2] = Math.abs(nrm.getZ(i));
+    const dom = n[0] >= n[1] && n[0] >= n[2] ? 0 : n[1] >= n[2] ? 1 : 2;
+    const others = [0, 1, 2].filter((a) => a !== dom);
+    // U follows the grain axis when it lies in this face; otherwise the longer remaining axis
+    let ua, va;
+    if (others.includes(gi)) {
+      ua = gi;
+      va = others.find((a) => a !== gi);
+    } else {
+      ua = size.getComponent(others[0]) >= size.getComponent(others[1]) ? others[0] : others[1];
+      va = others.find((a) => a !== ua);
+    }
+    // vertical faces: V runs up (Y) whenever Y is one of the face axes
+    if (dom !== 1 && ua === 1 && gi !== 1) [ua, va] = [va, ua];
+    uv[i * 2] = p[ua] / tile + offset[0];
+    uv[i * 2 + 1] = p[va] / tile + offset[1];
+  }
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  return geometry;
+}
+
+function foliageNormals(geometry, center, blend) {
+  if (!geometry.attributes.normal) geometry.computeVertexNormals();
+  const pos = geometry.attributes.position;
+  const nrm = geometry.attributes.normal;
+  if (!center) {
+    geometry.computeBoundingBox();
+    center = geometry.boundingBox.getCenter(new THREE.Vector3());
+  }
+  const v = new THREE.Vector3();
+  const nn = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i).sub(center);
+    v.y += 0.25 * v.length(); // bias upwards: canopies are lit from above
+    v.normalize();
+    nn.fromBufferAttribute(nrm, i);
+    // flip face normal to the outward side before blending (cards are double-sided)
+    if (nn.dot(v) < 0) nn.negate();
+    nn.lerp(v, blend).normalize();
+    nrm.setXYZ(i, nn.x, nn.y, nn.z);
+  }
+  nrm.needsUpdate = true;
+  return geometry;
 }
 
 export default materials;

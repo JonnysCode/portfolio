@@ -1,50 +1,71 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Lighting — golden-hour storybook light. The ONLY module that creates lights.
+// Lighting — late golden afternoon in a forest glen. The ONLY module that
+// creates lights.
 //
-//   sun  DirectionalLight  warm key light with crisp PCF shadows. By night it
-//                          becomes the moonlight (blue-lavender, from the SE).
-//   hemi HemisphereLight   sky/ground fill: cool lavender sky, warm green bounce.
-//   rim  DirectionalLight  cool back light from opposite the key — lifts the
-//                          shaded side of toon objects so shapes read in depth.
+//   sun  DirectionalLight  warm, low from the back-left (WNW) so it rakes
+//                          through the canopy, rims every silhouette and casts
+//                          long dappled shadows. Soft PCF shadows with a FIXED
+//                          frustum tightly covering the glen (±32 units) at the
+//                          largest map the tier allows — no swimming, no
+//                          re-fitting while the camera glides. By night it
+//                          becomes the moonlight (blue-lavender, back-right).
+//   hemi HemisphereLight   cool blue-green sky fill / warm mossy ground bounce.
+//   rim  DirectionalLight  faint cool light from the back-right that separates
+//                          the shaded sides from the misty background.
+//   scene.environment      a painted "under the canopy" PMREM (env/envmap.js) so
+//                          PBR surfaces get soft teal-green ambient and gentle
+//                          reflections; swapped for a night version at dusk.
 //
-// The shadow frustum follows the camera rig's target (read lazily: the rig is
-// created after the world), is pushed ahead along the view direction, sized for
-// the camera distance and snapped to whole shadow-map texels so shadows never
-// shimmer while walking.
+// Warm point lights (lanterns, windows, forge …) only through
+//   ctx.lights.addPoint(position, { color, day, night, distance, decay })
+// which is budgeted per tier and may return null (use glow materials then).
 //
-// ctx.lights = { sun, hemi, rim, keyDir, shadowExtent, addPoint(position, opts), points }   (keyDir is live, world space)
+// ctx.lights = { sun, hemi, rim, keyDir, shadowExtent, shadowCenter, addPoint(position, opts), points }
+//   keyDir is live (world space, towards the current key light).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { clamp, smoothstep } from '../core/rng.js';
+import { smoothstep } from '../core/rng.js';
 import { SUN_LIGHT_DIR, MOON_LIGHT_DIR, dirFromAngles, envUniforms } from './env/celestial.js';
+import { installFog } from './env/fog.js';
+import { buildEnvMaps } from './env/envmap.js';
+
+// Patch the fog chunks before any material compiles (idempotent).
+installFog();
 
 const DAY = {
-  key: new THREE.Color('#ffebd2'),
-  keyI: 2.55,
-  hemiSky: new THREE.Color('#b4c6ee'),
-  hemiGround: new THREE.Color('#d2a36e'),
-  hemiI: 1.45,
-  rim: new THREE.Color('#c3b8f0'),
-  rimI: 0.5,
+  key: new THREE.Color('#ffd9a6'),
+  keyI: 3.6,
+  hemiSky: new THREE.Color('#9fc4c4'),
+  hemiGround: new THREE.Color('#6b5b3c'),
+  hemiI: 0.85,
+  rim: new THREE.Color('#a9d2e6'),
+  rimI: 0.45,
+  envI: 0.55,
 };
 const NIGHT = {
-  key: new THREE.Color('#aab4ff'),
-  keyI: 1.2,
-  hemiSky: new THREE.Color('#6170bd'),
-  hemiGround: new THREE.Color('#33365f'),
-  hemiI: 1.35,
-  rim: new THREE.Color('#7f8fe0'),
-  rimI: 0.4,
+  key: new THREE.Color('#9fb0ff'),
+  keyI: 1.05,
+  hemiSky: new THREE.Color('#2f4f78'),
+  hemiGround: new THREE.Color('#141f26'),
+  hemiI: 0.75,
+  rim: new THREE.Color('#5f86c8'),
+  rimI: 0.35,
+  envI: 0.45,
 };
 
-const RIM_DAY_DIR = dirFromAngles(22, 228 - 180);
-const RIM_NIGHT_DIR = dirFromAngles(28, 140 - 180);
-/** How far the shadow camera sits from its focus along the light direction. */
-const LIGHT_DISTANCE = 140;
+const RIM_DAY_DIR = dirFromAngles(24, 70);
+const RIM_NIGHT_DIR = dirFromAngles(30, 250);
+/** Centre of the fixed shadow frustum (the middle of the glen). */
+const SHADOW_CENTER = new THREE.Vector3(0, 3, 1);
+/** Half size of the fixed shadow frustum (light-space units). */
+const SHADOW_EXTENT = 32;
+/** How far the shadow camera sits from the centre along the light direction. */
+const LIGHT_DISTANCE = 95;
 
 export default async function build(ctx) {
-  const { scene, engine, env, camera } = ctx;
+  const { scene, engine, env } = ctx;
   const q = ctx.quality ?? engine.quality;
+  const renderer = engine.renderer;
 
   const hemi = new THREE.HemisphereLight(DAY.hemiSky, DAY.hemiGround, DAY.hemiI);
   hemi.name = 'hemi';
@@ -53,37 +74,49 @@ export default async function build(ctx) {
   const sun = new THREE.DirectionalLight(DAY.key, DAY.keyI);
   sun.name = 'sun';
   sun.castShadow = !!q.shadows;
-  const mapSize = q.shadowMapSize || 1024;
+  // The largest map the tier (and GPU) allows: the frustum is fixed, so every
+  // texel goes into crisp dappled canopy shadows.
+  const maxTex = renderer.capabilities.maxTextureSize || 4096;
+  const wanted = q.tier === 'high' ? 4096 : q.tier === 'medium' ? 2048 : q.shadowMapSize || 1024;
+  const mapSize = Math.min(wanted, maxTex);
   sun.shadow.mapSize.set(mapSize, mapSize);
-  sun.shadow.radius = q.tier === 'high' ? 1.6 : 1.2;
-  sun.shadow.bias = -0.0004;
+  sun.shadow.radius = q.tier === 'high' ? 3.2 : 2.0;
+  sun.shadow.bias = -0.00025;
+  const texel = (2 * SHADOW_EXTENT) / mapSize;
+  sun.shadow.normalBias = Math.max(0.02, texel * 1.4);
   const scam = sun.shadow.camera;
+  scam.left = -SHADOW_EXTENT;
+  scam.right = SHADOW_EXTENT;
+  scam.top = SHADOW_EXTENT;
+  scam.bottom = -SHADOW_EXTENT;
   scam.near = 1;
-  scam.far = LIGHT_DISTANCE * 2.2;
+  scam.far = LIGHT_DISTANCE + 110;
+  scam.updateProjectionMatrix();
+  sun.target.position.copy(SHADOW_CENTER);
   scene.add(sun, sun.target);
 
   const rim = new THREE.DirectionalLight(DAY.rim, DAY.rimI);
   rim.name = 'rim';
   rim.castShadow = false;
+  rim.target.position.copy(SHADOW_CENTER);
   scene.add(rim, rim.target);
+
+  // Painted IBL (day & night share size → swapping never recompiles).
+  let envMaps = null;
+  try {
+    envMaps = buildEnvMaps(renderer, { sunDir: SUN_LIGHT_DIR, moonDir: MOON_LIGHT_DIR });
+    scene.environment = envMaps.day;
+    scene.environmentIntensity = DAY.envI;
+  } catch (err) {
+    console.warn('[lighting] environment map failed, using lights only', err);
+  }
 
   const keyDir = new THREE.Vector3().copy(SUN_LIGHT_DIR);
   const rimDir = new THREE.Vector3().copy(RIM_DAY_DIR);
-
-  // ── shadow-follow scratch (no per-frame allocations) ──
-  const focus = new THREE.Vector3();
-  const fwd = new THREE.Vector3();
-  const center = new THREE.Vector3();
-  const lightRot = new THREE.Matrix4();
-  const lightRotInv = new THREE.Matrix4();
-  const ls = new THREE.Vector3();
-  const ORIGIN = new THREE.Vector3();
-  const UP = new THREE.Vector3(0, 1, 0);
-  let extent = 0;
   let lastNight = -1;
 
   // Budget-managed warm point lights (lanterns, windows, the forge …).
-  const POINT_BUDGET = { high: 10, medium: 5, low: 0 }[q.tier] ?? 4;
+  const POINT_BUDGET = { high: 12, medium: 6, low: 0 }[q.tier] ?? 4;
   const points = [];
   /**
    * Add a point light if the budget allows. opts: { color, day, night (intensities),
@@ -97,12 +130,14 @@ export default async function build(ctx) {
     l.userData.intensity = { day: opts.day ?? 0.4, night: opts.night ?? 6 };
     scene.add(l);
     points.push(l);
+    applyPoint(l, env?.night ?? 0);
     return l;
   }
-  engine.addUpdate(() => {
-    const n = env.night;
-    for (const l of points) l.intensity = l.userData.intensity.day + (l.userData.intensity.night - l.userData.intensity.day) * n;
-  }, 21);
+  function applyPoint(l, n) {
+    // Lanterns swell a little beyond linear as dusk falls (they "come on").
+    const k = smoothstep(0.15, 0.9, n);
+    l.intensity = l.userData.intensity.day + (l.userData.intensity.night - l.userData.intensity.day) * k;
+  }
 
   ctx.lights = {
     sun,
@@ -112,85 +147,52 @@ export default async function build(ctx) {
     points,
     /** Live direction towards the current key light (sun by day, moon by night). */
     keyDir,
-    get shadowExtent() {
-      return extent;
-    },
+    /** Half size of the fixed shadow frustum (world units). */
+    shadowExtent: SHADOW_EXTENT,
+    shadowCenter: SHADOW_CENTER,
+    envMaps,
   };
 
-  function updateColours(n) {
+  function place() {
+    sun.position.copy(SHADOW_CENTER).addScaledVector(keyDir, LIGHT_DISTANCE);
+    sun.target.updateMatrixWorld();
+    rim.position.copy(SHADOW_CENTER).addScaledVector(rimDir, 60);
+    rim.target.updateMatrixWorld();
+  }
+
+  function update(n) {
     // n is already eased by env; dip the key light around dusk so the swing of
     // the shadow direction between sun and moon is not noticeable.
     const dusk = Math.sin(Math.PI * n);
-    keyDir.copy(SUN_LIGHT_DIR).lerp(MOON_LIGHT_DIR, smoothstep(0.25, 0.75, n)).normalize();
+    keyDir.copy(SUN_LIGHT_DIR).lerp(MOON_LIGHT_DIR, smoothstep(0.3, 0.7, n)).normalize();
     rimDir.copy(RIM_DAY_DIR).lerp(RIM_NIGHT_DIR, n).normalize();
     sun.color.copy(DAY.key).lerp(NIGHT.key, n);
-    sun.intensity = (DAY.keyI + (NIGHT.keyI - DAY.keyI) * n) * (1 - 0.55 * dusk);
+    sun.intensity = (DAY.keyI + (NIGHT.keyI - DAY.keyI) * n) * (1 - 0.75 * dusk);
     hemi.color.copy(DAY.hemiSky).lerp(NIGHT.hemiSky, n);
     hemi.groundColor.copy(DAY.hemiGround).lerp(NIGHT.hemiGround, n);
     hemi.intensity = DAY.hemiI + (NIGHT.hemiI - DAY.hemiI) * n;
     rim.color.copy(DAY.rim).lerp(NIGHT.rim, n);
     rim.intensity = DAY.rimI + (NIGHT.rimI - DAY.rimI) * n;
+    if (envMaps) {
+      // swap the painted environment at the darkest moment of dusk
+      scene.environment = n < 0.5 ? envMaps.day : envMaps.night;
+      scene.environmentIntensity = (DAY.envI + (NIGHT.envI - DAY.envI) * n) * (1 - 0.6 * dusk);
+    }
+    for (const l of points) applyPoint(l, n);
     envUniforms.uKeyDir.value.copy(keyDir);
     envUniforms.uKeyColor.value.copy(sun.color).multiplyScalar(sun.intensity / DAY.keyI);
+    place();
   }
 
-  function updateShadowFrustum() {
-    const rig = ctx.cameraRig;
-    if (rig?.target) focus.copy(rig.target);
-    else focus.set(0, 0, 0);
-
-    // Push the frustum ahead along the (horizontal) view direction: the camera
-    // sees much more ground in front of its target than behind it.
-    const camDist = camera.position.distanceTo(focus);
-    camera.getWorldDirection(fwd);
-    fwd.y = 0;
-    if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1);
-    fwd.normalize();
-    const ahead = clamp(camDist * 0.55, 0, 60);
-    center.copy(focus).addScaledVector(fwd, ahead);
-
-    // Quantise the extent so the texel size is stable while zooming slightly.
-    const wanted = clamp(camDist * 1.2 + 12, 22, 110);
-    const quant = Math.ceil(wanted / 6) * 6;
-    if (quant !== extent) {
-      extent = quant;
-      scam.left = -extent;
-      scam.right = extent;
-      scam.top = extent;
-      scam.bottom = -extent;
-      scam.updateProjectionMatrix();
-    }
-
-    // Snap the centre to whole texels in light space.
-    lightRot.lookAt(keyDir, ORIGIN, UP); // same basis as the shadow camera (z = keyDir)
-    lightRotInv.copy(lightRot).transpose();
-    ls.copy(center).applyMatrix4(lightRotInv);
-    const texel = (2 * extent) / mapSize;
-    ls.x = Math.round(ls.x / texel) * texel;
-    ls.y = Math.round(ls.y / texel) * texel;
-    center.copy(ls).applyMatrix4(lightRot);
-
-    sun.target.position.copy(center);
-    sun.position.copy(center).addScaledVector(keyDir, LIGHT_DISTANCE);
-    sun.target.updateMatrixWorld();
-    sun.shadow.normalBias = texel * 1.6;
-
-    rim.target.position.copy(focus);
-    rim.position.copy(focus).addScaledVector(rimDir, 50);
-    rim.target.updateMatrixWorld();
-  }
-
-  // After the camera rig (order 80) so the frustum matches this frame's view.
   engine.addUpdate(() => {
     const n = env?.night ?? 0;
     if (n !== lastNight) {
       lastNight = n;
-      updateColours(n);
+      update(n);
     }
-    updateShadowFrustum();
-  }, 85);
+  }, 21);
 
-  updateColours(env?.night ?? 0);
-  updateShadowFrustum();
+  update(env?.night ?? 0);
+  lastNight = env?.night ?? 0;
   return {};
 }

@@ -22,42 +22,46 @@ export function dirFromAngles(elevationDeg, azimuthDeg, target = new THREE.Vecto
   return target.set(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el)).normalize();
 }
 
-/** Golden-hour sun used for lighting & shadows (south-west, long-ish shadows). */
-export const SUN_LIGHT_DIR = dirFromAngles(38, 228);
-/** Where the sun disc is drawn — lower than the light so it can sit near the mountains. */
-export const SUN_SKY_DIR = dirFromAngles(9, 236);
-/** Moonlight (south-east, higher, so the night stays readable). */
-export const MOON_LIGHT_DIR = dirFromAngles(50, 140);
-/** Where the moon disc is drawn. */
-export const MOON_SKY_DIR = dirFromAngles(24, 148);
+/**
+ * Late-afternoon sun for lighting & shadows: low from the back-left (west-north-west)
+ * so it rakes through the canopy, rims silhouettes and sends its shafts slanting
+ * towards the camera side (the camera looks north, from +Z).
+ */
+export const SUN_LIGHT_DIR = dirFromAngles(36, 290);
+/** Where the sun's luminous haze sits in the sky — low, just above the far treetops. */
+export const SUN_SKY_DIR = dirFromAngles(16, 292);
+/** Moonlight: from the back-right, high enough to silver roofs & caps. */
+export const MOON_LIGHT_DIR = dirFromAngles(50, 62);
+/** Where the moon disc is drawn (peeks through a canopy gap at the back-right). */
+export const MOON_SKY_DIR = dirFromAngles(30, 40);
 
 /** Day / night colour sets (sRGB hex — converted to linear by THREE.Color). */
 export const SKY_COLORS = {
   day: {
-    zenith: '#5d9de0',
-    mid: '#9fcaee',
-    horizon: '#ffe0b4',
-    fog: '#f0d9b5',
-    sunGlow: '#ffb867',
-    cloudLit: '#fffaf2',
-    cloudShade: '#d6cde6',
-    mountainFar: '#a9b9d6',
-    mountainNear: '#7f98b8',
-    snowLit: '#ffe9dc',
-    snowShade: '#b9c3e6',
+    zenith: '#7eaecb',
+    mid: '#a6cdcf',
+    horizon: '#cfe0d2',
+    fog: '#8db0aa', // cool blue-green mist
+    sunGlow: '#ffd596', // warm luminous haze around the sun
+    cloudLit: '#fff6e6',
+    cloudShade: '#b7cbd0',
+    mountainFar: '#5d7e7a', // far forest silhouettes (before mist)
+    mountainNear: '#3e5b55',
+    snowLit: '#ffe9c4', // backdrop rim light
+    snowShade: '#9fbcb8',
   },
   night: {
-    zenith: '#0d1233',
-    mid: '#1b2352',
-    horizon: '#3a3c74',
-    fog: '#2a2f5c',
-    sunGlow: '#5a5aa0',
-    cloudLit: '#5c64a0',
-    cloudShade: '#2e3466',
-    mountainFar: '#2c3466',
-    mountainNear: '#212852',
-    snowLit: '#aab6e8',
-    snowShade: '#5d68a6',
+    zenith: '#050a1e',
+    mid: '#0b1734',
+    horizon: '#16294a',
+    fog: '#132a3c', // deep teal night mist
+    sunGlow: '#6f86c8', // moon halo
+    cloudLit: '#4a5c8c',
+    cloudShade: '#1c2846',
+    mountainFar: '#0f2030',
+    mountainNear: '#0a1724',
+    snowLit: '#8ea6d8',
+    snowShade: '#2a3c5c',
   },
 };
 

@@ -37,10 +37,16 @@ export function createEngine(canvas) {
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
   renderer.setSize(window.innerWidth, window.innerHeight, false);
+  // Colour pipeline (owned by the light/post builder): linear HDR lighting,
+  // filmic tone mapping, sRGB output. The post chain (world/post.js) applies
+  // the same tone mapping in its finish pass. ?tm=aces|agx|neutral&exposure=1.1
+  // override it for look-dev comparisons.
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.NeutralToneMapping;
-  renderer.toneMappingExposure = 1.0;
+  const TONE_MAPPINGS = { aces: THREE.ACESFilmicToneMapping, agx: THREE.AgXToneMapping, neutral: THREE.NeutralToneMapping };
+  renderer.toneMapping = TONE_MAPPINGS[params.get('tm')] ?? THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = Number(params.get('exposure')) || 1.0;
   renderer.shadowMap.enabled = quality.shadows;
+  // PCF with a Vogel-disk kernel (shadow.radius) — soft, dappled canopy shadows.
   renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const scene = new THREE.Scene();

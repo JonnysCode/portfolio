@@ -49,6 +49,13 @@ export async function buildWorld(ctx, onProgress = () => {}) {
       { id: 'showcase', load: () => import('../props/showcase.js') },
     ];
   }
+  // ?scene=materials renders the surface/foliage material showcase (look-dev of src/core/materials.js).
+  if (ctx.engine.params.get('scene') === 'materials') {
+    tasks = [
+      ...tasks.filter((t) => ['lighting', 'sky', 'atmosphere', 'post'].includes(t.id)),
+      { id: 'materials', load: () => import('../core/materialShowcase.js') },
+    ];
+  }
   // ?only=oak,terrain builds just those modules (+ lighting/sky/atmosphere/post) — handy while developing one piece.
   const only = ctx.engine.params.get('only');
   if (only) {

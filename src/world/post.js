@@ -1,242 +1,333 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Post-processing — the "miniature diorama" finish (only when quality.post).
+// Post-processing — the final image: a painted miniature seen through a macro
+// lens.
 //
-//   RenderPass (MSAA, half-float, linear HDR)
-//   → UnrealBloom   tuned to stay out of the way by day; at night only the
-//                   genuinely bright things (windows, lanterns, fireflies,
-//                   glowing mushrooms, the moon) bloom
-//   → TiltShift H   horizontal half of a separable blur whose radius grows
-//                   towards the top & bottom of the screen
-//   → Finish        vertical half of the tilt-shift + tone mapping (the
-//                   renderer's own, e.g. Neutral) + gentle warm grade +
-//                   vignette + sRGB output — merged into ONE pass
+//   scene      rendered once into an HDR (half-float, MSAA) target, with a
+//              depth texture on 'high'
+//   bloom      UnrealBloom mip chain with a soft knee: fairy lights, windows,
+//              lanterns, fireflies and sun glints glow; stronger at night.
+//              (Only the blur chain is used — the result is added in the
+//              finish pass, so the HDR scene is never re-resolved.)
+//   DOF        ('high') depth of field around ctx.cameraRig.focusDistance:
+//              half-resolution prefilter (colour + signed circle of
+//              confusion) → 28-tap golden-angle gather with scatter-as-gather
+//              weights (foreground bleeds over sharp things, background never
+//              bleeds onto them) → mixed back at full resolution by CoC.
+//   finish     ONE pass: DOF composite + bloom + the renderer's tone mapping &
+//              exposure + colour grade (warm highlights, teal-green shadows,
+//              softly lifted blacks, a touch of saturation) + warm vignette +
+//              fine animated grain + sRGB output.
 //
-// The middle band stays pin sharp so signs and text read. If anything throws
-// (setup or a frame) we fall back to plain rendering for good.
+// Tiers: high = everything; medium = bloom + grade (no depth/DOF); low = plain
+// renderer (tone mapping only). If anything throws — setup or a frame — we
+// fall back to plain rendering for good.
 //
-// ctx.post = { composer, bloom, enabled, settings } (settings are live-tunable).
+// ctx.post = { composer (null — custom chain), bloom, settings, enabled, setEnabled(on) }
+//   settings are live-tunable (see SETTINGS).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 
 /** Live-tunable settings (also exposed as ctx.post.settings). */
 const SETTINGS = {
-  tiltRadius: 3.8, // max blur radius in CSS pixels at the very top/bottom
-  tiltBand: 0.2, // half height of the sharp band (0..0.5 of the screen)
-  tiltRamp: 0.32, // how quickly the blur ramps up beyond the band
-  tiltFocus: 0.48, // vertical centre of the sharp band (0 = bottom)
-  bloomDay: { strength: 0.12, radius: 0.35, threshold: 1.05 },
-  bloomNight: { strength: 0.85, radius: 0.55, threshold: 0.62 },
-  vignette: 0.28,
-  saturation: 1.06,
-  warmth: 0.025,
+  bloomDay: { strength: 0.32, radius: 0.55, threshold: 1.0, knee: 0.6 },
+  bloomNight: { strength: 0.9, radius: 0.7, threshold: 0.42, knee: 0.5 },
+  dof: true,
+  /** CoC scale in px (at 720p): blur of something infinitely far behind the focus. */
+  aperture: 12,
+  /** In-focus dead zone (px) so the subject stays pin sharp. */
+  focusBand: 0.9,
+  maxBlur: 11, // px at 720p
+  saturation: 1.08,
+  warmth: 0.035,
+  shadowTint: [-0.012, 0.006, 0.012], // added in the shadows (teal-green)
+  lift: 0.018,
+  vignette: 0.32,
+  grain: 0.022,
 };
 
-const BLUR_GLSL = /* glsl */ `
-  uniform sampler2D tDiffuse;
-  uniform vec2 uTexel;
-  uniform vec2 uDir;
-  uniform float uRadius, uBand, uRamp, uFocus;
-  varying vec2 vUv;
-  float tiltAmount(float y) {
-    float dy = y - uFocus;
-    float k = smoothstep(uBand, uBand + uRamp, abs(dy));
-    // the foreground (bottom) blurs a little less than the distance (top)
-    return k * (dy < 0.0 ? 0.75 : 1.0);
-  }
-  vec4 tiltBlur(vec2 uv) {
-    float r = tiltAmount(uv.y) * uRadius;
-    if (r < 0.35) return texture2D(tDiffuse, uv);
-    vec4 sum = vec4(0.0);
-    float wsum = 0.0;
-    for (int i = -6; i <= 6; i++) {
-      float f = float(i) / 6.0;
-      float w = exp(-f * f * 2.2);
-      sum += texture2D(tDiffuse, uv + uDir * uTexel * f * r) * w;
-      wsum += w;
-    }
-    return sum / wsum;
-  }
-`;
-
-const FULLSCREEN_VERT = /* glsl */ `
+const VERT = /* glsl */ `
   varying vec2 vUv;
   void main() {
     vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    gl_Position = vec4(position.xy, 0.0, 1.0);
   }
 `;
 
-function tiltUniforms() {
-  return {
-    tDiffuse: { value: null },
-    uTexel: { value: new THREE.Vector2(1, 1) },
-    uDir: { value: new THREE.Vector2(1, 0) },
-    uRadius: { value: SETTINGS.tiltRadius },
-    uBand: { value: SETTINGS.tiltBand },
-    uRamp: { value: SETTINGS.tiltRamp },
-    uFocus: { value: SETTINGS.tiltFocus },
-  };
-}
+const COC_GLSL = /* glsl */ `
+  uniform sampler2D tDepth;
+  uniform float uNear, uFar, uFocus, uAperture, uBand, uMaxBlur;
+  float viewDepth(vec2 uv) {
+    float d = texture2D(tDepth, uv).x;
+    // perspective depth → positive view distance
+    return (uNear * uFar) / ((uFar - uNear) * d - uFar);
+  }
+  // signed circle of confusion in px (−: in front of the focus, +: behind)
+  float cocAt(vec2 uv) {
+    float z = -viewDepth(uv);
+    float c = uAperture * (z - uFocus) / max(z, 1e-3);
+    c = sign(c) * max(abs(c) - uBand, 0.0);
+    return clamp(c, -uMaxBlur * 1.25, uMaxBlur);
+  }
+`;
 
-const TiltShiftH = {
-  name: 'TiltShiftH',
-  uniforms: tiltUniforms(),
-  vertexShader: FULLSCREEN_VERT,
+/** Half-res: colour (4-tap box) + signed CoC (in half-res px). */
+const PrefilterShader = {
+  uniforms: {
+    tColor: { value: null },
+    tDepth: { value: null },
+    uTexel: { value: new THREE.Vector2() },
+    uNear: { value: 0.1 },
+    uFar: { value: 100 },
+    uFocus: { value: 20 },
+    uAperture: { value: 10 },
+    uBand: { value: 1 },
+    uMaxBlur: { value: 10 },
+  },
+  vertexShader: VERT,
   fragmentShader: /* glsl */ `
-    ${BLUR_GLSL}
-    void main() { gl_FragColor = tiltBlur(vUv); }
+    uniform sampler2D tColor;
+    uniform vec2 uTexel; // full-res texel
+    varying vec2 vUv;
+    ${COC_GLSL}
+    void main() {
+      vec2 o = uTexel * 0.5;
+      vec3 c = texture2D(tColor, vUv + vec2(-o.x, -o.y)).rgb + texture2D(tColor, vUv + vec2(o.x, -o.y)).rgb
+             + texture2D(tColor, vUv + vec2(-o.x, o.y)).rgb + texture2D(tColor, vUv + vec2(o.x, o.y)).rgb;
+      c *= 0.25;
+      // tame fireflies so single hot pixels do not become big discs
+      c = c / (1.0 + max(max(c.r, c.g), c.b) * 0.12);
+      float coc = cocAt(vUv) * 0.5; // half-res px
+      gl_FragColor = vec4(c, coc);
+    }
   `,
 };
 
-/** Final pass: vertical tilt-shift, tone mapping, grade, vignette, sRGB. */
-class FinishPass extends Pass {
+const TAPS = 28;
+/** Half-res gather blur. Output: rgb = blurred colour, a = foreground coverage. */
+const BokehShader = {
+  uniforms: {
+    tPre: { value: null },
+    uTexel: { value: new THREE.Vector2() }, // half-res texel
+    uMaxR: { value: 6 },
+  },
+  vertexShader: VERT,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tPre;
+    uniform vec2 uTexel;
+    uniform float uMaxR;
+    varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tPre, vUv);
+      float cocC = c.a;
+      vec3 sum = c.rgb;
+      float wsum = 1.0;
+      float fg = 0.0;
+      const float GOLDEN = 2.39996323;
+      for (int i = 0; i < ${TAPS}; i++) {
+        float fi = float(i);
+        float r = uMaxR * sqrt((fi + 0.5) / ${TAPS.toFixed(1)});
+        float th = fi * GOLDEN;
+        vec4 s = texture2D(tPre, vUv + vec2(cos(th), sin(th)) * r * uTexel);
+        float cs = s.a;
+        // a sample behind a sharper centre must not spread onto it
+        float reach = cs > cocC ? min(abs(cs), max(abs(cocC), 0.0) * 1.5 + 0.35) : abs(cs);
+        float w = smoothstep(r - 0.75, r + 0.25, reach);
+        sum += s.rgb * w;
+        wsum += w;
+        fg = max(fg, w * smoothstep(0.6, 1.8, -cs));
+      }
+      gl_FragColor = vec4(sum / wsum, fg);
+    }
+  `,
+};
+
+class FinishMaterial extends THREE.ShaderMaterial {
   constructor() {
-    super();
-    this.uniforms = {
-      ...tiltUniforms(),
-      toneMappingExposure: { value: 1 },
-      uVignette: { value: SETTINGS.vignette },
-      uVignetteColor: { value: new THREE.Color('#5a3a2a') },
-      uSaturation: { value: SETTINGS.saturation },
-      uWarmth: { value: SETTINGS.warmth },
-      uAspect: { value: 1 },
-      uNight: { value: 0 },
-    };
-    this.uniforms.uDir.value.set(0, 1);
-    this.material = new THREE.RawShaderMaterial({
+    super({
       name: 'WoodlandFinish',
-      uniforms: this.uniforms,
-      vertexShader: /* glsl */ `
-        precision highp float;
-        uniform mat4 modelViewMatrix;
-        uniform mat4 projectionMatrix;
-        attribute vec3 position;
-        attribute vec2 uv;
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
+      uniforms: {
+        tColor: { value: null },
+        tBloom: { value: null },
+        tBokeh: { value: null },
+        tDepth: { value: null },
+        uUseBloom: { value: 0 },
+        uUseDof: { value: 0 },
+        uNear: { value: 0.1 },
+        uFar: { value: 100 },
+        uFocus: { value: 20 },
+        uAperture: { value: 10 },
+        uBand: { value: 1 },
+        uMaxBlur: { value: 10 },
+        uSaturation: { value: SETTINGS.saturation },
+        uWarmth: { value: SETTINGS.warmth },
+        uShadowTint: { value: new THREE.Vector3(...SETTINGS.shadowTint) },
+        uLift: { value: SETTINGS.lift },
+        uLiftColor: { value: new THREE.Color('#2d4a4a') },
+        uVignette: { value: SETTINGS.vignette },
+        uVignetteColor: { value: new THREE.Color('#2a1a10') },
+        uGrain: { value: SETTINGS.grain },
+        uAspect: { value: 1 },
+        uNight: { value: 0 },
+        uTime: { value: 0 },
+      },
+      vertexShader: VERT,
       fragmentShader: /* glsl */ `
-        precision highp float;
-        ${BLUR_GLSL}
-        uniform float uVignette, uSaturation, uWarmth, uAspect, uNight;
-        uniform vec3 uVignetteColor;
-        #include <tonemapping_pars_fragment>
-        #include <colorspace_pars_fragment>
+        uniform sampler2D tColor, tBloom, tBokeh;
+        uniform float uUseBloom, uUseDof;
+        uniform float uSaturation, uWarmth, uLift, uVignette, uGrain, uAspect, uNight, uTime;
+        uniform vec3 uShadowTint, uLiftColor, uVignetteColor;
+        varying vec2 vUv;
+        ${COC_GLSL}
+        float hash12(vec2 p) {
+          vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+          p3 += dot(p3, p3.yzx + 33.33);
+          return fract((p3.x + p3.y) * p3.z);
+        }
         void main() {
-          vec4 c = tiltBlur(vUv);
-          vec3 col = c.rgb;
-          #ifdef LINEAR_TONE_MAPPING
-            col = LinearToneMapping(col);
-          #elif defined(REINHARD_TONE_MAPPING)
-            col = ReinhardToneMapping(col);
-          #elif defined(CINEON_TONE_MAPPING)
-            col = CineonToneMapping(col);
-          #elif defined(ACES_FILMIC_TONE_MAPPING)
-            col = ACESFilmicToneMapping(col);
-          #elif defined(AGX_TONE_MAPPING)
-            col = AgXToneMapping(col);
-          #elif defined(NEUTRAL_TONE_MAPPING)
-            col = NeutralToneMapping(col);
-          #endif
-          // gentle grade (display-referred linear): a touch more colour, warm gain
+          vec3 col = texture2D(tColor, vUv).rgb;
+          if (uUseDof > 0.5) {
+            vec4 b = texture2D(tBokeh, vUv);
+            float coc = abs(cocAt(vUv));
+            float k = max(smoothstep(0.35, 2.2, coc), b.a);
+            col = mix(col, b.rgb, k);
+          }
+          if (uUseBloom > 0.5) col += texture2D(tBloom, vUv).rgb;
+
+          // the renderer's tone mapping (exposure included)
+          col = toneMapping(col);
+          col = clamp(col, 0.0, 1.0);
+
+          // grade (display-referred linear)
           float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
           col = max(mix(vec3(l), col, uSaturation), 0.0);
-          col *= vec3(1.0 + uWarmth, 1.0 + uWarmth * 0.3, 1.0 - uWarmth);
-          // moonlight: pull greens towards a cool blue without crushing anything
-          col = mix(col, l * vec3(0.72, 0.86, 1.32), uNight * 0.28);
-          // soft, warm-tinted vignette (multiplied towards a colour, never grey)
+          float sh = (1.0 - l) * (1.0 - l);
+          col += uShadowTint * sh * (1.0 + uNight);
+          col *= mix(vec3(1.0), vec3(1.0 + uWarmth, 1.0 + uWarmth * 0.35, 1.0 - uWarmth * 0.6), smoothstep(0.25, 0.9, l));
+          // moonlight: cool the greens a little without crushing anything
+          col = mix(col, l * vec3(0.78, 0.9, 1.25), uNight * 0.18);
+          // softly lifted blacks, towards a deep teal (never grey)
+          col = col * (1.0 - uLift) + uLiftColor * uLift * 2.2;
+          // warm, gentle vignette
           vec2 q = (vUv - 0.5) * vec2(uAspect, 1.0);
-          float v = smoothstep(0.35, 1.05, length(q) * 1.15) * uVignette;
-          col = mix(col, col * uVignetteColor * 1.6, v);
-          gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
-          #ifdef SRGB_TRANSFER
-            gl_FragColor = sRGBTransferOETF(gl_FragColor);
-          #endif
+          float v = smoothstep(0.42, 1.15, length(q) * 1.1) * uVignette;
+          col = mix(col, col * uVignetteColor * 2.4, v);
+          col = clamp(col, 0.0, 1.0);
+
+          gl_FragColor = linearToOutputTexel(vec4(col, 1.0));
+          // fine film grain (in display space, strongest in the mid tones)
+          float g = hash12(gl_FragCoord.xy + fract(uTime * 7.31) * 517.0) - 0.5;
+          float mid = 1.0 - abs(l * 2.0 - 1.0);
+          gl_FragColor.rgb += g * uGrain * (0.4 + 0.6 * mid);
         }
       `,
+      depthTest: false,
+      depthWrite: false,
+      // keeps three's toneMapping()/exposure available in this shader (the
+      // tonemapping chunk itself is not included — we call it ourselves)
+      toneMapped: true,
     });
-    this._quad = new FullScreenQuad(this.material);
-    this._toneMapping = null;
-    this._colorSpace = null;
   }
+}
 
-  render(renderer, writeBuffer, readBuffer) {
-    this.uniforms.tDiffuse.value = readBuffer.texture;
-    this.uniforms.toneMappingExposure.value = renderer.toneMappingExposure;
-    if (this._toneMapping !== renderer.toneMapping || this._colorSpace !== renderer.outputColorSpace) {
-      this._toneMapping = renderer.toneMapping;
-      this._colorSpace = renderer.outputColorSpace;
-      const d = {};
-      if (THREE.ColorManagement.getTransfer(this._colorSpace) === THREE.SRGBTransfer) d.SRGB_TRANSFER = '';
-      const tm = {
-        [THREE.LinearToneMapping]: 'LINEAR_TONE_MAPPING',
-        [THREE.ReinhardToneMapping]: 'REINHARD_TONE_MAPPING',
-        [THREE.CineonToneMapping]: 'CINEON_TONE_MAPPING',
-        [THREE.ACESFilmicToneMapping]: 'ACES_FILMIC_TONE_MAPPING',
-        [THREE.AgXToneMapping]: 'AGX_TONE_MAPPING',
-        [THREE.NeutralToneMapping]: 'NEUTRAL_TONE_MAPPING',
-      }[this._toneMapping];
-      if (tm) d[tm] = '';
-      this.material.defines = d;
-      this.material.needsUpdate = true;
+/** UnrealBloomPass, but we only want its blurred mip composite (added in the finish pass). */
+class WoodlandBloom extends UnrealBloomPass {
+  renderBloom(renderer, input) {
+    const oldAutoClear = renderer.autoClear;
+    renderer.autoClear = false;
+    renderer.getClearColor(this._oldClearColor);
+    this._oldClearAlpha = renderer.getClearAlpha();
+    renderer.setClearColor(this.clearColor, 0);
+
+    this.highPassUniforms.tDiffuse.value = input;
+    this.highPassUniforms.luminosityThreshold.value = this.threshold;
+    this._fsQuad.material = this.materialHighPassFilter;
+    renderer.setRenderTarget(this.renderTargetBright);
+    renderer.clear();
+    this._fsQuad.render(renderer);
+
+    let inputRT = this.renderTargetBright;
+    for (let i = 0; i < this.nMips; i++) {
+      const m = this.separableBlurMaterials[i];
+      this._fsQuad.material = m;
+      m.uniforms.colorTexture.value = inputRT.texture;
+      m.uniforms.direction.value = UnrealBloomPass.BlurDirectionX;
+      renderer.setRenderTarget(this.renderTargetsHorizontal[i]);
+      renderer.clear();
+      this._fsQuad.render(renderer);
+      m.uniforms.colorTexture.value = this.renderTargetsHorizontal[i].texture;
+      m.uniforms.direction.value = UnrealBloomPass.BlurDirectionY;
+      renderer.setRenderTarget(this.renderTargetsVertical[i]);
+      renderer.clear();
+      this._fsQuad.render(renderer);
+      inputRT = this.renderTargetsVertical[i];
     }
-    renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
-    if (!this.renderToScreen && this.clear) renderer.clear();
-    this._quad.render(renderer);
-  }
 
-  dispose() {
-    this.material.dispose();
-    this._quad.dispose();
+    this._fsQuad.material = this.compositeMaterial;
+    this.compositeMaterial.uniforms.bloomStrength.value = this.strength;
+    this.compositeMaterial.uniforms.bloomRadius.value = this.radius;
+    this.compositeMaterial.uniforms.bloomTintColors.value = this.bloomTintColors;
+    renderer.setRenderTarget(this.renderTargetsHorizontal[0]);
+    renderer.clear();
+    this._fsQuad.render(renderer);
+
+    renderer.setClearColor(this._oldClearColor, this._oldClearAlpha);
+    renderer.autoClear = oldAutoClear;
+    return this.renderTargetsHorizontal[0].texture;
   }
 }
 
 export default async function build(ctx) {
   const { engine, scene, camera } = ctx;
   const quality = ctx.quality ?? engine.quality;
-  if (!quality.post) return {};
+  const tier = quality.tier;
+  // high: full chain; medium: bloom + grade; low: plain renderer.
+  if (tier === 'low') return {};
   const renderer = engine.renderer;
+  const useDof = tier === 'high';
 
-  let composer, bloom, tiltH, finish;
+  let sceneRT, bloom, preRT, bokehRT, finishMat, quads;
   try {
-    const size = renderer.getSize(new THREE.Vector2());
+    const size = renderer.getDrawingBufferSize(new THREE.Vector2());
     const pr = renderer.getPixelRatio();
-    const target = new THREE.WebGLRenderTarget(size.x * pr, size.y * pr, {
+    sceneRT = new THREE.WebGLRenderTarget(size.x, size.y, {
       type: THREE.HalfFloatType,
       samples: pr >= 1.75 ? 2 : 4,
+      depthTexture: useDof ? new THREE.DepthTexture(size.x, size.y) : undefined,
     });
-    target.texture.name = 'woodland.post.rt';
-    composer = new EffectComposer(renderer, target);
-    composer.addPass(new RenderPass(scene, camera));
-    bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), SETTINGS.bloomDay.strength, SETTINGS.bloomDay.radius, SETTINGS.bloomDay.threshold);
-    composer.addPass(bloom);
-    tiltH = new ShaderPass(TiltShiftH);
-    composer.addPass(tiltH);
-    finish = new FinishPass();
-    composer.addPass(finish);
+    sceneRT.texture.name = 'woodland.post.scene';
+    const css = renderer.getSize(new THREE.Vector2());
+    bloom = new WoodlandBloom(new THREE.Vector2(css.x, css.y), SETTINGS.bloomDay.strength, SETTINGS.bloomDay.radius, SETTINGS.bloomDay.threshold);
+    bloom.highPassUniforms.smoothWidth.value = SETTINGS.bloomDay.knee;
+    finishMat = new FinishMaterial();
+    quads = { finish: new FullScreenQuad(finishMat) };
+    if (useDof) {
+      const half = { type: THREE.HalfFloatType, depthBuffer: false };
+      preRT = new THREE.WebGLRenderTarget(Math.ceil(size.x / 2), Math.ceil(size.y / 2), half);
+      bokehRT = new THREE.WebGLRenderTarget(Math.ceil(size.x / 2), Math.ceil(size.y / 2), half);
+      preRT.texture.minFilter = preRT.texture.magFilter = THREE.LinearFilter;
+      quads.pre = new FullScreenQuad(new THREE.ShaderMaterial({ ...PrefilterShader, uniforms: THREE.UniformsUtils.clone(PrefilterShader.uniforms), depthTest: false, depthWrite: false }));
+      quads.bokeh = new FullScreenQuad(new THREE.ShaderMaterial({ ...BokehShader, uniforms: THREE.UniformsUtils.clone(BokehShader.uniforms), depthTest: false, depthWrite: false }));
+    }
   } catch (err) {
     console.warn('[post] setup failed, rendering without post-processing', err);
     return {};
   }
 
-  const tiltPasses = [tiltH.uniforms, finish.uniforms];
+  const fu = finishMat.uniforms;
   function resize(w, h) {
     const pr = renderer.getPixelRatio();
-    composer.setPixelRatio(pr);
-    composer.setSize(w, h);
-    for (const u of tiltPasses) {
-      u.uTexel.value.set(1 / (w * pr), 1 / (h * pr));
-      u.uRadius.value = SETTINGS.tiltRadius * pr;
+    const W = Math.floor(w * pr), H = Math.floor(h * pr);
+    sceneRT.setSize(W, H);
+    bloom.setSize(w, h);
+    if (useDof) {
+      preRT.setSize(Math.ceil(W / 2), Math.ceil(H / 2));
+      bokehRT.setSize(Math.ceil(W / 2), Math.ceil(H / 2));
+      quads.pre.material.uniforms.uTexel.value.set(1 / W, 1 / H);
+      quads.bokeh.material.uniforms.uTexel.value.set(2 / W, 2 / H);
     }
-    finish.uniforms.uAspect.value = w / Math.max(h, 1);
+    fu.uAspect.value = w / Math.max(h, 1);
   }
   const s0 = renderer.getSize(new THREE.Vector2());
   resize(s0.x, s0.y);
@@ -248,13 +339,59 @@ export default async function build(ctx) {
   let active = true;
   const plain = () => {
     renderer.info.reset();
+    renderer.setRenderTarget(null);
     renderer.render(scene, camera);
   };
+
+  function cocUniforms(u, H) {
+    // CoC sizes are authored for a 720 px tall image
+    const k = H / 720;
+    u.uNear.value = camera.near;
+    u.uFar.value = camera.far;
+    u.uFocus.value = Math.max(0.5, ctx.cameraRig?.focusDistance ?? 20);
+    u.uAperture.value = SETTINGS.aperture * k;
+    u.uBand.value = SETTINGS.focusBand * k;
+    u.uMaxBlur.value = SETTINGS.maxBlur * k;
+  }
+
+  function frame(dt) {
+    renderer.info.reset();
+    renderer.setRenderTarget(sceneRT);
+    renderer.render(scene, camera);
+
+    const bloomTex = bloom.strength > 0.001 ? bloom.renderBloom(renderer, sceneRT.texture) : null;
+
+    const dofOn = useDof && SETTINGS.dof;
+    if (dofOn) {
+      const H = sceneRT.height;
+      const pu = quads.pre.material.uniforms;
+      pu.tColor.value = sceneRT.texture;
+      pu.tDepth.value = sceneRT.depthTexture;
+      cocUniforms(pu, H);
+      renderer.setRenderTarget(preRT);
+      quads.pre.render(renderer);
+      const bu = quads.bokeh.material.uniforms;
+      bu.tPre.value = preRT.texture;
+      bu.uMaxR.value = (SETTINGS.maxBlur * (H / 720)) / 2;
+      renderer.setRenderTarget(bokehRT);
+      quads.bokeh.render(renderer);
+      fu.tDepth.value = sceneRT.depthTexture;
+      fu.tBokeh.value = bokehRT.texture;
+      cocUniforms(fu, H);
+    }
+    fu.uUseDof.value = dofOn ? 1 : 0;
+    fu.tColor.value = sceneRT.texture;
+    fu.tBloom.value = bloomTex;
+    fu.uUseBloom.value = bloomTex ? 1 : 0;
+    fu.uTime.value += dt || 1 / 60;
+    renderer.setRenderTarget(null);
+    quads.finish.render(renderer);
+  }
+
   engine.setRenderFn((dt) => {
     if (failed || !active) return plain();
     try {
-      renderer.info.reset();
-      composer.render(dt);
+      frame(dt);
     } catch (err) {
       failed = true;
       console.warn('[post] render failed, falling back to plain rendering', err);
@@ -263,12 +400,14 @@ export default async function build(ctx) {
     }
   });
 
-  const vignetteDay = new THREE.Color('#5a3a2a');
-  const vignetteNight = new THREE.Color('#1a2350');
+  const vignetteDay = new THREE.Color('#2a1a10');
+  const vignetteNight = new THREE.Color('#0a1430');
+  const liftDay = new THREE.Color('#2d4a4a');
+  const liftNight = new THREE.Color('#14223e');
   let lastNight = -1;
 
   ctx.post = {
-    composer,
+    composer: null,
     bloom,
     settings: SETTINGS,
     get enabled() {
@@ -289,17 +428,17 @@ export default async function build(ctx) {
         bloom.strength = D.strength + (N.strength - D.strength) * n;
         bloom.radius = D.radius + (N.radius - D.radius) * n;
         bloom.threshold = D.threshold + (N.threshold - D.threshold) * n;
-        finish.uniforms.uVignetteColor.value.copy(vignetteDay).lerp(vignetteNight, n);
-        finish.uniforms.uVignette.value = SETTINGS.vignette * (1 + 0.35 * n);
-        finish.uniforms.uNight.value = n;
+        bloom.highPassUniforms.smoothWidth.value = D.knee + (N.knee - D.knee) * n;
+        fu.uVignetteColor.value.copy(vignetteDay).lerp(vignetteNight, n);
+        fu.uLiftColor.value.copy(liftDay).lerp(liftNight, n);
+        fu.uNight.value = n;
       }
-      for (const u of tiltPasses) {
-        u.uBand.value = SETTINGS.tiltBand;
-        u.uRamp.value = SETTINGS.tiltRamp;
-        u.uFocus.value = SETTINGS.tiltFocus;
-      }
-      finish.uniforms.uSaturation.value = SETTINGS.saturation;
-      finish.uniforms.uWarmth.value = SETTINGS.warmth;
+      fu.uVignette.value = SETTINGS.vignette * (1 + 0.3 * n);
+      fu.uSaturation.value = SETTINGS.saturation;
+      fu.uWarmth.value = SETTINGS.warmth * (1 - n);
+      fu.uShadowTint.value.set(...SETTINGS.shadowTint);
+      fu.uLift.value = SETTINGS.lift;
+      fu.uGrain.value = SETTINGS.grain;
     },
   };
 }
