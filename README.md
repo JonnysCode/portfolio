@@ -1,22 +1,22 @@
 # 🍄 Jonny's Woodland
 
-A portfolio you can walk around in: a cozy woodland village of mushroom houses,
-little villagers and rideable snails, built **entirely procedurally with
-three.js** — no 3D model files. Each corner of the village is one of my
-passions:
+A portfolio you can explore like a miniature diorama: a magical forest glen
+under a colossal oak, full of mushroom houses, little villagers, snails and
+fireflies — built **entirely procedurally with three.js** (no 3D model or
+texture files). Every corner of the glen is one of my passions:
 
-| | Area | What's there |
+| | Spot | What's there |
 |---|---|---|
-| ⛲ | **Village Square** | signposts, notice board, the Schneckenpost stop |
-| 🪚 | **Schreinerei** | woodworking: my Schreiner EFZ, tables, the record player, … |
-| 🚲 | **Velowerkstatt** | bike builds, restorations, wheel building |
-| 🛋️ | **Wohnatelier** | interior design concepts and material boards |
-| 💻 | **Code Grove** | software projects (including this one) |
-| 🏡 | **Jonny's Cottage** | about me & contact |
+| 🪚 | **Schreinerei** | a woodworking shop in the roots of the Great Oak: my Schreiner EFZ, the dining table, the record player (click it!) … |
+| 💻 | **Code Loft** | a treehouse halfway up the oak — software projects, including this one |
+| 🍄 | **Jonny's Cottage** | about me & contact (the mailbox by the gate) |
+| 🛋️ | **Wohnatelier** | a mushroom house opened like a dollhouse: interior design |
+| 🚲 | **Velowerkstatt** | across the stone bridge: bike builds, restorations, wheels |
 
-Walk by clicking the ground (or WASD), drag to look around, click glowing things
-to read about them, and hop on a yellow **Schneckenpost** snail to travel.
-Prefer reading? The 📖 guidebook lists everything on one page.
+Glide between spots with the spot bar (or ← → / 1–6), drag to look around,
+scroll to zoom, and click whatever looks interesting. A few secrets are
+hidden in the glen. Prefer reading? The 📖 guidebook lists everything on one
+page.
 
 ## ✏️ Make it yours
 
@@ -42,13 +42,14 @@ npm run preview    # serve the build
 ```
 
 Handy URL flags: `?night=1` (start at night), `?q=low|medium|high` (quality
-tier), `?debug`. In the browser console, `__woodland.debug` has helpers such
-as `view('woodworking')`, `teleportToArea('bikes')` and `stats()`.
+tier), `?debug`, `?only=oak,terrain` (build only some modules). In the browser
+console, `__woodland.debug` has helpers such as `goTo('woodworking')`,
+`view('bikes-close')` and `stats()`.
 
 `npm run shots` renders headless screenshots of every area into `shots/` and
 fails on console errors — see [`scripts/shots.mjs`](scripts/shots.mjs).
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains how the world is put
-together (layout, district contract, art direction, performance budget).
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains how the glen is put
+together (layout & anchors, module contract, art bible, performance budget).
 
 ## Deploy
 

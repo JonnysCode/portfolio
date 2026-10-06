@@ -108,7 +108,7 @@ try {
     }, { def: job.def, frames });
     await page.waitForTimeout(60);
     const file = path.join(outDir, `${prefix}${job.name}.png`);
-    await page.screenshot({ path: file });
+    await page.screenshot({ path: file, timeout: Number(opt('shot-timeout', 240000)) });
     console.log(`[shot] ${path.relative(root, file)}`);
   }
   const stats = await page.evaluate(() => window.__woodland.debug.stats());
