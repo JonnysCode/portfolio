@@ -25,19 +25,33 @@ export const sharedUniforms = {
   uWindStrength: { value: 1 },
 };
 
-function makeGradientMap(steps) {
+/**
+ * Build a toon ramp texture. `steps` are direct-light multipliers sampled by
+ * (dot(N, L) * 0.5 + 0.5), i.e. the first half of the array covers surfaces
+ * facing away from the light. `smooth` blends neighbouring steps (soft bands).
+ */
+export function makeGradientMap(steps, { smooth = false } = {}) {
   const data = new Uint8Array(steps.length);
   steps.forEach((v, i) => (data[i] = Math.round(v * 255)));
   const tex = new THREE.DataTexture(data, steps.length, 1, THREE.RedFormat);
-  tex.minFilter = THREE.NearestFilter;
-  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = smooth ? THREE.LinearFilter : THREE.NearestFilter;
+  tex.magFilter = smooth ? THREE.LinearFilter : THREE.NearestFilter;
   tex.generateMipmaps = false;
   tex.needsUpdate = true;
   return tex;
 }
 
-/** Soft 4-step ramp: deep enough shadows to read shapes, never pitch black. */
-export const toonGradient = makeGradientMap([0.38, 0.62, 0.84, 1.0]);
+/**
+ * Storybook cel ramp (8 bins over dot(N,L) from −1 to 1): surfaces turned away
+ * from the sun get almost no direct light — so their tone matches cast shadows —
+ * a soft mid band sits at the terminator, and everything facing the sun is
+ * fully lit. The hemisphere + rim lights (world/lighting.js) keep the shaded
+ * side warm-cool and readable, never black.
+ */
+export const toonGradient = makeGradientMap([0.1, 0.1, 0.12, 0.2, 0.58, 0.86, 1.0, 1.0]);
+
+/** Same ramp with soft (linear-filtered) band edges — for big organic surfaces like terrain. */
+export const softToonGradient = makeGradientMap([0.1, 0.12, 0.16, 0.3, 0.62, 0.88, 1.0, 1.0], { smooth: true });
 
 function makeGrainTexture() {
   const rnd = createRng('wood-grain');
@@ -126,6 +140,7 @@ export const materials = {
   palette,
   sharedUniforms,
   gradientMap: toonGradient,
+  softGradientMap: softToonGradient,
 
   /**
    * Cel-shaded material (MeshToonMaterial) — the default look of the village.

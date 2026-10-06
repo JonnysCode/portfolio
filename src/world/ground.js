@@ -86,18 +86,24 @@ export function analyticHeight(x, z, pathDist = analyticPathDistance(x, z).d) {
   const amp = 0.5 + 2.6 * smoothstep(14, 55, r);
   let h = fbm(noiseA, x * 0.022, z * 0.022, 4) * amp;
   h += fbm(noiseB, x * 0.09, z * 0.09, 2) * 0.25;
-  // The forest rim: hills rise beyond the walkable area to close the valley.
+  // The forest rim: hills rise beyond the walkable area to close the valley
+  // (kept moderate so the distant Alps can peek over the treetops).
   const rim = smoothstep(WORLD_RADIUS - 8, WORLD_RADIUS + 34, r);
-  h += rim * rim * (16 + 9 * fbm(noiseB, x * 0.015 + 9, z * 0.015 - 3, 3));
+  h += rim * rim * (12 + 7 * fbm(noiseB, x * 0.015 + 9, z * 0.015 - 3, 3));
   // Paths are smoothed towards a gentle profile.
   const pw = 1 - smoothstep(1.0, 3.2, pathDist);
   h = h * (1 - pw * 0.8);
   // Clearings are perfectly flat at y = 0.
   const cw = clearingWeight(x, z);
   h = h * (1 - cw);
-  // Pond bowl.
-  const pdist = Math.hypot(x - POND.center.x, z - POND.center.z);
-  const bowl = 1 - smoothstep(POND.radius * 0.35, POND.radius * 1.15, pdist);
+  // Pond: a calm little meadow around it, then a bowl with a softly wobbling shore.
+  const pdx = x - POND.center.x, pdz = z - POND.center.z;
+  const pdist = Math.hypot(pdx, pdz);
+  const calm = 1 - smoothstep(POND.radius * 1.1, POND.radius * 2.2, pdist);
+  h = h * (1 - calm * 0.8);
+  const ang = Math.atan2(pdz, pdx);
+  const wobble = 1 + 0.035 * Math.sin(ang * 3 + 0.7) + 0.02 * Math.sin(ang * 5 - 1.3);
+  const bowl = 1 - smoothstep(POND.radius * 0.35, POND.radius * 1.15, pdist / wobble);
   h = h * (1 - bowl) - bowl * POND.depth;
   return h;
 }
