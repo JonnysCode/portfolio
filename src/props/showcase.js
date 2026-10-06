@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import * as props from './index.js';
 import { materials } from '../core/materials.js';
 import { palette } from '../core/palette.js';
-import { DISTRICTS } from '../world/layout.js';
+import { AREAS } from '../world/layout.js';
 
 function row(ctx, items, z, gap) {
   items.forEach((o, i) => {
@@ -70,7 +70,7 @@ export default async function build(ctx) {
   ctx.scene.add(sitter.group);
 
   // row 4: signs
-  const arrows = DISTRICTS.map((d) => ({ text: d.title, angle: Math.atan2(d.center.x, d.center.z), color: d.color }));
+  const arrows = AREAS.filter((d) => d.id !== 'glen').map((d) => ({ text: d.title, angle: Math.atan2(d.center.x, d.center.z) }));
   const signs = [
     props.makeSign({ text: 'Schreinerei', style: 'post', width: 2.2 }),
     props.makeSign({ text: 'Village Notices', style: 'board', width: 1.8 }),

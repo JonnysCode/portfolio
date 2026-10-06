@@ -220,6 +220,43 @@ export const materials = {
     return m;
   },
 
+  /**
+   * Painterly physically-based SURFACES for the detailed glen. Builders ask for
+   * a surface by KIND and get a cached material; the atmosphere/look-dev builder
+   * owns how each kind looks (procedural textures, triplanar mapping, moss on
+   * up-facing faces, colour breakup …). Kinds:
+   *   bark, wood (planks/joinery; opts.species = oak|walnut|spruce|ash|cherry|maple),
+   *   timber (weathered structural beams), shingles, plaster, stone, cobble,
+   *   rock (big mossy boulders/cliffs), moss, soil, mushroomCap (opts.color),
+   *   mushroomStem, gills, leaf (solid leaves/ivy), fabric (opts.color), rope,
+   *   metal (opts.color), glass, paper, thatch, clay (pots, roof tiles; opts.color)
+   * opts: { color, species, mossy (0..1 amount of moss creeping on top faces),
+   *         side, transparent, opacity }
+   * Geometry needs UVs for wood/shingles/plaster; organic kinds (bark, rock,
+   * stone, moss, soil) work without (triplanar).
+   */
+  surface(kind = 'stone', opts = {}) {
+    const key = keyOf('surface:' + kind, opts.color ?? '#ffffff', opts);
+    if (cache.has(key)) return cache.get(key);
+    const m = makeSurface(kind, opts);
+    m.name = `surface-${kind}`;
+    cache.set(key, m);
+    return m;
+  },
+
+  /**
+   * Foliage for leaf-card clusters (alpha-tested leaf textures on quads):
+   * opts { color, variant: 'oak'|'fern'|'ivy'|'grass'|'needle'|'blossom', wind: { strength, base } }.
+   * Owned by the look-dev builder (alpha test, two-sided, soft translucency).
+   */
+  foliage(opts = {}) {
+    const key = keyOf('foliage', opts.color ?? palette.leaf, opts);
+    if (cache.has(key)) return cache.get(key);
+    const m = makeFoliage(opts);
+    cache.set(key, m);
+    return m;
+  },
+
   /** Called every frame by the environment system. */
   update(dt, t, night) {
     sharedUniforms.uTime.value = t;
@@ -235,5 +272,54 @@ export const materials = {
     return cache.size;
   },
 };
+
+// ─── PLACEHOLDER surface / foliage implementations ──────────────────────────
+// Flat-coloured stand-ins so builders can work before the look-dev pass.
+const SURFACE_DEFAULTS = {
+  bark: { color: '#6e4f3a', roughness: 0.95 },
+  wood: { color: palette.oak, roughness: 0.75 },
+  timber: { color: '#7a5a40', roughness: 0.9 },
+  shingles: { color: '#8a5a3b', roughness: 0.9 },
+  plaster: { color: '#efe2c4', roughness: 0.95 },
+  stone: { color: '#a9a296', roughness: 0.95 },
+  cobble: { color: '#9d968a', roughness: 0.95 },
+  rock: { color: '#8c877c', roughness: 1 },
+  moss: { color: '#6f8f3a', roughness: 1 },
+  soil: { color: '#7a5b3e', roughness: 1 },
+  mushroomCap: { color: '#c9352a', roughness: 0.6 },
+  mushroomStem: { color: '#efe4cc', roughness: 0.85 },
+  gills: { color: '#e6d3b0', roughness: 0.9 },
+  leaf: { color: '#4f7f36', roughness: 0.8 },
+  fabric: { color: '#c9b79a', roughness: 1 },
+  rope: { color: '#b89b6a', roughness: 1 },
+  metal: { color: '#6b6f73', roughness: 0.45, metalness: 0.8 },
+  glass: { color: '#cfe8f0', roughness: 0.1, transparent: true, opacity: 0.35 },
+  paper: { color: '#f3ead6', roughness: 1 },
+  thatch: { color: '#b9955a', roughness: 1 },
+  clay: { color: '#b8653f', roughness: 0.85 },
+};
+
+function makeSurface(kind, opts) {
+  const d = SURFACE_DEFAULTS[kind] ?? SURFACE_DEFAULTS.stone;
+  const color = opts.color ?? (kind === 'wood' && opts.species ? palette[opts.species] ?? d.color : d.color);
+  return new THREE.MeshStandardMaterial({
+    color: new THREE.Color(color),
+    roughness: d.roughness,
+    metalness: d.metalness ?? 0,
+    transparent: opts.transparent ?? d.transparent ?? false,
+    opacity: opts.opacity ?? d.opacity ?? 1,
+    side: opts.side ?? THREE.FrontSide,
+  });
+}
+
+function makeFoliage(opts) {
+  const m = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(opts.color ?? palette.leaf),
+    roughness: 0.85,
+    side: THREE.DoubleSide,
+  });
+  if (opts.wind) applyWind(m, opts.wind);
+  return m;
+}
 
 export default materials;

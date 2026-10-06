@@ -20,9 +20,7 @@ import * as props from './props/index.js';
 import { createColliders } from './systems/colliders.js';
 import { createEnv } from './systems/env.js';
 import { createInteractions } from './systems/interactions.js';
-import { createPlayer } from './systems/player.js';
 import { createCameraRig } from './systems/cameraRig.js';
-import { createTransport } from './systems/transport.js';
 import { createUI } from './ui/index.js';
 import { createAudio } from './audio/audio.js';
 import { installDebug } from './debug.js';
@@ -87,18 +85,16 @@ async function boot() {
 
   ctx.ui.setProgress(0.05, 'Planting mushrooms…');
   const labels = {
-    lighting: 'Hanging the sun…', sky: 'Fluffing clouds…', terrain: 'Rolling out the meadow…', water: 'Filling the pond…',
-    vegetation: 'Growing trees…', ambient: 'Waking the fireflies…', plaza: 'Sweeping the square…',
-    woodworking: 'Sharpening chisels…', bikes: 'Truing wheels…', interior: 'Fluffing cushions…', code: 'Compiling mushrooms…', home: 'Putting the kettle on…',
+    lighting: 'Hanging the sun…', sky: 'Painting the sky…', atmosphere: 'Letting the mist in…', terrain: 'Rolling out the moss…',
+    oak: 'Growing the Great Oak…', schreinerei: 'Sharpening chisels…', loft: 'Booting the treehouse…', cottage: 'Putting the kettle on…',
+    riverside: 'Filling the stream…', vegetation: 'Unfurling ferns…', ambient: 'Waking the fireflies…', post: 'Polishing the lens…',
   };
   const report = await buildWorld(ctx, (p, id) => ctx.ui.setProgress(0.05 + p * 0.85, labels[id]));
   if (report.failed.length) console.warn('[boot] some modules failed:', report.failed.map((f) => f.id));
 
   engine.addUpdate(props.tickProps, 25);
-  ctx.player = createPlayer(ctx);
   ctx.cameraRig = createCameraRig(ctx);
-  ctx.transport = createTransport(ctx);
-  ctx.player.onAreaChange((id) => id && ctx.ui.showAreaBanner(id));
+  ctx.cameraRig.onSpotChange((id) => id && id !== 'glen' && ctx.ui.showAreaBanner?.(id));
 
   ctx.ui.setProgress(0.95, 'Warming up shaders…');
   // Compile all shaders up front to avoid hitches on first view.

@@ -3,31 +3,21 @@
 // console-error checks) and handy in the browser console.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { AREAS, AREA_BY_ID, POND, SPAWN } from './world/layout.js';
+import { SPOTS } from './world/layout.js';
 import { getHeight } from './world/ground.js';
 
-function areaView(a, dist = 1.35, height = 0.75) {
-  const facing = a.facing ?? 0;
-  const r = a.radius;
-  const dirX = Math.sin(facing), dirZ = Math.cos(facing);
-  return {
-    position: [a.center.x + dirX * r * dist, r * height + 2, a.center.z + dirZ * r * dist],
-    target: [a.center.x, 1.5, a.center.z],
-  };
-}
-
+/** Named camera views for screenshots: every spot, plus '<spot>-wide' and '<spot>-close' variants. */
 export function buildViews() {
   const views = {
-    overview: { position: [0, 95, 85], target: [0, 0, -2] },
-    spawn: { position: [SPAWN.x, 9, SPAWN.z + 15], target: [SPAWN.x, 1.2, SPAWN.z] },
-    pond: { position: [POND.center.x + 4, 7, POND.center.z + POND.radius + 10], target: [POND.center.x, 0, POND.center.z] },
+    overview: { position: [0, 34, 52], target: [0, 4, -2] },
+    top: { position: [0, 70, 6], target: [0, 0, 0] },
   };
-  for (const a of AREAS) {
-    views[a.id] = a.id === 'plaza'
-      ? { position: [0, 13, 22], target: [0, 1, 0] }
-      : areaView(a);
-    views[`${a.id}-close`] = a.id === 'plaza' ? { position: [0, 5, 10], target: [0, 1.5, 0] } : areaView(a, 0.75, 0.3);
-    views[`${a.id}-high`] = a.id === 'plaza' ? { position: [0, 30, 18], target: [0, 0, 0] } : areaView(a, 1.1, 1.9);
+  for (const s of SPOTS) {
+    const p = s.camera.position, t = s.camera.target;
+    views[s.id] = { position: p, target: t };
+    const lerpTo = (k) => [t[0] + (p[0] - t[0]) * k, t[1] + (p[1] - t[1]) * k, t[2] + (p[2] - t[2]) * k];
+    views[`${s.id}-wide`] = { position: lerpTo(1.8), target: t };
+    views[`${s.id}-close`] = { position: lerpTo(0.55), target: s.focus ?? t };
   }
   return views;
 }
@@ -49,14 +39,10 @@ export function installDebug(ctx) {
     setNight(on) {
       ctx.env.setNight(!!on, true);
     },
-    teleport(x, z, facing) {
-      ctx.player.teleport(x, z, facing);
-      ctx.cameraRig.snap();
-    },
-    teleportToArea(id) {
-      const a = AREA_BY_ID[id];
-      const facing = a.facing ?? 0;
-      api.teleport(a.center.x + Math.sin(facing) * (a.radius - 4), a.center.z + Math.cos(facing) * (a.radius - 4), facing + Math.PI);
+    /** Glide (or jump with instant=true) to a spot like a visitor would. */
+    goTo(id, instant = true) {
+      ctx.cameraRig.clearOverride();
+      return ctx.cameraRig.goTo(id, { instant });
     },
     openEntry(id) {
       ctx.ui.openEntry(id);

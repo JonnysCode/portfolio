@@ -14,7 +14,7 @@
 // District builders should use site.addCollider / site.addBoxCollider instead,
 // which take district-local coordinates.
 // ─────────────────────────────────────────────────────────────────────────────
-import { WORLD_RADIUS } from '../world/layout.js';
+import { GLEN_RADIUS as WORLD_RADIUS } from '../world/layout.js';
 
 /** Spatial hash bucket size (world units) and the query reach it is built for. */
 const BUCKET = 4;

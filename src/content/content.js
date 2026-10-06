@@ -33,10 +33,10 @@ export const profile = {
 
 /** Intro cards for each area of the village (ids match src/world/layout.js). */
 export const areas = {
-  plaza: {
-    title: 'Village Square',
+  glen: {
+    title: "Jonny's Woodland",
     kicker: 'Start here',
-    text: 'The heart of the woodland. Signposts point to every corner of my interests, and the yellow Schneckenpost will carry you anywhere — slowly, but in style.',
+    text: 'A little glen under a very old oak. Every house here holds one of the things I love making — glide between them, peek into windows and click whatever catches your eye.',
   },
   woodworking: {
     title: 'Schreinerei',
@@ -46,7 +46,7 @@ export const areas = {
   bikes: {
     title: 'Velowerkstatt',
     kicker: 'Bike building',
-    text: 'Frames, wheels and a lot of grease. I love building bikes from the ground up — choosing every part, truing every wheel and getting the fit just right.',
+    text: 'Across the stone bridge, in the mushroom with the big doors: frames, wheels and a lot of grease. I love building bikes from the ground up — choosing every part, truing every wheel and getting the fit just right.',
   },
   interior: {
     title: 'Wohnatelier',
@@ -54,14 +54,14 @@ export const areas = {
     text: 'Rooms are furniture at a bigger scale. Here I collect layouts, material boards and the little decisions that make a space feel like home.',
   },
   code: {
-    title: 'Code Grove',
+    title: 'Code Loft',
     kicker: 'Software engineering',
-    text: 'Where the mushrooms glow and the fireflies carry packets. My software projects, tools and experiments — including the code behind this very woodland.',
+    text: 'A treehouse halfway up the Great Oak, where the screens glow late into the night. My software projects, tools and experiments — including the code behind this very woodland.',
   },
   home: {
     title: "Jonny's Cottage",
     kicker: 'About me & contact',
-    text: 'Make yourself at home. Here is a bit about who I am — and the mailbox is always open.',
+    text: 'The tall red mushroom with the crooked chimney is mine. Here is a bit about who I am — and the mailbox by the gate is always open.',
   },
 };
 

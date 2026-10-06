@@ -12,7 +12,7 @@
 // the camera distance and snapped to whole shadow-map texels so shadows never
 // shimmer while walking.
 //
-// ctx.lights = { sun, hemi, rim, keyDir, shadowExtent }   (keyDir is live, world space)
+// ctx.lights = { sun, hemi, rim, keyDir, shadowExtent, addPoint(position, opts), points }   (keyDir is live, world space)
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { clamp, smoothstep } from '../core/rng.js';
@@ -82,10 +82,34 @@ export default async function build(ctx) {
   let extent = 0;
   let lastNight = -1;
 
+  // Budget-managed warm point lights (lanterns, windows, the forge …).
+  const POINT_BUDGET = { high: 10, medium: 5, low: 0 }[q.tier] ?? 4;
+  const points = [];
+  /**
+   * Add a point light if the budget allows. opts: { color, day, night (intensities),
+   * distance, decay }. Returns the light or null (always handle null — use glow then).
+   */
+  function addPoint(position, opts = {}) {
+    if (points.length >= POINT_BUDGET) return null;
+    const l = new THREE.PointLight(opts.color ?? '#ffb866', 0, opts.distance ?? 7, opts.decay ?? 2);
+    l.position.copy(position);
+    l.castShadow = false;
+    l.userData.intensity = { day: opts.day ?? 0.4, night: opts.night ?? 6 };
+    scene.add(l);
+    points.push(l);
+    return l;
+  }
+  engine.addUpdate(() => {
+    const n = env.night;
+    for (const l of points) l.intensity = l.userData.intensity.day + (l.userData.intensity.night - l.userData.intensity.day) * n;
+  }, 21);
+
   ctx.lights = {
     sun,
     hemi,
     rim,
+    addPoint,
+    points,
     /** Live direction towards the current key light (sun by day, moon by night). */
     keyDir,
     get shadowExtent() {

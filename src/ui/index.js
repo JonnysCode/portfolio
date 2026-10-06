@@ -66,7 +66,7 @@ export function createUI(ctx) {
       'div',
       { class: 'hud-actions' },
       btn('📖', 'Guidebook — everything at a glance', () => ui.showGuidebook()),
-      btn('🐌', 'Schneckenpost — travel', () => ui.showDestinations(ctx.player?.area ?? 'plaza')),
+      btn('🐌', 'Explore — choose a spot', () => ui.showDestinations(ctx.cameraRig?.spot ?? 'glen')),
       nightBtn
     )
   );
@@ -228,7 +228,7 @@ export function createUI(ctx) {
           AREAS.filter((a) => a.id !== fromAreaId).map((a) =>
             h(
               'button',
-              { type: 'button', class: 'dest', onclick: () => { closeModal(); ctx.transport?.travelTo(a.id); } },
+              { type: 'button', class: 'dest', onclick: () => { closeModal(); ctx.cameraRig?.goTo(a.id); } },
               h('span', { class: 'dest__icon' }, a.icon),
               h('span', { class: 'dest__title' }, a.title),
               h('span', { class: 'dest__sub' }, a.subtitle)
@@ -297,7 +297,7 @@ export function createUI(ctx) {
       return new Promise((r) => setTimeout(r, 450));
     },
     showMap() {
-      ui.showDestinations(ctx.player?.area ?? 'plaza');
+      ui.showDestinations(ctx.cameraRig?.spot ?? 'glen');
     },
     showFallback(reason) {
       loader.remove();

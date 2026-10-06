@@ -1,172 +1,226 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// World layout — the single source of truth for WHERE things are.
+// Glen layout — the single source of truth for WHERE everything is.
 //
-// Coordinates: three.js world units, Y is up, the ground plane is XZ.
-// Scale: 1 unit ≈ 1 "villager metre". A villager is ~1.1 units tall, a
-// mushroom house 4–7 units, a big tree 8–14 units, a riding snail ~2.2 long.
+// The woodland is ONE miniature forest glen, rich in detail, explored by
+// gliding the camera between "spots". Coordinates are three.js world units,
+// Y up. The default camera sits on the +Z side looking towards −Z ("north"),
+// so the FRONT of the diorama is +Z and the Great Oak stands at the back.
 //
-// Every district is a flat circular clearing (ground height exactly 0 inside
-// `radius`). District builders work in LOCAL coordinates: the clearing centre
-// is the origin and local +Z points towards the plaza (the entrance side).
+// Scale: a villager ≈ 1.1 units tall. Doors ≈ 1.6. Mushroom houses 5–9.
+// The Great Oak is colossal: trunk ⌀ ≈ 7 at the base, canopy up to ~32.
+//
+//            −Z (back, misty forest)
+//      waterfall ▲                       canopy of the Great Oak overhead
+//   ┌──────────────────────────────────────────────┐
+//   │        ☘          (0,−6) GREAT OAK      ⛰ (17,−13) │
+//   │   cottage  ⌂ Schreinerei at the roots    ≈ stream │
+//   │  (−14,5)        path ┊          bridge ⌒ (11.5,5)  │
+//   │  🍄🍄             ┊               bike shed (18,7) │
+//   └──────────────────────┊───────────────────────┘
+//            +Z (front, where the camera looks from)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Player can walk anywhere inside this radius (minus colliders). */
-export const WORLD_RADIUS = 66;
-/** Terrain mesh extent (half size). Beyond the walkable radius it rises into hills. */
-export const TERRAIN_HALF_SIZE = 150;
+/** Half-size of the terrain mesh. The glen itself is ~±26; beyond it the ground rises into misty forest. */
+export const TERRAIN_HALF_SIZE = 70;
+/** The detailed, explorable part of the glen (radius from the origin). */
+export const GLEN_RADIUS = 27;
 
-export const PLAZA = {
-  id: 'plaza',
-  title: 'Village Square',
-  subtitle: 'Start here',
-  center: { x: 0, z: 0 },
-  radius: 12,
-  color: '#d9b26f',
-  icon: '⛲',
+/** The Great Oak. Trunk base centre on the ground. */
+export const OAK = {
+  x: 0,
+  z: -6,
+  baseRadius: 3.6, // trunk radius at the ground (roots flare out to ~rootRadius)
+  rootRadius: 9,
+  height: 30, // to the top of the canopy
+  /** Where the round workshop door sits in the trunk (front face, facing +Z). */
+  door: { x: 0, y: 0, z: -6 + 3.45, rotY: 0 },
+  /** Treehouse platform (the Code Loft) wrapping the trunk's front-right. */
+  loft: { x: 3.6, y: 11.5, z: -3.4, rotY: -0.55, radius: 4.2 },
 };
 
 /**
- * Districts, clockwise starting at the north (−Z is "north", the direction the
- * camera looks on spawn).
+ * The trunk's radius contract: radius of the (round-ish) trunk at height y,
+ * EXCLUDING the root flare near the ground and bark relief (±0.2). Anything
+ * attached to the bark (door frame, stairs, loft braces, lanterns) uses this.
+ * The trunk forks into the main limbs above y ≈ 17.
  */
-export const DISTRICTS = [
+export function oakRadiusAt(y) {
+  const pts = [
+    [0, 3.45],
+    [2, 3.15],
+    [5, 2.85],
+    [10, 2.6],
+    [14, 2.5],
+    [17, 2.7],
+  ];
+  if (y <= 0) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) {
+    if (y <= pts[i][0]) {
+      const [y0, r0] = pts[i - 1], [y1, r1] = pts[i];
+      const t = (y - y0) / (y1 - y0);
+      return r0 + (r1 - r0) * t;
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+
+/** The Schreinerei: workshop annex built against the oak's roots (front-left). */
+export const SCHREINEREI = {
+  annex: { x: -6.2, z: -2.6, rotY: 0.32, width: 5.6, depth: 4.4 },
+  /** Outdoor workbench porch in front of the annex. */
+  porch: { x: -3.6, z: 1.2 },
+  /** Small gallery deck front-right of the door where finished pieces are shown. */
+  deck: { x: 4.2, z: 1.6, rotY: -0.25 },
+};
+
+/** Jonny's cottage cluster (tall conical red mushroom houses), front-left. */
+export const COTTAGE = {
+  home: { x: -15, z: 4, rotY: 0.55 }, // Jonny's own house (about & contact)
+  atelier: { x: -11.2, z: 10.2, rotY: 0.35 }, // the Wohnatelier (interior design) — open/cutaway side
+  shed: { x: -19, z: 9.5, rotY: 0.9 }, // a tiny third mushroom (garden shed)
+};
+
+/** The stream: waterfall at the back-right, flowing towards the front-right edge. */
+export const STREAM = {
+  /** Centre line control points (x, z); y follows the carved channel. */
+  points: [
+    { x: 16.5, z: -10.5 }, // plunge pool below the waterfall
+    { x: 14.5, z: -5 },
+    { x: 12.2, z: 0.5 },
+    { x: 11.5, z: 5 }, // under the bridge
+    { x: 12.5, z: 10.5 },
+    { x: 10.5, z: 16 },
+    { x: 8.5, z: 22 },
+    { x: 7.5, z: 30 }, // leaves the glen
+  ],
+  halfWidth: 1.7,
+  depth: 0.9,
+  waterLevel: -0.55,
+  /** Mossy rock outcrop the waterfall pours from. */
+  falls: { x: 18.5, z: -14.5, top: 5.2, radius: 6.5, lipX: 17.2, lipZ: -12.2 },
+  pool: { x: 16.2, z: -10, radius: 3.2 },
+};
+
+/** Stone arch bridge crossing the stream, and the bike workshop on the far bank. */
+export const RIVERSIDE = {
+  bridge: { x: 11.6, z: 5, rotY: Math.PI / 2 - 0.12, span: 5.2, width: 2.2 },
+  bikeShed: { x: 18.2, z: 7.4, rotY: -0.9 },
+};
+
+/** The main winding path: front edge → oak door. Side paths branch to the cottage and the bridge. */
+export const PATHS = {
+  main: [
+    { x: 1.5, z: 27 },
+    { x: -1.5, z: 20 },
+    { x: 1.2, z: 13 },
+    { x: -0.6, z: 6.5 },
+    { x: 0, z: 0.4 }, // at the door step
+  ],
+  cottage: [
+    { x: -0.8, z: 9.5 },
+    { x: -5.5, z: 8.6 },
+    { x: -9, z: 6.8 },
+    { x: -12.5, z: 5.6 },
+  ],
+  bridge: [
+    { x: 0.6, z: 8.5 },
+    { x: 4.5, z: 6.8 },
+    { x: 8.4, z: 5.4 }, // bridge west abutment
+  ],
+  farBank: [
+    { x: 14.8, z: 4.7 }, // bridge east abutment
+    { x: 16.6, z: 6.2 },
+  ],
+};
+export const PATH_HALF_WIDTH = { main: 1.15, cottage: 0.85, bridge: 0.85, farBank: 0.75 };
+
+/**
+ * SPOTS — the places the camera glides to. `focus` is the point of interest
+ * (used for depth of field and markers); `camera` is the composed shot.
+ * `areas` lists the content areas (src/content/content.js) presented here.
+ */
+export const SPOTS = [
+  {
+    id: 'glen',
+    title: "Jonny's Woodland",
+    subtitle: 'The whole glen',
+    icon: '🌳',
+    areas: [],
+    focus: [0, 4, -2],
+    camera: { position: [4, 17, 40], target: [0, 6.5, -2], fov: 40 },
+  },
   {
     id: 'woodworking',
     title: 'Schreinerei',
-    subtitle: 'Woodworking workshop',
-    center: { x: 0, z: -40 },
-    radius: 16,
-    color: '#c98a4b',
+    subtitle: 'Woodworking · Schreiner EFZ',
     icon: '🪚',
-    bend: 2.5,
-  },
-  {
-    id: 'bikes',
-    title: 'Velowerkstatt',
-    subtitle: 'Bike building',
-    center: { x: 38, z: -11 },
-    radius: 12.5,
-    color: '#e8a838',
-    icon: '🚲',
-    bend: -3,
+    areas: ['woodworking'],
+    focus: [-1, 1.8, -1.5],
+    camera: { position: [3.5, 5.2, 13.5], target: [-1.2, 2.6, -2.2], fov: 40 },
   },
   {
     id: 'code',
-    title: 'Code Grove',
+    title: 'Code Loft',
     subtitle: 'Software engineering',
-    center: { x: 29, z: 30 },
-    radius: 12.5,
-    color: '#5fb8c9',
     icon: '💻',
-    bend: 3,
+    areas: ['code'],
+    focus: [3.6, 12.6, -3.4],
+    camera: { position: [9.5, 15, 7.5], target: [3.4, 12.6, -3.2], fov: 40 },
   },
   {
     id: 'home',
     title: "Jonny's Cottage",
     subtitle: 'About me & contact',
-    center: { x: -29, z: 29 },
-    radius: 12,
-    color: '#e2553f',
-    icon: '🏡',
-    bend: -2.5,
+    icon: '🍄',
+    areas: ['home'],
+    focus: [-15, 2.4, 4],
+    camera: { position: [-6.5, 5.5, 16], target: [-14.5, 3, 4.5], fov: 40 },
   },
   {
     id: 'interior',
     title: 'Wohnatelier',
-    subtitle: 'Interior design studio',
-    center: { x: -38, z: -12 },
-    radius: 12.5,
-    color: '#b39ddb',
+    subtitle: 'Interior design',
     icon: '🛋️',
-    bend: 3,
+    areas: ['interior'],
+    focus: [-11.2, 1.8, 10.2],
+    camera: { position: [-5.5, 4, 17.5], target: [-11.2, 2, 10.2], fov: 40 },
+  },
+  {
+    id: 'bikes',
+    title: 'Velowerkstatt',
+    subtitle: 'Bike building · by the bridge',
+    icon: '🚲',
+    areas: ['bikes'],
+    focus: [16, 1.6, 6.6],
+    camera: { position: [8.5, 4.6, 16.5], target: [15.2, 1.8, 6.2], fov: 40 },
   },
 ];
-
-/** Scenic features that are not districts but shape the terrain. */
-export const POND = { id: 'pond', center: { x: 2, z: 41 }, radius: 9, waterLevel: -0.45, depth: 1.6 };
-
-/** Where the player appears, and the direction they face (towards −Z / north). */
-export const SPAWN = { x: 0, z: 8, facing: Math.PI };
-
-// ─── Derived data ────────────────────────────────────────────────────────────
-
-for (const d of DISTRICTS) {
-  const dx = PLAZA.center.x - d.center.x;
-  const dz = PLAZA.center.z - d.center.z;
-  /**
-   * rotation.y applied to the district group so that local +Z points to the
-   * plaza: local (0,0,1) → world (sin θ, 0, cos θ).
-   */
-  d.facing = Math.atan2(dx, dz);
-  /** Local position of the district's snail stop (right of the entrance path). */
-  d.stationLocal = { x: 3.6, z: d.radius - 2.4 };
-  /** Local position where the main path enters the clearing. */
-  d.entranceLocal = { x: 0, z: d.radius };
-  d.station = localToWorld(d, d.stationLocal.x, d.stationLocal.z);
-  d.entrance = localToWorld(d, 0, d.radius);
-}
-
-export const DISTRICT_BY_ID = Object.fromEntries(DISTRICTS.map((d) => [d.id, d]));
-export const AREAS = [PLAZA, ...DISTRICTS];
-export const AREA_BY_ID = Object.fromEntries(AREAS.map((a) => [a.id, a]));
-
-/** The plaza-side snail stop for rides out to each district. */
-PLAZA.station = { x: -4.2, z: 4.6 };
-
-/** Convert district-local XZ to world XZ. */
-export function localToWorld(district, lx, lz) {
-  const s = Math.sin(district.facing);
-  const c = Math.cos(district.facing);
-  // rotation.y = θ: x' = x cosθ + z sinθ ; z' = −x sinθ + z cosθ
-  return {
-    x: district.center.x + lx * c + lz * s,
-    z: district.center.z - lx * s + lz * c,
-  };
-}
-
-/** Convert world XZ to district-local XZ. */
-export function worldToLocal(district, wx, wz) {
-  const s = Math.sin(district.facing);
-  const c = Math.cos(district.facing);
-  const x = wx - district.center.x;
-  const z = wz - district.center.z;
-  return { x: x * c - z * s, z: x * s + z * c };
-}
+export const SPOT_BY_ID = Object.fromEntries(SPOTS.map((s) => [s.id, s]));
+/** Content area id → the spot that presents it. */
+export const SPOT_FOR_AREA = Object.fromEntries(SPOTS.flatMap((s) => s.areas.map((a) => [a, s.id])));
 
 /**
- * Main dirt paths: plaza edge → district entrance, as XZ control points for a
- * Catmull-Rom curve. A gentle sideways `bend` keeps them from looking ruler-straight.
+ * AREAS — kept for the UI (guidebook, map, banners): one entry per spot,
+ * with `center` (x, z) for maps.
  */
-export const PATHS = {};
-for (const d of DISTRICTS) {
-  const len = Math.hypot(d.center.x, d.center.z);
-  const ux = d.center.x / len;
-  const uz = d.center.z / len;
-  const px = -uz; // perpendicular
-  const pz = ux;
-  const start = PLAZA.radius - 1.5;
-  const end = len - d.radius + 1.5;
-  const pts = [];
-  const steps = 5;
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const along = start + (end - start) * t;
-    const bend = Math.sin(t * Math.PI) * d.bend;
-    pts.push({ x: ux * along + px * bend, z: uz * along + pz * bend });
-  }
-  PATHS[d.id] = pts;
-}
-/** A small trail from the plaza to the pond's north shore. */
-PATHS.pond = (() => {
-  const pts = [];
-  const sx = 0, sz = PLAZA.radius - 1.5;
-  const ex = POND.center.x, ez = POND.center.z - POND.radius - 1.2;
-  for (let i = 0; i <= 4; i++) {
-    const t = i / 4;
-    pts.push({ x: sx + (ex - sx) * t + Math.sin(t * Math.PI) * 2, z: sz + (ez - sz) * t });
-  }
-  return pts;
-})();
+export const AREAS = SPOTS.map((s) => ({
+  id: s.id,
+  title: s.title,
+  subtitle: s.subtitle,
+  icon: s.icon,
+  center: { x: s.focus[0], z: s.focus[2] },
+  radius: s.id === 'glen' ? GLEN_RADIUS : 5,
+}));
+export const AREA_BY_ID = Object.fromEntries(AREAS.map((a) => [a.id, a]));
 
-/** Path half-widths (the walkable dirt ribbon). */
-export const PATH_WIDTH = { default: 1.7, pond: 1.1 };
+/** Orbit limits for the free diorama camera (azimuth measured from +Z, radians). */
+export const CAMERA_LIMITS = {
+  minAzimuth: -1.25,
+  maxAzimuth: 1.25,
+  minPolar: 0.35, // from straight up
+  maxPolar: 1.42,
+  minDistance: 5,
+  maxDistance: 52,
+  /** The orbit target stays inside this box. */
+  targetBox: { minX: -20, maxX: 20, minY: 0.5, maxY: 16, minZ: -14, maxZ: 16 },
+};
