@@ -53,6 +53,16 @@ really feel like we're in a magical forest."* So:
    `094cf9d:src/world/water.js`) — reuse the charm (lily pads with flowers,
    cattails, ducks and ducklings, a little wooden jetty), restyled for the glen.
 
+## The Great Oak API (`ctx.oak`, built before the Schreinerei and the loft)
+
+`ctx.oak = { group, limbs, limbInfo, crownBounds, barkRadius(a, y), barkPoint(a, y, lift = 0),
+roots, hollows, doorNiche, forkY, lanterns }` — `a` is the azimuth in radians
+around (OAK.x, OAK.z) measured from +Z toward +X. Use `barkPoint`/`barkRadius`
+for exact attachment to the sculpted bark (stairs, braces, lanterns, the snail
+elevator track). `src/scene/oak/shape.js` also exports `crownBlocked(p, r)`,
+`trunkRadius`, `ROOTS`, `LIMBS`, `HOLLOWS`, `FORK_Y`. The crown spans y ≈ 12–45
+and ≈ 40 wide; the loft volume and every spot camera frustum are kept clear.
+
 ## Art bible
 
 Reference images live in `/root/.claude/uploads/5671997e-a07c-5490-b81d-336014d01540/`
