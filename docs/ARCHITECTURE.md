@@ -23,6 +23,36 @@ shots). `src/world/ground.js` gives `getHeight`, `getPathDistance`,
 plots) are exactly flat at y = 0. `oakRadiusAt(y)` (layout.js) is the trunk's
 radius contract that everything attached to the bark relies on.
 
+## ⚠️ Owner feedback — read before anything else
+
+On the first (open low-poly village) version the owner said: *"very cute, the
+houses and pond, but the sizing and the woodland are not great yet. There is so
+much space that isn't detailed at all, the trees are much too small, it doesn't
+really feel like we're in a magical forest."* So:
+
+1. **Keep the cuteness.** The charm of the cute mushroom houses (round friendly
+   shapes, little windows, chimneys, flower boxes) and the pond (lily pads,
+   reeds, ducks, a jetty) was loved. Target = *cute + magical + richly
+   detailed*, never grim or hyper-real.
+2. **Colossal trees — we are tiny in a forest of giants.** The Great Oak is
+   huge (trunk ⌀ ≈ 7, crown up to ~40). The forest around and *inside* the
+   glen must be giants too: trunks ⌀ 2.5–6, rising 40–70 units, mostly
+   leaving the top of the frame like columns in a cathedral, their crowns
+   forming a high canopy ceiling with light shafts falling through. A few of
+   these giants stand inside the glen between the spots (never blocking a spot
+   camera), with roots and moss at their feet. Nothing about the trees may
+   read as "small decoration".
+3. **No empty ground.** The glen is deliberately compact; every square unit
+   visible from any spot camera is detailed: moss, ferns, flowers, roots,
+   stones, little mushrooms, fallen logs, leaf litter, giant mushrooms. If a
+   screenshot shows a bare patch, fill it.
+4. **The pond is back:** `STREAM.pond` (layout.js) — the stream widens into a
+   lily pond near the front-right before leaving the glen (ground.js carves it,
+   `isInWater` includes it). The riverside builder owns it; the first
+   version's pond props are in git (`git show 094cf9d:src/world/env/pondProps.js`,
+   `094cf9d:src/world/water.js`) — reuse the charm (lily pads with flowers,
+   cattails, ducks and ducklings, a little wooden jetty), restyled for the glen.
+
 ## Art bible
 
 Reference images live in `/root/.claude/uploads/5671997e-a07c-5490-b81d-336014d01540/`

@@ -127,9 +127,12 @@ export function analyticHeight(x, z, pathDist = analyticPathDistance(x, z), stre
   const pool = STREAM.pool;
   const pd = Math.hypot(x - pool.x, z - pool.z);
   const pw2 = 1 - smoothstep(pool.radius * 0.5, pool.radius * 1.35, pd);
-  const carve = Math.max(cw, pw2);
+  const pond = STREAM.pond;
+  const od = Math.hypot((x - pond.x) * 0.9, z - pond.z);
+  const pw3 = 1 - smoothstep(pond.radius * 0.45, pond.radius * 1.3, od);
+  const carve = Math.max(cw, pw2, pw3);
   if (carve > 0) {
-    const target = bed - pw2 * 0.4;
+    const target = bed - Math.max(pw2, pw3) * 0.4;
     h = h + (Math.min(h, target) - h) * carve;
   }
   return h;
@@ -194,11 +197,13 @@ export function getNormal(x, z, target = _n) {
   return target.set(-hx, 2 * e, -hz).normalize();
 }
 
-/** True if the point is in the stream or the plunge pool. */
+/** True if the point is in the stream, the plunge pool or the lily pond. */
 export function isInWater(x, z, pad = 0) {
   if (getStreamDistance(x, z) < STREAM.halfWidth + pad) return true;
   const p = STREAM.pool;
-  return Math.hypot(x - p.x, z - p.z) < p.radius + pad;
+  if (Math.hypot(x - p.x, z - p.z) < p.radius + pad) return true;
+  const o = STREAM.pond;
+  return Math.hypot((x - o.x) * 0.9, z - o.z) < o.radius + pad;
 }
 
 /** Which pad (building plot) contains this point, if any. */

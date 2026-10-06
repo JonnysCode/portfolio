@@ -99,6 +99,12 @@ export const STREAM = {
   /** Mossy rock outcrop the waterfall pours from. */
   falls: { x: 18.5, z: -14.5, top: 5.2, radius: 6.5, lipX: 17.2, lipZ: -12.2 },
   pool: { x: 16.2, z: -10, radius: 3.2 },
+  /**
+   * Lily pond where the stream widens near the front-right before leaving the
+   * glen (the owner loved the pond of the first version: lily pads, reeds,
+   * ducks, a little wooden jetty).
+   */
+  pond: { x: 9.8, z: 18.2, radius: 4.6 },
 };
 
 /** Stone arch bridge crossing the stream, and the bike workshop on the far bank. */
