@@ -16,7 +16,7 @@
 import * as THREE from 'three';
 import { OAK, oakRadiusAt } from '../../world/layout.js';
 import { createRng } from '../../core/rng.js';
-import { Batch, makeMats, board, uvBox, xf, deform, mat4, stoneGeo, mossGeo, tube, archShape, arcSegment, addIvy, addToadstool, peg, noiseA, noiseB } from './kit.js';
+import { Batch, board, uvBox, xf, deform, mat4, mossGeo, tube, archShape, arcSegment, addIvy, addToadstool, addLantern, peg, noiseA, noiseB } from './kit.js';
 
 /** Door dimensions (exported so others can align to it). */
 export const DOOR = {
@@ -171,7 +171,7 @@ export function buildDoor(ctx, B, mats) {
       v.z += wob * Math.sin(((v.y - y0) / (Hs + R)) * Math.PI);
     });
     uvBox(g, 'y', undefined, [rng.next() * 9, rng.next() * 9]);
-    leaf.add(i % 2 ? oak : mats.wood('oak'), g);
+    leaf.add(oak, g, { color: i % 2 ? '#b8874f' : '#a97a45' });
   }
   // inside ledges + a diagonal brace (Z), hidden mostly but honest
   for (const ly of [leafBottom + 0.22, archY - 0.05]) leaf.add(oak, xf(board(LW - 0.12, 0.12, 0.035, { along: 'x', rng }), [0, ly, -0.02]));
@@ -217,7 +217,7 @@ export function buildDoor(ctx, B, mats) {
     leaf.add(iron, xf(ring, [px, py - 0.075, LT + 0.032], [0.35, 0, 0]), { cast: false });
     const kh = new THREE.BoxGeometry(0.05, 0.08, 0.008);
     leaf.add(iron, xf(kh, [px, py - 0.2, LT + 0.006]), { cast: false });
-    leaf.add(mats.vc(), xf(new THREE.BoxGeometry(0.012, 0.03, 0.004), [px, py - 0.205, LT + 0.012]), { color: '#120d0a', cast: false });
+    leaf.add(iron, xf(new THREE.BoxGeometry(0.012, 0.03, 0.004), [px, py - 0.205, LT + 0.012]), { color: '#0d0a08', cast: false });
   }
   // bullseye window with a cross muntin (glows)
   {
@@ -237,7 +237,7 @@ export function buildDoor(ctx, B, mats) {
   leafGroup.position.set(LR + 0.012, 0, 0);
   hinge.add(leafGroup);
   group.add(hinge);
-  leaf.build(leafGroup, 'door-leaf');
+  leaf.build(leafGroup, 'door-leaf', { mergeShadow: true });
 
   // ── bark collar: the trunk has grown around the frame ──────────────────────
   {
@@ -362,10 +362,7 @@ export function buildDoor(ctx, B, mats) {
     }
     B.add(iron, tube(scroll, 0.011, 4, 18), { cast: false });
     B.add(iron, xf(new THREE.CylinderGeometry(0.045, 0.05, 0.03, 8), [bx, by, barkZ - 0.05], [Math.PI / 2, 0, 0]), { cast: false });
-    const lantern = props.makeLantern({ hanging: true, haloSize: 1.0 });
-    lantern.position.set(bx, by - 0.04, DOOR.z + 0.4);
-    lantern.scale.setScalar(1.1);
-    group.add(lantern);
+    addLantern(B, mats, [bx, by - 0.03, DOOR.z + 0.4], new THREE.Vector3(bx, by - 0.03, DOOR.z + 0.4), { scale: 1.1 });
     lanternPos.set(bx, by - 0.35, DOOR.z + 0.4);
   }
 
@@ -393,7 +390,7 @@ export function buildDoor(ctx, B, mats) {
   }
 
   // ── the EFZ certificate under its little roof (hotspot) ────────────────────
-  const cert = makeCertificate(ctx, mats, rng);
+  const cert = makeCertificate(ctx, mats.piece, rng);
   {
     const cx = R + F + 1.03, cy = 1.32;
     const bz = barkZAt(cx, cy);
@@ -620,7 +617,7 @@ function makeCertificate(ctx, mats, rng) {
   for (const [x, y, w, h] of [[0, H / 2 + fw / 2, W + fw * 2, fw], [0, -H / 2 - fw / 2, W + fw * 2, fw], [-W / 2 - fw / 2, 0, fw, H], [W / 2 + fw / 2, 0, fw, H]]) {
     B.add(mats.wood('oak'), board(w, h, 0.035, { along: w > h ? 'x' : 'y', rng, r: 0.006 }).translate(x, y, 0.0));
   }
-  B.build(g, 'certificate');
+  B.build(g, 'certificate', { mergeShadow: true });
   // the paper (canvas texture)
   const c = document.createElement('canvas');
   c.width = 512;
@@ -672,10 +669,5 @@ function makeCertificate(ctx, mats, rng) {
   paper.position.z = 0.005;
   paper.name = 'efz-paper';
   g.add(paper);
-  // glass pane glint
-  const glass = new THREE.Mesh(new THREE.PlaneGeometry(W, H), mats.glass());
-  glass.position.z = 0.012;
-  glass.raycast = () => {};
-  g.add(glass);
   return g;
 }

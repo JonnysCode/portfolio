@@ -265,9 +265,24 @@ const FOLIAGE_MAIN = /* glsl */ `
   }
 `;
 
+// Keep leaf cards from thinning out in the distance: lower mips average the
+// alpha down, so scale it back up by the mip level before the alpha test.
+const FOLIAGE_ALPHA = /* glsl */ `
+#ifdef USE_MAP
+  {
+    vec2 sfTs = vMapUv * vec2(textureSize(map, 0));
+    vec2 sfDx = dFdx(sfTs), sfDy = dFdy(sfTs);
+    float sfLod = max(0.0, 0.5 * log2(max(dot(sfDx, sfDx), dot(sfDy, sfDy))));
+    diffuseColor.a *= 1.0 + sfLod * 0.28;
+  }
+#endif
+#include <alphatest_fragment>
+`;
+
 export function patchFoliage(shader, u) {
   Object.assign(shader.uniforms, u);
   shader.fragmentShader = shader.fragmentShader
     .replace('#include <lights_physical_pars_fragment>', '#include <lights_physical_pars_fragment>\n' + DIRECT_OVERRIDE + FOLIAGE_PARS)
+    .replace('#include <alphatest_fragment>', FOLIAGE_ALPHA)
     .replace('#include <normal_fragment_begin>', FOLIAGE_MAIN);
 }

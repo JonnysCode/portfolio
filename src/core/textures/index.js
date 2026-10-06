@@ -11,11 +11,11 @@
 // Maps are baked on the GPU (see bakery.js), cached for the whole session and
 // shared by every material that uses the same kind/variant.
 // ─────────────────────────────────────────────────────────────────────────────
-import { requestBake, setBakeRenderer, hasBakeRenderer, flushBakes, bakeStats, measureMean } from './bakery.js';
+import { requestBake, setBakeRenderer, setBakeScale, hasBakeRenderer, flushBakes, bakeStats, measureMean } from './bakery.js';
 import { SURFACE_GLSL } from './surfaces.glsl.js';
 import { FOLIAGE_GLSL, FOLIAGE_VARIANTS } from './foliage.glsl.js';
 
-export { setBakeRenderer, hasBakeRenderer, flushBakes, bakeStats, measureMean, FOLIAGE_VARIANTS };
+export { setBakeRenderer, setBakeScale, hasBakeRenderer, flushBakes, bakeStats, measureMean, FOLIAGE_VARIANTS };
 
 /**
  * Per-kind recipe.
@@ -26,27 +26,27 @@ export { setBakeRenderer, hasBakeRenderer, flushBakes, bakeStats, measureMean, F
  *   mean:  average sRGB colour of the baked albedo — opts.color re-tints relative to it
  */
 export const KINDS = {
-  bark: { mode: 'rgb', size: [512, 512], bump: 0.05, cavity: 3, mapping: 'triplanar', tile: 2.6, normal: 1.2, ao: 1, breakup: 1, wrap: 0.15, mean: '#584838' },
+  bark: { mode: 'rgb', size: [512, 512], bump: 0.05, cavity: 1.5, mapping: 'triplanar', tile: 3.2, normal: 1.2, ao: 1, breakup: 1, wrap: 0.15, mean: '#6a5845' },
   wood: { mode: 'colorize', size: [512, 512], bump: 0.004, cavity: 1.5, mapping: 'uv', tile: 1.4, normal: 0.8, ao: 0.8, breakup: 0.5, wrap: 0.1 },
   woodPlanks: { glsl: 'wood', defines: '#define WOOD_PLANKS\n', mode: 'colorize', size: [512, 512], bump: 0.004, cavity: 1.5, mapping: 'uv', tile: 1.6, normal: 0.9, ao: 1, breakup: 0.5, wrap: 0.1 },
-  timber: { mode: 'rgb', size: [512, 512], bump: 0.012, cavity: 2, mapping: 'uv', tile: 1.6, normal: 1, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#7a6a58' },
-  shingles: { mode: 'rgb', size: [512, 512], bump: 0.035, cavity: 1.5, mapping: 'uv', tile: 1.4, normal: 1.2, ao: 1, breakup: 0.9, wrap: 0.1, mean: '#6b5040' },
-  plaster: { mode: 'rgb', size: [512, 512], bump: 0.006, cavity: 2, mapping: 'uv', tile: 2.2, normal: 0.9, ao: 0.8, breakup: 0.8, wrap: 0.2, mean: '#e4d6b9' },
-  stone: { mode: 'rgb', size: [512, 512], bump: 0.035, cavity: 2.5, mapping: 'triplanar', tile: 1.6, normal: 1.1, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#978d7c' },
-  cobble: { mode: 'rgb', size: [512, 512], bump: 0.035, cavity: 2.5, mapping: 'triplanar', tile: 1.8, normal: 1.1, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#7f786b' },
-  rock: { mode: 'rgb', size: [512, 512], bump: 0.05, cavity: 2, mapping: 'triplanar', tile: 5, normal: 1.1, ao: 1, breakup: 1, wrap: 0.1, mossy: 0.35, mean: '#7f7b72' },
-  moss: { mode: 'rgb', size: [512, 512], bump: 0.025, cavity: 2, mapping: 'triplanar', tile: 1.3, normal: 1, ao: 1, breakup: 1.2, velvet: 0.6, wrap: 0.35, mean: '#4f6a26' },
-  soil: { mode: 'rgb', size: [512, 512], bump: 0.02, cavity: 2, mapping: 'triplanar', tile: 2.2, normal: 1, ao: 1, breakup: 1, wrap: 0.15, mean: '#4a3627' },
+  timber: { mode: 'rgb', size: [512, 512], bump: 0.012, cavity: 2, mapping: 'uv', tile: 1.6, normal: 1, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#755d48' },
+  shingles: { mode: 'rgb', size: [512, 512], bump: 0.035, cavity: 1.5, mapping: 'uv', tile: 1.4, normal: 1.2, ao: 1, breakup: 0.9, wrap: 0.1, mean: '#694e3b' },
+  plaster: { mode: 'rgb', size: [512, 512], bump: 0.006, cavity: 2, mapping: 'uv', tile: 2.2, normal: 0.9, ao: 0.8, breakup: 0.8, wrap: 0.2, mean: '#ede1c6' },
+  stone: { mode: 'rgb', size: [512, 512], bump: 0.035, cavity: 1.2, mapping: 'triplanar', tile: 1.6, normal: 1.1, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#9c9483' },
+  cobble: { mode: 'rgb', size: [512, 512], bump: 0.035, cavity: 1.2, mapping: 'triplanar', tile: 1.8, normal: 1.1, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#8b8473' },
+  rock: { mode: 'rgb', size: [512, 512], bump: 0.05, cavity: 2, mapping: 'triplanar', tile: 5, normal: 1.1, ao: 1, breakup: 1, wrap: 0.1, mossy: 0.35, mean: '#8d8b82' },
+  moss: { mode: 'rgb', size: [512, 512], bump: 0.025, cavity: 2, mapping: 'triplanar', tile: 1.3, normal: 1, ao: 1, breakup: 1.2, velvet: 0.6, wrap: 0.35, mean: '#597320' },
+  soil: { mode: 'rgb', size: [512, 512], bump: 0.02, cavity: 2, mapping: 'triplanar', tile: 2.2, normal: 1, ao: 1, breakup: 1, wrap: 0.15, mean: '#503720' },
   mushroomCap: { mode: 'colorize', size: [512, 512], bump: 0.008, cavity: 1, mapping: 'uv', tile: 1, wrapT: 'clamp', normal: 0.8, ao: 0.5, breakup: 0.6, velvet: 0.35, wrap: 0.25 },
-  mushroomStem: { mode: 'rgb', size: [512, 512], bump: 0.01, cavity: 1.5, mapping: 'uv', tile: 1, normal: 0.9, ao: 0.8, breakup: 0.7, velvet: 0.15, wrap: 0.3, mean: '#e8dcc0' },
-  gills: { mode: 'rgb', size: [1024, 256], bump: 0.006, cavity: 1, mapping: 'uv', tile: 1, polar: true, normal: 1, ao: 1, breakup: 0.5, wrap: 0.3, mean: '#b8a17c' },
-  leaf: { mode: 'rgb', size: [256, 256], bump: 0.006, cavity: 1, mapping: 'uv', tile: 1, normal: 1, ao: 0.5, breakup: 1, wrap: 0.4, mean: '#4c7a32' },
+  mushroomStem: { mode: 'rgb', size: [512, 512], bump: 0.01, cavity: 1.5, mapping: 'uv', tile: 1, normal: 0.9, ao: 0.8, breakup: 0.7, velvet: 0.15, wrap: 0.3, mean: '#e1d5bb' },
+  gills: { mode: 'rgb', size: [1024, 256], bump: 0.006, cavity: 1, mapping: 'uv', tile: 1, polar: true, normal: 1, ao: 1, breakup: 0.5, wrap: 0.3, mean: '#baa889' },
+  leaf: { mode: 'rgb', size: [256, 256], bump: 0.006, cavity: 1, mapping: 'uv', tile: 1, normal: 1, ao: 0.5, breakup: 1, wrap: 0.4, mean: '#598333' },
   fabric: { mode: 'colorize', size: [256, 256], bump: 0.01, cavity: 1, mapping: 'uv', tile: 0.5, normal: 0.8, ao: 0.6, breakup: 0.6, velvet: 0.3, wrap: 0.3 },
-  rope: { mode: 'rgb', size: [256, 256], bump: 0.03, cavity: 1, mapping: 'uv', tile: 1, normal: 1, ao: 1, breakup: 0.6, wrap: 0.2, mean: '#9a805a' },
+  rope: { mode: 'rgb', size: [256, 256], bump: 0.03, cavity: 1, mapping: 'uv', tile: 1, normal: 1, ao: 1, breakup: 0.6, wrap: 0.2, mean: '#947d55' },
   metal: { mode: 'colorize', size: [256, 256], bump: 0.006, cavity: 1, mapping: 'triplanar', tile: 0.7, normal: 0.8, ao: 0.6, breakup: 0.4, metalness: 0.65, metalRust: 1 },
-  glass: { mode: 'rgb', size: [256, 256], bump: 0.004, cavity: 0, mapping: 'uv', tile: 1, normal: 0.6, ao: 0, breakup: 0.2, transparent: true, opacity: 0.35, mean: '#d5e8e0' },
-  paper: { mode: 'rgb', size: [256, 256], bump: 0.002, cavity: 0.5, mapping: 'uv', tile: 1, normal: 0.6, ao: 0.4, breakup: 0.3, wrap: 0.3, mean: '#efe4cc' },
-  thatch: { mode: 'rgb', size: [512, 512], bump: 0.03, cavity: 1.5, mapping: 'uv', tile: 1.6, normal: 1.1, ao: 1, breakup: 1, wrap: 0.2, mean: '#a48a58' },
+  glass: { mode: 'rgb', size: [256, 256], bump: 0.004, cavity: 0, mapping: 'uv', tile: 1, normal: 0.6, ao: 0, breakup: 0.2, transparent: true, opacity: 0.35, mean: '#d3e6de' },
+  paper: { mode: 'rgb', size: [256, 256], bump: 0.002, cavity: 0.5, mapping: 'uv', tile: 1, normal: 0.6, ao: 0.4, breakup: 0.3, wrap: 0.3, mean: '#eae0c9' },
+  thatch: { mode: 'rgb', size: [512, 512], bump: 0.03, cavity: 1.5, mapping: 'uv', tile: 1.6, normal: 1.1, ao: 1, breakup: 1, wrap: 0.2, mean: '#988254' },
   clay: { mode: 'colorize', size: [256, 256], bump: 0.004, cavity: 1, mapping: 'uv', tile: 0.8, normal: 0.8, ao: 0.6, breakup: 0.6, wrap: 0.15 },
 };
 

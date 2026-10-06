@@ -53,9 +53,9 @@ const domeFragment = /* glsl */ `
     col = mix(col, uSkyZenith, smoothstep(0.25, 0.95, t));
 
     // ── thin painterly wisps (barely seen through the canopy) ──
-    vec2 cp = d.xz / max(y + 0.25, 0.05);
-    float w = envFbm(cp * vec2(0.9, 2.4) + vec2(uTime * 0.004, 0.0));
-    float wisp = smoothstep(0.55, 0.85, w) * smoothstep(0.04, 0.3, y) * (1.0 - smoothstep(0.6, 0.95, y));
+    vec2 cp = d.xz / max(y + 0.35, 0.05);
+    float w = envFbm(cp * vec2(0.55, 1.1) + vec2(uTime * 0.004, 0.0));
+    float wisp = smoothstep(0.5, 0.9, w) * smoothstep(0.04, 0.3, y) * (1.0 - smoothstep(0.6, 0.95, y));
     vec3 wispCol = mix(vec3(1.0, 0.96, 0.9), uSkyHorizon * 0.7, uNight);
     col = mix(col, wispCol, wisp * mix(0.35, 0.15, uNight));
 
@@ -100,6 +100,17 @@ const domeFragment = /* glsl */ `
     // ── at & below the horizon: exactly the (fully fogged) mist colour ──
     vec3 mist = woodlandFogColor(d);
     col = mix(col, mist, 1.0 - smoothstep(-0.02, 0.16, y));
+
+    // ── the endless forest beyond: two soft painted treelines dissolving in the mist ──
+    float az = atan(d.x, -d.z);
+    float tl1 = 0.07 + 0.05 * envFbm(vec2(az * 9.0, 1.7)) + 0.03 * envNoise(vec2(az * 40.0, 3.1));
+    float tl2 = 0.035 + 0.035 * envFbm(vec2(az * 14.0, 7.3)) + 0.02 * envNoise(vec2(az * 70.0, 5.5));
+    float fw = fwidth(y) * 1.5 + 0.002;
+    vec3 far1 = mix(mist, uSkyZenith * 0.35 + mist * 0.45, 0.32 * day + 0.2 * uNight);
+    vec3 far2 = mix(mist, uSkyZenith * 0.3 + mist * 0.4, 0.5 * day + 0.3 * uNight);
+    col = mix(col, far1, smoothstep(fw, -fw, y - tl1) * smoothstep(-0.05, 0.02, y));
+    col = mix(col, far2, smoothstep(fw, -fw, y - tl2) * smoothstep(-0.05, 0.02, y));
+    col = mix(col, mist, 1.0 - smoothstep(-0.03, 0.03, y));
 
     gl_FragColor = vec4(col, 1.0);
     #include <tonemapping_fragment>
@@ -164,7 +175,7 @@ export default async function build(ctx) {
   const focus = new THREE.Vector3();
   const glowDir = new THREE.Vector3();
   const warm = new THREE.Color();
-  const warmDay = new THREE.Color('#f6cf8e');
+  const warmDay = new THREE.Color('#f0d6a4');
   const warmNight = new THREE.Color('#3d5a8c');
 
   function applyNight(n) {
@@ -176,14 +187,14 @@ export default async function build(ctx) {
     fogParams.sun[0] = glowDir.x;
     fogParams.sun[1] = glowDir.y;
     fogParams.sun[2] = glowDir.z;
-    fogParams.sun[3] = 0.75 - 0.45 * n;
+    fogParams.sun[3] = 0.62 - 0.35 * n;
     warm.copy(warmDay).lerp(warmNight, n);
     fogParams.warm[0] = warm.r;
     fogParams.warm[1] = warm.g;
     fogParams.warm[2] = warm.b;
-    fogParams.warm[3] = 7 + 3 * n;
+    fogParams.warm[3] = 8 + 3 * n;
     // the ground mist thickens at night
-    fogParams.height[0] = 0.007 + 0.02 * n;
+    fogParams.height[0] = 0.0055 + 0.011 * n;
     fogParams.height[1] = 0.42 - 0.06 * n;
     fogParams.misc[2] = n;
     backdrop?.night(n);
@@ -201,8 +212,8 @@ export default async function build(ctx) {
     else focus.set(0, 4, -2);
     const camDist = camera.position.distanceTo(focus);
     const nightK = 1 - 0.15 * n;
-    scene.fog.near = (12 + camDist * 0.62) * nightK;
-    scene.fog.far = (scene.fog.near + 70 + camDist * 0.9) * nightK;
+    scene.fog.near = (14 + camDist * 0.6) * nightK;
+    scene.fog.far = (scene.fog.near + 90 + camDist) * nightK;
   }
 
   // After the camera (order 80) so the fog matches this frame's camera.

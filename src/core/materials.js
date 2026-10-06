@@ -27,7 +27,7 @@
 import * as THREE from 'three';
 import { palette } from './palette.js';
 import { createRng } from './rng.js';
-import { KINDS, WOOD_SPECIES, FOLIAGE_VARIANTS, surfaceMaps, foliageMap, setBakeRenderer, hasBakeRenderer, bakeStats, measureMean } from './textures/index.js';
+import { KINDS, WOOD_SPECIES, FOLIAGE_VARIANTS, surfaceMaps, foliageMap, setBakeRenderer, setBakeScale, hasBakeRenderer, bakeStats, measureMean } from './textures/index.js';
 import { patchSurface, patchFoliage } from './textures/surfaceShader.js';
 
 /** Uniforms shared by every material that opts into wind / time effects. */
@@ -269,7 +269,10 @@ export const materials = {
    *   scale      texture scale multiplier (2 = features twice as big)
    *   repeat     uv kinds: number or [u, v] repeats over the UV range (for 0..1 primitive UVs)
    *   grain      'u' (default) | 'v' — which UV axis the wood grain / fibres follow
+   *   swapUV     same as grain: 'v' — swaps U and V for any uv kind (e.g. bark with
+   *              triplanar: false on a TubeGeometry branch: furrows then run along the tube)
    *   vertexColors  multiply by vertex colours (the texture is normalised to average white)
+   *   bump       normal-map strength multiplier     breakup  painterly colour variation (0 = off)
    *   side, transparent, opacity, wind: { strength, base, speed }, roughness (multiplier)
    * }
    * Note: triplanar kinds sample WORLD space — an object that moves will swim
@@ -308,10 +311,19 @@ export const materials = {
 
   /**
    * Give the texture bakery the renderer (call once at boot, right after the
-   * engine exists). Without it, the first surface drawn bakes everything then.
+   * engine exists: materials.setRenderer(engine.renderer, engine.quality)).
+   * Maps are then baked as soon as they are first requested. Without it, the
+   * first surface drawn bakes everything pending in that frame.
+   * quality.tier 'low' halves the texture resolution.
    */
-  setRenderer(renderer) {
+  setRenderer(renderer, quality = null) {
+    if (quality?.tier === 'low') setBakeScale(0.5);
     setBakeRenderer(renderer);
+  },
+
+  /** The live per-material uniforms of a surface/foliage material (look-dev & debugging). */
+  surfaceUniforms(material) {
+    return patchedUniforms.get(material) ?? null;
   },
 
   /** Request (and bake, if a renderer is known) the maps of these kinds up front. */
@@ -389,6 +401,34 @@ const WHITE = new THREE.Color(1, 1, 1);
 /** First surface/foliage material drawn hands its renderer to the bakery (unless setRenderer was called). */
 function captureRenderer(renderer) {
   if (!hasBakeRenderer()) setBakeRenderer(renderer);
+}
+
+/** Per-material uniform sets (kept out of userData so materials stay JSON/clone friendly). */
+const patchedUniforms = new WeakMap();
+
+function cloneUniforms(u) {
+  const out = {};
+  for (const [k, v] of Object.entries(u)) out[k] = { value: v.value?.isTexture ? v.value : v.value?.clone ? v.value.clone() : v.value };
+  return out;
+}
+
+/**
+ * Install a shader patch (+ optional wind) on a material, with a stable
+ * program cache key, and make .clone() carry the patch (with its own uniforms).
+ */
+function installPatch(m, patch, u, progKey, wind) {
+  patchedUniforms.set(m, u);
+  m.onBeforeCompile = (shader) => patch(shader, u);
+  m.onBeforeRender = captureRenderer;
+  if (wind) applyWind(m, wind);
+  const windKey = wind ? m.customProgramCacheKey() : '';
+  m.customProgramCacheKey = () => progKey + windKey;
+  m.clone = function () {
+    const c = new this.constructor().copy(this);
+    installPatch(c, patch, cloneUniforms(u), progKey, wind);
+    return c;
+  };
+  return m;
 }
 
 function lin(hex) {
@@ -472,9 +512,9 @@ function makeSurface(kindIn, opts) {
     sfColB: { value: colB },
     sfColC: { value: colC },
     sfTile: { value: tile },
-    sfP: { value: new THREE.Vector4(kd.normal ?? 1, kd.ao ?? 1, opts.roughness ?? 1, opts.breakup ?? kd.breakup ?? 1) },
+    sfP: { value: new THREE.Vector4((kd.normal ?? 1) * (opts.bump ?? 1), kd.ao ?? 1, opts.roughness ?? 1, opts.breakup ?? kd.breakup ?? 1) },
     sfQ: { value: new THREE.Vector4(mossy, 1 / (KINDS.moss.tile * 0.9), kd.velvet ?? 0, kd.metalRust ?? 0) },
-    sfR: { value: new THREE.Vector4(opts.grain === 'v' ? 1 : 0, kd.polar ? (opts.gills === 'cone' ? 2 : 1) : 0, opts.metalness ?? kd.metalness ?? 0, 0) },
+    sfR: { value: new THREE.Vector4(opts.grain === 'v' || opts.swapUV ? 1 : 0, kd.polar ? (opts.gills === 'cone' ? 2 : 1) : 0, opts.metalness ?? kd.metalness ?? 0, 0) },
     sfLight: { value: new THREE.Vector4(opts.wrap ?? kd.wrap ?? 0, 0, 0, 0) },
   };
   if (moss) {
@@ -499,13 +539,8 @@ function makeSurface(kindIn, opts) {
   if (colorize) defines.SF_COLORIZE = '';
   if (moss) defines.SF_MOSS = '';
   m.defines = defines;
-  m.userData.surface = { kind, uniforms: u };
-  const progKey = `sf|${triplanar ? 't' : 'u'}${colorize ? 'c' : ''}${moss ? 'm' : ''}`;
-  m.onBeforeCompile = (shader) => patchSurface(shader, u);
-  m.onBeforeRender = captureRenderer;
-  if (opts.wind) applyWind(m, opts.wind);
-  const windKey = opts.wind ? m.customProgramCacheKey() : '';
-  m.customProgramCacheKey = () => progKey + windKey;
+  m.userData.surface = { kind };
+  installPatch(m, patchSurface, u, `sf|${triplanar ? 't' : 'u'}${colorize ? 'c' : ''}${moss ? 'm' : ''}`, opts.wind);
   return m;
 }
 
@@ -529,13 +564,9 @@ function makeFoliage(opts) {
     sfLight: { value: new THREE.Vector4(opts.wrap ?? 0.6, opts.translucency ?? 0.8, 0, 0) },
     sfFol: { value: new THREE.Vector4(opts.volume === false ? 0 : 1, opts.breakup ?? 1, 0, 0) },
   };
-  m.userData.foliage = { variant, uniforms: u };
+  m.userData.foliage = { variant };
   m.name = `foliage-${variant}`;
-  m.onBeforeCompile = (shader) => patchFoliage(shader, u);
-  m.onBeforeRender = captureRenderer;
-  if (opts.wind) applyWind(m, opts.wind);
-  const windKey = opts.wind ? m.customProgramCacheKey() : '';
-  m.customProgramCacheKey = () => 'foliage|' + windKey;
+  installPatch(m, patchFoliage, u, 'foliage|', opts.wind);
   return m;
 }
 

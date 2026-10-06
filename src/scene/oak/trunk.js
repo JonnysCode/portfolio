@@ -127,32 +127,54 @@ export function compact(g) {
 }
 
 /**
- * Dark cavities sitting inside the hollows so they read as deep holes even in
- * full sun. Returns one merged geometry (position/normal/uv) and the hollow
- * mouths (for the owl & co): [{ id, position, normal, a, y }].
+ * Dark linings for the hollows so they read as deep holes even in full sun:
+ * a small grid laid just in front of the carved cup (and tucked under the
+ * bark outside it). Returns the geometries and the hollow mouths (for the
+ * owl & co): [{ id, a, y, floor, position, normal }].
  */
 export function buildHollowCavities() {
   const parts = [];
   const mouths = [];
   for (const h of HOLLOWS) {
-    const a = h.a * DEG;
+    const a0 = h.a * DEG;
     const R0 = baseRadius(h.y);
-    const g = new THREE.SphereGeometry(1, 16, 12);
-    // stretch to the hollow's mouth and sink it into the trunk
-    g.scale(h.rx * 0.95, h.ry * 0.95, h.depth * 0.8);
-    const m = new THREE.Matrix4().makeRotationY(a);
-    const c = polar(a, R0 - h.depth * 0.78, h.y);
-    m.setPosition(c);
-    g.applyMatrix4(m);
+    const da = (h.rx * 1.08) / R0;
+    const ys = [];
+    const n = 22;
+    for (let i = 0; i <= n; i++) ys.push(h.y - h.ry * 1.08 + (i / n) * h.ry * 2.16);
+    const cols = 22;
+    const pos = new Float32Array((n + 1) * (cols + 1) * 3);
+    const v = new THREE.Vector3();
+    for (let i = 0; i <= n; i++) {
+      for (let j = 0; j <= cols; j++) {
+        const a = a0 - da + (j / cols) * da * 2;
+        const y = ys[i];
+        const q = Math.hypot(((a - a0) * R0) / h.rx, (y - h.y) / h.ry);
+        const r = trunkRadius(a, y) + (q < 0.97 ? 0.03 : -0.12);
+        polar(a, r, y, v);
+        pos.set([v.x, v.y, v.z], (i * (cols + 1) + j) * 3);
+      }
+    }
+    const index = [];
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < cols; j++) {
+        const p = i * (cols + 1) + j, q = (i + 1) * (cols + 1) + j;
+        index.push(p, p + 1, q, p + 1, q + 1, q);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setIndex(index);
+    g.computeVertexNormals();
     parts.push(g);
     mouths.push({
       id: h.id,
-      a,
+      a: a0,
       y: h.y,
       // floor of the hollow (where a creature can sit)
-      floor: polar(a, R0 - h.depth * 0.55, h.y - h.ry * 0.62),
-      position: polar(a, R0, h.y),
-      normal: new THREE.Vector3(Math.sin(a), 0, Math.cos(a)),
+      floor: polar(a0, R0 - h.depth * 0.45, h.y - h.ry * 0.7),
+      position: polar(a0, R0, h.y),
+      normal: new THREE.Vector3(Math.sin(a0), 0, Math.cos(a0)),
     });
   }
   return { parts, mouths };

@@ -67,7 +67,12 @@ const FRAG = /* glsl */ `
     // fine streaks across the beam, slowly drifting dust density along it
     float streak = 0.55 + 0.45 * envNoise(vec2(across * 4.5 + vSeed * 17.0, along * 0.8 + vSeed));
     float drift = 0.65 + 0.35 * envNoise(vec2(along * 3.0 - uTime * 0.07 + vSeed * 9.0, across * 1.5 + uTime * 0.02));
-    float lit = sunVisibility(vW);
+    // four taps across the beam soften the canopy-cut edges into bundles of rays
+    vec3 sideW = normalize(cross(normalize(uAxis), normalize(vW - cameraPosition)));
+    float lit = 0.25 * (sunVisibility(vW + sideW * 0.12) + sunVisibility(vW - sideW * 0.12)
+              + sunVisibility(vW + sideW * 0.32 + uAxis * 0.4) + sunVisibility(vW - sideW * 0.32 - uAxis * 0.4));
+    // no shadow map (low tier): fake the canopy cut with noise bundles
+    if (uSunShadowParams.x < 0.5) lit = 0.25 + 0.75 * smoothstep(0.35, 0.75, envNoise(vec2(across * 3.5 + vSeed * 31.0, 0.5)));
     // forward scattering: brighter when looking into the light
     vec3 v = normalize(vW - cameraPosition);
     float c = dot(v, normalize(uAxis));
@@ -159,7 +164,8 @@ export function buildShafts(ctx) {
   mesh.receiveShadow = false;
   mesh.raycast = () => {};
 
-  const base = tier === 'low' ? 0.22 : 0.34;
+  // (the HDR post path compresses additive light through the tone curve, so it gets more)
+  const base = tier === 'low' ? 0.13 : 0.36;
   return {
     mesh,
     uniforms,

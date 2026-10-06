@@ -43,11 +43,11 @@ const DAY = {
   envI: 0.55,
 };
 const NIGHT = {
-  key: new THREE.Color('#9fb0ff'),
-  keyI: 1.05,
-  hemiSky: new THREE.Color('#2f4f78'),
-  hemiGround: new THREE.Color('#141f26'),
-  hemiI: 0.75,
+  key: new THREE.Color('#a9b6ff'),
+  keyI: 1.7,
+  hemiSky: new THREE.Color('#34587f'),
+  hemiGround: new THREE.Color('#16232a'),
+  hemiI: 0.9,
   rim: new THREE.Color('#5f86c8'),
   rimI: 0.35,
   envI: 0.45,

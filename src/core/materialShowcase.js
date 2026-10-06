@@ -154,7 +154,7 @@ export default async function build(ctx) {
     [roof(materials.surface('thatch', { repeat: [3, 2], side: THREE.DoubleSide })), 'thatch'],
     [mesh(box(), materials.surface('fabric', { color: '#a8452e', repeat: 3 })), 'fabric red'],
     [mesh(box(), materials.surface('fabric', { color: '#4f6d9a', repeat: 3 })), 'fabric blue'],
-    [mesh(tube, materials.surface('rope', { repeat: [5, 1] }), 0), 'rope'],
+    [mesh(tube, materials.surface('rope', { repeat: [2, 1] }), 0), 'rope'],
     [mesh(sphere, materials.surface('glass')), 'glass'],
     [mesh(box(), materials.surface('paper')), 'paper'],
     [mesh(pot, materials.surface('clay', { repeat: [3, 1] }), 0), 'clay'],

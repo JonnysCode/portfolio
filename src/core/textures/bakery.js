@@ -27,8 +27,10 @@ const programs = new Map();
 let finalizeMat = null;
 let quad = null;
 let quadCam = null;
-let scratch = null; // { w, h, rt }
+const scratch = new Map(); // 'wxh' → MRT scratch target (freed shortly after the last bake)
+let scratchTimer = 0;
 let floatOK = true;
+let sizeScale = 1;
 const stats = { bakes: 0, ms: 0, bytes: 0, programs: 0 };
 
 const VERT = /* glsl */ `
@@ -141,8 +143,8 @@ function getFinalize() {
 }
 
 function getScratch(w, h) {
-  if (scratch && scratch.w === w && scratch.h === h) return scratch.rt;
-  if (scratch) scratch.rt.dispose();
+  const key = w + 'x' + h;
+  if (scratch.has(key)) return scratch.get(key);
   const ext = renderer.extensions;
   floatOK = ext.has('EXT_color_buffer_float') || ext.has('EXT_color_buffer_half_float');
   const rt = new THREE.WebGLRenderTarget(w, h, {
@@ -153,8 +155,34 @@ function getScratch(w, h) {
     magFilter: THREE.NearestFilter,
     generateMipmaps: false,
   });
-  scratch = { w, h, rt };
+  scratch.set(key, rt);
   return rt;
+}
+
+function scheduleScratchRelease() {
+  clearTimeout(scratchTimer);
+  scratchTimer = setTimeout(() => {
+    for (const rt of scratch.values()) rt.dispose();
+    scratch.clear();
+  }, 3000);
+}
+
+const scaled = (size) => size.map((v) => Math.max(64, Math.round(v * sizeScale)));
+
+/**
+ * Scale the resolution of every map not baked yet (e.g. 0.5 on low-end
+ * devices). Already-baked maps keep their size.
+ */
+export function setBakeScale(k) {
+  sizeScale = k;
+  for (const e of entries.values()) {
+    if (e.baked) continue;
+    stats.bytes -= e.size[0] * e.size[1] * 4 * (e.b ? 2 : 1) * 1.333;
+    e.size = scaled(e.def.size);
+    e.a.setSize(e.size[0], e.size[1]);
+    e.b?.setSize(e.size[0], e.size[1]);
+    stats.bytes += e.size[0] * e.size[1] * 4 * (e.b ? 2 : 1) * 1.333;
+  }
 }
 
 function makeTarget(w, h, srgb, wrapT = THREE.RepeatWrapping, wrapS = THREE.RepeatWrapping) {
@@ -179,7 +207,7 @@ function makeTarget(w, h, srgb, wrapT = THREE.RepeatWrapping, wrapS = THREE.Repe
 export function requestBake(key, def) {
   let e = entries.get(key);
   if (e) return e;
-  const [w, h] = def.size;
+  const [w, h] = scaled(def.size);
   const srgb = def.mode !== 'colorize';
   const wrapT = def.wrapT === 'clamp' || def.alpha ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
   const wrapS = def.alpha ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
@@ -187,7 +215,7 @@ export function requestBake(key, def) {
   const b = def.alpha ? null : makeTarget(w, h, false, wrapT, wrapS);
   a.texture.name = `${key}-map`;
   if (b) b.texture.name = `${key}-detail`;
-  e = { key, def, a, b, map: a.texture, detail: b ? b.texture : null, baked: false };
+  e = { key, def, size: [w, h], a, b, map: a.texture, detail: b ? b.texture : null, baked: false };
   entries.set(key, e);
   stats.bytes += w * h * 4 * (b ? 2 : 1) * 1.333;
   if (renderer) bakeNow([e]);
@@ -210,7 +238,7 @@ function bakeNow(list) {
   try {
     for (const e of list) {
       if (e.baked) continue;
-      const [w, h] = e.def.size;
+      const [w, h] = e.size;
       const tmp = getScratch(w, h);
       // pass 1: the pattern
       const m1 = passOneMaterial(e.def);
@@ -247,6 +275,7 @@ function bakeNow(list) {
     r.setRenderTarget(prevRT, prevFace, prevMip);
     r.xr.enabled = prevXR;
     r.autoClear = prevAutoClear;
+    scheduleScratchRelease();
   }
 }
 

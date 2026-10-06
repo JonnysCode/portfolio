@@ -59,6 +59,24 @@ export const palette = {
   shell: ['#c98a4b', '#e8a838', '#d9673b', '#b39ddb', '#8fbf5a'],
   snailBody: '#e9d7b8',
 
+  // painterly surface tints (materials.surface(kind, { color })) — PBR values,
+  // a touch deeper than the toon colours above
+  capFlyAgaric: '#c4301f',
+  capRust: '#b8562a',
+  capTan: '#b08a5a',
+  capButter: '#e2b85a',
+  mossDeep: '#3c5a22',
+  mossSunlit: '#a3b34a',
+  lichen: '#b7bf98',
+  stoneWarm: '#ab9c84',
+  stoneCool: '#8d9396',
+  mortar: '#c2b9a2',
+  shingleBrown: '#7e5237',
+  thatchStraw: '#c4a062',
+  iron: '#3d3833',
+  terracotta: '#b5633e',
+  linen: '#d8ccb4',
+
   // accents
   swissRed: '#d52b1e',
   postYellow: '#ffcc00',

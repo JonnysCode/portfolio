@@ -107,7 +107,7 @@ function blobGeometry(rng, cx, cy, cz, sx, sy, sz) {
   const s = rng.range(0, 100);
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-    const n = 1 + 0.22 * noise(x * 1.8 + s, z * 1.8 + y * 1.3) + 0.1 * noise(x * 4.1 - s, y * 4.3 + z);
+    const n = 1 + 0.26 * noise(x * 1.8 + s, z * 1.8 + y * 1.3) + 0.14 * noise(x * 4.1 - s, y * 4.3 + z);
     // flat-ish bottoms like real crowns
     const yy = y < 0 ? y * 0.55 : y;
     p.setXYZ(i, cx + x * sx * n, cy + yy * sy * n, cz + z * sz * n);
@@ -177,7 +177,7 @@ const FOREST_VERT = /* glsl */ `
 `;
 
 const FOREST_FRAG = /* glsl */ `
-  uniform vec3 uKeyDir, uKeyColor, uSkyCol, uShadeCol;
+  uniform vec3 uKeyDir, uKeyColor, uSkyCol, uShadeCol, uMoss;
   uniform float uNight;
   varying vec3 vTint;
   varying vec3 vN;
@@ -187,20 +187,39 @@ const FOREST_FRAG = /* glsl */ `
   void main() {
     vec3 n = normalize(vN);
     vec3 v = normalize(vW - cameraPosition);
+    // bark (brownish tint) vs foliage (green tint)
+    float isBark = step(vTint.g, vTint.r + 0.02);
     // painterly breakup: broad colour patches that do not follow the mesh
     float patchN = envFbm(vW.xz * 0.09 + vW.y * 0.05);
-    vec3 base = vTint * mix(0.78, 1.18, patchN);
+    vec3 base = vTint * mix(0.75, 1.2, patchN);
+    // bark: long vertical furrows + moss creeping up from the roots
+    float around = dot(vW.xz, vec2(0.71, 0.71)) + dot(n.xz, vec2(-0.71, 0.71)) * 3.0;
+    float furrow = envFbm(vec2(around * 1.6, vW.y * 0.09));
+    base = mix(base, base * mix(0.55, 1.25, furrow), isBark);
+    // moss on the up-facing root flares and in streaks down the windward side
+    float mossAmt = isBark * (smoothstep(0.25, 0.85, n.y) * 0.75 + smoothstep(0.2, 0.9, -n.x) * 0.35) * smoothstep(0.35, 0.65, envNoise(vW.xz * 0.6 + vW.y * 0.2));
+    base = mix(base, uMoss * mix(0.7, 1.1, patchN), clamp(mossAmt, 0.0, 0.85));
+    // foliage: ragged, leafy silhouettes — break the edges of each mass up with noise
+    if (isBark < 0.5) {
+      float rim = 1.0 - abs(dot(n, v));
+      float leafN = envNoise(vW.xy * 1.1 + vW.z * 0.63) * 0.55 + envNoise(vW.zy * 2.7 + vW.x * 0.4) * 0.45;
+      if (rim > 0.35 + 0.6 * leafN) discard;
+    }
+    // foliage: clumpy leaf masses — darker gaps, lighter clump tops
+    float clump = envFbm(vW.xz * 0.35 + vW.y * 0.4) * 0.6 + envNoise(vW.xz * 1.7 + vW.y * 1.3) * 0.4;
+    base = mix(base, base * mix(0.6, 1.3, clump) * (0.85 + 0.3 * max(n.y, 0.0)), 1.0 - isBark);
     // soft wrapped key light, sky from above, teal shade below
     float key = clamp(dot(n, uKeyDir) * 0.6 + 0.4, 0.0, 1.0);
-    vec3 col = base * (uShadeCol * 0.9 + uKeyColor * key * 0.55 + uSkyCol * max(n.y, 0.0) * 0.35);
+    vec3 col = base * (uShadeCol * 0.9 + uKeyColor * key * 0.6 + uSkyCol * max(n.y, 0.0) * 0.4);
     // golden rim where a silhouette is backlit by the sun
     float facing = pow(1.0 - abs(dot(n, v)), 2.5);
     float toward = pow(max(dot(v, uKeyDir), 0.0), 2.0);
-    col += uKeyColor * facing * (0.12 + 0.55 * toward) * vTint.g * 2.2 * (1.0 - 0.6 * uNight);
+    col += uKeyColor * facing * (0.06 + 0.4 * toward) * 0.35 * (1.0 - 0.6 * uNight);
     gl_FragColor = vec4(col, 1.0);
-    #include <fog_fragment>
+    // same order as three's built-in materials: the fog chunk expects display space
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
+    #include <fog_fragment>
   }
 `;
 
@@ -276,15 +295,18 @@ export function buildBackdrop(ctx) {
   const rng = createRng('backdrop');
   const parts = [];
 
-  const BARK = [0.16, 0.14, 0.11];
+  const BARKS = [[0.16, 0.14, 0.11], [0.18, 0.14, 0.1], [0.14, 0.14, 0.12], [0.15, 0.13, 0.1]];
   const LEAF = [[0.17, 0.25, 0.12], [0.13, 0.22, 0.14], [0.2, 0.27, 0.13], [0.11, 0.19, 0.13]];
   const BUSH = [0.12, 0.2, 0.11];
 
-  // three receding rows of colossal trees
+  // receding rows of colossal trees, the farthest a ghostly wall in the haze
   const rows = [
     { r: [41, 50], count: tier === 'low' ? 9 : 15, radius: [1.6, 2.8], height: [34, 46] },
     { r: [54, 66], count: tier === 'low' ? 10 : 17, radius: [2.2, 3.6], height: [42, 56] },
     { r: [72, 92], count: tier === 'low' ? 10 : 19, radius: [2.8, 4.6], height: [50, 66] },
+    { r: [100, 135], count: tier === 'low' ? 0 : 22, radius: [3.5, 6], height: [60, 80], far: true },
+    // understory: smaller trees whose crowns sit low enough to be seen between the giants
+    { r: [50, 80], count: tier === 'low' ? 6 : 14, radius: [0.8, 1.4], height: [18, 28], under: true },
   ];
   const leaf = () => LEAF[rng.int(0, LEAF.length - 1)];
   const v = new THREE.Vector3();
@@ -296,38 +318,46 @@ export function buildBackdrop(ctx) {
       const y0 = farHeight(x, z);
       const radius = rng.range(row.radius[0], row.radius[1]);
       const height = rng.range(row.height[0], row.height[1]);
-      const lean = rng.range(0.004, 0.02);
+      // the old giants lean and bend; a few lean a lot
+      const lean = rng.next() < 0.2 ? rng.range(0.02, 0.035) : rng.range(0.004, 0.018);
       const leanAz = rng.range(0, Math.PI * 2);
+      const bark = BARKS[rng.int(0, BARKS.length - 1)];
       const trunk = trunkGeometry(rng, { radius, height, lean, leanAz });
       trunk.translate(x, y0, z);
-      parts.push(tint(trunk, BARK));
+      parts.push(tint(trunk, bark));
       const topY = y0 + height - 3;
       const bend = lean * height;
       const tx = x + Math.sin(leanAz) * bend;
       const tz = z - Math.cos(leanAz) * bend;
-      // a few heavy limbs reaching out into the crown
-      const limbs = rng.int(2, 4);
+      // heavy limbs: some fork low (gnarled giants), most reach out into the crown
+      const limbs = row.far ? 0 : rng.int(2, 4);
       for (let l = 0; l < limbs; l++) {
         const la = rng.range(0, Math.PI * 2);
-        const from = new THREE.Vector3(tx, topY - height * rng.range(0.12, 0.3), tz);
-        const reach = radius * rng.range(3, 5.5);
-        const to = v.set(tx + Math.cos(la) * reach, topY + rng.range(2, 7), tz + Math.sin(la) * reach).clone();
-        parts.push(tint(limbGeometry(from, to, radius * 0.45, radius * 0.18), BARK));
+        const low = !row.under && l === 0 && rng.next() < 0.45;
+        const fromY = low ? y0 + height * rng.range(0.35, 0.55) : topY - height * rng.range(0.12, 0.3);
+        const from = new THREE.Vector3(tx - Math.sin(leanAz) * bend * (low ? 0.5 : 0), fromY, tz + Math.cos(leanAz) * bend * (low ? 0.5 : 0));
+        const reach = radius * rng.range(3, 5.5) * (low ? 1.6 : 1);
+        const to = v.set(from.x + Math.cos(la) * reach, (low ? fromY + reach * 0.9 : topY + rng.range(2, 7)), from.z + Math.sin(la) * reach).clone();
+        parts.push(tint(limbGeometry(from, to, radius * (low ? 0.5 : 0.45), radius * 0.18), bark));
+        if (low) {
+          const s = radius * rng.range(2.4, 3.4);
+          parts.push(tint(blobGeometry(rng, to.x, to.y + s * 0.3, to.z, s * 1.3, s * 0.7, s * 1.3), leaf()));
+        }
       }
       // crown: a cluster of lumpy masses
-      const masses = rng.int(3, 5);
+      const masses = row.under ? rng.int(3, 4) : rng.int(3, 5);
       for (let m = 0; m < masses; m++) {
         const ma = rng.range(0, Math.PI * 2);
-        const md = radius * rng.range(1.2, 4.5);
-        const s = radius * rng.range(2.6, 4.2);
-        parts.push(tint(blobGeometry(rng, tx + Math.cos(ma) * md, topY + rng.range(1, 9), tz + Math.sin(ma) * md, s * 1.25, s * 0.75, s * 1.25), leaf()));
+        const md = radius * rng.range(1.2, 4.5) * (row.under ? 1.8 : 1);
+        const s = radius * rng.range(2.6, 4.2) * (row.under ? 1.7 : 1);
+        parts.push(tint(blobGeometry(rng, tx + Math.cos(ma) * md, topY + rng.range(1, 9) * (row.under ? 0.4 : 1), tz + Math.sin(ma) * md, s * 1.25, s * 0.75, s * 1.25), leaf()));
       }
       // undergrowth at the foot
-      if (tier !== 'low') {
+      if (tier !== 'low' && !row.far) {
         const bushes = rng.int(1, 3);
         for (let b = 0; b < bushes; b++) {
           const ba = rng.range(0, Math.PI * 2);
-          const bd = radius * rng.range(1.6, 3.5);
+          const bd = radius * rng.range(1.6, 3.5) + 1;
           const s = rng.range(1.6, 3.4);
           const bx = x + Math.cos(ba) * bd, bz = z + Math.sin(ba) * bd;
           parts.push(tint(blobGeometry(rng, bx, farHeight(bx, bz) + s * 0.2, bz, s * 1.4, s * 0.8, s * 1.4), BUSH));
@@ -366,6 +396,7 @@ export function buildBackdrop(ctx) {
       uNight: U.uNight,
       uSkyCol: { value: new THREE.Color('#9cc3c4') },
       uShadeCol: { value: new THREE.Color('#5d7f80') },
+      uMoss: { value: new THREE.Color('#3f5a26') },
     },
     vertexShader: FOREST_VERT,
     fragmentShader: FOREST_FRAG,
@@ -384,7 +415,7 @@ export function buildBackdrop(ctx) {
       ...fogUniforms(),
       uTime: U.uTime,
       uNight: U.uNight,
-      uOpacity: { value: 1 },
+      uOpacity: { value: 0.75 },
     },
     vertexShader: MIST_VERT,
     fragmentShader: MIST_FRAG,

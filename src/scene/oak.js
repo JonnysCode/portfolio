@@ -26,6 +26,8 @@ import { buildTrunkGeometry, buildTrunkMossGeometry, buildHollowCavities } from 
 import { buildRoots } from './oak/roots.js';
 import { buildLimbs } from './oak/limbs.js';
 import { buildCrown } from './oak/crown.js';
+import { buildIvy } from './oak/ivy.js';
+import { buildDetails } from './oak/details.js';
 
 /** Merge geometries that share the oak's attribute layout (position/normal/uv, indexed). */
 function merge(list, name) {
@@ -77,9 +79,11 @@ export default async function build(ctx) {
   await tick();
 
   const barkLow = merge([trunkGeo, ...roots.bark], 'trunk');
-  group.add(staticMesh(barkLow, materials.surface('bark', { mossy: 0.3 }), { name: 'oak-trunk' }));
-  const barkHigh = merge(skeleton.tubes, 'limbs');
-  group.add(staticMesh(barkHigh, materials.surface('bark', { mossy: 0.36 }), { name: 'oak-limbs' }));
+  group.add(staticMesh(barkLow, materials.surface('bark', { mossy: 0.17, scale: 1.6 }), { name: 'oak-trunk' }));
+  // ivy: woody stems join the limb bark, the leaf cards are one mesh
+  const ivy = buildIvy(rng.fork('ivy'), skeleton.limbs, { density });
+  const barkHigh = merge([...skeleton.tubes, ...ivy.stems], 'limbs');
+  group.add(staticMesh(barkHigh, materials.surface('bark', { mossy: 0.3, scale: 1.25 }), { name: 'oak-limbs' }));
 
   // ── moss: the trunk's foot, the shady back, the fork, the root tops ─────
   const debug = ctx.engine?.params?.get('oak') ?? '';
@@ -95,9 +99,17 @@ export default async function build(ctx) {
   );
   await tick();
 
+  const ivyMesh = staticMesh(ivy.leaves, materials.foliage({ variant: 'ivy', color: '#3d6b2c' }), { cast: false, name: 'oak-ivy' });
+  group.add(ivyMesh);
+
   // ── crown ────────────────────────────────────────────────────────────────
   const crown = buildCrown(ctx, rng.fork('crown'), skeleton.clumps, { density });
   if (!debug.includes('noleaves')) for (const m of crown.meshes) group.add(m);
+
+  // ── the little things: fungi, toadstools, lanterns, fairy lights, swing,
+  //    bird house, the owl and the secret mouse door ─────────────────────────
+  await tick();
+  const details = buildDetails(ctx, rng.fork('details'), group, { limbs: skeleton.limbs, roots: roots.roots, hollows: hollows.mouths });
 
   ctx.colliders?.addCircle?.(OAK.x, OAK.z, OAK.baseRadius + 0.3, 'oak');
 
@@ -111,6 +123,6 @@ export default async function build(ctx) {
     roots: roots.roots,
     hollows: hollows.mouths,
   };
-  group.userData.stats = { leafCards: crown.cards, clumps: skeleton.clumps.length };
-  return {};
+  group.userData.stats = { leafCards: crown.cards, clumps: skeleton.clumps.length, ivyCards: ivy.cards };
+  return { update: details.update };
 }

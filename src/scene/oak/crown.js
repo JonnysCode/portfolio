@@ -121,8 +121,8 @@ export function buildCrown(ctx, rng, clumps, { density = 1 } = {}) {
   ];
   // leaf-card budget at high density, whatever the number of clumps (overdraw
   // of stacked alpha-tested cards is the real cost, not the triangle count)
-  const budget = (ctx.engine?.params?.get('oakcards') ? +ctx.engine.params.get('oakcards') : 24000) * density;
-  const perClump = Math.max(90, Math.min(420, Math.round(budget / Math.max(1, clumps.length))));
+  const budget = (ctx.engine?.params?.get('oakcards') ? +ctx.engine.params.get('oakcards') : 20000) * density;
+  const perClump = Math.max(60, Math.min(420, Math.round(budget / Math.max(1, clumps.length))));
   // fewer cards → slightly bigger cards so the masses stay closed
   const grow = Math.sqrt(380 / perClump);
   const geos = templates.map((t, i) =>

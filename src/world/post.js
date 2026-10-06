@@ -34,16 +34,19 @@ const SETTINGS = {
   bloomDay: { strength: 0.32, radius: 0.55, threshold: 1.0, knee: 0.6 },
   bloomNight: { strength: 0.9, radius: 0.7, threshold: 0.42, knee: 0.5 },
   dof: true,
+  /** Contact shadows in nooks ('high'): strength 0..1 and world radius. */
+  ao: 0.7,
+  aoRadius: 0.55,
   /** CoC scale in px (at 720p): blur of something infinitely far behind the focus. */
-  aperture: 12,
+  aperture: 10,
   /** In-focus dead zone (px) so the subject stays pin sharp. */
   focusBand: 0.9,
   maxBlur: 11, // px at 720p
-  saturation: 1.08,
-  warmth: 0.035,
+  saturation: 1.12,
+  warmth: 0.05,
   shadowTint: [-0.012, 0.006, 0.012], // added in the shadows (teal-green)
   lift: 0.018,
-  vignette: 0.32,
+  vignette: 0.26,
   grain: 0.022,
 };
 
@@ -84,10 +87,13 @@ const PrefilterShader = {
     uAperture: { value: 10 },
     uBand: { value: 1 },
     uMaxBlur: { value: 10 },
+    tAO: { value: null },
+    uAO: { value: 0 },
   },
   vertexShader: VERT,
   fragmentShader: /* glsl */ `
-    uniform sampler2D tColor;
+    uniform sampler2D tColor, tAO;
+    uniform float uAO;
     uniform vec2 uTexel; // full-res texel
     varying vec2 vUv;
     ${COC_GLSL}
@@ -96,6 +102,7 @@ const PrefilterShader = {
       vec3 c = texture2D(tColor, vUv + vec2(-o.x, -o.y)).rgb + texture2D(tColor, vUv + vec2(o.x, -o.y)).rgb
              + texture2D(tColor, vUv + vec2(-o.x, o.y)).rgb + texture2D(tColor, vUv + vec2(o.x, o.y)).rgb;
       c *= 0.25;
+      if (uAO > 0.0) c *= mix(1.0, texture2D(tAO, vUv).r, uAO * (1.0 - smoothstep(1.0, 3.0, max(max(c.r, c.g), c.b))));
       // tame fireflies so single hot pixels do not become big discs
       c = c / (1.0 + max(max(c.r, c.g), c.b) * 0.12);
       float coc = cocAt(vUv) * 0.5; // half-res px
@@ -143,6 +150,105 @@ const BokehShader = {
   `,
 };
 
+
+const DEPTH_GLSL = /* glsl */ `
+  uniform sampler2D tDepth;
+  uniform float uNear, uFar;
+  uniform vec2 uTanHalf; // tan(fov/2) * (aspect, 1)
+  float viewZ(vec2 uv) {
+    float d = texture2D(tDepth, uv).x;
+    return (uNear * uFar) / ((uFar - uNear) * d - uFar);
+  }
+  vec3 viewPos(vec2 uv) {
+    float z = viewZ(uv);
+    return vec3((uv * 2.0 - 1.0) * uTanHalf * (-z), z);
+  }
+`;
+
+const AO_SAMPLES = 12;
+/** Half-res depth-only ambient occlusion (Alchemy-style), normals rebuilt from depth. */
+const AOShader = {
+  uniforms: {
+    tDepth: { value: null },
+    uNear: { value: 0.1 },
+    uFar: { value: 100 },
+    uTanHalf: { value: new THREE.Vector2(1, 1) },
+    uTexel: { value: new THREE.Vector2() }, // half-res texel
+    uRadius: { value: 0.5 },
+    uProjScale: { value: 300 }, // px per world unit at distance 1 (half res)
+    uIntensity: { value: 1 },
+  },
+  vertexShader: VERT,
+  fragmentShader: /* glsl */ `
+    uniform vec2 uTexel;
+    uniform float uRadius, uProjScale, uIntensity;
+    varying vec2 vUv;
+    ${DEPTH_GLSL}
+    void main() {
+      vec3 P = viewPos(vUv);
+      float dist = -P.z;
+      if (dist > 70.0 || dist >= uFar * 0.98) { gl_FragColor = vec4(1.0); return; }
+      // robust normal: use the neighbour on the side with the smaller depth jump
+      vec3 pl = viewPos(vUv - vec2(uTexel.x, 0.0)), pr = viewPos(vUv + vec2(uTexel.x, 0.0));
+      vec3 pd = viewPos(vUv - vec2(0.0, uTexel.y)), pu = viewPos(vUv + vec2(0.0, uTexel.y));
+      vec3 dx = abs(pr.z - P.z) < abs(P.z - pl.z) ? pr - P : P - pl;
+      vec3 dy = abs(pu.z - P.z) < abs(P.z - pd.z) ? pu - P : P - pd;
+      vec3 N = normalize(cross(dx, dy));
+      float rPx = clamp(uRadius * uProjScale / dist, 1.5, 48.0);
+      float rot = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) * 6.2831853;
+      float occ = 0.0;
+      for (int i = 0; i < ${AO_SAMPLES}; i++) {
+        float t = (float(i) + 0.5) / ${AO_SAMPLES.toFixed(1)};
+        float a = float(i) * 2.39996323 + rot;
+        vec2 off = vec2(cos(a), sin(a)) * rPx * t;
+        vec3 S = viewPos(vUv + off * uTexel);
+        vec3 v = S - P;
+        float vv = dot(v, v);
+        float range = 1.0 - smoothstep(uRadius, uRadius * 2.5, sqrt(vv));
+        occ += max(dot(v, N) - 0.015 * dist * 0.08, 0.0) / (vv + 0.02) * range;
+      }
+      float ao = clamp(1.0 - uIntensity * uRadius * occ * (2.0 / ${AO_SAMPLES.toFixed(1)}), 0.0, 1.0);
+      // fade out with distance (far things live in the mist)
+      ao = mix(ao, 1.0, smoothstep(30.0, 70.0, dist));
+      gl_FragColor = vec4(ao, ao, ao, 1.0);
+    }
+  `,
+};
+
+/** Depth-aware 4×4 blur of the half-res AO. */
+const AOBlurShader = {
+  uniforms: {
+    tAO: { value: null },
+    tDepth: { value: null },
+    uNear: { value: 0.1 },
+    uFar: { value: 100 },
+    uTanHalf: { value: new THREE.Vector2(1, 1) },
+    uTexel: { value: new THREE.Vector2() },
+  },
+  vertexShader: VERT,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tAO;
+    uniform vec2 uTexel;
+    varying vec2 vUv;
+    ${DEPTH_GLSL}
+    void main() {
+      float z0 = viewZ(vUv);
+      float sum = 0.0, wsum = 0.0;
+      for (int y = -2; y <= 1; y++) {
+        for (int x = -2; x <= 1; x++) {
+          vec2 uv = vUv + (vec2(float(x), float(y)) + 0.5) * uTexel;
+          float z = viewZ(uv);
+          float w = 1.0 / (0.02 + abs(z - z0) * 4.0 / max(-z0, 1.0));
+          sum += texture2D(tAO, uv).r * w;
+          wsum += w;
+        }
+      }
+      float ao = sum / wsum;
+      gl_FragColor = vec4(ao, ao, ao, 1.0);
+    }
+  `,
+};
+
 class FinishMaterial extends THREE.ShaderMaterial {
   constructor() {
     super({
@@ -152,6 +258,8 @@ class FinishMaterial extends THREE.ShaderMaterial {
         tBloom: { value: null },
         tBokeh: { value: null },
         tDepth: { value: null },
+        tAO: { value: null },
+        uAO: { value: 0 },
         uUseBloom: { value: 0 },
         uUseDof: { value: 0 },
         uNear: { value: 0.1 },
@@ -174,8 +282,8 @@ class FinishMaterial extends THREE.ShaderMaterial {
       },
       vertexShader: VERT,
       fragmentShader: /* glsl */ `
-        uniform sampler2D tColor, tBloom, tBokeh;
-        uniform float uUseBloom, uUseDof;
+        uniform sampler2D tColor, tBloom, tBokeh, tAO;
+        uniform float uUseBloom, uUseDof, uAO;
         uniform float uSaturation, uWarmth, uLift, uVignette, uGrain, uAspect, uNight, uTime;
         uniform vec3 uShadowTint, uLiftColor, uVignetteColor;
         varying vec2 vUv;
@@ -187,6 +295,11 @@ class FinishMaterial extends THREE.ShaderMaterial {
         }
         void main() {
           vec3 col = texture2D(tColor, vUv).rgb;
+          if (uAO > 0.0) {
+            // contact shadows — but never dim things that glow
+            float glow = smoothstep(1.0, 3.0, max(max(col.r, col.g), col.b));
+            col *= mix(1.0, texture2D(tAO, vUv).r, uAO * (1.0 - glow));
+          }
           if (uUseDof > 0.5) {
             vec4 b = texture2D(tBokeh, vUv);
             float coc = abs(cocAt(vUv));
@@ -287,14 +400,14 @@ export default async function build(ctx) {
   const renderer = engine.renderer;
   const useDof = tier === 'high';
 
-  let sceneRT, bloom, preRT, bokehRT, finishMat, quads;
+  let sceneRT, bloom, preRT, bokehRT, aoRT, aoBlurRT, finishMat, quads;
   try {
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
     const pr = renderer.getPixelRatio();
     sceneRT = new THREE.WebGLRenderTarget(size.x, size.y, {
       type: THREE.HalfFloatType,
       samples: pr >= 1.75 ? 2 : 4,
-      depthTexture: useDof ? new THREE.DepthTexture(size.x, size.y) : undefined,
+      depthTexture: useDof ? new THREE.DepthTexture(size.x, size.y) : null,
     });
     sceneRT.texture.name = 'woodland.post.scene';
     const css = renderer.getSize(new THREE.Vector2());
@@ -309,6 +422,11 @@ export default async function build(ctx) {
       preRT.texture.minFilter = preRT.texture.magFilter = THREE.LinearFilter;
       quads.pre = new FullScreenQuad(new THREE.ShaderMaterial({ ...PrefilterShader, uniforms: THREE.UniformsUtils.clone(PrefilterShader.uniforms), depthTest: false, depthWrite: false }));
       quads.bokeh = new FullScreenQuad(new THREE.ShaderMaterial({ ...BokehShader, uniforms: THREE.UniformsUtils.clone(BokehShader.uniforms), depthTest: false, depthWrite: false }));
+      const aoOpts = { type: THREE.UnsignedByteType, format: THREE.RGBAFormat, depthBuffer: false };
+      aoRT = new THREE.WebGLRenderTarget(Math.ceil(size.x / 2), Math.ceil(size.y / 2), aoOpts);
+      aoBlurRT = new THREE.WebGLRenderTarget(Math.ceil(size.x / 2), Math.ceil(size.y / 2), aoOpts);
+      quads.ao = new FullScreenQuad(new THREE.ShaderMaterial({ ...AOShader, uniforms: THREE.UniformsUtils.clone(AOShader.uniforms), depthTest: false, depthWrite: false }));
+      quads.aoBlur = new FullScreenQuad(new THREE.ShaderMaterial({ ...AOBlurShader, uniforms: THREE.UniformsUtils.clone(AOBlurShader.uniforms), depthTest: false, depthWrite: false }));
     }
   } catch (err) {
     console.warn('[post] setup failed, rendering without post-processing', err);
@@ -326,6 +444,10 @@ export default async function build(ctx) {
       bokehRT.setSize(Math.ceil(W / 2), Math.ceil(H / 2));
       quads.pre.material.uniforms.uTexel.value.set(1 / W, 1 / H);
       quads.bokeh.material.uniforms.uTexel.value.set(2 / W, 2 / H);
+      aoRT.setSize(Math.ceil(W / 2), Math.ceil(H / 2));
+      aoBlurRT.setSize(Math.ceil(W / 2), Math.ceil(H / 2));
+      quads.ao.material.uniforms.uTexel.value.set(2 / W, 2 / H);
+      quads.aoBlur.material.uniforms.uTexel.value.set(2 / W, 2 / H);
     }
     fu.uAspect.value = w / Math.max(h, 1);
   }
@@ -361,12 +483,38 @@ export default async function build(ctx) {
 
     const bloomTex = bloom.strength > 0.001 ? bloom.renderBloom(renderer, sceneRT.texture) : null;
 
+    const aoOn = useDof && SETTINGS.ao > 0.001;
+    if (aoOn) {
+      const H = sceneRT.height;
+      const tanY = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+      for (const q of [quads.ao, quads.aoBlur]) {
+        const u = q.material.uniforms;
+        u.tDepth.value = sceneRT.depthTexture;
+        u.uNear.value = camera.near;
+        u.uFar.value = camera.far;
+        u.uTanHalf.value.set(tanY * camera.aspect, tanY);
+      }
+      const au = quads.ao.material.uniforms;
+      au.uRadius.value = SETTINGS.aoRadius;
+      au.uProjScale.value = (H / 2) / (2 * tanY);
+      renderer.setRenderTarget(aoRT);
+      quads.ao.render(renderer);
+      quads.aoBlur.material.uniforms.tAO.value = aoRT.texture;
+      renderer.setRenderTarget(aoBlurRT);
+      quads.aoBlur.render(renderer);
+    }
+    const aoK = aoOn ? SETTINGS.ao * (1 - 0.35 * (ctx.env?.night ?? 0)) : 0;
+    fu.tAO.value = aoOn ? aoBlurRT.texture : null;
+    fu.uAO.value = aoK;
+
     const dofOn = useDof && SETTINGS.dof;
     if (dofOn) {
       const H = sceneRT.height;
       const pu = quads.pre.material.uniforms;
       pu.tColor.value = sceneRT.texture;
       pu.tDepth.value = sceneRT.depthTexture;
+      pu.tAO.value = aoOn ? aoBlurRT.texture : null;
+      pu.uAO.value = aoK;
       cocUniforms(pu, H);
       renderer.setRenderTarget(preRT);
       quads.pre.render(renderer);

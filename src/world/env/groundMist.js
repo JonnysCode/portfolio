@@ -71,7 +71,7 @@ const FRAG = /* glsl */ `
     float hollow = smoothstep(0.4, -0.6, ground) * 0.6;
     float mask = max(max(water, pool), max(rim * 0.45, hollow));
     float keepOut = smoothstep(4.5, 8.0, length(vW.xz - uOak.xz)); // not inside the workshop
-    mask = max(mask * keepOut, uNight * 0.45 * smoothstep(8.0, 16.0, r));
+    mask = max(mask * keepOut, uNight * 0.22 * smoothstep(10.0, 20.0, r));
     // drifting wisps
     vec2 p = vW.xz * 0.11 + vec2(uTime * 0.018, -uTime * 0.011) + vLayer * 5.3;
     float n = envFbm(p) * 0.65 + envFbm(p * 2.7 - vec2(uTime * 0.03, 0.0)) * 0.35;
@@ -154,7 +154,7 @@ export function buildGroundMist(ctx) {
     mesh,
     uniforms,
     update(night) {
-      uniforms.uStrength.value = 0.5 + 0.8 * night;
+      uniforms.uStrength.value = 0.42 + 0.45 * night;
     },
   };
 }

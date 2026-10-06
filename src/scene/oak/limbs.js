@@ -66,7 +66,7 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
         const D = perpendicular(T, roll, new THREE.Vector3());
         const bend = depth === 1 ? rng.range(0.55, 1.0) : rng.range(0.5, 1.1);
         D.multiplyScalar(Math.sin(bend)).addScaledVector(T, Math.cos(bend));
-        D.y += depth === 1 ? 0.28 : 0.2;
+        D.y += depth === 1 ? 0.12 : 0.2;
         D.normalize();
         // branches reach out and up, never back into the trunk or steeply down
         const outward = D.x * out.x + D.z * out.z;
@@ -172,7 +172,7 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
     const limb = { id: L.id, curve, radiusAt, length: len, depth: 0 };
     limbs.push(limb);
     grow(limb, L.branches, 1);
-    skirt(limb, 0.42, 0.11, 1);
+    skirt(limb, 0.3, 0.1, 1);
     const tip = curve.getPointAt(1);
     addClump(tip.add(new THREE.Vector3(0, 0.6, 0)), rng.range(2.6, 3.2), 0);
   });

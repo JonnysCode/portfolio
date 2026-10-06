@@ -41,7 +41,7 @@ export const SKY_COLORS = {
     zenith: '#7eaecb',
     mid: '#a6cdcf',
     horizon: '#cfe0d2',
-    fog: '#8db0aa', // cool blue-green mist
+    fog: '#84aba8', // cool blue-green mist
     sunGlow: '#ffd596', // warm luminous haze around the sun
     cloudLit: '#fff6e6',
     cloudShade: '#b7cbd0',

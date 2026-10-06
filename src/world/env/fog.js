@@ -23,6 +23,10 @@
 // Materials that lack them (a ShaderMaterial built from its own uniform list)
 // see zeros and fall back to classic linear fog (fogMisc.w = 0).
 //
+// Like three's own chunk, <fog_fragment> must come AFTER <tonemapping_fragment>
+// and <colorspace_fragment> (it converts the mist colour to display space
+// itself, which is a no-op when rendering into the HDR post target).
+//
 // installFog() is idempotent and runs on import, so importing this file from
 // the first world module (lighting.js) patches the chunks before anything
 // compiles. Custom shaders:  uniforms: { ...fogUniforms(), ...mine }, fog: true
@@ -40,7 +44,7 @@ export const fogParams = {
   /** x: ground mist density, y: height falloff, z: mist base height, w: max fog opacity. */
   height: new Float32Array([0.018, 0.32, -0.6, 0.985]),
   /** x: distance curve exponent, y: distance strength, z: night, w: 1 = enabled. */
-  misc: new Float32Array([1.35, 2.7, 0, 1]),
+  misc: new Float32Array([1.6, 2.2, 0, 1]),
 };
 
 const EXTRA_UNIFORMS = {
@@ -129,11 +133,14 @@ const FOG_FRAGMENT = /* glsl */ `
     vec3 fogCol = fogV.rgb;
     // Built-in materials apply fog after tone mapping & output encoding; bring the
     // mist colour into the same space so it matches the HDR (post) path exactly.
+    float fogA = fogV.a;
     #ifdef TONE_MAPPING
       fogCol = toneMapping( fogCol );
+      // mixing in display space reads thinner than in linear HDR — compensate
+      fogA = 1.0 - pow( 1.0 - fogA, 1.6 );
     #endif
     fogCol = linearToOutputTexel( vec4( fogCol, 1.0 ) ).rgb;
-    gl_FragColor.rgb = mix( gl_FragColor.rgb, fogCol, fogV.a );
+    gl_FragColor.rgb = mix( gl_FragColor.rgb, fogCol, fogA );
   }
 #endif
 `;

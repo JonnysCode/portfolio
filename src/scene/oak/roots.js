@@ -85,11 +85,12 @@ export function buildRoots() {
           const n = nMoss(s * 0.42 + ri * 7.1, phi * 0.7, ri * 3.3);
           const n2 = nMoss(s * 1.7 + 40, phi * 2.2, ri);
           // moss sits on the top of the root in patches; flanks stay bark
-          let m = ((top - 0.45) / 0.55) * (0.55 + 0.75 * n) + 0.2 * n + 0.14 * n2 - 0.12;
+          let m = ((top - 0.55) / 0.45) * (0.5 + 0.8 * n) + 0.22 * n + 0.14 * n2 - 0.2;
           m -= smoothstep(0.78, 1, t) * 0.7; // the tip plunges into bare soil
           if (root.thin) m -= 0.12;
+          if (root.id === 'front-right') m -= 0.18; // keep the mouse door's root mostly bark
           const k = clamp(sz.w / 0.55, 0.35, 1.1);
-          return Math.max(m, -0.5) * 0.15 * k;
+          return Math.max(m, -0.5) * 0.12 * k;
         },
       })
     );

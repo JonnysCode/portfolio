@@ -39,49 +39,54 @@ float oakLeaf(vec2 l, float len, out float rib, out float along) {
   float x = l.y / len;
   along = x;
   float y = l.x / len;
-  float base = pow(max(x, 0.0), 0.75) * pow(max(1.0 - x, 0.0), 0.45) * 1.25;
-  float lobes = 0.72 + 0.28 * cos(x * 6.2831853 * 4.2 + 0.6);
-  float w = 0.36 * base * lobes;
-  rib = (1.0 - smoothstep(0.0, 0.025, abs(y))) * step(0.02, x) * step(x, 0.95);
-  float lat = fract((x - abs(y) * 1.2) * 4.2 + 0.1);
-  rib = max(rib, 0.5 * (1.0 - smoothstep(0.0, 0.08, min(lat, 1.0 - lat))) * step(abs(y), w * 0.85));
+  // obovate outline with 4–5 rounded lobes per side
+  float base = pow(max(x, 0.0), 0.6) * pow(max(1.0 - x, 0.0), 0.42) * 1.3;
+  float lobes = 0.78 + 0.22 * cos(x * 6.2831853 * 3.2 + 0.9);
+  float w = 0.42 * base * lobes;
+  rib = (1.0 - smoothstep(0.0, 0.022, abs(y))) * step(0.02, x) * step(x, 0.95);
+  float lat = fract((x - abs(y) * 1.1) * 3.4 + 0.2);
+  rib = max(rib, 0.45 * (1.0 - smoothstep(0.0, 0.07, min(lat, 1.0 - lat))) * step(abs(y), w * 0.8));
   float d = (w - abs(y)) * len;
   return smoothstep(-AA, AA, d) * step(0.0, x) * step(x, 1.0);
 }
 Surf card_oak(vec2 uv) {
   vec3 bg = C(0x4d7a31);
   vec4 acc = vec4(bg, 0.0);
-  // twig
-  vec2 a = vec2(0.5, 0.0), b = vec2(0.47, 0.45), c = vec2(0.55, 0.86);
-  for (int i = 0; i < 15; i++) {
+  // a rounded clump of leaves radiating from the twig tip (centre of the card):
+  // back leaves darker, front leaves brighter — reads as a little volume
+  vec2 ctr = vec2(0.5, 0.5);
+  for (int i = 0; i < 30; i++) {
     float fi = float(i);
-    float t = 0.12 + fi * 0.055;
-    vec2 o = qbez(a, b, c, t);
-    float side = mod(fi, 2.0) < 1.0 ? -1.0 : 1.0;
-    float rnd = hash1(vec2(fi, 3.0), 9u);
-    float phi = side * (0.75 + 0.5 * rnd) * (1.0 - t * 0.55);
-    float len = (0.2 + 0.12 * hash1(vec2(fi, 4.0), 9u)) * (1.0 - 0.25 * t) * (i == 14 ? 1.15 : 1.0);
-    if (i == 14) phi = 0.08;
+    vec3 r = hash3(vec2(fi, 13.0));
+    float layer = fi / 30.0;                      // painter's order: back → front
+    float ang = fi * 2.39996 + r.x * 0.6;         // golden-angle spiral
+    float rad = 0.3 * sqrt(fract(fi * 0.618 + r.y * 0.3));
+    vec2 c = ctr + vec2(cos(ang), sin(ang)) * rad * vec2(1.0, 0.92);
+    vec2 out2 = rad > 0.04 ? normalize(c - ctr) : vec2(cos(ang * 3.0), sin(ang * 3.0));
+    float phi = atan(-out2.x, out2.y) + (r.z - 0.5) * 1.1;
+    float len = (0.2 + 0.1 * r.y) * (1.0 - 0.2 * layer);
+    vec2 dir = rot2(vec2(0.0, 1.0), phi);
+    vec2 o = c - dir * len * 0.45;                // petiole, so the blade is centred on c
     vec2 l = leafLocal(uv, o, phi);
     float rib, along;
-    // drop shadow of this leaf onto what is below
-    float sh = oakLeaf(leafLocal(uv + vec2(0.012, 0.016), o, phi), len * 1.04, rib, along);
-    shade(acc, sh, 0.35);
+    float sh = oakLeaf(leafLocal(uv + vec2(0.012, 0.018), o, phi), len * 1.04, rib, along);
+    shade(acc, sh, 0.32);
     float m = oakLeaf(l, len, rib, along);
     if (m > 0.0) {
-      float tone = hash1(vec2(fi, 7.0), 9u);
-      vec3 col = mix(C(0x3a6a28), C(0x6c9a3a), tone);
-      col = mix(col, C(0x9aae46), step(0.82, tone) * 0.6);
-      col *= 0.82 + 0.3 * along;
-      col *= 0.9 + 0.2 * sat(0.5 + l.x / len * 2.0 * side);
-      col = mix(col, col * 1.35 + 0.03, rib * 0.55);
-      col *= 0.92 + 0.08 * gnoise(uv * 90.0, vec2(90.0));
+      float tone = r.x;
+      vec3 col = mix(C(0x30561f), C(0x67933a), tone * 0.7 + layer * 0.3);
+      col = mix(col, C(0x98ab44), step(0.86, fract(tone * 7.0)) * 0.5);
+      col *= 0.72 + 0.4 * along * (0.6 + 0.4 * layer);
+      col *= 0.9 + 0.2 * sat(0.5 + l.x / len * 2.0);
+      col = mix(col, col * 1.3 + 0.025, rib * 0.5);
+      col *= 0.93 + 0.07 * gnoise(uv * 90.0, vec2(90.0));
       put(acc, col, m);
     }
   }
-  float tw = 1.0 - smoothstep(0.004, 0.009, length(uv - qbez(a, b, c, sat((uv.y) / 0.86))) - 0.002 * (1.0 - uv.y));
-  tw *= step(uv.y, 0.86);
-  put(acc, C(0x5a4630), tw);
+  // the twig into the clump
+  float tw = 1.0 - smoothstep(0.006, 0.011, segDist(uv, vec2(0.5, 0.0), ctr + vec2(0.0, -0.05)));
+  vec4 under = acc;
+  put(acc, C(0x5a4630), tw * (1.0 - step(0.5, under.a)));
   return surf(acc.rgb, 0.5, 0.7, acc.a);
 }`,
 

@@ -19,7 +19,7 @@ import { SCHREINEREI } from '../../world/layout.js';
 import { createRng } from '../../core/rng.js';
 import {
   Batch, board, timber, peg, uvBox, xf, deform, mat4, stoneGeo, mossGeo, tube, rbox,
-  ShingleField, layShingles, shingleGeo, addIvy, addToadstool, addFern, noiseA, noiseB,
+  ShingleField, layShingles, shingleGeo, addIvy, addToadstool, addFern, pushHalo, noiseA, noiseB,
 } from './kit.js';
 import { makeSmoke } from './fx.js';
 
@@ -501,7 +501,7 @@ export function buildAnnex(ctx, B, mats) {
     F.add(mats.wood('oak'), timber([s * (eaveX + 0.02), roofSurf(eaveX) - 0.03, zB], [0, roofSurf(0) - 0.03, zB], 0.05, 0.26, { rng, up: [s * sinP, cosP, 0], wobble: 0.004 }));
     // roof deck boards (closing the underside of the overhangs)
     const deckLen = Math.hypot(eaveX, roofSurf(0) - roofSurf(eaveX));
-    const deck = new THREE.BoxGeometry(deckLen, 0.025, zF - zB);
+    const deck = new THREE.BoxGeometry(deckLen, 0.025, zF - zB, 4, 1, 14);
     uvBox(deck, 'x');
     xf(deck, [s * eaveX / 2, (roofSurf(eaveX) + roofSurf(0)) / 2 + 0.012, (zF + zB) / 2], [0, 0, s * Math.atan(T) * -1]);
     F.add(mats.wood('spruce'), deck);
@@ -527,21 +527,34 @@ export function buildAnnex(ctx, B, mats) {
     dw.timber(-0.05, dorm.y0 + 0.06, dorm.w + 0.05, dorm.y0 + 0.06, 0.12);
     addWindow(dw, mats, rng, 0.2, dorm.y0 + 0.16, dorm.w - 0.2, top - 0.14, { cols: 2, rows: 2, glow, glow2, sill: false });
     dw.plaster([[0, dorm.y0], [dorm.w, dorm.y0], [dorm.w, top], [0, top]], [[[0.2, dorm.y0 + 0.16], [dorm.w - 0.2, dorm.y0 + 0.16], [dorm.w - 0.2, top - 0.14], [0.2, top - 0.14]]]);
-    // cheeks (side walls) going back into the roof
-    for (const s of [-1, 1]) {
-      const cheek = new THREE.BoxGeometry(1.25, dorm.h, 0.1);
-      xf(cheek, [dx - 0.6, dorm.y0 + dorm.h / 2, dz + s * (hw - 0.05)]);
-      F.add(mats.plaster(), uvBox(cheek, 'x', 1 / 2.2));
+    // cheeks: triangles from the front wall back to where they meet the main roof
+    const xr = (y) => hx - (y - eave) / T - 0.02;
+    for (const sgn of [-1, 1]) {
+      const sh = new THREE.Shape([new THREE.Vector2(dx, dorm.y0 - 0.1), new THREE.Vector2(dx, top), new THREE.Vector2(xr(top) - 0.1, top), new THREE.Vector2(xr(dorm.y0 - 0.1) - 0.1, dorm.y0 - 0.1)]);
+      const cg = new THREE.ExtrudeGeometry(sh, { depth: 0.08, bevelEnabled: false });
+      cg.translate(0, 0, sgn > 0 ? -0.08 : 0);
+      uvBox(cg, 'x', 1 / 2.2);
+      F.add(mats.plaster(), xf(cg, [0, 0, dz + sgn * hw]));
+      // corner board
+      F.add(tim, xf(board(0.08, dorm.h + 0.05, 0.08, { along: 'y', rng }), [dx - 0.02, dorm.y0 + dorm.h / 2, dz + sgn * (hw - 0.02)]));
     }
-    // little gable roof with shingle-like boards
-    const dp = 0.75; // pitch tan
-    for (const s of [-1, 1]) {
-      const len = Math.hypot(hw + 0.15, (hw + 0.15) * dp);
-      const rf = new THREE.BoxGeometry(1.55, 0.05, len);
-      xf(rf, [dx - 0.55, top + (hw + 0.15) * dp * 0.5 + 0.02, dz + s * (hw + 0.15) / 2], [-s * Math.atan(dp), 0, 0]);
-      F.add(mats.wood('oak'), uvBox(rf, 'x'));
+    // little gable roof: two board planes (ridge along x), a carved bargeboard pair in front
+    const dp = 0.75;
+    const ow = hw + 0.15; // eave overhang
+    const rl = Math.hypot(ow, ow * dp);
+    const back = xr(top + ow * dp) - 0.15;
+    const rlen = dx + 0.22 - back;
+    for (const sgn of [-1, 1]) {
+      const rf = new THREE.BoxGeometry(rlen, 0.04, rl, 3, 1, 2);
+      uvBox(rf, 'x');
+      xf(rf, [back + rlen / 2, top + (ow * dp) / 2 + 0.03, dz + (sgn * ow) / 2], [sgn * Math.atan(dp), 0, 0]);
+      F.add(mats.wood('spruce'), rf);
+      const bb = board(0.04, 0.14, rl + 0.05, { along: 'z', rng });
+      F.add(mats.wood('oak'), xf(bb, [dx + 0.22, top + (ow * dp) / 2, dz + (sgn * ow) / 2], [sgn * Math.atan(dp), 0, 0]));
     }
-    dorm.ridge = top + (hw + 0.15) * dp;
+    dorm.ridge = top + ow * dp;
+    dorm.ow = ow;
+    dorm.back = back;
   }
 
   // ── shingles ───────────────────────────────────────────────────────────────
@@ -564,10 +577,14 @@ export function buildAnnex(ctx, B, mats) {
       rng,
       skip: (u, v) => {
         if (s < 0) return false;
-        // leave room for the dormer
+        // leave room for the dormer: its box below its eaves, its gable roof above (a triangle)
         const z = zF + 0.06 - u;
-        const y = roofSurf(eaveX) + v * sinP;
-        return z > dorm.z - dorm.w / 2 - 0.12 && z < dorm.z + dorm.w / 2 + 0.12 && y > dorm.y0 - 0.1 && y < dorm.ridge + 0.2;
+        const y = roofSurf(eaveX + 0.06) + v * sinP;
+        const dzz = Math.abs(z - dorm.z);
+        if (y < dorm.y0 - 0.12 || y > dorm.ridge + 0.1) return false;
+        if (y < dorm.y0 + dorm.h) return dzz < dorm.w / 2 + 0.06;
+        const k = 1 - (y - dorm.y0 - dorm.h) / (dorm.ridge - dorm.y0 - dorm.h);
+        return dzz < dorm.ow * k + 0.04;
       },
       tint: (u, v, c, p) => {
         // moss creeping up from the eaves and in patches; sun-bleached near the ridge
@@ -603,11 +620,11 @@ export function buildAnnex(ctx, B, mats) {
     const ca = Math.cos(Math.atan(dp)), sa = Math.sin(Math.atan(dp));
     for (const s of [-1, 1]) {
       layShingles(field, {
-        origin: new THREE.Vector3(s > 0 ? dorm.x - 1.1 : dorm.x + 0.22, top + 0.06, dorm.z + s * hw),
+        origin: new THREE.Vector3(s > 0 ? dorm.back : dorm.x + 0.24, top + 0.06, dorm.z + s * hw),
         alongDir: new THREE.Vector3(s, 0, 0),
         upDir: new THREE.Vector3(0, sa, -s * ca),
         normal: new THREE.Vector3(0, ca, s * sa),
-        length: 1.32,
+        length: dorm.x + 0.24 - dorm.back,
         height: dl,
         w: 0.17,
         exposure: 0.11,
@@ -751,13 +768,10 @@ export function buildAnnex(ctx, B, mats) {
   // warm light inside, spilling out of the door and windows (budgeted)
   const light = ctx.lights?.addPoint?.(annexToWorld(-0.6, 1.6, 0.8), { color: '#ffb866', day: 1.2, night: 7, distance: 7 });
 
-  // a glow halo in each big window at night
-  const halos = [];
-  for (const [x, y, z, s] of [[W1[0] + 0.65 - hx, 1.65, hz + 0.25, 1.4], [W2[0] + 0.5 - hx, 1.5, hz + 0.25, 1.0], [-0.85, 3.5, gz + 0.2, 0.9], [0.85, 3.5, gz + 0.2, 0.9]]) {
-    const p = annexToWorld(x, y, z);
-    halos.push({ x: p.x, y: p.y, z: p.z, size: s });
+  // a glow halo in each window at night
+  for (const [x, y, z, sz] of [[W1[0] + 0.65 - hx, 1.65, hz + 0.25, 1.4], [W2[0] + 0.5 - hx, 1.5, hz + 0.25, 1.0], [-0.85, 3.5, gz + 0.2, 0.9], [0.85, 3.5, gz + 0.2, 0.9], [dorm.x + 0.2, dorm.y0 + 0.4, dorm.z, 0.7]]) {
+    pushHalo(annexToWorld(x, y, z), sz);
   }
-  group.add(ctx.props.glowQuads(halos, '#ffc66e', { day: 0.05, night: 0.55 }));
 
   return {
     group,

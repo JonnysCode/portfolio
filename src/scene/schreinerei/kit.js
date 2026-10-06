@@ -27,13 +27,21 @@ const noiseB = createNoise2D(5531);
  */
 export function makeMats(ctx) {
   const m = ctx.materials;
-  return {
-    wood: (species = 'oak', extra = {}) => m.surface('wood', { species, ...extra }),
+  // One vertex-coloured material per colorize kind: the species / colour rides
+  // on the vertex colour, so every wood species (or metal, fabric) merges into
+  // ONE draw call. mats.wood('walnut') returns a proxy the Batch unwraps.
+  const proxy = (material, color) => ({ isProxy: true, material, color });
+  const vcSurface = (kind, extra = {}) => m.surface(kind, { ...(kind === 'wood' ? { species: 'oak' } : {}), vertexColors: true, ...extra });
+  const mats = {
+    wood: (species = 'oak', extra = {}) => proxy(vcSurface('wood', extra), SPECIES[species] ?? species),
+    /** A real (non-proxy) wood material, for meshes not built through a Batch. */
+    woodMat: (species = 'oak', extra = {}) => m.surface('wood', { species, ...extra }),
     timber: (extra = {}) => m.surface('timber', extra),
     /** Individual instanced shakes: weathered timber, world-mapped so every shake differs. */
-    shingles: () => m.surface('timber', { triplanar: true, color: '#6f5643' }),
+    shingles: () => m.surface('timber', { triplanar: true, color: '#7a5a42' }),
     plaster: () => m.surface('plaster'),
     stone: (extra = {}) => m.surface('stone', extra),
+    mortar: () => m.surface('stone', { color: '#8d867a' }),
     cobble: () => m.surface('cobble'),
     rock: () => m.surface('rock'),
     moss: () => m.surface('moss'),
@@ -42,16 +50,41 @@ export function makeMats(ctx) {
     leaf: () => m.surface('leaf', { side: THREE.DoubleSide }),
     rope: () => m.surface('rope'),
     paper: () => m.surface('paper'),
-    fabric: (color) => m.surface('fabric', { color }),
-    metal: (color = '#3d3833') => m.surface('metal', { color }),
+    fabric: (color = '#c9b79a') => proxy(vcSurface('fabric'), color),
+    metal: (color = '#3d3833') => proxy(vcSurface('metal'), color),
     glass: () => m.surface('glass'),
-    clay: (color) => m.surface('clay', color ? { color } : {}),
+    clay: (color = '#b5633e') => proxy(vcSurface('clay'), color),
     mushroomCap: (color) => m.surface('mushroomCap', { color }),
     mushroomStem: () => m.surface('mushroomStem'),
     vc: () => m.standard('#ffffff', { vertexColors: true, roughness: 0.78 }),
-    glow: (color, day = 0.35, night = 2.2) => m.glow(color, { day, night }),
+    /** Warm window/lamp glows: two shared intensities keep the material count low. */
+    glow: (color, day = 0.35, night = 2.2) =>
+      day >= 0.5 ? m.glow('#ffd79a', { day: 0.9, night: 3.2 }) : day >= 0.3 ? m.glow('#ffc46e', { day: 0.4, night: 2.4 }) : m.glow('#ffa850', { day: 0.26, night: 1.9 }),
   };
+  /**
+   * For small hotspot pieces: painted bits, fabric and glass ride on the shared
+   * vertex-coloured wood material too (at that size the grain is invisible), so
+   * a piece costs one or two draw calls.
+   */
+  mats.piece = {
+    ...mats,
+    vc: () => proxy(vcSurface('wood'), '#ffffff'),
+    fabric: (color = '#c9b79a') => proxy(vcSurface('wood'), color),
+    glass: () => proxy(vcSurface('wood'), '#cfe3e0'),
+    clay: (color = '#b5633e') => proxy(vcSurface('wood'), color),
+  };
+  return mats;
 }
+
+/** Average (sRGB) colour of each wood species — the vertex colour on the shared wood material. */
+export const SPECIES = {
+  oak: '#b8874f',
+  walnut: '#6a4630',
+  spruce: '#dcb880',
+  ash: '#d4b78a',
+  cherry: '#aa603c',
+  maple: '#e8d2a6',
+};
 
 // ─── batching ────────────────────────────────────────────────────────────────
 const _c = new THREE.Color();
@@ -101,6 +134,10 @@ export class Batch {
    * Add a geometry (consumed). opts: { cast = true, receive = true, color (vc materials), matrix }
    */
   add(material, geo, opts = {}) {
+    if (material.isProxy) {
+      if (opts.color === undefined) opts = { ...opts, color: material.color };
+      material = material.material;
+    }
     const cast = opts.cast ?? true;
     const receive = opts.receive ?? true;
     const vc = !!material.vertexColors;
@@ -132,9 +169,26 @@ export class Batch {
       batch: parent,
     };
   }
-  /** Merge everything into meshes added to `parent`. Returns the meshes. */
-  build(parent, name = 'batch') {
+  /**
+   * Merge everything into meshes added to `parent`. Returns the meshes.
+   * opts.mergeShadow: put a material's casting and non-casting parts into ONE
+   * casting mesh (fewer draw calls for small hotspot pieces).
+   */
+  build(parent, name = 'batch', { mergeShadow = false } = {}) {
     const out = [];
+    if (mergeShadow) {
+      const merged = new Map();
+      for (const e of this.lists.values()) {
+        const k = e.material.uuid;
+        const t = merged.get(k);
+        if (t) {
+          t.geos.push(...e.geos);
+          t.cast = t.cast || e.cast;
+          t.receive = t.receive || e.receive;
+        } else merged.set(k, { ...e, geos: [...e.geos] });
+      }
+      this.lists = merged;
+    }
     for (const e of this.lists.values()) {
       const g = e.geos.length === 1 ? e.geos[0] : mergeGeometries(e.geos, false);
       if (!g) {
@@ -283,11 +337,71 @@ export function rbox(w, h, d, r = 0.012) {
 }
 
 /**
+ * A chamfered beam along X (length len, height h along Y, width w along Z):
+ * an 8-sided section with `segs` length segments (so crooked deforms bend it)
+ * and flat end caps. Much cheaper than a rounded box (≈ 16·segs + 12 tris).
+ */
+export function beamGeo(len, h, w, c = 0.012, segs = 1) {
+  const cc = Math.max(0.0005, Math.min(c, h * 0.3, w * 0.3));
+  const hh = h / 2, hw = w / 2;
+  // section outline (y, z), counter-clockwise seen from +X
+  const sec = [
+    [-hh + cc, -hw], [hh - cc, -hw], [hh, -hw + cc], [hh, hw - cc],
+    [hh - cc, hw], [-hh + cc, hw], [-hh, hw - cc], [-hh, -hw + cc],
+  ];
+  const pos = [];
+  const nor = [];
+  const idx = [];
+  const n = sec.length;
+  // sides: each face gets its own vertices (flat-ish shading per facet)
+  for (let f = 0; f < n; f++) {
+    const a = sec[f], b = sec[(f + 1) % n];
+    const ny = b[1] - a[1], nz = -(b[0] - a[0]);
+    const nl = Math.hypot(ny, nz) || 1;
+    const base = pos.length / 3;
+    for (let i = 0; i <= segs; i++) {
+      const x = -len / 2 + (len * i) / segs;
+      pos.push(x, a[0], a[1], x, b[0], b[1]);
+      nor.push(0, ny / nl, nz / nl, 0, ny / nl, nz / nl);
+    }
+    for (let i = 0; i < segs; i++) {
+      const k = base + i * 2;
+      idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
+    }
+  }
+  // caps
+  for (const sx of [-1, 1]) {
+    const base = pos.length / 3;
+    for (const [y, z] of sec) {
+      pos.push((sx * len) / 2, y, z);
+      nor.push(sx, 0, 0);
+    }
+    for (let i = 1; i < n - 1; i++) {
+      if (sx > 0) idx.push(base, base + i, base + i + 1);
+      else idx.push(base, base + i + 1, base + i);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setIndex(idx);
+  return g;
+}
+
+/** beamGeo oriented along an axis ('x' | 'y' | 'z'): sizes are (w, h, d) like a BoxGeometry. */
+export function beamBox(w, h, d, along = 'x', c = 0.012, segs = 1) {
+  if (along === 'x') return beamGeo(w, h, d, c, segs);
+  if (along === 'y') return beamGeo(h, w, d, c, segs).rotateZ(Math.PI / 2);
+  return beamGeo(d, h, w, c, segs).rotateY(-Math.PI / 2);
+}
+
+/**
  * A wooden part: rounded box with grain UVs. along = grain axis ('x' | 'y' | 'z').
  * rng (optional) gives the board its own UV offset so neighbours don't match.
  */
-export function board(w, h, d, { along = 'x', r = 0.01, rng = null, scale = 1 / TILE.wood } = {}) {
-  const g = rbox(w, h, d, r);
+export function board(w, h, d, { along = 'x', r = 0.01, rng = null, scale = 1 / TILE.wood, segs = 0 } = {}) {
+  const len = along === 'x' ? w : along === 'y' ? h : d;
+  const g = beamBox(w, h, d, along, r, segs || Math.max(1, Math.round(len / 0.7)));
   return uvBox(g, along, scale, rng ? [rng.next() * 7, rng.next() * 7] : [0, 0]);
 }
 
@@ -297,8 +411,8 @@ export function board(w, h, d, { along = 'x', r = 0.01, rng = null, scale = 1 / 
  */
 export function timber(a, b, w, h, { rng = null, up = [0, 1, 0], r = 0.018, wobble = 0.012, scale = 1 / TILE.timber } = {}) {
   const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-  const segs = Math.max(1, Math.round(len / 0.6));
-  const g = new RoundedBoxGeometry(len, h, w, 1, Math.min(r, w * 0.4, h * 0.4));
+  const segs = Math.max(1, Math.round(len / 0.5));
+  const g = beamGeo(len, h, w, r, segs);
   if (rng && wobble > 0) {
     const s1 = rng.next() * 10, s2 = rng.next() * 10;
     const k1 = rng.jitter(1), k2 = rng.jitter(1);
@@ -310,7 +424,6 @@ export function timber(a, b, w, h, { rng = null, up = [0, 1, 0], r = 0.018, wobb
     });
   }
   uvBox(g, 'x', scale, rng ? [rng.next() * 7, rng.next() * 7] : [0, 0]);
-  void segs;
   return alongX(g, a, b, up);
 }
 
@@ -543,7 +656,7 @@ export { noiseA, noiseB };
  * plane: width along X, length along +Y (butt at y = 0), facing +Z.
  */
 export function shingleGeo(w = 0.2, l = 0.34, t = 0.022) {
-  const g = new THREE.BoxGeometry(w, l, t, 3, 3, 1);
+  const g = new THREE.BoxGeometry(w, l, t, 2, 2, 1);
   g.translate(0, l / 2, 0);
   deform(g, (v) => {
     const xn = v.x / (w / 2);
@@ -637,4 +750,91 @@ export function layShingles(field, { origin, alongDir, upDir, normal, length, he
       field.push(m, col);
     }
   }
+}
+
+// ─── lights: lanterns, fairy lights, halos (all batched) ────────────────────
+const halos = [];
+/** Queue a soft glow halo (world space); main builds ONE glowQuads mesh from all of them. */
+export function pushHalo(p, size = 0.6) {
+  halos.push({ x: p.x ?? p[0], y: p.y ?? p[1], z: p.z ?? p[2], size });
+}
+/** Take (and clear) the queued halos. */
+export function takeHalos() {
+  return halos.splice(0, halos.length);
+}
+
+/**
+ * A forged lantern (≈0.5 tall, origin at the hanging ring on top) added into a
+ * batch frame `F` at local position `pos` (array). `world` (Vector3) is used
+ * for the halo. Iron in the vertex-coloured metal, glass in the bright glow.
+ */
+export function addLantern(F, mats, pos, world, { scale = 1, color = '#2f2b28' } = {}) {
+  const iron = mats.metal(color);
+  const m = mat4(pos, null, scale);
+  const parts = [];
+  // ring, roof, cap
+  parts.push([iron, new THREE.TorusGeometry(0.035, 0.009, 4, 10).translate(0, -0.01, 0)]);
+  parts.push([iron, new THREE.SphereGeometry(0.028, 6, 4).translate(0, -0.06, 0)]);
+  parts.push([iron, new THREE.ConeGeometry(0.17, 0.12, 6, 1).translate(0, -0.12, 0)]);
+  parts.push([iron, new THREE.CylinderGeometry(0.175, 0.175, 0.018, 6).translate(0, -0.185, 0)]);
+  // corner posts & glass (glow)
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    parts.push([iron, new THREE.BoxGeometry(0.018, 0.25, 0.018).translate(Math.sin(a) * 0.12, -0.32, Math.cos(a) * 0.12)]);
+  }
+  parts.push([mats.glow('#ffd79a', 0.9, 3.2), new THREE.CylinderGeometry(0.115, 0.1, 0.24, 6).translate(0, -0.32, 0)]);
+  parts.push([iron, new THREE.CylinderGeometry(0.13, 0.11, 0.025, 6).translate(0, -0.455, 0)]);
+  parts.push([iron, new THREE.SphereGeometry(0.025, 6, 4).translate(0, -0.48, 0)]);
+  for (const [mat, g] of parts) F.add(mat, g.applyMatrix4(m), { cast: false });
+  if (world) pushHalo(new THREE.Vector3(world.x, world.y - 0.32 * scale, world.z), 0.95 * scale);
+}
+
+/**
+ * Fairy lights: sagging dark wires between points (local to F) with warm
+ * bulbs; halos queued in world space via `toWorld(v)`. Returns the bulb count.
+ */
+export function addFairyLights(F, mats, points, toWorld, { sag = 0.08, spacing = 0.3 } = {}) {
+  const wire = mats.metal('#2a2624');
+  const bulbMat = mats.glow('#ffd79a', 0.9, 3.2);
+  const tmp = new THREE.Vector3();
+  let count = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i], b = points[i + 1];
+    const span = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    const curve = sagCurve(a, b, span * sag, 16);
+    const g = new THREE.TubeGeometry(curve, Math.max(8, Math.round(span * 8)), 0.006, 3, false);
+    F.add(wire, g, { cast: false });
+    const n = Math.max(1, Math.floor(span / spacing));
+    for (let k = 0; k < n; k++) {
+      const p = curve.getPointAt((k + 0.5) / n);
+      F.add(wire, new THREE.CylinderGeometry(0.011, 0.011, 0.022, 5).translate(p.x, p.y - 0.014, p.z), { cast: false });
+      const bulb = new THREE.SphereGeometry(0.022, 6, 4);
+      bulb.scale(1, 1.3, 1);
+      F.add(bulbMat, bulb.translate(p.x, p.y - 0.045, p.z), { cast: false, receive: false });
+      tmp.set(p.x, p.y - 0.045, p.z);
+      pushHalo(toWorld(tmp.clone()), 0.26);
+      count++;
+    }
+  }
+  return count;
+}
+
+/** Make a thin open surface visible from both sides (duplicate with flipped winding & normals). */
+export function doubleFace(geo) {
+  const g = geo.index ? geo.toNonIndexed() : geo.clone();
+  const back = g.clone();
+  const pos = back.attributes.position;
+  const nor = back.attributes.normal;
+  for (let i = 0; i < pos.count; i += 3) {
+    for (const a of [pos, nor, back.attributes.uv].filter(Boolean)) {
+      for (let k = 0; k < a.itemSize; k++) {
+        const t = a.array[(i + 1) * a.itemSize + k];
+        a.array[(i + 1) * a.itemSize + k] = a.array[(i + 2) * a.itemSize + k];
+        a.array[(i + 2) * a.itemSize + k] = t;
+      }
+    }
+  }
+  for (let i = 0; i < nor.array.length; i++) nor.array[i] = -nor.array[i];
+  const out = mergeGeometries([g, back], false);
+  return out;
 }
