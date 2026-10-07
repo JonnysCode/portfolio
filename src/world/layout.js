@@ -150,7 +150,7 @@ export const PATH_HALF_WIDTH = { main: 1.15, cottage: 0.85, bridge: 0.85, farBan
 export const SPOTS = [
   {
     id: 'glen',
-    title: "Jonny's Woodland",
+    title: 'Jonny’s Woodland',
     subtitle: 'The whole glen',
     icon: '🌳',
     areas: [],
@@ -177,7 +177,7 @@ export const SPOTS = [
   },
   {
     id: 'home',
-    title: "Jonny's Cottage",
+    title: 'Jonny’s Cottage',
     subtitle: 'About me & contact',
     icon: '🍄',
     areas: ['home'],

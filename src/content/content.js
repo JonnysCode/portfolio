@@ -34,7 +34,7 @@ export const profile = {
 /** Intro cards for each area of the village (ids match src/world/layout.js). */
 export const areas = {
   glen: {
-    title: "Jonny's Woodland",
+    title: 'Jonny’s Woodland',
     kicker: 'Start here',
     text: 'A little glen under a very old oak. Every house here holds one of the things I love making — glide between them, peek into windows and click whatever catches your eye.',
   },
@@ -59,7 +59,7 @@ export const areas = {
     text: 'A treehouse halfway up the Great Oak, where the screens glow late into the night. My software projects, tools and experiments — including the code behind this very woodland.',
   },
   home: {
-    title: "Jonny's Cottage",
+    title: 'Jonny’s Cottage',
     kicker: 'About me & contact',
     text: 'The tall red mushroom with the crooked chimney is mine. Here is a bit about who I am — and the mailbox by the gate is always open.',
   },
@@ -255,18 +255,20 @@ export const entries = {
     area: 'code',
     kind: 'project',
     title: 'This Woodland',
-    subtitle: 'A procedural three.js world as a portfolio',
+    subtitle: 'A miniature forest glen, built entirely in code',
     year: '2026',
-    summary: 'Every mushroom, snail and plank here is generated in code — no 3D models were harmed.',
+    summary: 'Every mushroom, plank, leaf and snail in this glen is generated in code — no 3D models or textures were harmed.',
     body: [
-      'The whole village is built procedurally with three.js: terrain, trees, mushroom houses, villagers and snails are all generated from code at load time, with cel-shaded materials, instanced vegetation and a day/night cycle.',
-      'All the content lives in a single file, so updating the portfolio never requires touching the 3D code.',
+      'The whole glen is procedural three.js: the Great Oak is sculpted from noise and curves, every shingle, stone and leaf card is placed by code, and the painterly bark, moss and stone textures are baked on the GPU when the page loads.',
+      'Light does the rest: a low golden sun through the canopy, height fog and mist, light shafts with drifting motes, bloom and a miniature depth of field — and at night, moonlight, fireflies and glowing mushrooms.',
+      'All the portfolio text lives in a single content file, so updating it never means touching the 3D code.',
     ],
     facts: [
       ['Stack', 'three.js, Vite, vanilla JS'],
-      ['Assets', '100% procedural'],
+      ['Assets', '100% procedural — no model or texture files'],
+      ['Extras', 'day/night, secrets to find, synthesized sound'],
     ],
-    tags: ['three.js', 'WebGL', 'Creative coding'],
+    tags: ['three.js', 'WebGL', 'Creative coding', 'Procedural'],
     links: [{ label: 'Source on GitHub', href: 'https://github.com/JonnysCode/portfolio' }],
     featured: true,
   },
