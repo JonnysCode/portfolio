@@ -232,12 +232,16 @@ export function fallenLog(B, rng, x, z, len, r, yaw) {
   return { pts, r, brackets };
 }
 
+// (twigs & small roots are a little darker than the trunks' bark)
+const SMALL_BARK = new THREE.Color(BARK_MEAN).multiplyScalar(0.8);
+const smallBark = () => SMALL_BARK;
+
 /** A small exposed root snaking out of the soil (bark material). */
 export function smallRoot(B, rng, x, z, yaw, len, r) {
   const steps = 7;
   const pts = groundPath(x, z, yaw, len, steps, (t) => r * (0.55 - t * 1.0) + Math.sin(t * Math.PI * 2) * r * 0.25, rng.jitter(0.8));
   const radii = pts.map((_, i) => r * (1 - 0.75 * (i / steps)));
-  tube(B, pts, radii, 6, {});
+  tube(B, pts, radii, 6, { color: smallBark });
 }
 
 /** A thin twig lying on the ground, with a fork. */
@@ -246,14 +250,14 @@ export function twig(B, rng, x, z) {
   const len = rng.range(0.25, 0.7);
   const r = rng.range(0.008, 0.018);
   const pts = groundPath(x, z, yaw, len, 3, r, rng.jitter(0.6));
-  tube(B, pts, pts.map((_, i) => r * (1 - i * 0.2)), 4, {});
+  tube(B, pts, pts.map((_, i) => r * (1 - i * 0.2)), 3, { color: smallBark });
   if (rng.chance(0.6)) {
     const k = 1 + Math.floor(rng.next() * 2);
     const a = yaw + rng.range(0.4, 0.9) * (rng.chance(0.5) ? 1 : -1);
     const p0 = pts[k];
     const p1 = p0.clone().add(new THREE.Vector3(Math.sin(a) * len * 0.35, 0.005, Math.cos(a) * len * 0.35));
     p1.y = getHeight(p1.x, p1.z) + r * 0.7;
-    tube(B, [p0, p1], [r * 0.7, r * 0.4], 4, {});
+    tube(B, [p0, p1], [r * 0.7, r * 0.4], 3, { color: smallBark });
   }
 }
 

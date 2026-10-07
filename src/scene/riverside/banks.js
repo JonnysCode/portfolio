@@ -130,7 +130,7 @@ export function buildBanks(ctx, B, rng, rocks) {
   for (const r of rocks) {
     const bed = getHeight(r.x, r.z);
     const top = WL + r.h;
-    const g = stoneGeo(rng, { r: r.r, sx: rng.range(1.0, 1.35), sz: rng.range(0.8, 1.1), sy: 1, lump: 0.18, detail: 2, flatTop: 0.75, flatBottom: -2 });
+    const g = stoneGeo(rng, { r: r.r, sx: rng.range(1.0, 1.35), sz: rng.range(0.8, 1.1), sy: 1, lump: 0.18, sphere: [11, 7], flatTop: 0.75, flatBottom: -2 });
     // stretch the lower half down into the bed so nothing floats
     const below = top - bed + 0.15;
     deform(g, (v) => {

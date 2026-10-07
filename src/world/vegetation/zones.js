@@ -259,6 +259,37 @@ export function viewDetail(x, y, z, { r = 0.5, near = 14, far = 34, min = 0.5 } 
   return 1 - (1 - min) * THREE.MathUtils.smoothstep(d, near, far);
 }
 
+// ─── the composed shots (for "no bare ground" checks) ───────────────────────
+// Full (un-narrowed) frusta of every spot's composed shot and its -wide
+// variant, plus the overview: what the visitor sees when a glide lands.
+let shots = null;
+const _shot = new THREE.Sphere();
+/** True if a sphere shows in any composed shot (spot, spot-wide, overview). */
+export function inShot(x, y, z, r = 0.3) {
+  if (!shots) {
+    shots = [];
+    const cam = new THREE.PerspectiveCamera(42, ASPECT, 0.5, 220);
+    const add = (p, t, fov) => {
+      cam.fov = fov + 2;
+      cam.updateProjectionMatrix();
+      cam.position.set(...p);
+      cam.lookAt(t[0], t[1], t[2]);
+      cam.updateMatrixWorld(true);
+      shots.push(new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)));
+    };
+    for (const s of SPOTS) {
+      const p = s.camera.position, t = s.camera.target, fov = s.camera.fov ?? 40;
+      add(p, t, fov);
+      if (s.id !== 'glen') add([t[0] + (p[0] - t[0]) * 1.8, t[1] + (p[1] - t[1]) * 1.8, t[2] + (p[2] - t[2]) * 1.8], t, fov);
+    }
+    add([0, 34, 52], [0, 4, -2], 40);
+  }
+  _shot.center.set(x, y, z);
+  _shot.radius = r;
+  for (const f of shots) if (f.intersectsSphere(_shot)) return true;
+  return false;
+}
+
 /** Path distance (normalised) re-exported for convenience. */
 export { getPathDistance, getStreamDistance };
 

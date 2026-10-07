@@ -55,7 +55,7 @@ const SETTINGS = {
   aperture: 10,
   /** In-focus dead zone (px) so the subject stays pin sharp. */
   focusBand: 0.9,
-  maxBlur: 11, // px at 720p (behind the focus)
+  maxBlur: 9, // px at 720p (behind the focus; enough for the macro look, the far forest keeps its trunks)
   /** Near field (in front of the focus): wider dead zone, CoC scale, and a
    *  soft saturation towards nearMaxBlur so big foreground framing stays readable. */
   nearBand: 1.2,
@@ -67,6 +67,9 @@ const SETTINGS = {
    *  compressed by the tone curve here but not in the plain path — keep parity. */
   exposure: 1.06,
   saturation: 1.12,
+  /** Highlights keep their hue (0..1) instead of bleaching to white — warm lights stay warm. */
+  highlightHueDay: 0.2,
+  highlightHueNight: 0.55,
   warmth: 0.05,
   shadowTint: [-0.02, 0.008, 0.018], // added in the shadows (teal-green)
   lift: 0.018,
@@ -307,6 +310,7 @@ class FinishMaterial extends THREE.ShaderMaterial {
         uUseBloom: { value: 0 },
         uUseDof: { value: 0 },
         uExposure: { value: SETTINGS.exposure },
+        uHighlightHue: { value: 0.2 },
         uSaturation: { value: SETTINGS.saturation },
         uWarmth: { value: SETTINGS.warmth },
         uShadowTint: { value: new THREE.Vector3(...SETTINGS.shadowTint) },
@@ -323,7 +327,7 @@ class FinishMaterial extends THREE.ShaderMaterial {
       fragmentShader: /* glsl */ `
         uniform sampler2D tColor, tBloom, tBokeh, tAO;
         uniform float uUseBloom, uUseDof, uAO;
-        uniform float uExposure, uSaturation, uWarmth, uLift, uVignette, uGrain, uAspect, uNight, uTime;
+        uniform float uExposure, uSaturation, uWarmth, uLift, uVignette, uGrain, uAspect, uNight, uTime, uHighlightHue;
         uniform vec3 uShadowTint, uLiftColor, uVignetteColor;
         varying vec2 vUv;
         ${COC_GLSL}
@@ -349,7 +353,16 @@ class FinishMaterial extends THREE.ShaderMaterial {
           if (uUseBloom > 0.5) col += texture2D(tBloom, vUv).rgb;
 
           // the renderer's tone mapping (exposure included)
-          col = toneMapping(col * uExposure);
+          vec3 hdr = col * uExposure;
+          col = toneMapping(hdr);
+          // keep lights warm: the filmic curve bleaches bright warm lights to
+          // white, so in the highlights blend towards a hue-preserving curve
+          // (the max channel goes through the tone curve, the hue is kept)
+          float mx = max(max(hdr.r, hdr.g), hdr.b);
+          if (mx > 0.9 && uHighlightHue > 0.0) {
+            vec3 hp = hdr * (toneMapping(vec3(mx)).g / mx);
+            col = mix(col, hp, uHighlightHue * smoothstep(0.9, 3.5, mx));
+          }
           col = clamp(col, 0.0, 1.0);
 
           // grade (display-referred linear)
@@ -659,6 +672,7 @@ export default async function build(ctx) {
       fu.uVignette.value = SETTINGS.vignette * (1 + 0.3 * n);
       fu.uSaturation.value = SETTINGS.saturation;
       fu.uExposure.value = SETTINGS.exposure;
+      fu.uHighlightHue.value = SETTINGS.highlightHueDay + (SETTINGS.highlightHueNight - SETTINGS.highlightHueDay) * n;
       fu.uWarmth.value = SETTINGS.warmth * (1 - n);
       const st = SETTINGS.shadowTint;
       fu.uShadowTint.value.set(st[0], st[1], st[2]);

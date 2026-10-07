@@ -140,7 +140,7 @@ export function buildBridge(ctx, B, rng) {
     const core = new THREE.ExtrudeGeometry(shape, { depth: W - 0.14, bevelEnabled: false, curveSegments: 1 });
     core.translate(0, 0, -(W - 0.14) / 2);
     // dark, damp mortar with moss in it: every joint between the face stones reads as a shadowed groove
-    const dark = new THREE.Color(MORTAR), green = new THREE.Color('#3c5021');
+    const dark = new THREE.Color(MORTAR), green = new THREE.Color('#465a28');
     paintFn(core, MORTAR, (x, y, z, i, c) => c.copy(dark).lerp(green, smooth01(0.3 + noiseA(x * 1.5, y * 2 + z) * 0.8 - y * 0.3)));
     F.add(MM.moss, core);
   }

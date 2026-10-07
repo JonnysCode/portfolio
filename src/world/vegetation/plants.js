@@ -249,14 +249,14 @@ function blade(B, base, dir, side, len, wid, color, { cup = 0, droop = 0, segs =
 }
 
 /** A bell (lathe) hanging from `top`, opening along `axis` (unit). */
-function bell(B, top, axis, len, rad, color, inner = null, { flare = 0.35, seg = 7 } = {}) {
+function bell(B, top, axis, len, rad, color, inner = null, { flare = 0.35, seg = 7, rows = 3 } = {}) {
   const ref = Math.abs(axis.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : UP;
   const u = new THREE.Vector3().crossVectors(ref, axis).normalize();
   const v = new THREE.Vector3().crossVectors(axis, u).normalize();
   // profile (t along the axis, radius factor)
   const prof = [[0, 0.3], [0.45, 0.9], [1, 1 + flare]];
-  // (seg ≤ 4: a two-row bell — the waist row is invisible at thumbnail size)
-  if (seg <= 4) prof.splice(1, 1);
+  // (rows = 2: a single flaring band — the waist is invisible at thumbnail size)
+  if (rows < 3 || seg <= 4) prof.splice(1, 1);
   const base = B.count;
   for (const [t, rf] of prof) {
     for (let i = 0; i <= seg; i++) {
@@ -295,16 +295,16 @@ function petalQuad(B, base, dir, side, normal, len, wid, color) {
 }
 
 /** A tiny flat star flower (forget-me-not): one fan with lobed petals and a coloured eye. */
-function starFlower(B, center, normal, r, petalCol, eyeCol, lobes = 5) {
+function starFlower(B, center, normal, r, petalCol, eyeCol, lobes = 5, notched = true) {
   const ref = Math.abs(normal.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : UP;
   const u = new THREE.Vector3().crossVectors(ref, normal).normalize();
   const v = new THREE.Vector3().crossVectors(normal, u).normalize();
   const b = B.count;
   B.vert(center.x, center.y, center.z, normal.x, normal.y, normal.z, 0.5, 0.5, eyeCol);
-  const n = lobes * 2;
+  const n = notched ? lobes * 2 : lobes;
   for (let i = 0; i < n; i++) {
     const a = (i / n) * TAU;
-    const rr = i % 2 === 0 ? r : r * 0.55;
+    const rr = !notched || i % 2 === 0 ? r : r * 0.55;
     const p = center.clone().addScaledVector(u, Math.cos(a) * rr).addScaledVector(v, Math.sin(a) * rr);
     B.vert(p.x, p.y, p.z, normal.x, normal.y, normal.z, 0.5 + 0.5 * Math.cos(a), 0.5 + 0.5 * Math.sin(a), petalCol);
   }
@@ -398,7 +398,8 @@ function forgetMeNots(B, rng) {
       const p = top.clone().add(new THREE.Vector3(rng.jitter(0.028), rng.jitter(0.012), rng.jitter(0.028)));
       const nrm = new THREE.Vector3(rng.jitter(0.6), 1, rng.jitter(0.6)).normalize();
       const pink = k === 0 && rng.chance(0.4);
-      starFlower(B, p, nrm, 0.0085, pink ? col('#e8a8d0') : blue, col('#f4e070'));
+      // (8 mm across: the lobes' notches never read — a plain pentagon)
+      starFlower(B, p, nrm, 0.0085, pink ? col('#e8a8d0') : blue, col('#f4e070'), 5, false);
     }
   }
 }
@@ -424,7 +425,7 @@ function foxgloves(B, rng) {
       const out = new THREE.Vector3(Math.sin(az), 0, Math.cos(az));
       const axis = out.clone().multiplyScalar(0.8).add(new THREE.Vector3(0, -0.55, 0)).normalize();
       const sz = 1 - t * 0.55;
-      bell(B, p.clone().addScaledVector(out, 0.012), axis, 0.06 * sz, 0.016 * sz, pink, inner, { flare: 0.35, seg: 5 });
+      bell(B, p.clone().addScaledVector(out, 0.012), axis, 0.06 * sz, 0.016 * sz, pink, inner, { flare: 0.4, seg: 5, rows: 2 });
     }
     // tip buds
     for (let k = 0; k < 2; k++) {
@@ -441,8 +442,8 @@ function foxgloves(B, rng) {
   }
 }
 
-function daisies(B, rng) {
-  const n = rng.int(4, 8);
+function daisies(B, rng, heads = [4, 8]) {
+  const n = rng.int(heads[0], heads[1]);
   for (let s = 0; s < n; s++) {
     const a = rng.range(0, TAU), d = rng.range(0, 0.18);
     const base = new THREE.Vector3(Math.sin(a) * d, 0, Math.cos(a) * d);
@@ -461,8 +462,8 @@ function daisies(B, rng) {
   }
 }
 
-function buttercups(B, rng) {
-  const n = rng.int(3, 6);
+function buttercups(B, rng, heads = [3, 6], leafN = [4, 6]) {
+  const n = rng.int(heads[0], heads[1]);
   for (let s = 0; s < n; s++) {
     const a = rng.range(0, TAU), d = rng.range(0, 0.18);
     const base = new THREE.Vector3(Math.sin(a) * d, 0, Math.cos(a) * d);
@@ -480,7 +481,7 @@ function buttercups(B, rng) {
     }
   }
   // lobed leaves (three blades each)
-  for (let i = 0; i < rng.int(4, 6); i++) {
+  for (let i = 0; i < rng.int(leafN[0], leafN[1]); i++) {
     const az = rng.range(0, TAU);
     const p = new THREE.Vector3(rng.jitter(0.12), rng.range(0.02, 0.06), rng.jitter(0.12));
     for (let l = -1; l <= 1; l++) {
@@ -492,10 +493,10 @@ function buttercups(B, rng) {
 }
 
 function meadow(B, rng) {
-  daisies(B, rng);
-  if (rng.chance(0.7)) buttercups(B, rng);
+  daisies(B, rng, [3, 5]);
+  if (rng.chance(0.7)) buttercups(B, rng, [2, 4], [2, 3]);
   // white clover heads
-  for (let i = 0; i < rng.int(1, 3); i++) {
+  for (let i = 0; i < rng.int(1, 2); i++) {
     const base = new THREE.Vector3(rng.jitter(0.2), 0, rng.jitter(0.2));
     const top = base.clone().add(new THREE.Vector3(rng.jitter(0.02), rng.range(0.06, 0.11), rng.jitter(0.02)));
     stem(B, base, top, 0.003, col(GREEN));

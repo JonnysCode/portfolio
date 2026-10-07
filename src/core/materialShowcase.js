@@ -8,6 +8,10 @@
 // Rows (z): 12 organic spheres (triplanar) · 6 wood & building boxes (uv)
 //           0 roofs, cloth, rope, glass, paper, clay, leaf · −6 mushrooms & gills
 //         −12 foliage cards (flat card + crossed cluster per variant)
+//         −22 builder-scale look-dev: giant trunk (bark scale 1.6), limb (1.25),
+//             forest giant (1.8), boxy field stones (stone / mossy / rock), cobbles
+//   npm run shots -- --param scene=materials --custom "trunk:-8,3,-12.5:-8,4.5,-20" \
+//     --custom "stones:5,1.5,-15.5:5,0.35,-20.5"
 // Columns are 2.6 apart, centred on x = 0. Rows are 6 apart so a close-up
 // camera fits between them (e.g. "row:x,1.7,z+4.4:x,1,z").
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,6 +113,65 @@ function cardCluster(mat, size = 1.4, cards = 5) {
   return g;
 }
 
+/** A lumpy, roughly dressed field stone (like the builders' stones): box → bulged, jittered. */
+function fieldStone(seed, sx, sy, sz) {
+  const g = new RoundedBoxGeometry(1, 1, 1, 3, 0.22);
+  const p = g.attributes.position;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    const n = Math.sin(v.x * 5.1 + seed) * Math.cos(v.z * 4.3 - seed * 0.7) * 0.05 + Math.sin(v.y * 6.7 + seed * 1.3) * 0.03;
+    v.multiplyScalar(1 + n);
+    if (v.y > 0) v.y *= 0.92; // flatter top, like a dressed face
+    p.setXYZ(i, v.x * sx, v.y * sy, v.z * sz);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+function buildLookDev(ctx) {
+  const Z = -22;
+  const add = (geo, mat, x, y, z, ry = 0, rz = 0) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.rotation.set(0, ry, rz);
+    m.castShadow = m.receiveShadow = true;
+    ctx.scene.add(m);
+    return m;
+  };
+  const tag = (text, x, y, z) => {
+    const l = label(text);
+    l.position.set(x, y, z);
+    ctx.scene.add(l);
+  };
+  // giant trunk at the oak's scale (diameter ~7)
+  add(new THREE.CylinderGeometry(3.2, 3.9, 18, 96, 24), materials.surface('bark', { mossy: 0.17, scale: 1.6 }), -8, 9, Z);
+  tag('bark s1.6 m0.17', -8, 0.6, Z + 4.3);
+  // a leaning limb at the oak's limb scale
+  add(new THREE.CylinderGeometry(0.9, 1.15, 9, 48, 12), materials.surface('bark', { mossy: 0.3, scale: 1.25 }), -1.8, 4.2, Z + 1, 0, 0.35);
+  tag('bark s1.25 m0.3', -1.2, 0.6, Z + 2.6);
+  // forest giant scale
+  add(new THREE.CylinderGeometry(2.0, 2.5, 18, 72, 20), materials.surface('bark', { mossy: 0.3, scale: 1.8 }), -15.5, 9, Z - 1);
+  tag('bark s1.8 m0.3', -15.5, 0.6, Z + 2);
+  // boxy field stones: plain, mossy, rock — a little course + loose stones
+  const kinds = [
+    ['stone', {}], ['stone', { mossy: 0.3 }], ['stone', { mossy: 0.4 }], ['rock', { scale: 0.5, mossy: 0.1 }],
+  ];
+  kinds.forEach(([k, o], i) => {
+    const mat = materials.surface(k, o);
+    const x0 = 2.2 + i * 2.1;
+    for (let j = 0; j < 3; j++) {
+      const s = 0.42 + 0.12 * ((i * 3 + j) % 3);
+      add(fieldStone(i * 7 + j, s * 1.3, s * 0.8, s), mat, x0 + (j - 1) * 0.62, s * 0.38, Z + 2.3 + (j % 2) * 0.5, (i + j) * 0.7);
+    }
+    add(fieldStone(i * 11 + 5, 1.1, 0.7, 0.8), mat, x0, 0.33, Z + 1.0, i * 0.4);
+    tag(k + (o.mossy ? ` m${o.mossy}` : ''), x0, 1.35, Z + 1.0);
+  });
+  // cobble patch
+  add(new THREE.BoxGeometry(5, 0.12, 3.2), materials.surface('cobble'), 13.5, 0.06, Z + 1.6);
+  tag('cobble', 13.5, 0.9, Z + 1.6);
+}
+
 export default async function build(ctx) {
   // neutral stage
   const stage = new THREE.Mesh(new THREE.CircleGeometry(40, 64), materials.standard('#77736a', { roughness: 0.95 }));
@@ -192,6 +255,10 @@ export default async function build(ctx) {
     g.add(card, cl);
     place(ctx, g, i, variants.length, -12, v);
   });
+
+  // row 5 — builder-scale look-dev (z = -22): a giant trunk & a limb at the
+  // scales the oak uses, a forest giant, boxy field stones and a cobble patch
+  buildLookDev(ctx);
 
   console.info('[materials] textures', JSON.stringify(materials.textureStats()));
   return {};

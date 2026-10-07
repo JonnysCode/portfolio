@@ -48,6 +48,19 @@ export const WOOD = {
   shutter: '#4f6d6a', // a faded green-teal paint
   dark: '#3e2e22',
 };
+/**
+ * Bark tints for the vertex-coloured branch material. `default` is the bark
+ * texture's own average (the look every railing had before); `warm` is a
+ * lighter, sun-bleached honey-brown for the stair & the snail lift so they
+ * read as weathered wood against the dark trunk, never as black steel.
+ */
+export const BARK = {
+  default: '#6d5d4a',
+  warm: '#9a7a56',
+  warmLight: '#a88a64',
+};
+/** Warm, weathered oak tones for the stair treads, the lift's planks and rails. */
+export const WARM_WOOD = ['#b48c5e', '#a8804f', '#bd9868', '#9f7a4e', '#b08a5a', '#a57d52', '#c09a6a'];
 export const IRON = '#36312c';
 export const BRASS = '#b88a3e';
 export const COPPER = '#a8603a';
@@ -164,7 +177,12 @@ export function makeMats(ctx) {
     paper: (color = '#efe6d0') => proxy(vc('paper'), color),
     /** plain painted / plastic / small bits (vertex coloured, no texture) */
     paint: (color = '#ffffff') => proxy(m.standard('#ffffff', { vertexColors: true, roughness: 0.72 }), color),
-    bark: () => m.surface('bark', { mossy: 0.22 }),
+    /**
+     * bark-covered branches (railings, posts, braces, logs): vertex coloured so
+     * the stair and the lift can use a warmer, lighter, sun-bleached tone than
+     * the oak's own dark bark — in ONE draw call with every other branch.
+     */
+    bark: (color = BARK.default) => proxy(vc('bark', { mossy: 0.22 }), color),
     moss: () => m.surface('moss'),
     rope: () => m.surface('rope'),
     stone: () => m.surface('stone', { mossy: 0.4 }),
@@ -654,6 +672,25 @@ export function tubeAlong(points, radius = 0.012, radial = 5, tubular = null) {
   const L = curve.getLength();
   for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * L * 6, uv.getY(i));
   return g;
+}
+
+/**
+ * A rope lashing: `turns` tight wraps around a pole of radius r at `p`, the pole
+ * running along `dir` (a few tori, slightly tilted like real wraps). Returns geometries.
+ */
+export function lashing(p, dir, r, { turns = 3, thick = 0.014, gap = 0.028, tilt = 0.18 } = {}) {
+  const d = dir.clone().normalize();
+  const out = [];
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), d);
+  for (let k = 0; k < turns; k++) {
+    const g = new THREE.TorusGeometry(r + thick * 0.6, thick, 4, 12);
+    g.rotateX(tilt * (k % 2 ? 1 : -1));
+    g.applyQuaternion(q);
+    const c = p.clone().addScaledVector(d, (k - (turns - 1) / 2) * gap);
+    g.translate(c.x, c.y, c.z);
+    out.push(g);
+  }
+  return out;
 }
 
 /** Sagging catenary-ish curve between two points (ropes, wires, chains). */

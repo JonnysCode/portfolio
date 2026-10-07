@@ -46,8 +46,8 @@ export const SKY_COLORS = {
   day: {
     zenith: '#7eaecb',
     mid: '#a6cdcf',
-    horizon: '#bcd6cb',
-    fog: '#6a9a93', // cool blue-green mist (deep forest, never fog-white)
+    horizon: '#a9cbbd',
+    fog: '#588b88', // cool blue-green mist (deep forest, never fog-white)
     sunGlow: '#ffd596', // warm luminous haze around the sun
     cloudLit: '#fff6e6',
     cloudShade: '#b7cbd0',
@@ -59,8 +59,8 @@ export const SKY_COLORS = {
   night: {
     zenith: '#050a1e',
     mid: '#0b1734',
-    horizon: '#16294a',
-    fog: '#17334a', // deep teal night mist (moonlit: silhouettes read against it)
+    horizon: '#1a3152',
+    fog: '#1c3d55', // deep teal night mist (moonlit: silhouettes read against it)
     sunGlow: '#6f86c8', // moon halo
     cloudLit: '#4a5c8c',
     cloudShade: '#1c2846',

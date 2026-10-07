@@ -16,48 +16,93 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const SURFACE_GLSL = {
-  // ── BARK — plates split by deep vertical furrows, fibrous ridges, lichen ──
+  // ── BARK — deep, wandering vertical furrows between long fibrous ridges ──
+  // The map is TALL (1:2, see KINDS.bark.aspect): u spans one tile, v two —
+  // so frequencies along v are doubled to stay isotropic. No cell lattice:
+  // every furrow is its own meandering line that deepens, thins out and
+  // re-opens (ridges merge and split), ridges carry fine fibrous grooves and
+  // only an occasional cross-break, and the material bends it all with a
+  // slow world-space warp.
   bark: /* glsl */ `
 Surf kind_bark(vec2 uv) {
-  // braided ridges: long vertical plates that split and merge around narrow,
-  // deep furrows; fibrous streaks; a few irregular fissures across the plates
-  vec2 w = vec2(fbm(uv * vec2(4.0, 2.0), vec2(4.0, 2.0), 4), fbm(uv * vec2(3.0, 2.0) + vec2(7.0, 3.0), vec2(3.0, 2.0), 3));
-  vec2 q = uv + vec2(w.x * 0.07, w.y * 0.04);
-  vec2 cell, tc;
-  vec4 v = voronoi(q * vec2(9.0, 2.0), vec2(9.0, 2.0), 1.0, cell, tc);
-  vec3 hs = hash3(cell + 3.0);
-  float e = v.y + 0.035 * gnoise(q * vec2(40.0, 6.0), vec2(40.0, 6.0));
-  float ridge = smoothstep(0.0, 0.1, e);
-  float crown = sqrt(smoothstep(0.0, 0.42, e));
-  float fib = gnoise(q * vec2(140.0, 6.0), vec2(140.0, 6.0));
-  float fib2 = gnoise(q * vec2(50.0, 3.0), vec2(50.0, 3.0));
-  float scaleN = fbm(q * vec2(18.0, 6.0), vec2(18.0, 6.0), 3);
-  float cy = q.y * 4.0 + hs.x * 7.0 + 0.8 * w.x + 0.08 * fib2;
-  float fiss = (1.0 - smoothstep(0.0, 0.035, abs(fract(cy) - 0.5) - 0.455)) * step(0.62, hs.y) * smoothstep(0.08, 0.22, e);
-  float h = ridge * (0.45 + 0.33 * crown + 0.07 * fib2 + 0.06 * scaleN + 0.08 * hs.z) + 0.03 * fib;
-  h = max(h - 0.1 * fiss, 0.0);
-  vec3 furrow = C(0x2a2017), flank = C(0x77634e), crest = C(0xa3907a), bleach = C(0xc4b8a2);
-  vec3 col = mix(furrow, flank, smoothstep(0.03, 0.45, h));
-  col = mix(col, crest, smoothstep(0.52, 0.76, h));
-  col = mix(col, bleach, smoothstep(0.74, 0.9, h) * sat(0.3 + fib2));
-  col *= 0.86 + 0.24 * hs.z;
-  col = temp(col, (hs.x - 0.5) * 0.9);
-  col *= 0.9 + 0.12 * fib;
-  col = mix(col, col * 0.62, fiss);
-  // green algae down in the furrows
-  float alg = sat(fbm(q * 5.0 + vec2(3.0), vec2(5.0), 3) * 0.8 + 0.45);
-  col = mix(col, C(0x3a4522), (1.0 - ridge) * alg * 0.55);
-  // lichen crusts on the crests: sage patches + yellow rosettes
-  float lich = fbm(q * 6.0 + vec2(11.0), vec2(6.0), 4) + 0.3 * gnoise(q * 44.0, vec2(44.0));
-  float lm = smoothstep(0.32, 0.46, lich) * smoothstep(0.42, 0.62, h);
+  const float BN = 8.0;                         // furrows across one tile
+  float Y = uv.y;                               // 0..1 over TWO tiles
+  // slow lateral meander shared by the furrows and the fibres
+  float mx = 0.04 * fbm(vec2(uv.x * 2.0, Y * 3.0), vec2(2.0, 3.0), 3);
+  float c = (uv.x + mx) * BN;
+  float ci = floor(c);
+  float xl = -9.0, xr = 9.0, kl = 0.0, el = 1.0, er = 1.0;
+  for (int j = -2; j <= 2; j++) {
+    float k = ci + float(j);
+    float kw = mod(k, BN);
+    vec3 hk = hash3(vec2(kw, 7.0));
+    // each furrow wanders on its own, slowly, with a little crook
+    float wan = 0.3 * gnoise(vec2(Y * 4.0, kw * 1.37 + 0.5), vec2(4.0, 1000.0))
+              + 0.1 * gnoise(vec2(Y * 14.0, kw * 2.11 + 3.0), vec2(14.0, 1000.0));
+    float x = k + 0.5 + (hk.x - 0.5) * 0.4 + wan;
+    // depth along the furrow: it thins out & re-opens, so ridges merge and split
+    float open = gnoise(vec2(Y * 5.0, kw * 3.3 + 9.0), vec2(5.0, 1000.0)) + 0.3 * (hk.y - 0.5) + 0.3;
+    float str = smoothstep(-0.3, 0.2, open) * (0.65 + 0.35 * hk.z);
+    float e = max(str, 0.025);
+    if (x <= c) { if (x > xl) { xl = x; kl = kw; el = e; } }
+    else if (x < xr) { xr = x; er = e; }
+  }
+  // distance to the furrows, widened where a furrow is shallow
+  float d = min((c - xl) / el, (xr - c) / er);
+  float t = sat((c - xl) / max(xr - xl, 0.05));  // 0..1 across the ridge
+  vec3 hp = hash3(vec2(kl, 19.0));               // ridge personality
+  float plateIn = smoothstep(0.1, 0.35, d);
+  // rare cross-breaks: staggered per ridge, slanted, only part-way across
+  float cy = Y * 4.0 + hp.x * 4.0 + (t - 0.5) * (hp.y - 0.5) * 1.2
+           + 0.08 * gnoise(vec2(c * 2.0, Y * 16.0), vec2(BN * 2.0, 16.0));
+  float row = floor(cy), fr = fract(cy);
+  vec3 hr = hash3(vec2(kl, mod(row, 4.0) + 40.0));
+  float present = step(0.5, hr.x) * (1.0 - smoothstep(0.0, 0.15, abs(t - hr.y) - 0.3));
+  float cd = min(fr, 1.0 - fr) * 4.0;            // in ~physical units (ridge widths)
+  float crack = present * (1.0 - smoothstep(0.03, 0.11, cd)) * plateIn;
+  float bev = mix(1.0, 0.75 + 0.25 * smoothstep(0.0, 0.5, cd), present);
+  // relief: broad dark V furrows, rounded ridges with fibrous grooves
+  float prof = smoothstep(0.0, 0.62, d);
+  prof = prof * (2.0 - prof);                    // rounded shoulders
+  float crev = 1.0 - smoothstep(0.0, 0.24, d);
+  float xf = uv.x + mx;
+  float groove = 1.0 - abs(gnoise(vec2(xf * 70.0, Y * 7.0), vec2(70.0, 7.0)));     // long fibre ridges
+  groove = groove * groove;
+  float fib = gnoise(vec2(xf * 170.0, Y * 12.0), vec2(170.0, 12.0));
+  float fib2 = gnoise(vec2(xf * 40.0, Y * 5.0), vec2(40.0, 5.0));
+  float flake = fbm(vec2(xf * 18.0, Y * 24.0), vec2(18.0, 24.0), 3);
+  float bulge = fbm(vec2(uv.x * 3.0, Y * 6.0), vec2(3.0, 6.0), 3);
+  float h = 0.06 + prof * (0.55 * bev + 0.1 * groove + 0.05 * fib2 + 0.05 * flake + 0.05 * hp.z + 0.06 * (hr.z - 0.5) * mix(smoothstep(0.0, 0.6, cd), 1.0, present))
+          + 0.025 * fib + 0.07 * bulge;
+  h -= 0.12 * crack;
+  h = sat(h);
+  // colour: near-black furrows, warm umber flanks, grey-brown weathered ridges
+  vec3 furrow = C(0x1b130d), flank = C(0x5a4635), plateC = C(0x826e5c), crest = C(0xa08e78), bleach = C(0xbcae98);
+  vec3 col = mix(furrow, flank, smoothstep(0.05, 0.34, h));
+  col = mix(col, plateC, smoothstep(0.34, 0.56, h));
+  col = mix(col, crest, smoothstep(0.52, 0.7, h) * sat(0.45 + groove * 0.6 + 0.4 * fib2));
+  col = mix(col, bleach, smoothstep(0.68, 0.84, h) * sat(0.25 + fib2 + 0.6 * flake));
+  col *= 0.84 + 0.26 * hp.z;
+  col = temp(col, (hp.x - 0.5) * 1.1);
+  col *= 0.86 + 0.1 * fib + 0.1 * groove;
+  col *= mix(1.0, 0.62, crack);
+  // green algae down in the furrows (patchy), damp moss-brown on the flanks
+  float alg = sat(fbm(vec2(uv.x * 4.0, Y * 8.0) + vec2(3.0), vec2(4.0, 8.0), 3) * 0.9 + 0.35);
+  col = mix(col, C(0x33421d), crev * alg * 0.55);
+  col = mix(col, col * vec3(0.88, 0.96, 0.72), (1.0 - prof) * alg * 0.35);
+  // lichen crusts on the ridges: soft sage patches, a few small pale rosettes
+  float lich = fbm(vec2(uv.x * 3.0, Y * 6.0) + vec2(11.0), vec2(3.0, 6.0), 4) + 0.25 * gnoise(vec2(uv.x * 40.0, Y * 80.0), vec2(40.0, 80.0));
+  float lm = smoothstep(0.28, 0.44, lich) * smoothstep(0.45, 0.68, h);
   vec2 lc, ltc;
-  vec4 lv = voronoi(q * 20.0, vec2(20.0), 1.0, lc, ltc);
-  float ros = step(0.85, lv.z) * (1.0 - smoothstep(0.16, 0.3, lv.x)) * ridge;
-  col = mix(col, mix(C(0x9fae8f), C(0xc1c7a2), sat(fib2 + 0.5)), lm * 0.7);
-  col = mix(col, mix(C(0xccbb62), C(0xdcd5aa), lv.w), ros * 0.75);
-  h += (lm + ros) * 0.02;
-  float rough = 0.93 - 0.06 * lm;
-  float ao = mix(0.35, 1.0, smoothstep(0.0, 0.45, h));
+  vec4 lv = voronoi(vec2(uv.x * 22.0, Y * 44.0), vec2(22.0, 44.0), 1.0, lc, ltc);
+  float ros = step(0.95, lv.z) * (1.0 - smoothstep(0.12, 0.26, lv.x)) * plateIn * smoothstep(0.2, 0.4, lich);
+  col = mix(col, mix(C(0x96a386), C(0xb5bc98), sat(fib2 + 0.5)), lm * 0.72);
+  col = mix(col, mix(C(0xbcb172), C(0xd2cdaa), lv.w), ros * 0.6);
+  h += (lm + ros) * 0.015;
+  // keep the map's mean at KINDS.bark.mean (#6a5845 — builders vertex-colour bark against it)
+  col *= vec3(0.93, 0.9, 0.86);
+  float rough = 0.94 - 0.05 * lm;
+  float ao = mix(0.2, 1.0, smoothstep(0.03, 0.46, h));
   return surf(col, h, rough, ao);
 }`,
 
@@ -171,47 +216,64 @@ Surf kind_soil(vec2 uv) {
   return surf(col, h, 0.95 - 0.1 * peb, ao);
 }`,
 
-  // ── STONE — irregular fieldstone wall with recessed lime mortar ──
+  // ── STONE — rough fieldstone: varied stones, dark recessed earthy joints ──
   stone: /* glsl */ `
 Surf kind_stone(vec2 uv) {
   vec2 w = vec2(fbmu(uv, 3.0, 4), fbmu(uv + vec2(0.31, 0.77), 3.0, 4));
-  vec2 q = uv + w * 0.035;
+  vec2 q = uv + w * 0.04;
   vec2 cell, tc;
   vec4 v = voronoi(q * vec2(4.0, 6.0), vec2(4.0, 6.0), 1.0, cell, tc);
   vec3 hs = hash3(cell + 17.0);
   // every stone sits differently: varying joint width, a tilt, its own colour
-  float inset = 0.035 + 0.11 * hs.x * hs.x;
+  float inset = 0.03 + 0.09 * hs.x * hs.x;
   float grain = fbm(q * 40.0, vec2(40.0), 3);
-  float edgeN = 0.025 * gnoise(q * 26.0, vec2(26.0));
-  float stoneM = smoothstep(inset, inset + 0.025, v.y + edgeN);
-  float bevel = smoothstep(inset, inset + 0.42, v.y + edgeN);
-  vec2 tilt = (hash2(cell, 91u) - 0.5) * 0.7;
-  float bump = fbm(q * 16.0 + hs.y * 9.0, vec2(16.0), 4);
-  float hStone = 0.45 + 0.3 * sqrt(bevel) + 0.08 * bump + dot(-tc, tilt) * 0.25 + 0.08 * hs.z;
+  // chipped, irregular stone outlines
+  float edgeN = 0.03 * gnoise(q * 26.0, vec2(26.0)) + 0.012 * gnoise(q * 90.0, vec2(90.0));
+  float e = v.y + edgeN;
+  float stoneM = smoothstep(inset, inset + 0.02, e);
+  float bevel = smoothstep(inset, inset + 0.4, e);
+  vec2 tilt = (hash2(cell, 91u) - 0.5) * 0.8;
+  float bump = fbm(q * 14.0 + hs.y * 9.0, vec2(14.0), 5);
+  float pits = smoothstep(0.3, 0.75, fbm(q * 52.0 + hs.z * 3.0, vec2(52.0), 2));
+  float fine = gnoise(q * 150.0, vec2(150.0));
+  float hStone = 0.44 + 0.3 * sqrt(bevel) + 0.11 * bump + dot(-tc, tilt) * 0.28 + 0.08 * hs.z - 0.05 * pits + 0.015 * fine;
   // little filler stones wedged into the wide joints
   vec2 fc, ftc;
   vec4 fv = voronoi(q * vec2(15.0, 22.0), vec2(15.0, 22.0), 1.0, fc, ftc);
-  float fill = (1.0 - stoneM) * step(0.35, fv.z) * smoothstep(0.08, 0.16, fv.y) * smoothstep(0.035, 0.07, v.y);
-  float hFill = 0.3 + 0.12 * sqrt(smoothstep(0.08, 0.35, fv.y));
-  float hMortar = 0.14 + 0.06 * grain;
+  float fill = (1.0 - stoneM) * step(0.4, fv.z) * smoothstep(0.08, 0.16, fv.y) * smoothstep(0.03, 0.065, v.y);
+  float hFill = 0.26 + 0.12 * sqrt(smoothstep(0.08, 0.35, fv.y));
+  float hMortar = 0.06 + 0.06 * grain;
   float h = mix(mix(hMortar, hFill, fill), hStone, stoneM);
+  // stone colours: blue-grey, warm sandstone, pale limestone, dark basalt, rusty
   float pick = hs.y;
-  vec3 sc = pick < 0.2 ? C(0xa39c90) : pick < 0.36 ? C(0xb7a98d) : pick < 0.52 ? C(0x8e9497) : pick < 0.68 ? C(0xa8a296) : pick < 0.8 ? C(0x7f786d) : pick < 0.92 ? C(0xb39c78) : C(0x9a8f82);
-  sc *= 0.84 + 0.26 * sat(bump * 0.8 + 0.5);
-  sc *= 1.0 + 0.09 * gnoise(q * 170.0, vec2(170.0));
-  sc = mix(sc, sc * 1.16, sat(dot(-tc, tilt) * 2.0 + 0.3) * bevel);   // facets turned to the light
-  sc = mix(sc, sc * 0.78, (1.0 - bevel) * 0.55);                        // worn, dirty edges
+  vec3 sc = pick < 0.16 ? C(0x9a958c) : pick < 0.3 ? C(0xae9b7c) : pick < 0.44 ? C(0x7b8286)
+          : pick < 0.58 ? C(0xa8a296) : pick < 0.7 ? C(0x69635a) : pick < 0.82 ? C(0xa38a68)
+          : pick < 0.92 ? C(0x8a887e) : C(0xbfb8a8);
+  sc *= (0.78 + 0.38 * sat(bump * 0.8 + 0.5)) * 1.07;
+  sc *= 1.0 + 0.1 * fine;
+  // mineral grains: dark & pale specks
+  vec4 gv = voronoi(q * 70.0, vec2(70.0), 1.0);
+  float dot1 = 1.0 - smoothstep(0.1, 0.24, gv.x);
+  sc = mix(sc, sc * 0.58, step(0.8, gv.z) * dot1 * 0.75);
+  sc = mix(sc, sc * 1.22 + 0.03, step(0.9, gv.w) * dot1 * 0.6);
+  sc *= 1.0 - 0.22 * pits;
+  sc = mix(sc, sc * 1.17, sat(dot(-tc, tilt) * 2.0 + 0.3) * bevel);   // facets turned to the light
+  sc = mix(sc, sc * 0.68, (1.0 - bevel) * 0.6);                        // grimy, worn edges
   // lichen rosettes & dark water streaks
   vec4 lv = voronoi(q * 24.0, vec2(24.0), 1.0);
-  float lic = step(0.9, lv.z) * (1.0 - smoothstep(0.12, 0.3, lv.x)) * stoneM;
-  sc = mix(sc, lv.w > 0.5 ? C(0xd8d4bc) : C(0xc9b462), lic * 0.75);
+  float lic = step(0.88, lv.z) * (1.0 - smoothstep(0.12, 0.3, lv.x)) * stoneM;
+  sc = mix(sc, lv.w > 0.5 ? C(0xd6d2ba) : C(0xc4b25e), lic * 0.75);
   float streak = sat(gnoise(vec2(q.x * 30.0, q.y * 3.0), vec2(30.0, 3.0)) * 1.4 - 0.5);
-  sc *= 1.0 - 0.18 * streak;
-  vec3 fcol = mix(C(0x8a8478), C(0xa0978a), fv.w) * (0.8 + 0.25 * fv.z);
-  vec3 mortar = mix(C(0xa49a84), C(0xcfc6ae), smoothstep(0.0, 0.05, v.y) * (0.7 + 0.3 * grain));
+  sc *= 1.0 - 0.2 * streak;
+  vec3 fcol = mix(C(0x77716a), C(0x958c7e), fv.w) * (0.75 + 0.3 * fv.z);
+  // joints: dark earthy lime, soil & moss creeping in, deepest right under the stones
+  float jn = sat(fbm(q * 9.0 + vec2(4.0), vec2(9.0), 3) * 1.4 + 0.15);
+  vec3 mortar = mix(C(0x675e50), C(0x8c8270), sat(0.5 + 0.6 * grain));
+  mortar = mix(mortar, C(0x4c5626), jn * 0.5);
+  mortar *= mix(1.0, 0.5, smoothstep(0.35, 1.0, e / inset));
   vec3 col = mix(mix(mortar, fcol, fill), sc, stoneM);
-  float rough = mix(0.97, 0.84 - 0.08 * bevel, stoneM);
-  float ao = mix(0.7, 1.0, smoothstep(0.1, 0.5, h));
+  float rough = mix(0.97, 0.86 - 0.08 * bevel, stoneM);
+  float ao = mix(0.45, 1.0, smoothstep(0.08, 0.5, h));
   return surf(col, h, rough, ao);
 }`,
 
@@ -229,19 +291,24 @@ Surf kind_cobble(vec2 uv) {
   float dome = sqrt(smoothstep(gap, gap + 0.4, v.y + edgeN));
   vec2 tilt = (hash2(cell, 37u) - 0.5) * 0.5;
   float bump = fbm(q * 22.0 + hs.y * 5.0, vec2(22.0), 4);
-  float h = mix(0.16 + 0.05 * fbm(q * 30.0, vec2(30.0), 2), 0.38 + 0.42 * dome + 0.06 * bump + dot(-tc, tilt) * 0.2, stoneM);
+  float fine = gnoise(q * 160.0, vec2(160.0));
+  float h = mix(0.2 + 0.05 * fbm(q * 30.0, vec2(30.0), 2), 0.38 + 0.42 * dome + 0.06 * bump + dot(-tc, tilt) * 0.2 + 0.012 * fine, stoneM);
   float pick = hs.y;
-  vec3 sc = pick < 0.25 ? C(0xa19b90) : pick < 0.45 ? C(0x8f8e8a) : pick < 0.62 ? C(0xad9e84) : pick < 0.78 ? C(0x857d71) : pick < 0.9 ? C(0xb6ad9b) : C(0x9c8c76);
-  sc *= 0.82 + 0.28 * sat(bump * 0.8 + 0.5);
+  vec3 sc = pick < 0.22 ? C(0xa19b90) : pick < 0.4 ? C(0x8a8a87) : pick < 0.56 ? C(0xad9e84)
+          : pick < 0.7 ? C(0x7a7368) : pick < 0.84 ? C(0xb6ad9b) : pick < 0.93 ? C(0x9c8c76) : C(0x6e7377);
+  sc *= 0.8 + 0.3 * sat(bump * 0.8 + 0.5);
   sc *= 0.8 + 0.28 * dome;
-  sc = mix(sc, sc * 1.14, smoothstep(0.55, 1.0, dome));
-  // joints: packed earth, grit and moss
+  sc *= 1.0 + 0.1 * fine;
+  vec4 gv = voronoi(q * 90.0, vec2(90.0), 1.0);
+  sc = mix(sc, sc * 0.62, step(0.82, gv.z) * (1.0 - smoothstep(0.1, 0.24, gv.x)) * 0.6);   // dark grains
+  sc = mix(sc, sc * 1.14, smoothstep(0.55, 1.0, dome));                                   // polished crowns
+  // joints: packed earth, grit and moss — lighter, so close-ups stay readable
   float jn = fbm(q * 14.0, vec2(14.0), 3);
-  vec3 joint = mix(C(0x7a6650), C(0x76823f), sat(jn * 1.2 + 0.35));
-  joint *= 0.85 + 0.3 * sat(gnoise(q * 120.0, vec2(120.0)) + 0.5);
+  vec3 joint = mix(C(0x8b7659), C(0x7f8d47), sat(jn * 1.2 + 0.35));
+  joint *= 0.88 + 0.26 * sat(gnoise(q * 120.0, vec2(120.0)) + 0.5);
   vec3 col = mix(joint, sc, stoneM);
   float rough = mix(0.98, 0.86 - 0.22 * dome, stoneM);
-  float ao = mix(0.65, 1.0, smoothstep(0.12, 0.5, h));
+  float ao = mix(0.8, 1.0, smoothstep(0.14, 0.5, h));
   return surf(col, h, rough, ao);
 }`,
 
@@ -274,7 +341,13 @@ Surf kind_rock(vec2 uv) {
   vec3 col = base * (0.8 + 0.22 * grainy + 0.25 * facet);
   col = mix(col, C(0xc4bfb0), smoothstep(0.62, 0.9, h) * 0.45);
   col = mix(col, C(0x37383a), crack * 0.85 + crack2 * 0.5);
-  col *= 1.0 - 0.15 * pits;
+  col *= 1.0 - 0.18 * pits;
+  // mineral grains: dark & pale specks, so close-ups read as real, rough stone
+  vec4 gv = voronoi(q * 64.0, vec2(64.0), 1.0);
+  float gdot = (1.0 - smoothstep(0.1, 0.24, gv.x)) * (1.0 - crack);
+  col = mix(col, col * 0.6, step(0.8, gv.z) * gdot * 0.7);
+  col = mix(col, col * 1.2 + 0.025, step(0.9, gv.w) * gdot * 0.55);
+  col *= 1.0 + 0.08 * gnoise(q * 150.0, vec2(150.0));
   float streak = sat(gnoise(vec2(q.x * 24.0, q.y * 2.0), vec2(24.0, 2.0)) * 1.3 - 0.45);
   col = mix(col, col * vec3(0.72, 0.74, 0.7), streak * 0.6);
   float lich = fbm(q * 6.0 + vec2(9.0), vec2(6.0), 4) + 0.35 * gnoise(q * 50.0, vec2(50.0));
@@ -448,32 +521,54 @@ Surf kind_shingles(vec2 uv) {
   return surf(col, h, 0.86 + 0.08 * grain, ao);
 }`,
 
-  // ── THATCH — layered straw bundles with ragged ends ──
+  // ── THATCH — thick, uneven courses of straw bundles with ragged, overhanging butts ──
   thatch: /* glsl */ `
+float thWob(float x, float k) {
+  float kk = mod(k, 5.0);
+  return 0.24 * gnoise(vec2(x * 3.0, kk * 1.7 + 0.3), vec2(3.0, 1000.0)) + 0.09 * gnoise(vec2(x * 10.0, kk * 2.9 + 1.1), vec2(10.0, 1000.0));
+}
 Surf kind_thatch(vec2 uv) {
   const float ROWS = 5.0;
-  vec2 w = vec2(fbmu(uv, vec2(4.0, 2.0), 3), 0.0) * 0.03;
-  float r = uv.y * ROWS + 0.12 * gnoise(vec2(uv.x * 6.0, uv.y * ROWS), vec2(6.0, ROWS));
-  float row = floor(r), fv = fract(r);
-  float x = uv.x + w.x + hash1(vec2(mod(row, ROWS), 2.0), 81u);
-  // straw: many fine stalks in bundles, slightly fanned
+  float x0 = uv.x + 0.012 * gnoise(vec2(uv.x * 4.0, uv.y * 12.0), vec2(4.0, 12.0));
+  // wavy, uneven course lines — every course waves on its own (no stripes)
+  float r0 = uv.y * ROWS;
+  float k0 = floor(r0);
+  float b0 = k0 + thWob(x0, k0), b1 = k0 + 1.0 + thWob(x0, k0 + 1.0);
+  float row = r0 < b0 ? k0 - 1.0 : (r0 >= b1 ? k0 + 1.0 : k0);
+  float lo = row + thWob(x0, row), hi = row + 1.0 + thWob(x0, row + 1.0);
+  float fv = sat((r0 - lo) / max(hi - lo, 0.2));
+  float rk = mod(row, ROWS);
+  float x = x0 + hash1(vec2(rk, 2.0), 81u);
+  // straw: fine stalks, gathered into bundles of different age/colour
   float strands = ridged(vec2(x * 110.0, uv.y * ROWS * 1.4), vec2(110.0, ROWS * 1.4), 2);
   float strands2 = gnoise(vec2(x * 260.0, uv.y * 4.0), vec2(260.0, 4.0));
-  float bundle = gnoise(vec2(x * 14.0, mod(row, ROWS) * 1.7), vec2(14.0, 1000.0));
-  // ragged butt ends: each stalk ends at its own length
-  float rag = 0.1 + 0.16 * sat(gnoise(vec2(x * 90.0, mod(row, ROWS)), vec2(90.0, 1000.0)) * 0.6 + 0.5) + 0.06 * strands2 + 0.05 * bundle;
-  float below = smoothstep(rag + 0.03, rag - 0.03, fv);
+  float bundle = gnoise(vec2(x * 14.0, rk * 1.7), vec2(14.0, 1000.0));
+  // bundle personality: smooth (no hard blocks), each course its own
+  float tone = vnoise(vec2(x * 11.0, rk * 3.1 + 0.5), vec2(11.0, 1000.0));
+  float tone2 = vnoise(vec2(x * 7.0, rk * 5.3 + 2.0), vec2(7.0, 1000.0));
+  // ragged butt ends: each stalk stops at its own length
+  float rag = 0.05 + 0.13 * sat(gnoise(vec2(x * 90.0, rk), vec2(90.0, 1000.0)) * 0.6 + 0.5) + 0.04 * strands2 + 0.05 * bundle + 0.12 * tone2;
+  float below = 1.0 - smoothstep(rag - 0.025, rag + 0.025, fv);   // the dark gap under this course's butts
   float t = sat((fv - rag) / (1.0 - rag));
-  float hTop = 0.92 - 0.35 * t + 0.08 * bundle;
-  float hBelow = 0.45 + 0.4 * (fv + 1.0 - rag);
-  float h = mix(hTop, hBelow * 0.85, below) * 0.7 + 0.14 * strands + 0.05 * strands2;
+  float hTop = 0.95 - 0.42 * t + 0.07 * bundle + 0.06 * (tone - 0.5);
+  float hBelow = 0.12 + 0.35 * (fv / max(rag, 0.05));
+  // the overhang shadow is patchy along the course: deep under thick bundles, light where the butts thin out
+  float gapK = 0.45 + 0.55 * smoothstep(0.2, 0.8, vnoise(vec2(x * 9.0, rk * 2.3 + 7.0), vec2(9.0, 1000.0)));
+  float h = mix(hTop, mix(hTop * 0.75, hBelow, gapK), below) * 0.72 + 0.16 * strands + 0.05 * strands2;
+  // colour: golden fresh straw, pale bleached, grey weathered, a few dark damp bundles
+  vec3 straw = mix(C(0xc6a764), C(0xd3bf88), smoothstep(0.3, 0.6, tone));
+  straw = mix(straw, C(0x9c8e70), smoothstep(0.62, 0.85, tone));
+  straw = mix(straw, C(0x7a6646), smoothstep(0.7, 0.95, tone2) * 0.8);
+  vec3 c = mix(straw * 0.78, straw * 1.08, sat(strands * 0.9 + 0.05 + 0.3 * bundle));
   float wv = fbmu(vec2(x, uv.y), vec2(3.0, 4.0), 3);
-  vec3 c = mix(C(0xa88a52), C(0xcdb173), sat(strands * 0.8 + 0.1 + 0.3 * bundle));
-  c = mix(c, C(0x8a7f68), sat(wv + 0.25) * 0.55);
+  c = mix(c, C(0x847a62), sat(wv + 0.2) * 0.45);
   c *= 0.86 + 0.14 * strands2;
-  vec3 col = mix(c, c * 0.8, smoothstep(0.35, 0.0, t) * (1.0 - below) * 0.4);
-  col = mix(col, c * 0.72, below * 0.6);
-  float ao = mix(1.0, 0.75, smoothstep(0.8, 1.0, t)) * mix(1.0, 0.8, below);
+  c = mix(c, c * 1.1, (1.0 - smoothstep(0.0, 0.25, t)) * (1.0 - below) * 0.5);   // sunlit cut ends
+  c = mix(c, c * 0.7, smoothstep(0.6, 1.0, t) * 0.5);                      // shaded under the next course
+  vec3 col = mix(c, mix(c * 0.36, c * 0.62, fv / max(rag, 0.05)), below * gapK);
+  // a little green algae in the damp, shaded parts
+  col = mix(col, col * vec3(0.8, 0.95, 0.62), smoothstep(0.6, 1.0, t) * sat(wv + 0.3) * 0.5);
+  float ao = mix(1.0, 0.65, smoothstep(0.6, 1.0, t)) * mix(1.0, 0.6, below * gapK);
   return surf(col, h, 0.95, ao);
 }`,
 

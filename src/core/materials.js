@@ -28,14 +28,43 @@ import * as THREE from 'three';
 import { palette } from './palette.js';
 import { createRng } from './rng.js';
 import { KINDS, WOOD_SPECIES, FOLIAGE_VARIANTS, surfaceMaps, foliageMap, setBakeRenderer, setBakeScale, hasBakeRenderer, bakeStats, measureMean } from './textures/index.js';
-import { patchSurface, patchFoliage } from './textures/surfaceShader.js';
+import { patchSurface, patchFoliage, patchFoliageDepth } from './textures/surfaceShader.js';
+
+/**
+ * Wind amplitude when the visitor prefers reduced motion: foliage barely
+ * breathes instead of swaying (applies to every applyWind material, including
+ * the foliage shadow pass).
+ */
+export const REDUCED_WIND = 0.12;
+
+let reducedMotion = false;
+let reducedQuery = null;
+try {
+  reducedQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+  reducedMotion = !!reducedQuery?.matches;
+} catch {
+  /* no media queries (workers, tests) */
+}
 
 /** Uniforms shared by every material that opts into wind / time effects. */
 export const sharedUniforms = {
   uTime: { value: 0 },
   uNight: { value: 0 },
-  uWindStrength: { value: 1 },
+  uWindStrength: { value: reducedMotion ? REDUCED_WIND : 1 },
 };
+
+// follow the OS setting live (the wind settles / resumes without a reload)
+try {
+  reducedQuery?.addEventListener?.('change', (e) => setReducedMotion(e.matches));
+} catch {
+  /* old Safari: no change events on media queries */
+}
+
+/** Calm (true) or restore (false) the wind on every wind-swayed material. */
+export function setReducedMotion(on) {
+  reducedMotion = !!on;
+  sharedUniforms.uWindStrength.value = reducedMotion ? REDUCED_WIND : 1;
+}
 
 /**
  * Build a toon ramp texture. `steps` are direct-light multipliers sampled by
@@ -331,7 +360,22 @@ export const materials = {
       setBakeScale(0.5);
       lite = true;
     }
+    if (typeof quality?.reducedMotion === 'boolean' && quality.reducedMotion) setReducedMotion(true);
     setBakeRenderer(renderer);
+  },
+
+  /**
+   * Reduced motion: wind sway drops to a faint breathing (REDUCED_WIND). Read
+   * from prefers-reduced-motion automatically; call this to force it (e.g.
+   * materials.setReducedMotion(engine.reducedMotion)).
+   */
+  setReducedMotion(on) {
+    setReducedMotion(on);
+  },
+
+  /** True while wind is calmed for reduced motion. */
+  get reducedMotion() {
+    return reducedMotion;
   },
 
   /** The live per-material uniforms of a surface/foliage material (look-dev & debugging). */
@@ -524,9 +568,12 @@ function makeSurface(kindIn, opts) {
   }
 
   const rep = opts.repeat ?? 1;
+  // kd.aspect: the map covers `aspect` tiles along V (e.g. bark: tall 1:2 map → no short vertical repeat)
+  const aspect = kd.aspect ?? 1;
   const tile = triplanar
-    ? new THREE.Vector2(1 / (kd.tile * scale), 0)
+    ? new THREE.Vector2(1 / (kd.tile * scale), 1 / aspect)
     : new THREE.Vector2(...(Array.isArray(rep) ? rep : [rep, rep])).multiplyScalar(1 / scale);
+  if (!triplanar) tile.y /= aspect;
 
   const u = {
     sfMap: { value: maps.map },
@@ -537,7 +584,7 @@ function makeSurface(kindIn, opts) {
     sfTile: { value: tile },
     sfP: { value: new THREE.Vector4((kd.normal ?? 1) * (opts.bump ?? 1), kd.ao ?? 1, opts.roughness ?? 1, opts.breakup ?? kd.breakup ?? 1) },
     sfQ: { value: new THREE.Vector4(mossy, 1 / (KINDS.moss.tile * 0.9), kd.velvet ?? 0, kd.metalRust ?? 0) },
-    sfR: { value: new THREE.Vector4(opts.grain === 'v' || opts.swapUV ? 1 : 0, kd.polar ? (opts.gills === 'cone' ? 2 : 1) : 0, opts.metalness ?? kd.metalness ?? 0, 0) },
+    sfR: { value: new THREE.Vector4(opts.grain === 'v' || opts.swapUV ? 1 : 0, kd.polar ? (opts.gills === 'cone' ? 2 : 1) : 0, opts.metalness ?? kd.metalness ?? 0, triplanar ? kd.antiTile ?? 0 : 0) },
     sfLight: { value: new THREE.Vector4(opts.wrap ?? kd.wrap ?? 0, 0, 0, 0) },
   };
   if (moss) {
@@ -591,7 +638,36 @@ function makeFoliage(opts) {
   m.userData.foliage = { variant };
   m.name = `foliage-${variant}`;
   installPatch(m, patchFoliage, u, 'foliage|', opts.wind);
+  // Shadow pass: a depth material that keeps leaf coverage at any shadow-map
+  // footprint (mip alpha would otherwise average away and thin the shadows)
+  // and sways with the same wind as the leaves. Handed to each mesh the first
+  // time it is drawn (three.js copies map / alphaTest / side onto it).
+  const depth = foliageDepthMaterial(opts.wind);
+  m.onBeforeRender = (renderer, scene, camera, geometry, object) => {
+    captureRenderer(renderer);
+    if (object && object.customDepthMaterial === undefined && !Array.isArray(object.material)) object.customDepthMaterial = depth;
+  };
+  const baseClone = m.clone;
+  m.clone = function () {
+    const c = baseClone.call(this);
+    c.onBeforeRender = this.onBeforeRender;
+    return c;
+  };
   return m;
+}
+
+const depthMaterials = new Map();
+function foliageDepthMaterial(wind) {
+  const key = wind ? `${wind.strength ?? 0.06}|${wind.base ?? 0}|${wind.speed ?? 1.6}` : '-';
+  if (depthMaterials.has(key)) return depthMaterials.get(key);
+  const d = new THREE.MeshDepthMaterial();
+  d.name = 'foliage-depth';
+  d.onBeforeCompile = (shader) => patchFoliageDepth(shader);
+  if (wind) applyWind(d, wind);
+  const windKey = wind ? d.customProgramCacheKey() : '';
+  d.customProgramCacheKey = () => 'foliage-depth|' + windKey;
+  depthMaterials.set(key, d);
+  return d;
 }
 
 // ─── geometry helpers ───────────────────────────────────────────────────────

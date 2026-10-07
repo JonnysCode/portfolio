@@ -1,9 +1,17 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The snail lift of the Code Loft: a riding snail with a little wicker basket
-// crawls up and down a wooden track on the bark of the Great Oak, between a
-// boarding platform on the roots and the slot in the deck — up, rest (it
-// turns round), down, rest. It passes through the slot in the stair landing
-// on the way. A faint silvery slime trail glistens between the rails.
+// crawls up and down a track on the bark of the Great Oak, between a boarding
+// platform on the roots and the slot in the deck — up, rest (it turns round),
+// down, rest. It passes through the slot in the stair landing on the way. A
+// faint silvery slime trail glistens between the rails.
+//
+// Everything about the station is rustic woodland joinery in warm weathered
+// wood (seen from the workshop it once read as a dark steel fire escape): the
+// track is two crooked bark poles rope-lashed to pegs in the bark with ivy
+// twining up them (no rungs), the platform stands on crooked branch posts
+// (no X-bracing) and is reached by a short stair of chunky treads on bough
+// stringers (no ladder); a bell
+// on a gallows, lanterns on the railing and half way up the track.
 //
 // The basket hangs from a brass hook on the saddle and always stays level,
 // swinging gently when the snail starts and stops. Clicking the snail glides
@@ -15,7 +23,7 @@
 import * as THREE from 'three';
 import { OAK } from '../../world/layout.js';
 import { getHeight } from '../../world/ground.js';
-import { DEG, TAU, IRON, BRASS, addFlowerTuft, Batch, smallBitsRemap, polar, radial, timber, branch, tubeAlong, xf, stoneGeo, mossGeo } from './kit.js';
+import { DEG, TAU, IRON, BRASS, BARK, WARM_WOOD, addFlowerTuft, addToadstool, Batch, smallBitsRemap, polar, radial, board, timber, branch, tubeAlong, xf, stoneGeo, mossGeo, ivyCard, lashing } from './kit.js';
 import { ELEVATOR_AZ, LIFT } from './deck.js';
 import { addSignPlate } from './props.js';
 
@@ -149,7 +157,16 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
   }
   const bottomHookY = platY + 0.03 + floorToHook;
 
-  // boarding platform: planks on short posts, log steps down to the ground
+  // boarding platform: warm planks on crooked branch posts, a short stair of
+  // chunky treads up from the moss (rustic woodland joinery — no ladder, no
+  // X-bracing)
+  const barkMat = mats.bark(BARK.warm);
+  const ropeMat = mats.rope();
+  /** ground (or root) height under (x, z) */
+  const floorAt = (p) => {
+    const t = rootTop(p.x, p.z);
+    return Math.max(getHeight(p.x, p.z), isFinite(t) ? t : -Infinity);
+  };
   {
     const yP = platY;
     const r0 = bark(a, yP) + 0.15;
@@ -160,71 +177,83 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
       const p1 = polar(a, r0 + Dp, yP - 0.03).addScaledVector(lat, off);
       // leave a gap for the basket near the bark
       const g0 = p0.clone().lerp(p1, 0.52);
-      B.add(mats.wood(rng.pick(['#8f8478', '#9c7a55', '#8a6c4e'])), timber(g0, p1, 0.22, 0.06, { rng, wobble: 0.004 }));
+      B.add(mats.wood(rng.pick(WARM_WOOD)), timber(g0, p1.clone().addScaledVector(n, rng.jitter(0.06)), 0.22, 0.06, { rng, wobble: 0.004, scale: 1 / 1.4 }));
     }
     for (const s of [-1, 1]) {
       const p0 = polar(a, r0, yP - 0.1).addScaledVector(lat, s * W / 2);
       const p1 = polar(a, r0 + Dp, yP - 0.1).addScaledVector(lat, s * W / 2);
-      B.add(mats.timber('#7a6450'), timber(p0, p1, 0.09, 0.1, { rng }));
-      // crooked posts down to the roots / ground, X-braced between them
-      const feet = [];
-      for (const u of [0.5, 1]) {
+      B.add(mats.wood('#8f6a44'), timber(p0.clone().lerp(p1, 0.42), p1, 0.09, 0.1, { rng }));
+      // crooked branch posts down to the roots / ground, lashed to the bearer
+      for (const u of [0.55, 0.97]) {
         const top = p0.clone().lerp(p1, u);
-        const g = Math.max(getHeight(top.x, top.z), isFinite(rootTop(top.x, top.z)) ? rootTop(top.x, top.z) : -1);
+        const g = floorAt(top);
         if (top.y - g > 0.08) {
-          const foot = top.clone().setY(g - 0.1).addScaledVector(lat, s * 0.06);
+          const foot = top.clone().setY(g - 0.1).addScaledVector(lat, s * 0.07);
           const mid = top.clone().lerp(foot, 0.5).add(new THREE.Vector3(rng.jitter(0.05), 0, rng.jitter(0.05)));
-          B.add(mats.bark(), branch([top, mid, foot], 0.065, 0.08, { radial: 7, seed: u * 3 + s }));
-          feet.push({ top, foot });
-        }
-      }
-      if (feet.length === 2) {
-        const [A, Bf] = feet;
-        const lo = (f) => f.top.clone().lerp(f.foot, 0.82);
-        const hi = (f) => f.top.clone().lerp(f.foot, 0.12);
-        for (const [p, q] of [[lo(A), hi(Bf)], [hi(A), lo(Bf)]]) {
-          const m = p.clone().lerp(q, 0.5).addScaledVector(lat, s * 0.04);
-          B.add(mats.bark(), branch([p, m, q], 0.03, 0.026, { radial: 5, seed: p.y * 7 }), { cast: false });
+          B.add(barkMat, branch([foot, mid, top.clone().add(new THREE.Vector3(0, 0.06, 0))], 0.085, 0.07, { radial: 7, seed: u * 3 + s }));
+          for (const lg of lashing(top.clone().add(new THREE.Vector3(0, -0.02, 0)), new THREE.Vector3(0, 1, 0), 0.07, { turns: 2 })) B.add(ropeMat, lg, { cast: false });
+          B.add(mats.moss(), xf(mossGeo(rng, { r: 0.16, h: 0.06 }), [foot.x, g + 0.02, foot.z]), { cast: false });
         }
       }
       // a little railing on the sides
       const r0p = p0.clone().lerp(p1, 0.5).add(new THREE.Vector3(0, 0.1, 0));
       const r1p = p1.clone().add(new THREE.Vector3(0, 0.1, 0));
       const t0 = r0p.clone().add(new THREE.Vector3(0, 0.55, 0)), t1 = r1p.clone().add(new THREE.Vector3(0, 0.55, 0));
-      B.add(mats.bark(), branch([r0p, t0], 0.03, 0.026, { radial: 5, seed: s }), { cast: false });
-      B.add(mats.bark(), branch([r1p, t1], 0.03, 0.026, { radial: 5, seed: s + 2 }), { cast: false });
-      B.add(mats.bark(), branch([t0, t0.clone().lerp(t1, 0.5).add(new THREE.Vector3(0, 0.02, 0)), t1], 0.026, 0.024, { radial: 5, seed: s + 4 }), { cast: false });
-    }
-    // a rustic ladder from the moss up to the platform's outer edge
-    {
-      const topC = polar(a, r0 + Dp - 0.02, yP + 0.02);
-      const footC = polar(a, r0 + Dp + Math.max(0.6, yP * 0.32), 0);
-      footC.y = getHeight(footC.x, footC.z);
-      const rails = [];
-      for (const s of [-1, 1]) {
-        const t = topC.clone().addScaledVector(lat, s * 0.26).add(new THREE.Vector3(0, 0.45, 0));
-        const f = footC.clone().addScaledVector(lat, s * 0.3);
-        B.add(mats.bark(), branch([f, f.clone().lerp(t, 0.5).add(new THREE.Vector3(rng.jitter(0.03), 0, rng.jitter(0.03))), t], 0.045, 0.036, { radial: 6, seed: 70 + s }));
-        rails.push([f, t]);
+      B.add(barkMat, branch([r0p, t0], 0.036, 0.03, { radial: 6, seed: s }), { cast: false });
+      B.add(barkMat, branch([r1p, t1], 0.036, 0.03, { radial: 6, seed: s + 2 }), { cast: false });
+      B.add(barkMat, branch([t0, t0.clone().lerp(t1, 0.5).add(new THREE.Vector3(0, 0.02, 0)), t1], 0.03, 0.027, { radial: 6, seed: s + 4 }), { cast: false });
+      // ivy trailing from the side bearer
+      for (let j = 0; j < 3; j++) {
+        const base = p0.clone().lerp(p1, rng.range(0.5, 0.95)).addScaledVector(lat, s * 0.05);
+        B.add(mats.ivy(), ivyCard(base, new THREE.Vector3(rng.jitter(0.2), -1, rng.jitter(0.2)), lat.clone().multiplyScalar(s), rng.range(0.3, 0.55), rng.next() < 0.5), { cast: false });
       }
-      const rungs = Math.max(2, Math.round(yP / 0.32));
-      for (let k = 1; k <= rungs; k++) {
-        const u = k / (rungs + 1.3);
-        const p0 = rails[0][0].clone().lerp(rails[0][1], u), p1 = rails[1][0].clone().lerp(rails[1][1], u);
-        B.add(mats.wood('#7a5a3e'), timber(p0, p1, 0.05, 0.05, { rng, wobble: 0.006 }), { cast: false });
-        B.add(mats.rope(), xf(new THREE.TorusGeometry(0.05, 0.012, 3, 8), [p0.x, p0.y, p0.z], [0, a, 0]), { cast: false });
+    }
+    // a short rustic stair down from the platform's outer edge: chunky warm
+    // treads on two crooked bough stringers, moss and a toadstool at the foot
+    {
+      const topC = polar(a, r0 + Dp - 0.06, yP - 0.06);
+      const run = THREE.MathUtils.clamp(yP * 0.72, 0.8, 1.9);
+      const footC = polar(a, r0 + Dp + run, 0);
+      footC.y = floorAt(footC);
+      const rise = topC.y - footC.y;
+      if (rise > 0.25) {
+        const slope = new THREE.Vector3().subVectors(topC, footC);
+        const H = 0.38; // half width
+        for (const s of [-1, 1]) {
+          const t = topC.clone().addScaledVector(lat, s * H);
+          const f = footC.clone().addScaledVector(lat, s * (H + 0.04)).add(new THREE.Vector3(0, -0.12, 0));
+          const m = f.clone().lerp(t, 0.5).add(new THREE.Vector3(rng.jitter(0.03), -0.03, rng.jitter(0.03)));
+          B.add(barkMat, branch([f, m, t], 0.07, 0.06, { radial: 7, seed: 70 + s }));
+          B.add(mats.moss(), xf(mossGeo(rng, { r: 0.15, h: 0.05 }), [f.x, footC.y + 0.02, f.z]), { cast: false });
+        }
+        const nT = Math.max(2, Math.round(rise / 0.3));
+        const basis = new THREE.Matrix4().makeBasis(lat, new THREE.Vector3(0, 1, 0), lat.clone().cross(new THREE.Vector3(0, 1, 0)));
+        for (let k = 1; k <= nT; k++) {
+          const u = k / (nT + 0.6);
+          const c = footC.clone().addScaledVector(slope, u);
+          const g = board(2 * H + 0.16, 0.08, 0.27, { along: 'x', rng, c: 0.02 });
+          const m = basis.clone().multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rng.jitter(0.03), rng.jitter(0.05), rng.jitter(0.03))));
+          m.setPosition(c.clone().add(new THREE.Vector3(0, 0.1, 0)));
+          B.add(mats.wood(rng.pick(WARM_WOOD)), g.applyMatrix4(m));
+          if (rng.next() < 0.5) {
+            const mp = c.clone().addScaledVector(lat, rng.jitter(0.25)).add(new THREE.Vector3(0, 0.14, 0));
+            B.add(mats.moss(), xf(mossGeo(rng, { r: 0.09, h: 0.03, sx: 1.5 }), [mp.x, mp.y, mp.z], [0, rng.next() * TAU, 0]), { cast: false });
+          }
+        }
+        addToadstool(B.at(new THREE.Matrix4()), mats, rng, ...footC.clone().addScaledVector(lat, -H - 0.2).add(new THREE.Vector3(0, -0.02, 0)).toArray(), { size: 0.12 });
+        addToadstool(B.at(new THREE.Matrix4()), mats, rng, ...footC.clone().addScaledVector(lat, -H - 0.32).addScaledVector(n, 0.15).toArray(), { size: 0.08 });
       }
     }
     // a bell on a little gallows to call the snail
     {
       const bp = polar(a, r0 + Dp - 0.1, yP).addScaledVector(lat, 0.56);
       const top = bp.clone().add(new THREE.Vector3(0, 1.05, 0));
-      B.add(mats.bark(), branch([bp, bp.clone().add(new THREE.Vector3(0.02, 0.5, 0)), top], 0.035, 0.028, { radial: 6, seed: 61 }));
+      B.add(barkMat, branch([bp, bp.clone().add(new THREE.Vector3(0.02, 0.5, 0)), top], 0.04, 0.032, { radial: 6, seed: 61 }));
       const armEnd = top.clone().addScaledVector(lat, -0.25);
-      B.add(mats.bark(), branch([top, top.clone().addScaledVector(lat, -0.12).add(new THREE.Vector3(0, 0.03, 0)), armEnd], 0.025, 0.02, { radial: 5, seed: 62 }), { cast: false });
+      B.add(barkMat, branch([top, top.clone().addScaledVector(lat, -0.12).add(new THREE.Vector3(0, 0.03, 0)), armEnd], 0.028, 0.022, { radial: 5, seed: 62 }), { cast: false });
       B.add(mats.metal(BRASS), xf(new THREE.CylinderGeometry(0.03, 0.065, 0.1, 10, 1, true), [armEnd.x, armEnd.y - 0.1, armEnd.z]));
       B.add(mats.metal(BRASS), xf(new THREE.SphereGeometry(0.02, 6, 4), [armEnd.x, armEnd.y - 0.16, armEnd.z]), { cast: false });
-      B.add(mats.rope(), tubeAlong([armEnd.clone().add(new THREE.Vector3(0, -0.15, 0)), armEnd.clone().add(new THREE.Vector3(0.03, -0.45, 0)), armEnd.clone().add(new THREE.Vector3(0.02, -0.7, 0.02))], 0.008, 4), { cast: false });
+      B.add(ropeMat, tubeAlong([armEnd.clone().add(new THREE.Vector3(0, -0.15, 0)), armEnd.clone().add(new THREE.Vector3(0.03, -0.45, 0)), armEnd.clone().add(new THREE.Vector3(0.02, -0.7, 0.02))], 0.008, 4), { cast: false });
       // the station's name plate on the gallows post, facing out of the tree
       if (env.boards) {
         const c = bp.clone().add(new THREE.Vector3(0, 0.62, 0)).addScaledVector(n, 0.06);
@@ -255,24 +284,49 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     }
   }
 
-  // ── the track: two slim rails on standoff blocks, a slime trail between ───
+  // ── the track: two crooked peeled-pole rails lashed to the bark with rope,
+  //    ivy twining up them, a slime trail glistening between (no rungs: it
+  //    must never read as a ladder) ─────────────────────────────────────────
   {
     const y0 = Math.max(platY - 0.2, rootClear - 0.15), y1 = OAK.loft.y - 0.1;
+    const railMat = mats.wood('#c4a074');
     for (const s of [-1, 1]) {
       const pts = [];
       for (let y = y0; y <= y1 + 0.001; y += 0.5) pts.push(polar(a, bark(a, y) + 0.07, y).addScaledVector(lat, s * 0.2));
-      for (let j = 0; j < pts.length - 1; j++) B.add(mats.wood('#7a5a3e'), timber(pts[j], pts[j + 1], 0.05, 0.06, { rng, wobble: 0.003, up: [n.x, 0, n.z] }), { cast: false });
-      for (let j = 0; j < pts.length; j += 2) {
+      // one long pole per side, a gentle wander, tapering towards the top
+      const wander = pts.map((p, k) => p.clone().addScaledVector(lat, Math.sin(k * 0.7 + s) * 0.012));
+      B.add(mats.bark(BARK.warmLight), branch(wander, 0.036, 0.03, { radial: 6, seed: 80 + s, lump: 0.08 }), { cast: false });
+      // lashed to short wooden pegs in the bark every ~1.5
+      for (let j = 1; j < pts.length - 1; j += 3) {
         const p = pts[j];
-        B.add(mats.wood('#5e4433'), xf(new THREE.BoxGeometry(0.08, 0.12, 0.08), [p.x - n.x * 0.04, p.y, p.z - n.z * 0.04], [0, a, 0]), { cast: false });
-        B.add(mats.metal(IRON), xf(new THREE.CylinderGeometry(0.014, 0.014, 0.02, 5).rotateX(Math.PI / 2), [p.x + n.x * 0.035, p.y, p.z + n.z * 0.035], [0, a, 0]), { cast: false });
+        const along = pts[j + 1].clone().sub(pts[j - 1]).normalize();
+        B.add(railMat, xf(new THREE.CylinderGeometry(0.03, 0.035, 0.12, 6).rotateX(Math.PI / 2), [p.x - n.x * 0.04, p.y - 0.06, p.z - n.z * 0.04], [0, a, 0]), { cast: false });
+        for (const lg of lashing(p, along, 0.036, { turns: 2, thick: 0.012, gap: 0.03 })) B.add(ropeMat, lg, { cast: false });
+      }
+      // ivy twining up the rail here and there
+      for (let j = 1; j < pts.length - 1; j++) {
+        if ((j + (s > 0 ? 1 : 0)) % 4 !== 0) continue;
+        const p = pts[j];
+        for (let q = 0; q < 2; q++) {
+          const base = p.clone().addScaledVector(lat, s * 0.05).add(new THREE.Vector3(0, q * 0.25, 0));
+          B.add(mats.ivy(), ivyCard(base, new THREE.Vector3(rng.jitter(0.3), 1, rng.jitter(0.3)), n.clone().addScaledVector(lat, s * 0.6), rng.range(0.28, 0.42), rng.next() < 0.5), { cast: false });
+        }
       }
     }
-    // little slats between the rails every so often (it reads as a track)
-    for (let y = y0 + 0.25; y <= y1 - 0.2; y += 0.75) {
-      // tucked close to the bark so the snail's sole glides over them
-      const c = polar(a, bark(a, y) + 0.035, y);
-      B.add(mats.wood('#6b4a30'), timber(c.clone().addScaledVector(lat, -0.22), c.clone().addScaledVector(lat, 0.22), 0.05, 0.03, { rng, wobble: 0.002, up: [n.x, 0, n.z] }), { cast: false });
+    // a lantern half way up, on a crooked twig driven into the bark beside the track
+    {
+      const aL = a - 10 * DEG;
+      const yL = THREE.MathUtils.lerp(y0, y1, 0.42);
+      const nL = radial(aL);
+      const p0 = polar(aL, bark(aL, yL) - 0.04, yL);
+      const tip = polar(aL, bark(aL, yL) + 0.32, yL + 0.12);
+      B.add(barkMat, branch([p0, p0.clone().lerp(tip, 0.5).add(new THREE.Vector3(0, 0.07, 0)), tip], 0.035, 0.022, { radial: 5, seed: 83 }), { cast: false });
+      const l = ctx.props.makeLantern({ hanging: true, color: '#ffc46b', halo: false });
+      l.scale.setScalar(0.62);
+      l.position.copy(tip).add(new THREE.Vector3(0, -0.01, 0));
+      env.extraLights?.add(l);
+      env.halos.push(tip.clone().add(new THREE.Vector3(0, -0.5 * 0.62 + 0.17 * 0.62 - 0.01, 0)), 0.7, '#ffc46e');
+      B.add(mats.moss(), xf(mossGeo(rng, { r: 0.12, h: 0.05 }), [p0.x + nL.x * 0.06, p0.y + 0.03, p0.z + nL.z * 0.06]), { cast: false });
     }
     // the glistening slime trail
     const trail = [];

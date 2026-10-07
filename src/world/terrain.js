@@ -56,7 +56,8 @@ export default async function build(ctx) {
     const od = Math.hypot(x - OAK.x, z - OAK.z);
     let litter = smoothstep(0.6, 0.85, fieldBroad(x, z)) * 0.6;
     litter = Math.max(litter, (1 - smoothstep(7, 13, od)) * smoothstep(3.2, 5, od) * 0.85);
-    litter = Math.max(litter, smoothstep(22, 32, r) * (0.45 + 0.4 * fieldMid(x, z)));
+    // (under the forest wall: litter in patches between moss — never one bare brown band)
+    litter = Math.max(litter, smoothstep(23, 34, r) * (0.28 + 0.5 * smoothstep(0.35, 0.75, fieldMid(x, z))));
     for (const t of trees) {
       const d = Math.hypot(x - t.x, z - t.z);
       if (d < t.radius * 4) litter = Math.max(litter, (1 - smoothstep(t.radius * 1.3, t.radius * 4, d)) * 0.95);

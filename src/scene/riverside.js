@@ -75,7 +75,7 @@ export default async function build(ctx) {
     vintage.group.rotation.set(0, yaw, 0);
     vintage.group.rotateX(-0.2);
     vintage.group.updateMatrix();
-    const bike = makeBike({ style: 'vintage', seed: 'vintage', scale: 0.72, batch: B, matrix: vintage.group.matrix });
+    const bike = makeBike({ style: 'vintage', seed: 'vintage', scale: 0.72, detail: 'lite', batch: B, matrix: vintage.group.matrix });
     const d = bike.dims;
     const proxy = new THREE.Mesh(new THREE.BoxGeometry(d.length, d.height, 0.42), ctx.materials.basic('#ffffff', { visible: false }));
     proxy.position.set((d.frontAxle.x + d.rearAxle.x) / 2, d.height / 2, 0);

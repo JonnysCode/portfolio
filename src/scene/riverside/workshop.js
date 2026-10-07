@@ -99,9 +99,12 @@ export function buildWorkshop(ctx, B, rng, halos) {
     // a little loft window up under the cap
     { phi: 0.78, y: 2.72, r: 0.19, kind: 'round' },
   ];
-  const nearWindow = (phi, y, half) => windows.some((w) => {
+  /** Does a wall stone (centre phi, y; half length `half`, half height `hh`) overlap a window and its stone ring? */
+  const nearWindow = (phi, y, half, hh = 0.1) => windows.some((w) => {
     const d = Math.abs(Math.atan2(Math.sin(phi - w.phi), Math.cos(phi - w.phi))) * wallR(y);
-    return d < w.r + half + 0.04 && Math.abs(y - w.y) < w.r + 0.14;
+    const dx = Math.max(0, d - half), dy = Math.max(0, Math.abs(y - w.y) - hh);
+    if (w.kind === 'square') return dx < w.r + 0.04 && dy < w.r + 0.06;
+    return Math.hypot(dx, dy) < w.r + 0.19;
   });
   // rough fieldstones laid course by course: each one an irregular cushion
   // bulging out of dark, mossy mortar (bent around the drum), every stone its
@@ -125,13 +128,13 @@ export function buildWorkshop(ctx, B, rng, halos) {
         phi += dphi;
         const x = Math.sin(pc) * r, z = Math.cos(pc) * r;
         if (z > 0 && clashesOpening(x, len, y, y + hc)) continue;
-        if (nearWindow(pc, yc, len / 2)) continue;
+        if (nearWindow(pc, yc, len / 2, hc / 2)) continue;
         // follow the bulge (lean back) and hug the curve of the drum
         const slope = (wallR(yc + 0.05) - wallR(yc - 0.05)) / 0.1;
         const pair = !big && hc > 0.2 && rng.chance(0.12);
         const parts = pair ? [[-hc / 4, hc / 2], [hc / 4, hc / 2]] : [[0, big ? Math.min(hc * rng.range(1.0, 1.2), hc + 0.04) : hc]];
         for (const [dy, hh] of parts) {
-          const g = cushionStone(rng, len - 0.04, hh - 0.04, rng.range(0.045, 0.085), {
+          const g = cushionStone(rng, len - 0.04, hh - 0.04, rng.range(0.04, 0.072), {
             // greener, damper stones towards the foot
             color: yc < 0.55 && rng.chance(0.5) ? stoneTint(rng, ['#717559', '#6a7352', '#7a7b62']) : stoneTint(rng),
             segs: len > 0.45 ? 12 : 10,
@@ -180,8 +183,9 @@ export function buildWorkshop(ctx, B, rng, halos) {
     colorize(g);
     F.add(mat, g, { cast: false });
   };
-  const mortarDark = new THREE.Color(MORTAR), mortarMoss = new THREE.Color('#3c5021');
-  shell(0.055, MM.moss, false, (g) =>
+  const mortarDark = new THREE.Color(MORTAR), mortarMoss = new THREE.Color('#465a28');
+  // (deep enough that the window panes, just inside the frames, stay in front of it)
+  shell(0.075, MM.moss, false, (g) =>
     paintFn(g, MORTAR, (x, y, z, i, c) => {
       const k = smooth01(0.25 + noiseA(x * 1.7 + z * 1.3, y * 2.2) * 0.8 - y * 0.25);
       c.copy(mortarDark).lerp(mortarMoss, k);
@@ -265,7 +269,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
     const fm = new THREE.Matrix4().makeRotationY(w.phi).setPosition(n.x * (r - 0.02), w.y, n.z * (r - 0.02));
     const W = F.at(fm);
     if (w.kind === 'round') {
-      W.add(MM.lamp, new THREE.CircleGeometry(w.r - 0.02, 20).translate(0, 0, -0.05), { cast: false });
+      W.add(MM.lamp, new THREE.CircleGeometry(w.r - 0.02, 20).translate(0, 0, -0.035), { cast: false });
       W.add(MM.wood, new THREE.TorusGeometry(w.r, 0.055, 6, 24), { color: WOOD.door });
       W.add(MM.wood, new THREE.BoxGeometry(w.r * 2, 0.035, 0.04).translate(0, 0, -0.02), { color: WOOD.dark, cast: false });
       W.add(MM.wood, new THREE.BoxGeometry(0.035, w.r * 2, 0.04).translate(0, 0, -0.02), { color: WOOD.dark, cast: false });
@@ -278,7 +282,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
       }
     } else {
       const s = w.r;
-      W.add(MM.lamp, new THREE.PlaneGeometry(s * 1.6, s * 2).translate(0, 0, -0.05), { cast: false });
+      W.add(MM.lamp, new THREE.PlaneGeometry(s * 1.6, s * 2).translate(0, 0, -0.035), { cast: false });
       for (const [gw, gh, x, y] of [[s * 1.9, 0.06, 0, s + 0.02], [s * 1.9, 0.06, 0, -s - 0.02], [0.06, s * 2.1, s * 0.9, 0], [0.06, s * 2.1, -s * 0.9, 0], [0.035, s * 2, 0, 0], [s * 1.7, 0.035, 0, 0]]) {
         W.add(MM.wood, new THREE.BoxGeometry(gw, gh, 0.06).translate(x, y, 0), { color: WOOD.door, cast: false });
       }
@@ -700,7 +704,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
     out.set(Math.sin(phi) * pt.x * wob - curl * 0.42, y - curl * 0.12, Math.cos(phi) * pt.x * wob - curl * 0.12);
     return out.applyMatrix4(LEAN);
   };
-  const capTop = paramSurface((u, v, p) => capPoint(u * TAU, v, p), 80, 36, { uv: (u, v) => [u * 4, 1 - v] });
+  const capTop = paramSurface((u, v, p) => capPoint(u * TAU, v, p), 64, 28, { uv: (u, v) => [u * 4, 1 - v] });
   {
     // painterly gradient: a sun-bleached orange crown, burnt orange body, deep
     // rust towards the rim — with soft blotches and faint vertical streaks
@@ -727,7 +731,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
       capPoint((i / 80) * TAU, 1, q);
       pts.push(q.clone().add(new THREE.Vector3(0, -0.035, 0)));
     }
-    const rim = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 160, 0.075, 6, true);
+    const rim = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 120, 0.075, 6, true);
     F.add(MM.cap, rim, { color: '#8e3f1e' });
   }
   // gills: the underside from the wall top (which doesn't tilt) out to the
@@ -785,7 +789,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
   {
     const p0 = new THREE.Vector3(), pu = new THREE.Vector3(), pv = new THREE.Vector3();
     const placed = [];
-    for (let tries = 0; tries < 900 && placed.length < 170; tries++) {
+    for (let tries = 0; tries < 900 && placed.length < 150; tries++) {
       const v = Math.pow(rng.next(), 0.8) * 0.94 + 0.03;
       const phi = rng.next() * TAU;
       capPoint(phi, v, p0);
@@ -796,7 +800,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
       capPoint(phi, v + 0.01, pv).sub(p0);
       const nrm = new THREE.Vector3().crossVectors(pv, pu).normalize();
       if (nrm.y < 0) nrm.negate();
-      const g = new THREE.SphereGeometry(1, size > 0.09 ? 9 : 6, 3, 0, TAU, 0, Math.PI / 2);
+      const g = new THREE.SphereGeometry(1, size > 0.09 ? 8 : 6, size > 0.09 ? 3 : 2, 0, TAU, 0, Math.PI / 2);
       deform(g, (q) => {
         const k = 1 + 0.18 * noiseA(q.x * 2.5 + size * 97, q.z * 2.5 + placed.length);
         q.set(q.x * k, q.y, q.z * k);
@@ -914,7 +918,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
     I.add(null, rod([-0.3, 0, 0], [0.3, 0, 0], 0.008, 0.008, 4));
     I.add(null, new THREE.ConeGeometry(0.035, 0.09, 4).rotateZ(-Math.PI / 2).translate(0.33, 0, 0));
     I.add(null, new THREE.BoxGeometry(0.01, 0.1, 0.12).translate(-0.3, 0, 0));
-    makeBike({ style: 'road', batch: I, matrix: mat4([-0.08, 0.01, 0], [0, 0, 0]), scale: 0.22, lite: true, seed: 'vane' });
+    makeBike({ style: 'road', batch: I, matrix: mat4([-0.08, 0.01, 0], [0, 0, 0]), scale: 0.22, detail: 'mini', seed: 'vane' });
     VS.build(spin, 'vane');
     updates.push((dt, t) => {
       spin.rotation.y = 0.6 + 0.4 + Math.sin(t * 0.23) * 0.5 + Math.sin(t * 0.71) * 0.15;
@@ -940,39 +944,48 @@ export function buildWorkshop(ctx, B, rng, halos) {
   }
 
   // ── the yard: hero bike on a repair stand, truing stand, wheels, bits ────
-  const hero = makeBike({ style: 'gravel', spin: true, spinFront: false, seed: 'hero', scale: 0.8, color: '#2e6a66', tape: '#6b4a2e' });
-  const heroPos = new THREE.Vector3(-1.55, 0.2, 3.45);
+  // Jonny's own gravel build, cobalt blue with tan-wall tyres, up on the stand
+  // at the front of the yard — big and side-on to the spot camera
+  const hero = makeBike({ style: 'gravel', spin: true, spinFront: false, seed: 'hero', scale: 0.96, color: '#2f68d0', tape: '#6b4a2e' });
+  const heroPos = new THREE.Vector3(-1.72, 0.22, 3.82);
   hero.group.position.copy(heroPos);
-  hero.group.rotation.y = 0.12;
+  hero.group.rotation.y = 0.1;
   group.add(hero.group);
   hero.setSpin(0, 0);
   {
     // repair stand: tripod, mast, arm and clamp gripping the seatpost
-    const post = hero.dims.saddle.clone().add(new THREE.Vector3(0.05, -0.12, 0)).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.12).add(heroPos);
+    const post = hero.dims.saddle.clone().add(new THREE.Vector3(0.05, -0.14, 0)).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.1).add(heroPos);
     const mastX = post.x - 0.32, mastZ = post.z - 0.45;
-    F.add(MM.glossy, rod([mastX, 0.1, mastZ], [mastX, post.y + 0.05, mastZ], 0.022, 0.02, 8), { color: '#2f6f8f' });
+    const STAND = '#3a3d40';
+    F.add(MM.glossy, rod([mastX, 0.1, mastZ], [mastX, post.y + 0.05, mastZ], 0.024, 0.022, 8), { color: STAND });
     for (let i = 0; i < 3; i++) {
       const a = (i / 3) * TAU + 0.4;
-      F.add(MM.glossy, rod([mastX, 0.16, mastZ], [mastX + Math.sin(a) * 0.42, 0.01, mastZ + Math.cos(a) * 0.42], 0.016, 0.014, 6), { color: '#2f6f8f' });
-      F.add(MM.vc, new THREE.SphereGeometry(0.025, 6, 4).translate(mastX + Math.sin(a) * 0.42, 0.015, mastZ + Math.cos(a) * 0.42), { color: '#1f1e1d', cast: false });
+      F.add(MM.glossy, rod([mastX, 0.16, mastZ], [mastX + Math.sin(a) * 0.45, 0.01, mastZ + Math.cos(a) * 0.45], 0.017, 0.015, 6), { color: STAND });
+      F.add(MM.vc, new THREE.SphereGeometry(0.026, 6, 4).translate(mastX + Math.sin(a) * 0.45, 0.015, mastZ + Math.cos(a) * 0.45), { color: '#1f1e1d', cast: false });
     }
-    F.add(MM.metal, rod([mastX, post.y + 0.05, mastZ], [post.x, post.y + 0.02, post.z], 0.016, 0.016, 6), { color: '#9ea2a5' });
-    F.add(MM.vc, new THREE.BoxGeometry(0.07, 0.08, 0.09).translate(post.x, post.y, post.z), { color: '#1f1e1d' });
-    F.add(MM.vc, new THREE.SphereGeometry(0.035, 8, 6).translate(mastX, post.y + 0.1, mastZ), { color: '#b03a2e', cast: false });
+    F.add(MM.metal, rod([mastX, post.y + 0.05, mastZ], [post.x, post.y + 0.02, post.z], 0.017, 0.017, 6), { color: '#9ea2a5' });
+    F.add(MM.glossy, new THREE.BoxGeometry(0.08, 0.09, 0.1).translate(post.x, post.y, post.z), { color: '#c0392b' });
+    F.add(MM.glossy, new THREE.SphereGeometry(0.038, 8, 6).translate(mastX, post.y + 0.1, mastZ), { color: '#c0392b', cast: false });
     // a little tray of tools on the mast
-    F.add(MM.metal, new THREE.BoxGeometry(0.3, 0.025, 0.2).translate(mastX, 0.62, mastZ - 0.05), { color: '#2f6f8f' });
-    F.add(MM.metal, new THREE.BoxGeometry(0.02, 0.012, 0.16).translate(mastX - 0.06, 0.64, mastZ - 0.05), { color: '#c9cdd0', cast: false });
-    F.add(MM.vc, new THREE.CylinderGeometry(0.015, 0.015, 0.12, 6).rotateZ(Math.PI / 2).translate(mastX + 0.05, 0.645, mastZ - 0.03), { color: '#d9a441', cast: false });
+    F.add(MM.metal, new THREE.BoxGeometry(0.32, 0.025, 0.21).translate(mastX, 0.64, mastZ - 0.05), { color: STAND });
+    F.add(MM.metal, new THREE.BoxGeometry(0.02, 0.012, 0.16).translate(mastX - 0.06, 0.66, mastZ - 0.05), { color: '#c9cdd0', cast: false });
+    F.add(MM.vc, new THREE.CylinderGeometry(0.015, 0.015, 0.12, 6).rotateZ(Math.PI / 2).translate(mastX + 0.05, 0.665, mastZ - 0.03), { color: '#d9a441', cast: false });
   }
-  // the mechanic
+  // the mechanic, at the bars beside the front wheel (never in front of the bike)
   let mechanic = null;
   try {
     mechanic = ctx.props.makePerson({ seed: 'velo-mechanic', name: 'Mechanic', holding: 'wrench', action: 'work', apron: true, apronColor: '#3f5f73', hat: 'bandana', hatColor: '#b03a2e', hair: 'curly', shirt: '#e8a838', beard: true });
-    // at the front of the bike, turned three-quarters to the yard, wrench at the bars
-    const mp = new THREE.Vector3(-0.56, 0, 3.3);
+    const mp = new THREE.Vector3(-0.5, 0, 3.55);
     mechanic.group.position.copy(mp);
-    mechanic.group.rotation.y = -0.78;
+    mechanic.group.rotation.y = -1.15;
     group.add(mechanic.group);
+    // only the body casts (one caster, not a handful)
+    let first = true;
+    mechanic.group.traverse((o) => {
+      if (!o.isMesh || !o.castShadow) return;
+      if (first) first = false;
+      else o.castShadow = false;
+    });
   } catch (err) {
     console.warn('[riverside] mechanic skipped', err);
   }
@@ -1012,7 +1025,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
     truing.add(truingWheel);
   }
   // wheels on wall pegs right of the doors, a tyre stack, pump, oil can, crate
-  for (const [phi, y, st] of [[0.78, 1.55, 'vintage'], [0.98, 1.2, 'gravel']]) {
+  for (const [phi, y, st] of [[0.78, 1.55, 'vintage'], [0.93, 1.18, 'gravel']]) {
     const r = wallR(y) + 0.12;
     const p = [Math.sin(phi) * r, y, Math.cos(phi) * r];
     makeWheel({ style: st, batch: F, matrix: mat4(p, [0, phi, 0.05]), scale: 0.62, seed: `peg-${phi}`, lite: true });
@@ -1148,7 +1161,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
       const x = rng.range(-3.6, 4.2), z = rng.range(0.5, 4.8);
       if (Math.hypot(x, z) < wallR(0) + 0.5) continue;
       if (Math.abs(x) < 1.6 && z > 1.6 && z < 4.0) continue; // the apron & the door
-      if (x < -0.6 && z > 2.3 && z < 4.3) continue; // the repair stand
+      if (x < -0.4 && z > 2.6 && z < 4.7) continue; // the repair stand
       if (x > 1.4 && x < 2.6 && z > 2.6 && z < 3.5) continue; // the truing stand
       const wp = toWorld(x, 0, z);
       if (getPathDistance(wp.x, wp.z) < 1.2 || isInWater(wp.x, wp.z, 0.3)) continue;
@@ -1172,6 +1185,9 @@ export function buildWorkshop(ctx, B, rng, halos) {
     sign.position.set(Math.sin(phi) * (r + 0.42), y + 0.03, Math.cos(phi) * (r + 0.42));
     sign.rotation.y = phi + Math.PI / 2 + Math.PI;
     sign.scale.setScalar(0.8);
+    sign.traverse((o) => {
+      if (o.isMesh) o.castShadow = false; // (a small sign: not worth a shadow caster)
+    });
     group.add(sign);
   } catch (err) {
     console.warn('[riverside] sign skipped', err);
@@ -1204,8 +1220,9 @@ export function buildWorkshop(ctx, B, rng, halos) {
     ctx.colliders.addCircle(tw.x, tw.z, 0.42, 'velowerkstatt-truing-stand');
   }
 
-  // warm light inside the workshop (the doors spill it out at night)
-  const light = ctx.lights?.addPoint?.(toWorld(0, 2.0, 0.2), { color: '#ffb866', day: 1.2, night: 7, distance: 7.5 });
+  // warm light inside the workshop, hung by the work lamp over the bench (the
+  // doors spill it out at night)
+  const light = ctx.lights?.addPoint?.(toWorld(0.2, 1.65, -0.55), { color: '#ffb866', day: 1.2, night: 7, distance: 7.5 });
 
   const animate = !ctx.engine?.reducedMotion;
   let phase = 0;

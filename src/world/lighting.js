@@ -12,9 +12,12 @@
 //   hemi HemisphereLight   cool blue-green sky fill / warm mossy ground bounce.
 //   rim  DirectionalLight  faint cool light from the back-right that separates
 //                          the shaded sides from the misty background; by
-//                          night a stronger, low cool moon-rim from the
-//                          back-left so the giant trunks, caps and the oak
-//                          keep a silvered edge against the night mist.
+//                          night a stronger cool moon-rim from the west
+//                          (side-on to the spot cameras, opposite the moon)
+//                          so the giant trunks, caps and the oak keep a
+//                          silvered edge against the night mist. Not from
+//                          straight behind: back light makes leaf cards glow
+//                          (translucency) and the canopy would read as day.
 //   scene.environment      a painted "under the canopy" PMREM (env/envmap.js) so
 //                          PBR surfaces get soft teal-green ambient and gentle
 //                          reflections; swapped for a night version at dusk.
@@ -48,17 +51,20 @@ const DAY = {
 const NIGHT = {
   key: new THREE.Color('#a9b6ff'),
   keyI: 2.05,
-  hemiSky: new THREE.Color('#3a6290'),
-  hemiGround: new THREE.Color('#18262e'),
-  hemiI: 1.0,
+  hemiSky: new THREE.Color('#4170a2'),
+  hemiGround: new THREE.Color('#1a2a32'),
+  hemiI: 1.12,
   rim: new THREE.Color('#8fb4ec'),
-  rimI: 0.95,
+  rimI: 1.1,
   envI: 0.56,
 };
 
+/** The moonlit glen is exposed a touch brighter (all tiers; lights are tamed by post's night bloom). */
+const NIGHT_EXPOSURE_BOOST = 0.07;
+
 const RIM_DAY_DIR = dirFromAngles(24, 70);
-/** Night rim: low from the back-left, opposite the moon (back-right). */
-const RIM_NIGHT_DIR = dirFromAngles(16, 318);
+/** Night rim: from the west, side-on to the cameras, opposite the moon (back-right). */
+const RIM_NIGHT_DIR = dirFromAngles(28, 282);
 /** Centre of the fixed shadow frustum (the middle of the glen). */
 const SHADOW_CENTER = new THREE.Vector3(0, 3, -1);
 /** Half size of the fixed shadow frustum (light-space units). */
@@ -115,6 +121,14 @@ export default async function build(ctx) {
     console.warn('[lighting] environment map failed, using lights only', err);
   }
 
+  const baseExposure = renderer.toneMappingExposure;
+  // Without shadow maps (low tier) the canopy no longer occludes the moon and
+  // there is no post grade to cool & vignette the night: tone the moonlight
+  // down so the glen still reads as night, not as an overcast day.
+  const lit = q.shadows ? { key: 1, rim: 1, hemi: 1, boost: 1 } : { key: 0.45, rim: 0.55, hemi: 0.8, boost: 0 };
+  const nightKeyI = NIGHT.keyI * lit.key;
+  const nightRimI = NIGHT.rimI * lit.rim;
+  const nightHemiI = NIGHT.hemiI * lit.hemi;
   const keyDir = new THREE.Vector3().copy(SUN_LIGHT_DIR);
   const rimDir = new THREE.Vector3().copy(RIM_DAY_DIR);
   let lastNight = -1;
@@ -171,18 +185,19 @@ export default async function build(ctx) {
     keyDir.copy(SUN_LIGHT_DIR).lerp(MOON_LIGHT_DIR, smoothstep(0.3, 0.7, n)).normalize();
     rimDir.copy(RIM_DAY_DIR).lerp(RIM_NIGHT_DIR, n).normalize();
     sun.color.copy(DAY.key).lerp(NIGHT.key, n);
-    sun.intensity = (DAY.keyI + (NIGHT.keyI - DAY.keyI) * n) * (1 - 0.75 * dusk);
+    sun.intensity = (DAY.keyI + (nightKeyI - DAY.keyI) * n) * (1 - 0.75 * dusk);
     hemi.color.copy(DAY.hemiSky).lerp(NIGHT.hemiSky, n);
     hemi.groundColor.copy(DAY.hemiGround).lerp(NIGHT.hemiGround, n);
-    hemi.intensity = DAY.hemiI + (NIGHT.hemiI - DAY.hemiI) * n;
+    hemi.intensity = DAY.hemiI + (nightHemiI - DAY.hemiI) * n;
     rim.color.copy(DAY.rim).lerp(NIGHT.rim, n);
-    rim.intensity = DAY.rimI + (NIGHT.rimI - DAY.rimI) * n;
+    rim.intensity = DAY.rimI + (nightRimI - DAY.rimI) * n;
     if (envMaps) {
       // swap the painted environment at the darkest moment of dusk
       scene.environment = n < 0.5 ? envMaps.day : envMaps.night;
       scene.environmentIntensity = (DAY.envI + (NIGHT.envI - DAY.envI) * n) * (1 - 0.6 * dusk);
     }
     for (const l of points) applyPoint(l, n);
+    renderer.toneMappingExposure = baseExposure * (1 + NIGHT_EXPOSURE_BOOST * lit.boost * n);
     envUniforms.uKeyDir.value.copy(keyDir);
     envUniforms.uKeyColor.value.copy(sun.color).multiplyScalar(sun.intensity / DAY.keyI);
     place();

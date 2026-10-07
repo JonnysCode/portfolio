@@ -66,10 +66,10 @@ uniform sampler2D sfDetail;
 uniform vec3 sfColA;
 uniform vec3 sfColB;
 uniform vec3 sfColC;
-uniform vec2 sfTile;   // triplanar: (1/tile, -) · uv: repeat (u, v)
+uniform vec2 sfTile;   // triplanar: (1/tile, 1/aspect) · uv: repeat (u, v)
 uniform vec4 sfP;      // x normal strength, y ao strength, z roughness mul, w breakup
 uniform vec4 sfQ;      // x mossy, y moss frequency, z velvet, w metal-rust coupling
-uniform vec4 sfR;      // x uv swap (grain along V), y polar mode (1 disc, 2 cone), z metalness, w unused
+uniform vec4 sfR;      // x uv swap (grain along V), y polar mode (1 disc, 2 cone), z metalness, w anti-tile warp (triplanar)
 #ifdef SF_MOSS
 uniform sampler2D sfMossMap;
 uniform sampler2D sfMossDetail;
@@ -79,13 +79,14 @@ vec3 sfUnpack(vec2 xy, float s) {
   vec2 n = xy * 2.0 - 1.0;
   return vec3(n * s, sqrt(saturate(1.0 - dot(n, n))));
 }
-void sfTriplanar(sampler2D tA, sampler2D tD, vec3 p, vec3 n, float ns, out vec4 A, out vec4 D, out vec3 N) {
+// asp: the map covers 1/asp tiles along V (tall maps, e.g. bark) — V is scaled on every projection
+void sfTriplanar(sampler2D tA, sampler2D tD, vec3 p, vec3 n, float ns, float asp, out vec4 A, out vec4 D, out vec3 N) {
   vec3 w = pow(abs(n), vec3(5.0));
   w /= dot(w, vec3(1.0));
   vec3 sg = vec3(n.x < 0.0 ? -1.0 : 1.0, n.y < 0.0 ? -1.0 : 1.0, n.z < 0.0 ? -1.0 : 1.0);
   A = vec4(0.0); D = vec4(0.0); N = vec3(0.0);
   if (w.x > 0.02) {
-    vec2 uvX = vec2(-p.z * sg.x, p.y);
+    vec2 uvX = vec2(-p.z * sg.x, p.y * asp);
     vec4 a = texture2D(tA, uvX), d = texture2D(tD, uvX);
     vec3 tn = sfUnpack(d.xy, ns);
     tn.x *= -sg.x;
@@ -93,7 +94,7 @@ void sfTriplanar(sampler2D tA, sampler2D tD, vec3 p, vec3 n, float ns, out vec4 
     N += tn.zyx * w.x; A += a * w.x; D += d * w.x;
   }
   if (w.y > 0.02) {
-    vec2 uvY = vec2(p.x * sg.y, p.z);
+    vec2 uvY = vec2(p.x * sg.y, p.z * asp);
     vec4 a = texture2D(tA, uvY), d = texture2D(tD, uvY);
     vec3 tn = sfUnpack(d.xy, ns);
     tn.x *= sg.y;
@@ -101,7 +102,7 @@ void sfTriplanar(sampler2D tA, sampler2D tD, vec3 p, vec3 n, float ns, out vec4 
     N += tn.xzy * w.y; A += a * w.y; D += d * w.y;
   }
   if (w.z > 0.02) {
-    vec2 uvZ = vec2(p.x * sg.z, p.y);
+    vec2 uvZ = vec2(p.x * sg.z, p.y * asp);
     vec4 a = texture2D(tA, uvZ), d = texture2D(tD, uvZ);
     vec3 tn = sfUnpack(d.xy, ns);
     tn.x *= sg.z;
@@ -131,7 +132,16 @@ const SURFACE_MAIN = /* glsl */ `
   vec4 sfA, sfD;
   vec3 sfN;
 #ifdef SF_TRIPLANAR
-  sfTriplanar(sfMap, sfDetail, sfWPos * sfTile.x, sfGN, sfP.x, sfA, sfD, sfN);
+  vec3 sfTP = sfWPos * sfTile.x;
+#ifndef SF_LITE
+  if (sfR.w > 0.0) {
+    // anti-tiling: a slow world-space warp (≈3 tiles) bends the pattern so
+    // repeats never line up — furrows meander, plates never stack in a grid
+    vec3 sfWq = sfTP * 0.31;
+    sfTP += sfR.w * (vec3(sfNoise3(sfWq), sfNoise3(sfWq + 17.3), sfNoise3(sfWq + 31.7)) - 0.5);
+  }
+#endif
+  sfTriplanar(sfMap, sfDetail, sfTP, sfGN, sfP.x, sfTile.y, sfA, sfD, sfN);
   normal = normalize((viewMatrix * vec4(sfN, 0.0)).xyz);
 #else
   vec2 sfUv = vUv;
@@ -184,15 +194,19 @@ const SURFACE_MAIN = /* glsl */ `
   {
     vec4 mA, mD;
     vec3 mN;
-    sfTriplanar(sfMossMap, sfMossDetail, sfWPos * sfQ.y, sfGN, 1.0, mA, mD, mN);
+    sfTriplanar(sfMossMap, sfMossDetail, sfWPos * sfQ.y, sfGN, 1.0, 1.0, mA, mD, mN);
     float big = sfNoise3(sfWPos * 0.45);
     float small = sfNoise3(sfWPos * 2.3 + 7.0);
-    float field = sfGN.y * 0.85 + (big - 0.5) * 0.9 + (small - 0.5) * 0.3 + (0.5 - sfA.a) * 0.7 + (mA.a - 0.5) * 0.6;
+    // top faces (stone tops, ledges, sills) catch moss first and clearly once
+    // the surface is meant to be properly mossy (≥ 0.3); light moss (paths) unchanged
+    float up = smoothstep(0.35, 0.85, sfGN.y);
+    float field = sfGN.y * 0.85 + up * 0.3 * smoothstep(0.2, 0.4, sfQ.x) + (big - 0.5) * 0.9 + (small - 0.5) * 0.3 + (0.5 - sfA.a) * 0.7 + (mA.a - 0.5) * 0.6;
     float thr = 1.15 - sfQ.x * 1.75;
     float m = smoothstep(thr - 0.05, thr + 0.05, field);
     float fringe = smoothstep(thr - 0.16, thr - 0.04, field) * (1.0 - m);
-    sfCol = mix(sfCol, sfCol * vec3(0.78, 0.86, 0.6), fringe * 0.6);  // damp, greenish edge
-    sfCol = mix(sfCol, mA.rgb, m);
+    sfCol = mix(sfCol, sfCol * vec3(0.74, 0.84, 0.56), fringe * 0.65);  // damp, greenish edge
+    // sunlit cushions on top are a touch brighter & yellower than moss on the sides
+    sfCol = mix(sfCol, mA.rgb * mix(vec3(1.0), vec3(1.1, 1.14, 0.9), up), m);
     sfN = normalize(mix(sfN, mN, m));
     normal = normalize((viewMatrix * vec4(sfN, 0.0)).xyz);
     sfRough = mix(sfRough, mD.z, m);
@@ -286,4 +300,24 @@ export function patchFoliage(shader, u) {
     .replace('#include <lights_physical_pars_fragment>', '#include <lights_physical_pars_fragment>\n' + DIRECT_OVERRIDE + FOLIAGE_PARS)
     .replace('#include <alphatest_fragment>', FOLIAGE_ALPHA)
     .replace('#include <normal_fragment_begin>', FOLIAGE_MAIN);
+}
+
+// Shadow pass for foliage: sample the leaf alpha at a capped mip so a
+// shadow-map texel that covers many card texels still sees individual leaves
+// (dappled, coverage-preserving) instead of a mip average that falls below the
+// alpha test and makes canopy shadows thin out.
+const FOLIAGE_DEPTH_ALPHA = /* glsl */ `
+#ifdef USE_MAP
+  {
+    vec2 sfTs = vMapUv * vec2(textureSize(map, 0));
+    vec2 sfDx = dFdx(sfTs), sfDy = dFdy(sfTs);
+    float sfLod = clamp(0.5 * log2(max(dot(sfDx, sfDx), dot(sfDy, sfDy))), 0.0, 2.0);
+    diffuseColor.a = textureLod(map, vMapUv, sfLod).a * (1.0 + sfLod * 0.2);
+  }
+#endif
+#include <alphatest_fragment>
+`;
+
+export function patchFoliageDepth(shader) {
+  shader.fragmentShader = shader.fragmentShader.replace('#include <alphatest_fragment>', FOLIAGE_DEPTH_ALPHA);
 }

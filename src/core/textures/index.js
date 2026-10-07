@@ -21,20 +21,22 @@ export { setBakeRenderer, setBakeScale, hasBakeRenderer, flushBakes, bakeStats, 
  * Per-kind recipe.
  *   bake:  mode ('rgb' | 'colorize'), size, bump (relief depth, fraction of a tile), cavity (crevice darkening)
  *   look:  mapping ('triplanar' | 'uv'), tile (world units per texture tile, for triplanar and boxUV),
+ *          aspect (the map spans `aspect` tiles along V — a tall map hides vertical repeats),
+ *          antiTile (triplanar: slow world-space warp, in tiles, so repeats never line up),
  *          roughness / metalness multipliers, normal (strength), ao (strength), breakup (painterly
  *          colour variation), velvet (soft rim sheen), wrap (soft terminator), mossy (default amount)
  *   mean:  average sRGB colour of the baked albedo — opts.color re-tints relative to it
  */
 export const KINDS = {
-  bark: { mode: 'rgb', size: [512, 512], bump: 0.05, cavity: 1.5, mapping: 'triplanar', tile: 3.2, normal: 1.2, ao: 1, breakup: 1, wrap: 0.15, mean: '#6a5845' },
+  bark: { mode: 'rgb', size: [512, 1024], aspect: 2, antiTile: 0.6, bump: 0.05, cavity: 1.5, mapping: 'triplanar', tile: 3.2, normal: 1.2, ao: 1, breakup: 1, wrap: 0.15, mean: '#6a5845' },
   wood: { mode: 'colorize', size: [512, 512], bump: 0.004, cavity: 1.5, mapping: 'uv', tile: 1.4, normal: 0.8, ao: 0.8, breakup: 0.5, wrap: 0.1 },
   woodPlanks: { glsl: 'wood', defines: '#define WOOD_PLANKS\n', mode: 'colorize', size: [512, 512], bump: 0.004, cavity: 1.5, mapping: 'uv', tile: 1.6, normal: 0.9, ao: 1, breakup: 0.5, wrap: 0.1 },
   timber: { mode: 'rgb', size: [512, 512], bump: 0.012, cavity: 2, mapping: 'uv', tile: 1.6, normal: 1, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#755d48' },
   shingles: { mode: 'rgb', size: [512, 512], bump: 0.035, cavity: 1.5, mapping: 'uv', tile: 1.4, normal: 1.2, ao: 1, breakup: 0.9, wrap: 0.1, mean: '#694e3b' },
   plaster: { mode: 'rgb', size: [512, 512], bump: 0.006, cavity: 2, mapping: 'uv', tile: 2.2, normal: 0.9, ao: 0.8, breakup: 0.8, wrap: 0.2, mean: '#ede1c6' },
-  stone: { mode: 'rgb', size: [512, 512], bump: 0.035, cavity: 1.2, mapping: 'triplanar', tile: 1.6, normal: 1.1, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#9c9483' },
-  cobble: { mode: 'rgb', size: [512, 512], bump: 0.035, cavity: 1.2, mapping: 'triplanar', tile: 1.8, normal: 1.1, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#8b8473' },
-  rock: { mode: 'rgb', size: [512, 512], bump: 0.05, cavity: 2, mapping: 'triplanar', tile: 5, normal: 1.1, ao: 1, breakup: 1, wrap: 0.1, mossy: 0.35, mean: '#8d8b82' },
+  stone: { mode: 'rgb', size: [512, 512], bump: 0.045, cavity: 1.8, mapping: 'triplanar', tile: 2, normal: 1.25, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#867d6e' },
+  cobble: { mode: 'rgb', size: [512, 512], bump: 0.035, cavity: 0.9, mapping: 'triplanar', tile: 1.8, normal: 1.1, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#8c8671' },
+  rock: { mode: 'rgb', size: [512, 512], bump: 0.05, cavity: 2, mapping: 'triplanar', tile: 5, normal: 1.1, ao: 1, breakup: 1, wrap: 0.1, mossy: 0.35, mean: '#8c8a82' },
   moss: { mode: 'rgb', size: [512, 512], bump: 0.025, cavity: 2, mapping: 'triplanar', tile: 1.3, normal: 1, ao: 1, breakup: 1.2, velvet: 0.6, wrap: 0.35, mean: '#597320' },
   soil: { mode: 'rgb', size: [512, 512], bump: 0.02, cavity: 2, mapping: 'triplanar', tile: 2.2, normal: 1, ao: 1, breakup: 1, wrap: 0.15, mean: '#503720' },
   mushroomCap: { mode: 'colorize', size: [512, 512], bump: 0.008, cavity: 1, mapping: 'uv', tile: 1, wrapT: 'clamp', normal: 0.8, ao: 0.5, breakup: 0.6, velvet: 0.35, wrap: 0.25 },
@@ -46,7 +48,7 @@ export const KINDS = {
   metal: { mode: 'colorize', size: [256, 256], bump: 0.006, cavity: 1, mapping: 'triplanar', tile: 0.7, normal: 0.8, ao: 0.6, breakup: 0.4, metalness: 0.65, metalRust: 1 },
   glass: { mode: 'rgb', size: [256, 256], bump: 0.004, cavity: 0, mapping: 'uv', tile: 1, normal: 0.6, ao: 0, breakup: 0.2, transparent: true, opacity: 0.35, mean: '#d3e6de' },
   paper: { mode: 'rgb', size: [256, 256], bump: 0.002, cavity: 0.5, mapping: 'uv', tile: 1, normal: 0.6, ao: 0.4, breakup: 0.3, wrap: 0.3, mean: '#eae0c9' },
-  thatch: { mode: 'rgb', size: [512, 512], bump: 0.03, cavity: 1.5, mapping: 'uv', tile: 1.6, normal: 1.1, ao: 1, breakup: 1, wrap: 0.2, mean: '#988254' },
+  thatch: { mode: 'rgb', size: [512, 512], bump: 0.045, cavity: 1.5, mapping: 'uv', tile: 1.6, normal: 1.1, ao: 1, breakup: 1, wrap: 0.2, mean: '#908056' },
   clay: { mode: 'colorize', size: [256, 256], bump: 0.004, cavity: 1, mapping: 'uv', tile: 0.8, normal: 0.8, ao: 0.6, breakup: 0.6, wrap: 0.15 },
 };
 

@@ -513,8 +513,9 @@ export function rod(a, b, r1, r2 = r1, radial = 6, open = false) {
 }
 
 /** A lumpy stone (flattened noisy icosphere). opts: { r, sx, sy, sz, lump, detail, flatTop, flatBottom } */
-export function stoneGeo(rng, { r = 0.2, sx = 1, sy = 0.6, sz = 1, lump = 0.22, detail = 1, flatTop = 0.55, flatBottom = -0.6, uvScale = 1.6 } = {}) {
-  let g = new THREE.IcosahedronGeometry(1, detail);
+export function stoneGeo(rng, { r = 0.2, sx = 1, sy = 0.6, sz = 1, lump = 0.22, detail = 1, flatTop = 0.55, flatBottom = -0.6, uvScale = 1.6, sphere = null } = {}) {
+  // (sphere: [widthSegments, heightSegments] — a cheaper tessellation than icosahedron detail 2)
+  let g = sphere ? new THREE.SphereGeometry(1, sphere[0], sphere[1]) : new THREE.IcosahedronGeometry(1, detail);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -590,17 +591,17 @@ export function boulderGeo(rng, w, h, d, { strata = 3, lump = 0.18, detail = 3, 
 
 // ─── masonry ────────────────────────────────────────────────────────────────
 /** Rubble & fieldstone tints (sRGB): weathered greys, warm ochres, cool blue-greys — wide in value. */
-export const MASONRY_TINTS = ['#8d8474', '#7e786c', '#9a8b72', '#6f6c62', '#857a66', '#a39478', '#77736a', '#8b8170', '#6a675c', '#9c8f7a', '#7b7f74', '#94886f'];
+export const MASONRY_TINTS = ['#a1978a', '#938c80', '#ab9c84', '#868278', '#9a8e79', '#b4a68b', '#8d897f', '#a09684', '#827e72', '#ad9f8a', '#909488', '#a69a82'];
 /** Dressed sandstone (arch rings, quoins, sills): warmer and a touch lighter, still varied. */
-export const DRESSED_TINTS = ['#b29c76', '#a18c69', '#bba582', '#988567', '#ab946e', '#c0aa83', '#a39a84'];
+export const DRESSED_TINTS = ['#c2ad88', '#b39e7b', '#cab596', '#a99679', '#bba47f', '#cfb995', '#b3aa94'];
 /** Mortar joints: dark, damp and a little mossy (drawn with the moss surface). */
-export const MORTAR = '#3b3a2c';
+export const MORTAR = '#48463a';
 
 const _ca = new THREE.Color();
 const _cb = new THREE.Color();
 /** A stone's colour with life in it: per-stone value, now and then lichen-green or iron-stained. */
 export function stoneTint(rng, tints = MASONRY_TINTS, spread = 1) {
-  _ca.set(rng.pick(tints)).multiplyScalar(1 + rng.range(-0.36, 0.16) * spread);
+  _ca.set(rng.pick(tints)).multiplyScalar(1 + rng.range(-0.3, 0.16) * spread);
   const k = rng.next();
   if (k < 0.14) _ca.lerp(_cb.set('#76845e'), 0.32); // lichen-stained
   else if (k < 0.26) _ca.lerp(_cb.set('#b0855a'), 0.24); // iron-stained ochre
@@ -616,7 +617,7 @@ export function stoneTint(rng, tints = MASONRY_TINTS, spread = 1) {
  * × a lit crown and a dark, grimy rim, so every joint reads as a recessed,
  * shadowed line, plus a soft mottling. ≈ 5 · segs triangles (50 by default).
  */
-export function cushionStone(rng, w, h, proud, { color = '#8a8273', segs = 10, round = 3.2, lump = 0.1, tuck = 0.03, rim = 0.42 } = {}) {
+export function cushionStone(rng, w, h, proud, { color = '#8a8273', segs = 10, round = 3.2, lump = 0.1, tuck = 0.03, rim = 0.5 } = {}) {
   const RINGS = [[0.52, 1.0], [0.86, 0.74], [1.0, 0]]; // [radius fraction, height fraction]
   const n = round * rng.range(0.75, 1.3);
   const ox = rng.next() * 50, oy = rng.next() * 50;

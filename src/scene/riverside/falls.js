@@ -229,7 +229,7 @@ export function buildFalls(ctx, B, rng) {
     return h + (g - 0.3 - h) * fade;
   };
   {
-    const STEP = 0.085;
+    const STEP = 0.1;
     const u0 = -5.6, u1 = 5.6, w0 = -3.6, w1 = 3.3;
     const nu = Math.round((u1 - u0) / STEP), nw = Math.round((w1 - w0) / STEP);
     const W = nu + 1;
@@ -351,7 +351,7 @@ export function buildFalls(ctx, B, rng) {
     } else if (k < 0.86) {
       // a little cluster of toadstools
       const col = rng.chance(0.6) ? '#c4301f' : '#d7832e';
-      for (let i = 0; i < rng.int(2, 4); i++) addToadstool(R, rng, u + rng.jitter(0.12), y - 0.01, w + rng.jitter(0.12), { size: rng.range(0.06, 0.13), color: col });
+      for (let i = 0; i < rng.int(1, 3); i++) addToadstool(R, rng, u + rng.jitter(0.12), y - 0.01, w + rng.jitter(0.12), { size: rng.range(0.07, 0.14), color: col });
     } else if (k < 0.93) for (let i = 0; i < 3; i++) addFlower(R, rng, u + rng.jitter(0.12), y, w + rng.jitter(0.12), { size: 0.05, color: rng.pick(['#f4f0e6', '#7fa7e0', '#f29bb8']) });
     else glowSpots.push([u, y, w]);
   };
@@ -360,7 +360,7 @@ export function buildFalls(ctx, B, rng) {
     // a velvet moss mat over most boulder tops (the material adds moss to the
     // up-facing sides; the mats give the tops real thickness)
     if (rng.chance(0.7)) {
-      const m = mossGeo(rng, { r: Math.min(t.sx, t.sz) * rng.range(0.36, 0.46), h: rng.range(0.1, 0.16), sx: t.sx / Math.min(t.sx, t.sz), sz: t.sz / Math.min(t.sx, t.sz), seg: 12 });
+      const m = mossGeo(rng, { r: Math.min(t.sx, t.sz) * rng.range(0.36, 0.46), h: rng.range(0.1, 0.16), sx: t.sx / Math.min(t.sx, t.sz), sz: t.sz / Math.min(t.sx, t.sz), seg: 10 });
       xf(m, [t.u + rng.jitter(0.1), t.y, t.w + rng.jitter(0.1)], [0, rng.jitter(0.6), 0]);
       R.add(MM.moss, m, { color: rng.pick(['#6f8f3a', '#5d7d30', '#7f9a44']), cast: false });
     }

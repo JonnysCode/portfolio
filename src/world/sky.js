@@ -61,7 +61,7 @@ const domeFragment = /* glsl */ `
 
     // ── the low sun: a broad luminous golden haze (the disc itself hides behind the crowns) ──
     float sd = max(dot(d, uSunDir), 0.0);
-    vec3 haze = uSunGlow * (pow(sd, 3.0) * 0.2 + pow(sd, 14.0) * 0.55 + pow(sd, 160.0) * 2.2);
+    vec3 haze = uSunGlow * (pow(sd, 3.0) * 0.14 + pow(sd, 14.0) * 0.42 + pow(sd, 160.0) * 1.8);
     col += haze * day;
     // wisps catch the light near the sun
     col += uSunGlow * wisp * pow(sd, 6.0) * 0.9 * day;
@@ -175,7 +175,7 @@ export default async function build(ctx) {
   const focus = new THREE.Vector3();
   const glowDir = new THREE.Vector3();
   const warm = new THREE.Color();
-  const warmDay = new THREE.Color('#dcb67a');
+  const warmDay = new THREE.Color('#cfa565');
   const warmNight = new THREE.Color('#3d5a8c');
 
   function applyNight(n) {
@@ -187,12 +187,12 @@ export default async function build(ctx) {
     fogParams.sun[0] = glowDir.x;
     fogParams.sun[1] = glowDir.y;
     fogParams.sun[2] = glowDir.z;
-    fogParams.sun[3] = 0.48 - 0.2 * n;
+    fogParams.sun[3] = 0.3 - 0.02 * n;
     warm.copy(warmDay).lerp(warmNight, n);
     fogParams.warm[0] = warm.r;
     fogParams.warm[1] = warm.g;
     fogParams.warm[2] = warm.b;
-    fogParams.warm[3] = 10 + 1 * n;
+    fogParams.warm[3] = 13 - 2 * n;
     // the ground mist thickens at night
     fogParams.height[0] = 0.0055 + 0.011 * n;
     fogParams.height[1] = 0.42 - 0.06 * n;

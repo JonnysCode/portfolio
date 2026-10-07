@@ -130,7 +130,7 @@ export function mushroomGlowMaterials(ctx) {
     gills,
     warts,
     levels: [
-      [gills, 0.03, 1.15],
+      [gills, 0.03, 1.0],
       [warts, 0.0, 0.42],
     ],
   };
@@ -176,7 +176,7 @@ export class MushroomKit {
     const lod = THREE.MathUtils.clamp(opts.lod ?? 1, 0.4, 1);
     const seg = Math.max(6, Math.round((opts.seg ?? (H > 1.2 ? 24 : H > 0.6 ? 15 : H > 0.3 ? 10 : 7)) * lod));
     const sseg = Math.max(5, Math.round(seg * (H > 1.2 ? 0.75 : 0.7)));
-    const rings = Math.max(2, (H > 1.2 ? 8 : H > 0.4 ? 4 : 2) - (lod < 0.75 ? 1 : 0));
+    const rings = Math.max(2, (H > 1.2 ? 7 : H > 0.4 ? 4 : 2) - (lod < 0.75 ? 1 : 0));
     const leanAz = opts.leanAz ?? rng.range(0, TAU);
     const lean = opts.lean ?? rng.range(0, 0.12);
     const sink = opts.sink ?? H * 0.06;
@@ -265,8 +265,9 @@ export class MushroomKit {
         { r: r0 * 1.42, y: -drop * 0.8, v: 0.8 },
         { r: r0 * 1.38, y: -drop, v: 1 },
       ], sseg, { wob: skirtWob, color: (k) => C('#f2e8d4').multiplyScalar(1 - k * 0.04) });
-      // underside of the skirt (so it is not paper-thin from below)
-      lathe(this.stems, RF, [
+      // underside of the skirt (so it is not paper-thin from below — only the
+      // giants are ever seen from that low)
+      if (H > 1.2) lathe(this.stems, RF, [
         { r: r0 * 0.98, y: -drop * 0.12, v: 0 },
         { r: r0 * 1.3, y: -drop * 0.85, v: 0.8 },
         { r: r0 * 1.34, y: -drop * 1.02, v: 1 },
@@ -275,7 +276,7 @@ export class MushroomKit {
 
     // cap profile: rim (v = 0) → apex (v = 1)
     const capH = shape === 'cone' ? R * rng.range(1.0, 1.35) : shape === 'flat' ? R * rng.range(0.22, 0.32) : R * rng.range(0.5, 0.68);
-    const n = Math.max(3, Math.round((H > 1.2 ? 9 : H > 0.6 ? 6 : H > 0.3 ? 4 : 3) * (0.6 + 0.4 * lod)));
+    const n = Math.max(3, Math.round((H > 1.2 ? 8 : H > 0.6 ? 6 : H > 0.3 ? 4 : 3) * (0.6 + 0.4 * lod)));
     const prof = [];
     // the rim rolls under a little
     prof.push({ r: R * 0.93, y: -R * 0.045, v: 0 });
@@ -309,6 +310,8 @@ export class MushroomKit {
       // …and down into the stem, closing the gap above the stem's open top
       { r: rs * 0.85, y: -H * 0.06, v: 1 },
     ];
+    // (buttons: one band from the rim straight into the stem is enough)
+    if (H < 0.4) gProf.splice(1, 1);
     // (some giants are bioluminescent: their gills glow softly at night)
     // (the gills face the ground and sit in the cap's shadow: painted lighter
     //  than white so they read warm cream like the references, not black)
@@ -323,10 +326,10 @@ export class MushroomKit {
     // raised warts, denser towards the top, following the cap surface
     const density = opts.warts ?? 1;
     // (bold enough to read from across the glen: a few big flakes, many small spots)
-    const nW = Math.round(density * (H > 1 ? 112 : H > 0.4 ? 24 : 6) * Math.min(2.2, R / Math.max(0.05, H * 0.5)) * (0.5 + 0.5 * lod));
+    const nW = Math.round(density * (H > 1 ? 96 : H > 0.4 ? 17 : 6) * Math.min(2.2, R / Math.max(0.05, H * 0.5)) * (0.5 + 0.5 * lod));
     const wartCol = C('#f5ecd8');
     const wartB = opts.glowSpots ? this.glowWarts : this.warts;
-    const wartSeg = H > 1 && lod > 0.75 ? 5 : 4;
+    const wartSeg = H > 2.2 && lod > 0.8 ? 5 : 4;
     for (let i = 0; i < nW; i++) {
       // pick a profile position (area-weighted towards the rim, but keep the apex covered)
       const t = Math.pow(rng.next(), 0.75) * 0.92;
@@ -393,21 +396,21 @@ export class MushroomKit {
       const base = new THREE.Vector3(x + Math.sin(a) * d, y - 0.005, z + Math.cos(a) * d);
       const tip = base.clone().add(new THREE.Vector3(Math.sin(a) * H * 0.25 + rng.jitter(0.02), H, Math.cos(a) * H * 0.25 + rng.jitter(0.02)));
       const F0 = frameFor(base, tip.clone().sub(base));
+      // (a thumbnail-sized bonnet: a 3-sided stalk, a 5-sided bell cap)
       lathe(this.stems, F0, [
-        { r: R * 0.18, y: 0, v: 0 },
-        { r: R * 0.11, y: base.distanceTo(tip), v: 1 },
-      ], 4, { color: () => C(glow ? '#e8f4ec' : '#e2d2b4') });
+        { r: R * 0.2, y: 0, v: 0 },
+        { r: R * 0.12, y: base.distanceTo(tip), v: 1 },
+      ], 3, { color: () => C(glow ? '#e8f4ec' : '#e2d2b4') });
       const F = frameFor(tip, tip.clone().sub(base).normalize().lerp(UP, 0.5));
       lathe(capB, F, [
         { r: R * 0.95, y: -R * 0.08, v: 0 },
-        { r: R * 0.85, y: R * 0.45, v: 0.4 },
-        { r: R * 0.45, y: R * 0.85, v: 0.75 },
+        { r: R * 0.72, y: R * 0.62, v: 0.55 },
         { r: 0, y: R * 1.05, v: 1 },
-      ], 6, { color: () => col });
+      ], 5, { color: () => col });
       lathe(this.gills, F, [
         { r: R * 0.95, y: -R * 0.08, v: 0 },
         { r: R * 0.12, y: R * 0.3, v: 1 },
-      ], 6, { flip: true, disc: R, color: () => C(glow ? '#cfeee4' : '#e8d8bc') });
+      ], 5, { flip: true, disc: R, color: () => C(glow ? '#cfeee4' : '#e8d8bc') });
       if (glow) this.glowPoints.push({ x: tip.x, y: tip.y + R * 0.4, z: tip.z, size: R * 3.2 });
     }
   }
