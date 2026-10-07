@@ -251,7 +251,9 @@ export class Batch {
     for (const e of this.lists.values()) {
       let n = 0;
       for (const g of e.geos) n += (g.index ? g.index.count : g.attributes.position.count) / 3;
-      const k = e.material.name || 'mat';
+      // (named after the riverside material key when there is one: 'vc', 'glossy' …)
+      let k = e.material.name || 'mat';
+      if (MATS) for (const [key, m] of Object.entries(MATS)) if (m === e.material) k = key;
       out[k] = (out[k] ?? 0) + n;
     }
     return out;
@@ -601,7 +603,7 @@ export function blockStone(rng, w, h, d, lump = 0.12) {
  * horizontal strata ledges. Size w × h × d, centred on its base (y = 0 bottom).
  */
 export function boulderGeo(rng, w, h, d, { strata = 3, lump = 0.18, detail = 3, round = 0.55 } = {}) {
-  let g = new THREE.IcosahedronGeometry(1, icoDetail(detail, detail >= 3 ? 2 : 1));
+  let g = new THREE.IcosahedronGeometry(1, icoDetail(detail, detail >= 3 && LOD.k >= 0.5 ? 2 : 1));
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -1018,8 +1020,9 @@ export function addIvy(F, rng, start, dir, { length = 1.2, droop = 0.6, size = 0
     d.addScaledVector(nrm, -d.dot(nrm)).normalize();
     p.addScaledVector(d, step);
   }
-  // (a hair-thin stem: one tube segment per step is plenty; the low tier draws only the leaves)
-  if (stem && pts.length >= 2 && LOD.k > 0.5) F.add(M().vc, tube(pts, 0.007, 3, Math.max(4, Math.round(pts.length * (LOD.k < 1 ? 0.6 : 1)))), { color: stemColor, cast: false });
+  // (a hair-thin stem: one tube segment per step is plenty; below the high tier — a
+  // pixel wide on a phone — only the leaves are drawn)
+  if (stem && pts.length >= 2 && LOD.k >= 1) F.add(M().vc, tube(pts, 0.007, 3, Math.max(4, pts.length)), { color: stemColor, cast: false });
   const count = Math.round(n * 0.75 * density);
   const up = new THREE.Vector3();
   const nn = new THREE.Vector3();

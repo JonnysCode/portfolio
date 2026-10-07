@@ -485,7 +485,11 @@ function buildHouse(F, o, rng) {
   const gillGap = gillDeep.clone().multiplyScalar(0.55);
   const gillRoot = new THREE.Color(o.gillColor ?? '#e6c493').lerp(gillDeep, 0.55);
   {
-    const nP = Math.max(60, Math.round((TAU * Rc) / (0.056 / (0.55 + 0.45 * det)))); // lamella pitch ≈ 0.056 at full detail
+    // (their own generator; the house's main one replays the draws the previous fins made, so
+    //  everything built after them — door, windows, dormer, chimney, ivy … — stays where it was)
+    for (let i = Math.round(Rc * (40 + 30 * det)); i > 0; i--) rng.next();
+    const grng = createRng(`${o.seed}:gill-margin`);
+    const nP = Math.max(60, Math.round((TAU * Rc) / (0.064 / (0.55 + 0.45 * det)))); // lamella pitch ≈ 0.064 at full detail
     const rhoC = Rc - 0.58 * rt; // just inside the curl's lowest point
     const groove = 0.02 + 0.005 * Rc;
     const bandH = 0.04 + 0.006 * Rc; // how far the band shows below the rolled edge
@@ -493,19 +497,19 @@ function buildHouse(F, o, rng) {
     const yMid = rimY - 1.0 * rt; // ≈ the curl's lowest line
     const yBot = rimY - 1.06 * rt - bandH;
     const ridgePhi = [];
-    for (let i = 0; i < nP; i++) ridgePhi.push(((i + rng.jitter(0.18)) / nP) * TAU);
+    for (let i = 0; i < nP; i++) ridgePhi.push(((i + grng.jitter(0.18)) / nP) * TAU);
     const pos = [], col = [], uv = [], idx = [];
     const a = new THREE.Vector3();
     const rows = [
       // [y, ridge colour, gap colour]
       [yTop, gillRoot.clone().multiplyScalar(0.6), gillGap.clone().multiplyScalar(0.7)],
       [yMid, gillEdge.clone().multiplyScalar(0.82), gillGap],
-      [yBot, gillEdge, gillGap.clone().multiplyScalar(1.5)],
+      [yBot, gillEdge, gillGap.clone().lerp(gillEdge, 0.22)],
     ];
     const n2 = nP * 2;
     for (const [y, cR, cG] of rows) {
       for (let i = 0; i < nP; i++) {
-        const tone = 0.92 + 0.1 * rng.next();
+        const tone = 0.92 + 0.1 * grng.next();
         const ph0 = ridgePhi[i];
         const ph1 = (ridgePhi[i] + ridgePhi[(i + 1) % nP] + (i === nP - 1 ? TAU : 0)) / 2;
         capDeform(ph0, rhoC, y, a);
@@ -544,7 +548,6 @@ function buildHouse(F, o, rng) {
 
     // fine lamellae running in from the margin band (seen from below)
     const fpos = [], fcol = [], fuv = [], fidx = [];
-    const segs = 4;
     const dEdge = uStart[1] - yBot; // at the margin a lamella reaches down to the band's lower line
     const concave = 0.05 * (stemTop - rimY + 0.4);
     for (let f = 0; f < nP; f++) {
@@ -552,6 +555,7 @@ function buildHouse(F, o, rng) {
       // full lamella / lamellula / short lamellula (the margin is crowded, the collar is not)
       const kind = f % 4 === 0 ? 0 : f % 2 === 0 ? 1 : 2;
       const v1 = kind === 0 ? 0.96 : kind === 1 ? 0.5 : 0.22;
+      const segs = 4 - kind;
       const uT = Math.round((phi / TAU) * gRep * 120) / 120;
       const base = fpos.length / 3;
       for (let k = 0; k <= segs; k++) {
@@ -1059,19 +1063,23 @@ function buildWindow(put, o, rng, spec, { wallR, halos }) {
 // the cap material itself (same texture coordinates and colour as the skin
 // around it, darkening towards the wart). The cottage's wart material (kit.js)
 // is cream with a faint warm lift by day and the glen's cream-mint glow at night.
-const WART_DOME = [
-  // [radius, height] as fractions of the wart's radius / height, top → foot (the foot ring sinks into the skin)
-  [0.0, 1.0],
-  [0.36, 0.95],
-  [0.63, 0.8],
-  [0.82, 0.57],
-  [0.94, 0.3],
-  [1.0, 0],
-];
-const WART_DOT = [[0.0, 1.0], [0.6, 0.78], [0.9, 0.32], [1.0, 0]];
-/** contact shadow rings: [radius (× outline), darkening] from under the dome's foot outwards */
-const WART_AO = [[0.9, 0.42], [1.1, 0.16], [1.32, 0]];
-function buildWarts(put, o, rng, { capRaw, capFrame, capReserved, capPaint, count }) {
+// [radius, height] as fractions of the wart's radius / height, top → foot (the foot ring sinks into
+// the skin); smooth normals round the few rings off
+const WART_DOME = [[0.0, 1.0], [0.62, 0.84], [0.9, 0.42], [1.0, 0]];
+const WART_DOT = [[0.0, 1.0], [0.72, 0.62], [1.0, 0]];
+/** contact shadow ring: [radius (× outline), darkening] from under the dome's foot outwards */
+const WART_AO = [[0.9, 0.44], [1.36, 0]];
+/**
+ * The warts' vertex colour: the cream, whitened and lifted. Under the glen's warm key and grade a
+ * plain standard material renders far darker and yellower than the cap's painterly skin around it
+ * (#efe6cf came out ≈ rgb(170,165,133), khaki); this lands it on cream-white on screen.
+ */
+function wartAlbedo(color, out = new THREE.Color()) {
+  return out.set(color).lerp(new THREE.Color('#ffffff'), 0.3).multiplyScalar(1.6);
+}
+function buildWarts(put, o, houseRng, { capRaw, capFrame, capReserved, capPaint, count }) {
+  skipLegacyWartDraws(houseRng, o.Rc, count, capRaw, capReserved);
+  const rng = createRng(`${o.seed}:warts`);
   const M = mats();
   const { Rc } = o;
   const det = o.detail;
@@ -1105,10 +1113,10 @@ function buildWarts(put, o, rng, { capRaw, capFrame, capReserved, capPaint, coun
   };
   // 1. the warts proper, size-graded: big at the crown, small towards the rim
   for (let tries = 0, n = 0; n < count && tries < count * 40; tries++) {
-    const s = Math.sqrt(rng.range(0.004, 0.8)); // area-weighted towards the rim
+    const s = Math.sqrt(rng.range(0.01, 0.8)); // area-weighted towards the rim (not on the very tip)
     const phi = rng.next() * TAU;
     const size = Rc * 0.05 * (1.6 - 1.15 * s) * rng.range(0.72, 1.22) * (s < 0.12 ? 0.75 : 1);
-    const k = Math.max(7, Math.round((size > Rc * 0.055 ? 13 : size > Rc * 0.035 ? 11 : 9) * (0.65 + 0.35 * det)));
+    const k = Math.max(7, Math.round((size > Rc * 0.055 ? 13 : size > Rc * 0.035 ? 11 : 8) * (0.65 + 0.35 * det)));
     const w = { c: capRaw(phi, s), size, s, phi, ao: true, k, ...makeOutline(k) };
     if (!free(w, size * 0.15)) continue;
     placed.push(w);
@@ -1128,8 +1136,8 @@ function buildWarts(put, o, rng, { capRaw, capFrame, capReserved, capPaint, coun
   }
   if (!placed.length) return;
 
-  const cTop = new THREE.Color(o.wartColor).multiplyScalar(1.05);
-  const cFoot = new THREE.Color(o.wartColor).lerp(new THREE.Color('#a88d70'), 0.6);
+  const cTop = wartAlbedo(o.wartColor);
+  const cFoot = wartAlbedo(o.wartColor).lerp(new THREE.Color('#a88d70'), 0.5);
   const cV = new THREE.Color();
   const pos = [], col = [], uv = [], idx = [];
   const aPos = [], aNor = [], aCol = [], aUv = [], aIdx = [];
@@ -1154,7 +1162,7 @@ function buildWarts(put, o, rng, { capRaw, capFrame, capReserved, capPaint, coun
       const last = ri === prof.length - 1;
       const lift = last ? -0.012 : h * hf;
       // cream on top, a little warmer & deeper towards the crease where it meets the skin
-      cV.copy(cTop).lerp(cFoot, smooth01((rf - 0.55) / 0.45) * 0.65).multiplyScalar(tone);
+      cV.copy(cTop).lerp(cFoot, smooth01((rf - 0.5) / 0.5) * 0.7).multiplyScalar(tone);
       const n = ri === 0 ? 1 : k;
       for (let i = 0; i < n; i++) {
         const [ox, oz] = ri === 0 ? [0, 0] : pts[i];
@@ -1224,6 +1232,30 @@ function buildWarts(put, o, rng, { capRaw, capFrame, capReserved, capPaint, coun
     ag.setIndex(aIdx);
     faceOut(ag, new THREE.Vector3(aNor[0], aNor[1], aNor[2]));
     put(M.cap, ag, { cast: false, color: null });
+  }
+}
+
+/**
+ * Replays, on the house's main generator, the random draws the previous (flat-flake) wart
+ * builder made, so everything built after the warts — cap moss, dormer, chimney, ivy, the
+ * plants at the foot — keeps exactly the placement the glen was composed with. (The new
+ * warts draw from their own generator.)
+ */
+function skipLegacyWartDraws(rng, Rc, count, capRaw, capReserved) {
+  const placed = [];
+  const tmp = new THREE.Vector3();
+  for (let tries = 0; placed.length < count && tries < count * 40; tries++) {
+    const s = Math.sqrt(rng.range(0.0006, 0.84));
+    const phi = rng.next() * TAU;
+    const size = Rc * 0.046 * rng.range(0.45, 1.5) * (1.5 - 0.85 * s) * (s < 0.1 ? 0.8 : 1);
+    const c = capRaw(phi, s);
+    if (placed.some((p) => p.c.distanceTo(c) < (p.size + size) * 1.08)) continue;
+    if (capReserved.some((r) => capRaw(r.phi, r.s, tmp).distanceTo(c) < r.r + size)) continue;
+    placed.push({ c, size });
+  }
+  for (let i = 0; i < placed.length; i++) {
+    const k = rng.int(6, 9);
+    for (let j = 5 + 2 * k; j > 0; j--) rng.next();
   }
 }
 
@@ -1317,7 +1349,7 @@ function buildChimney(put, o, rng, { capFrame, chim, bendV }) {
       const sp = new THREE.SphereGeometry(0.03 * scale, 5, 3).scale(1, 0.5, 1);
       sp.translate(Math.cos(a) * Math.cos(el) * rr, top.y + 0.12 + Math.sin(el) * rr * 0.62, Math.sin(a) * Math.cos(el) * rr);
       sp.translate(top.x, 0, top.z);
-      put(M.warts, sp, { color: o.wartColor, cast: false });
+      put(M.warts, sp, { color: wartAlbedo(o.wartColor), cast: false });
     }
     return bendV(top.clone().add(new THREE.Vector3(0.18 * scale, 0.05, 0)));
   }

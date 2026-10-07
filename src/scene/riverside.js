@@ -10,7 +10,10 @@
 //                         sparkles, night glints, lantern reflections) —
 //                         exports flowAt/depthAt/calmAt
 //   riverside/falls.js    the layered mossy outcrop, ONE continuous falling
-//                         ribbon over three ledges, spray
+//                         ribbon from the crest over three ledges, spray
+//   riverside/ridge.js    the escarpment the falls pour from: a mossy cliff
+//                         ridge running off left & right, a giant tree on the
+//                         crest gripping the rock, the spring under its roots
 //   riverside/bridge.js   the humpbacked stone arch bridge with lanterns
 //   riverside/banks.js    stream rocks, bank vegetation, the outlet log & bank,
 //                         the lily pond (pads, glowing lilies, jetty, frog, duck
@@ -18,6 +21,10 @@
 //   riverside/workshop.js the Velowerkstatt (stone drum, arched doors, bell cap)
 //   riverside/bike.js     makeBike({ style: 'gravel'|'road'|'vintage', … }), makeWheel()
 //   riverside/puffs.js    makePuffs() — vertex-animated spray / smoke clouds
+//
+// Detail scales with ctx.quality.tier (kit.setDetail / bike.setBikeTier): stone,
+// cushion, moss & boulder subdivision, heightfield cells, bike segments, scatter
+// counts; the low tier draws masonry as a fieldstone texture on the cores.
 //
 // Module result (ctx.modules.riverside): { update, anchors, stats } with world-space
 // anchors { bridgeLanterns, bridgeCentre, workshopDoor, chimneyTop, heroBike,

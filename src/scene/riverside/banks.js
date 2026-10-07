@@ -162,7 +162,7 @@ export function buildBanks(ctx, B, rng, rocks) {
     while (s < LENGTH - 1) {
       const c = lineAt(s);
       for (const side of [-1, 1]) {
-        if (!rng.chance(0.42)) continue;
+        if (!rng.chance(LOD.k < 1 ? 0.3 : 0.42)) continue;
         // walk outwards to the waterline
         let u = 0.8;
         while (u < 4.5 && depthAt(c.x - c.dz * side * u, c.z + c.dx * side * u) > 0.02) u += 0.08;
@@ -871,15 +871,16 @@ function mergeGeometriesSafe(list) {
 }
 
 function duckGeometry(scale = 1, yellow = false) {
+  const S = (n, min = 4) => segs(n, min);
   const body = yellow ? '#ffd95a' : '#fff3d6';
   const wing = yellow ? '#f2c445' : '#efe2c4';
   const parts = [];
-  parts.push(tinted(new THREE.SphereGeometry(0.2, 14, 9).scale(1.12, 0.6, 1.55).translate(0, 0.07, -0.02), body));
-  for (const sd of [-1, 1]) parts.push(tinted(new THREE.SphereGeometry(0.13, 10, 7).scale(0.55, 0.6, 1.5).rotateY(sd * 0.12).translate(sd * 0.17, 0.13, -0.06), wing));
-  parts.push(tinted(new THREE.ConeGeometry(0.08, 0.18, 6).rotateX(-Math.PI / 2 - 0.7).translate(0, 0.16, -0.32), body));
-  parts.push(tinted(new THREE.CylinderGeometry(0.06, 0.075, 0.16, 8).translate(0, 0.19, 0.19), body));
-  parts.push(tinted(new THREE.SphereGeometry(0.1, 12, 8).scale(1, 0.95, 1.1).translate(0, 0.29, 0.23), body));
-  parts.push(tinted(new THREE.ConeGeometry(0.045, 0.13, 6).rotateX(Math.PI / 2).scale(1.35, 0.55, 1).translate(0, 0.27, 0.37), '#f0a23a'));
+  parts.push(tinted(new THREE.SphereGeometry(0.2, S(14, 8), S(9, 6)).scale(1.12, 0.6, 1.55).translate(0, 0.07, -0.02), body));
+  for (const sd of [-1, 1]) parts.push(tinted(new THREE.SphereGeometry(0.13, S(10, 6), S(7, 4)).scale(0.55, 0.6, 1.5).rotateY(sd * 0.12).translate(sd * 0.17, 0.13, -0.06), wing));
+  parts.push(tinted(new THREE.ConeGeometry(0.08, 0.18, S(6, 5)).rotateX(-Math.PI / 2 - 0.7).translate(0, 0.16, -0.32), body));
+  parts.push(tinted(new THREE.CylinderGeometry(0.06, 0.075, 0.16, S(8, 6)).translate(0, 0.19, 0.19), body));
+  parts.push(tinted(new THREE.SphereGeometry(0.1, S(12, 8), S(8, 6)).scale(1, 0.95, 1.1).translate(0, 0.29, 0.23), body));
+  parts.push(tinted(new THREE.ConeGeometry(0.045, 0.13, S(6, 5)).rotateX(Math.PI / 2).scale(1.35, 0.55, 1).translate(0, 0.27, 0.37), '#f0a23a'));
   for (const s of [-1, 1]) parts.push(tinted(new THREE.SphereGeometry(0.017, 6, 4).translate(s * 0.07, 0.315, 0.29), '#2b1d14'));
   const g = mergeAll(parts);
   g.scale(scale, scale, scale);

@@ -32,6 +32,7 @@ import {
   cushionStone, roundStone, archStone, stoneTint, wallFern, paint, paintFn, taperTube, DRESSED_TINTS, MORTAR,
 } from './kit.js';
 import { makeBike, makeWheel, makeBareFrame } from './bike.js';
+import { lowWall } from './bridge.js';
 import { makePuffs } from './puffs.js';
 
 // ── dimensions ──
@@ -134,6 +135,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
         const pair = !big && hc > 0.2 && rng.chance(0.12);
         const parts = pair ? [[-hc / 4, hc / 2], [hc / 4, hc / 2]] : [[0, big ? Math.min(hc * rng.range(1.0, 1.2), hc + 0.04) : hc]];
         for (const [dy, hh] of parts) {
+          if (LOD.k < 0.5) continue; // (low tier: the shell below is drawn as a fieldstone wall)
           const g = cushionStone(rng, len - 0.04, hh - 0.04, rng.range(0.04, 0.072), {
             // greener, damper stones towards the foot
             color: yc < 0.55 && rng.chance(0.5) ? stoneTint(rng, ['#717559', '#6a7352', '#7a7b62']) : stoneTint(rng),
@@ -185,7 +187,8 @@ export function buildWorkshop(ctx, B, rng, halos) {
   };
   const mortarDark = new THREE.Color(MORTAR), mortarMoss = new THREE.Color('#465a28');
   // (deep enough that the window panes, just inside the frames, stay in front of it)
-  shell(0.075, MM.moss, false, (g) =>
+  if (LOD.k < 0.5) shell(0.06, lowWall(), false, (g) => paintFn(g, '#b9b2a2', (x, y, z, i, c) => c.multiplyScalar(0.82 + 0.18 * noiseA(x * 1.7 + z * 1.3, y * 2.2) - 0.12 * (1 - smooth01(y / 0.8)))));
+  else shell(0.075, MM.moss, false, (g) =>
     paintFn(g, MORTAR, (x, y, z, i, c) => {
       const k = smooth01(0.25 + noiseA(x * 1.7 + z * 1.3, y * 2.2) * 0.8 - y * 0.25);
       c.copy(mortarDark).lerp(mortarMoss, k);
@@ -533,7 +536,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
       const rw = rIn(0.6) - 0.27;
       const yaw = Math.atan2(-Math.sin(phi), -Math.cos(phi));
       const bm4 = mat4([Math.sin(phi) * rw, 0.43, Math.cos(phi) * rw], [0, yaw, 1.25, 'YXZ']);
-      makeBike({ style: 'road', color: '#3a7a9a', tape: '#2b2b2b', detail: 'lite', batch: F, matrix: bm4, scale: 0.6, seed: 'hooked' });
+      makeBike({ style: 'road', color: '#3a7a9a', tape: '#2b2b2b', detail: LOD.k < 0.5 ? 'mini' : 'lite', batch: F, matrix: bm4, scale: 0.6, seed: 'hooked' });
       const hook = new THREE.Vector3(0.6 - 0.02, 0.34 + 0.33, 0).applyMatrix4(new THREE.Matrix4().makeScale(0.6, 0.6, 0.6)).applyMatrix4(bm4);
       const wallP = [Math.sin(phi) * (rIn(1.0) - 0.01), hook.y + 0.05, Math.cos(phi) * (rIn(1.0) - 0.01)];
       F.add(MM.metal, tube([wallP, [hook.x * 0.6 + wallP[0] * 0.4, hook.y + 0.07, hook.z * 0.6 + wallP[2] * 0.4], [hook.x, hook.y + 0.02, hook.z], [hook.x * 1.02, hook.y - 0.03, hook.z * 1.02]], 0.009, 4, 10), { color: IRON, cast: false });
@@ -973,6 +976,23 @@ export function buildWorkshop(ctx, B, rng, halos) {
     F.add(MM.metal, new THREE.BoxGeometry(0.02, 0.012, 0.16).translate(mastX - 0.06, 0.66, mastZ - 0.05), { color: '#c9cdd0', cast: false });
     F.add(MM.vc, new THREE.CylinderGeometry(0.015, 0.015, 0.12, 6).rotateZ(Math.PI / 2).translate(mastX + 0.05, 0.665, mastZ - 0.03), { color: '#d9a441', cast: false });
   }
+  // a stump beside the stand with the tools of the job laid out on it
+  {
+    const T = F.at(mat4([-2.4, 0, 2.6], [0, 0.5, 0]));
+    const top = 0.4;
+    T.add(MM.wood, new THREE.CylinderGeometry(0.21, 0.25, top, segs(14, 8)).translate(0, top / 2 - 0.02, 0), { color: '#6e5643' });
+    T.add(MM.vc, new THREE.CylinderGeometry(0.205, 0.205, 0.01, segs(16, 8)).translate(0, top + 0.003, 0), { color: '#b08e66', cast: false });
+    for (let k = 1; k <= 2; k++) T.add(MM.vc, new THREE.TorusGeometry(0.06 * k, 0.004, 3, segs(20, 10)).rotateX(Math.PI / 2).translate(0.01, top + 0.01, 0), { color: '#8a6e4e', cast: false });
+    // combination wrench, a hammer, three tyre levers and a chain tool
+    T.add(MM.metal, new THREE.BoxGeometry(0.2, 0.008, 0.025).rotateY(0.4).translate(-0.04, top + 0.012, 0.06), { color: '#c9cdd0', cast: false });
+    T.add(MM.wood, new THREE.CylinderGeometry(0.012, 0.014, 0.24, 6).rotateZ(Math.PI / 2).rotateY(-0.5).translate(0.03, top + 0.02, -0.08), { color: '#b98a55', cast: false });
+    T.add(MM.metal, new THREE.BoxGeometry(0.03, 0.03, 0.09).rotateY(-0.5).translate(0.13, top + 0.025, -0.15), { color: '#4a4744', cast: false });
+    ['#3a7bd5', '#f2c14e', '#3a7bd5'].forEach((c, i) => T.add(MM.glossy, new THREE.BoxGeometry(0.11, 0.006, 0.018).rotateY(1.2 + i * 0.12).translate(0.1 + i * 0.012, top + 0.012 + i * 0.006, 0.08), { color: c, cast: false }));
+    T.add(MM.glossy, new THREE.BoxGeometry(0.07, 0.03, 0.04).translate(-0.12, top + 0.022, -0.06), { color: '#b03a2e', cast: false });
+    // an old tyre leaning on the stump
+    T.add(MM.vc, new THREE.TorusGeometry(0.2, 0.03, segs(5, 3), segs(18, 10)).rotateY(1.3).rotateZ(0.25).translate(0.26, 0.19, 0.05), { color: '#2a2622', cast: false });
+  }
+
   // the mechanic, on the far side of the bike at the bars, facing it and
   // working on the front hub (the bike stays clear in front of him)
   let mechanic = null;
@@ -1133,7 +1153,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
     // the bikes lean back against the top rail
     const road = { style: 'road', color: '#b0392c', tape: '#f1ece2', lite: true, seed: 'customer', scale: 0.62 };
     makeBike({ ...road, batch: F, matrix: new THREE.Matrix4().makeTranslation(2.62, 0, fz + 0.2).multiply(new THREE.Matrix4().makeRotationX(-0.16)) });
-    makeBike({ style: 'vintage', color: '#f2c14e', basket: false, lite: true, seed: 'kid', scale: 0.42, batch: F, matrix: new THREE.Matrix4().makeTranslation(3.62, 0, fz + 0.16).multiply(new THREE.Matrix4().makeRotationX(-0.2)) });
+    if (LOD.k >= 0.5) makeBike({ style: 'vintage', color: '#f2c14e', basket: false, lite: true, seed: 'kid', scale: 0.42, batch: F, matrix: new THREE.Matrix4().makeTranslation(3.62, 0, fz + 0.16).multiply(new THREE.Matrix4().makeRotationX(-0.2)) });
     // a little chalkboard on an A-frame: "Velo-Service · offen"
     try {
       const tex = ctx.props.makeTextTexture(['Velo-Service', 'heute offen!'], { width: 384, height: 256, background: '#27322c', color: '#f1eee4', font: '"Patrick Hand", "Comic Sans MS", cursive', weight: 400, style: 'plain', padding: 0.14 });

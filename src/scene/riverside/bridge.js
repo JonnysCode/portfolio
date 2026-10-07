@@ -20,6 +20,7 @@
 import * as THREE from 'three';
 import { PATHS } from '../../world/layout.js';
 import { getHeight } from '../../world/ground.js';
+import { materials } from '../../core/materials.js';
 import {
   M, TAU, IRON, LOD, Cards, xf, mossGeo, arcSegment, paramSurface, taperTube, board, rod,
   plantFern, plantGrass, addFlower, addToadstool, addIvy, flushCards, noiseA, smooth01,
@@ -55,6 +56,9 @@ const deckSlope = (x) => (deckY(x + 0.01) - deckY(x - 0.01)) / 0.02;
 const intradosY = (x) => Y0 + Math.sqrt(Math.max(0, R * R - x * x));
 const XE = RE * Math.sin(THETA); // extrados end
 const extradosY = (x) => (Math.abs(x) <= XE ? Y0 + Math.sqrt(Math.max(0, RE * RE - x * x)) : -Infinity);
+
+/** The low tier's masonry: a fieldstone wall texture on the core (one material, shared with the workshop). */
+export const lowWall = () => materials.surface('stone', { vertexColors: true, mossy: 0.35, scale: 0.75 });
 
 export function buildBridge(ctx, B, rng) {
   const MM = M();
@@ -142,7 +146,10 @@ export function buildBridge(ctx, B, rng) {
     // dark, damp mortar with moss in it: every joint between the face stones reads as a shadowed groove
     const dark = new THREE.Color(MORTAR), green = new THREE.Color('#465a28');
     paintFn(core, MORTAR, (x, y, z, i, c) => c.copy(dark).lerp(green, smooth01(0.3 + noiseA(x * 1.5, y * 2 + z) * 0.8 - y * 0.3)));
-    F.add(MM.moss, core);
+    // (phones on the low tier: the spandrels are the core drawn as a fieldstone
+    // wall instead of hundreds of separate stones)
+    if (LOD.k < 0.5) F.add(lowWall(), paintFn(core, '#b9b2a2', (x, y, z, i, c) => c.multiplyScalar(0.85 + 0.15 * noiseA(x * 2, y * 2))));
+    else F.add(MM.moss, core);
   }
 
   // ── rubble facing on both faces (spandrels + wing walls) ─────────────────
@@ -178,8 +185,10 @@ export function buildBridge(ctx, B, rng) {
       row++;
     }
   };
-  faceStones(1);
-  faceStones(-1);
+  if (LOD.k >= 0.5) {
+    faceStones(1);
+    faceStones(-1);
+  }
   // little ferns sprouting from the joints of the spandrels
   for (const [x, y, side] of ferns) wallFern(F, rng, [x, y, side * (HALF_W + 0.02)], [0, 0, side], { size: rng.range(0.2, 0.3) });
 
@@ -222,7 +231,7 @@ export function buildBridge(ctx, B, rng) {
       x += len + rng.range(0.018, 0.04);
     }
     // moss tufts in the joints and along the parapet feet
-    for (let i = 0; i < 46; i++) {
+    for (let i = 0; i < Math.round(46 * (LOD.k < 1 ? 0.6 : 1)); i++) {
       const xc = rng.range(-END + 0.1, END - 0.1);
       const edge = rng.chance(0.6);
       const zc = edge ? (rng.chance(0.5) ? 1 : -1) * (innerHalf - rng.range(0.02, 0.1)) : rng.range(-innerHalf + 0.1, innerHalf - 0.1);

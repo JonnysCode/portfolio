@@ -73,7 +73,7 @@ const TIER_LODS = {
   high: LODS,
   medium: {
     full: { ...LODS.full, k: 0.7, rim: [4, 36], tyre: [6, 44], knobs: false, saddle: [14, 8], chain: [56, 3], bar: [6, 18], tube: 8, loop: 18, cassette: 5, ring: 28, petal: [5, 3] },
-    lite: { ...LODS.lite, k: 0.45, rim: [3, 20], tyre: [4, 22], spokes: 12, saddle: [8, 5], chain: [28, 3], bar: [4, 10], tube: 5, loop: 10, cassette: 2, ring: 14, petal: [4, 2] },
+    lite: { ...LODS.lite, k: 0.4, rim: [3, 16], tyre: [3, 18], spokes: 10, saddle: [6, 4], chain: [20, 3], bar: [4, 8], tube: 5, loop: 9, cassette: 2, ring: 12, petal: [4, 2] },
     mini: LODS.mini,
   },
   low: {

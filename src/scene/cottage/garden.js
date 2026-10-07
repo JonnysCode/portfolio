@@ -198,7 +198,8 @@ export function stringLights(F, lines, halos, { spacing = 0.28, sag = 0.08, tran
     for (let k = 0; k < n; k++) {
       const p = curve.getPointAt((k + 0.5) / n);
       F.add(M.metal, new THREE.CylinderGeometry(bulb * 0.45, bulb * 0.45, bulb * 0.7, 4, 1, true).translate(p.x, p.y - bulb * 0.5, p.z), { color: '#3a332c', cast: false });
-      F.add(M.bulb, new THREE.SphereGeometry(bulb, 5, 3).scale(1, 1.25, 1).translate(p.x, p.y - bulb * 1.35, p.z), { cast: false });
+      // (round enough not to read as little pennants by day)
+      F.add(M.bulb, new THREE.SphereGeometry(bulb, 7, 4).scale(1, 1.25, 1).translate(p.x, p.y - bulb * 1.35, p.z), { cast: false });
       if (halos) {
         _v.set(p.x, p.y - bulb * 1.35, p.z);
         if (transform) _v.applyMatrix4(transform);

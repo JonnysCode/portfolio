@@ -17,10 +17,10 @@
 // front-door leaf + Jonny's portrait in the window), contact (mailbox),
 // living-room (the sofa, picking the whole room), moodboards (easel),
 // small-space (model table), a secret cat.
-// Night: the caps' cream flakes glow faintly mint (the glen's enchanted-agaric
+// Night: the caps' raised cream warts glow faintly mint (the glen's enchanted-agaric
 // spot material), warm "bounce" halos sit under the rims above lit windows and
 // the porch, and the fairy-light spiral keeps the tall red cap a landmark.
-// Perf (high): ≈ 207k triangles, 46 draw calls, 12 shadow casters (moduleStats).
+// Perf (high): ≈ 228k triangles, 46 draw calls, 12 shadow casters (moduleStats).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { Batch, setCottageNight } from './cottage/kit.js';
@@ -31,7 +31,6 @@ import { glowQuads } from '../props/glow.js';
 import { makeSmoke } from './cottage/smoke.js';
 import { scatterPad } from './cottage/scatter.js';
 import { createRng } from '../core/rng.js';
-import { updateMushroomGlow } from '../world/vegetation/mushrooms.js';
 
 export default async function build(ctx) {
   const root = new THREE.Group();
@@ -64,8 +63,7 @@ export default async function build(ctx) {
   setCottageNight(ctx.env?.night ?? 0);
   updates.push(() => {
     const night = ctx.env?.night ?? 0;
-    setCottageNight(night); // warm gill bounce & the paper lantern follow day/night
-    updateMushroomGlow(ctx, night); // the caps' cream-mint flakes (shared with the glen's agarics; idempotent)
+    setCottageNight(night); // warm gill bounce, the paper lantern & the warts' cream-mint glow follow day/night
   });
   for (const p of parts) {
     for (const [obj, opts] of p.hotspots) ctx.interactions?.add?.(obj, opts);

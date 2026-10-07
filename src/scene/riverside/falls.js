@@ -1,9 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The waterfall (STREAM.falls → STREAM.pool): a mossy rock outcrop at the
-// back-right of the glen. A spring wells up between boulders on top of the
-// hill, runs over a broad slab and pours down three tiers into the plunge
-// pool:
+// back-right of the glen, embedded in an escarpment (ridge.js). The spring
+// wells up under the roots of the giant tree on the crest, drops ~6 units off
+// the crest lip into a basin on the outcrop and pours down three more tiers
+// into the plunge pool:
 //
+//   high    from the crest lip into the basin (a slim veil, widening)
 //   tier A  the main fall from an overhanging mossy lip slab (~2 units)
 //   tier B  from the first ledge (~1.4)
 //   tier C  from the second ledge into the pool (~1.5)
@@ -557,7 +559,7 @@ export function buildFalls(ctx, B, rng) {
     if (density < 0.9 && !rng.chance(0.35 + 0.65 * density)) continue; // (thinner on phones)
     // a velvet moss mat over most boulder tops (the material adds moss to the
     // up-facing sides; the mats give the tops real thickness)
-    if (rng.chance(0.7)) {
+    if (rng.chance(LOD.k < 1 ? 0.5 : 0.7)) {
       const m = mossGeo(rng, { r: Math.min(t.sx, t.sz) * rng.range(0.36, 0.46), h: rng.range(0.1, 0.16), sx: t.sx / Math.min(t.sx, t.sz), sz: t.sz / Math.min(t.sx, t.sz), seg: 10 });
       xf(m, [t.u + rng.jitter(0.1), t.y, t.w + rng.jitter(0.1)], [0, rng.jitter(0.6), 0]);
       R.add(MM.moss, m, { color: rng.pick(['#6f8f3a', '#5d7d30', '#7f9a44']), cast: false });
@@ -569,7 +571,7 @@ export function buildFalls(ctx, B, rng) {
   {
     const ivy = new Cards();
     for (const f of faces) {
-      const strands = rng.int(2, 4);
+      const strands = LOD.k < 0.5 ? rng.int(1, 2) : rng.int(2, 4);
       for (let k = 0; k < strands; k++) {
         const u0 = f.u + rng.jitter(f.size * 0.35);
         const wf = f.w + 0.04;
@@ -594,7 +596,7 @@ export function buildFalls(ctx, B, rng) {
   {
     const ivy = new Cards();
     for (const hg of hangers) {
-      const strands = hg.lip ? 2 : rng.int(1, 2);
+      const strands = hg.lip ? 2 : LOD.k < 0.5 ? 1 : rng.int(1, 2);
       for (let k = 0; k < strands; k++) {
         const u0 = hg.u + rng.jitter(hg.len * 0.35) * hg.ow, w0 = hg.w - rng.jitter(hg.len * 0.35) * hg.ou;
         addIvy(R, rng, [u0, hg.top, w0], [hg.ou * 0.2 + rng.jitter(0.15), -1, hg.ow * 0.2], {
@@ -696,7 +698,7 @@ export function buildFalls(ctx, B, rng) {
   // front sheet, then a narrower back veil just behind it (depth)
   for (const layer of [0, 1]) {
     const k = layer ? 0.82 : 1;
-    strip(line, layer ? 8 : 12, (r, j, a) => {
+    strip(line, layer ? (LOD.k < 0.5 ? 5 : 8) : LOD.k < 0.5 ? 8 : 12, (r, j, a) => {
       const [l, rr] = ribbonEdges(r, k);
       const u = l + (rr - l) * a;
       const bow = Math.sin(a * Math.PI);

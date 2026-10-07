@@ -202,7 +202,7 @@ button { font: inherit; color: inherit; }
 .edge-chip.is-shown { opacity: 1; visibility: visible; pointer-events: auto; transform: none; }
 .edge-chip__text { overflow: hidden; text-overflow: ellipsis; }
 .edge-chip__arrow { flex: none; width: 18px; height: 18px; color: var(--gold-2); }
-.edge-chip.is-shown .edge-chip__arrow { animation: chipNudgeL 1.8s ease-in-out infinite; }
+.edge-chip.is-shown .edge-chip__arrow { animation: chipNudgeL 1.8s ease-in-out 3; } /* (a few nudges, not forever: no endless repaint over the canvas) */
 .edge-chip.is-r.is-shown .edge-chip__arrow { animation-name: chipNudgeR; }
 @keyframes chipNudgeL { 50% { transform: translateX(-3px); } }
 @keyframes chipNudgeR { 50% { transform: translateX(3px); } }

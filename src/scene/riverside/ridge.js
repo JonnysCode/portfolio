@@ -215,7 +215,7 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
   const hangers = [];
   {
     const shelves = [];
-    const want = Math.round(46 * Math.max(0.5, density));
+    const want = Math.round(46 * (LOD.k < 1 ? 0.45 : 1));
     for (let tries = 0; tries < 1600 && shelves.length < want; tries++) {
       const u = rng.jitter(13), w = rng.range(-9.5, 1.5);
       if (Math.abs(u) < 1.0) continue;
@@ -247,7 +247,7 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
   {
     const ivy = new Cards();
     const edges = [];
-    for (let k = 0; k < Math.round(44 * Math.max(0.5, density)); k++) {
+    for (let k = 0; k < Math.round(44 * (LOD.k < 0.5 ? 0.25 : LOD.k < 1 ? 0.4 : 1)); k++) {
       const u = (rng.chance(0.5) ? 1 : -1) * rng.range(1.0, 12.5);
       const w = crestW(u) + 0.08;
       const y = heightAt(u, w - 0.15);
@@ -255,7 +255,7 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       edges.push({ u, w, top: y, ou: 0, ow: 1, len: 1.2 });
     }
     for (const hg of [...edges, ...hangers]) {
-      const strands = LOD.k < 1 ? rng.int(1, 2) : rng.int(1, 3);
+      const strands = LOD.k < 0.5 ? 1 : LOD.k < 1 ? rng.int(1, 2) : rng.int(1, 3);
       for (let k = 0; k < strands; k++) {
         const ua = hg.u + rng.jitter(hg.len * 0.4) * hg.ow, wa = hg.w - rng.jitter(hg.len * 0.4) * hg.ou;
         const n = new THREE.Vector3();
@@ -447,7 +447,6 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
     const pos = g.attributes.position;
     const col = new Float32Array(pos.count * 3);
     const c = new THREE.Color();
-    const cen = new THREE.Vector3();
     for (let i = 0; i < pos.count; i++) {
       // up-facing sides mossy
       const ny = g.attributes.normal.getY(i);
@@ -455,7 +454,6 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       if (mossTop) c.lerp(MOSSY, smooth01((ny - 0.25) / 0.5) * 0.7);
       col.set([c.r, c.g, c.b], i * 3);
     }
-    cen.set(0, 0, 0);
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     R.add(bark, g, { cast: r0 > 0.25 });
   };
@@ -520,7 +518,7 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       const pts = [new THREE.Vector3(tb.u + du * TREE.r * 0.62, tb.y + 3.0, tb.w + dw * TREE.r * 0.62), ...rootPath(su, sw, du, dw, tb.y + 1.2, rt.len, rt.r)];
       rootTube(pts, rt.r, rt.lets > 1 ? 0.06 : 0.05);
       // rootlets branching off sideways, creeping over the rock
-      for (let q = 0; q < rt.lets; q++) {
+      for (let q = 0; q < (LOD.k < 1 ? Math.min(1, rt.lets) : rt.lets); q++) {
         const p = pts[Math.min(pts.length - 2, 2 + Math.floor(((q + 0.5) / rt.lets) * (pts.length - 3)))];
         if (!p) continue;
         const ph2 = rt.phi + (q % 2 ? 1 : -1) * rng.range(0.7, 1.4);
@@ -553,19 +551,19 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
     for (const [u, w] of [[-1.0, -4.6], [1.05, -4.0], [-0.9, -3.3], [1.0, -3.15], [2.2, -3.6], [-2.0, -3.8]]) plantFern(R, rng, u, heightAt(u, w) - 0.03, w, { size: rng.range(0.75, 1.05), fronds: rng.int(9, 12), tilt: 1.2 });
   }
   // the forest's own giants that the ridge buries: roots gripping the rock round them
+  // (a moss collar only on the low tier)
   {
     const { trees } = forestPlan();
-    const inv = new THREE.Matrix4();
+    // (to the falls frame: dot with the frame axes)
+    const o = toWorld(0, 0, 0), ax = toWorld(1, 0, 0).sub(o), fw = toWorld(0, 0, 1).sub(o);
     for (const t of trees) {
-      // (to the falls frame: dot with the frame axes)
-      const o = toWorld(0, 0, 0), ax = toWorld(1, 0, 0).sub(o), fw = toWorld(0, 0, 1).sub(o);
       const dx = t.x - o.x, dz = t.z - o.z;
       const u = dx * ax.x + dz * ax.z, w = dx * fw.x + dz * fw.z;
       if (Math.abs(u) > 15 || w < -12 || w > 4) continue;
       const top = heightAt(u, w);
       if (top < t.y0 + 0.6) continue;
       const rr = t.radius * 1.12;
-      const n = t.kind === 'birch' ? 4 : 7;
+      const n = LOD.k < 0.5 ? 0 : t.kind === 'birch' ? 4 : LOD.k < 1 ? 4 : 7;
       for (let k = 0; k < n; k++) {
         const phi = (k / n) * TAU + rng.jitter(0.3);
         const du = Math.sin(phi), dw = Math.cos(phi);
@@ -577,7 +575,6 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       xf(m, [u, top - 0.05, w], [0, rng.next() * TAU, 0]);
       R.add(MM.moss, m, { color: '#5d7d30', cast: false });
     }
-    void inv;
   }
   if (ctx.colliders?.addCircle) {
     const p = toWorld(tb.u, 0, tb.w);
