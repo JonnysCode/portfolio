@@ -402,8 +402,10 @@ function buildOutlet(B, rng, reedClump) {
   const fillH = (x, z, f) => {
     const t = f.s - (sLog + 0.15);
     const k = smooth01(t / 1.5);
-    const hb = 0.12 + 0.08 * noiseOf(x * 0.7, z * 0.7);
-    return WL - 0.08 + (hb - WL + 0.08) * k + k * 0.07 * noiseOf(x * 1.9 + 3, z * 1.9);
+    const hb = 0.1 + 0.08 * noiseOf(x * 0.7, z * 0.7);
+    // only the channel: towards its sides the bank dives under the real banks (no carpet on the meadow)
+    const side = smooth01((Math.abs(f.u) - 1.9) / 0.8) * 0.45;
+    return WL - 0.08 + (hb - WL + 0.08) * k + k * 0.07 * noiseOf(x * 1.9 + 3, z * 1.9) - side;
   };
   {
     const STEP = 0.15;
@@ -423,7 +425,7 @@ function buildOutlet(B, rng, reedClump) {
     const pos = [], col = [], idx = [];
     const vid = new Int32Array((nx + 1) * (nz + 1)).fill(-1);
     // (the moss texture brings its own green: these stay olive so the bank sits in the meadow)
-    const cc = new THREE.Color(), moss = new THREE.Color('#7b8650'), mossL = new THREE.Color('#939c5c'), wet = new THREE.Color('#4a4536');
+    const cc = new THREE.Color(), moss = new THREE.Color('#77784c'), mossL = new THREE.Color('#8c8f58'), wet = new THREE.Color('#4a4536');
     const vert = (i, j) => {
       const k = j * W + i;
       if (vid[k] >= 0) return vid[k];
@@ -454,10 +456,11 @@ function buildOutlet(B, rng, reedClump) {
     // dress it: ferns, grass, cattails & reeds at the water, a mossy boulder or two, toadstools
     const f2 = { s: 0, u: 0, dx: 0, dz: 1 };
     let placed = 0;
-    for (let tries = 0; tries < 600 && placed < 70; tries++) {
+    for (let tries = 0; tries < 800 && placed < 85; tries++) {
       const x = x0 + rng.next() * (x1 - x0), z = z0 + rng.next() * (z1 - z0);
       flowAt(x, z, f2);
-      if (f2.s < sLog + 0.5 || Math.abs(f2.u) > 3.4) continue;
+      if (f2.s < sLog + 0.5 || Math.abs(f2.u) > 3.0) continue;
+      if (Math.abs(f2.u) < 1.6 && rng.chance(0.35)) continue; // favour the seams at the sides
       const gy = getHeight(x, z);
       const y = fillH(x, z, f2);
       if (y < gy - 0.02 && Math.abs(f2.u) < 2.2) continue; // (outside the channel the ground itself is dressed)

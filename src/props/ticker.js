@@ -15,7 +15,11 @@
 // player (which drives its own person) and the transport system (which drives
 // its snails) never double-update, and villagers dropped into a district just
 // work without any wiring.
+//
+// The ticker also runs the lamplighter's dusk clock (lamplighter.js), so every
+// warm lamp of the glen lights in its cascade.
 // ─────────────────────────────────────────────────────────────────────────────
+import { tickLamplighter } from './lamplighter.js';
 
 const animated = new Set();
 
@@ -95,6 +99,7 @@ const acc = new Map(); // entry → accumulated dt while throttled
 export function tickProps(dt, t) {
   frame++;
   if (!propsSettings.camera) lazyCtx();
+  tickLamplighter(dt, propsSettings.reducedMotion);
   const cam = propsSettings.camera;
   const cx = cam ? cam.position.x : 0, cy = cam ? cam.position.y : 0, cz = cam ? cam.position.z : 0;
   const far2 = propsSettings.farDistance * propsSettings.farDistance;

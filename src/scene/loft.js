@@ -111,7 +111,7 @@ export default async function build(ctx) {
   ctx.interactions?.add?.(house.interior.workstation, {
     entryId: 'this-portfolio',
     area,
-    focus: { faceAzimuth: Math.PI / 2 - 0.135, polar: 1.45, distance: 3.2, radius: 0.55 },
+    focus: { faceAzimuth: Math.PI / 2 - 0.135, polar: 1.45, distance: 3.2, radius: 0.42 },
     approach: false,
     markerHeight: 0.85,
   });

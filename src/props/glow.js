@@ -10,16 +10,28 @@
 // Billboarding happens in the vertex shader (every quad stores its centre), so
 // many halos can be merged into one static geometry. The intensity follows
 // the shared night uniform (materials.sharedUniforms.uNight): faint by day,
-// bright at night. Depth-tested, never writes depth, never raycastable.
+// bright at night. Halos of warm lights are LAMPS: at dusk they light one after
+// another in the lamplighter cascade (lamplighter.js — outwards from the
+// Schreinerei door, each with a little candle sputter; a point may add its own
+// `delay` in seconds, e.g. bulb by bulb along a strand). Cool glows (mushrooms,
+// glow-worms, water) follow the night directly. Depth-tested, never writes
+// depth, never raycastable.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { sharedUniforms } from '../core/materials.js';
 import { palette } from '../core/palette.js';
 import { noRaycast } from './util.js';
+import { LAMP_GLSL, lampUniforms, isWarmLight } from './lamplighter.js';
+
+export { isWarmLight };
 
 const VERT = /* glsl */ `
   attribute vec2 aCorner;
   attribute float aSize;
+  attribute float aLamp; // extra lamplighter delay (s); < 0: not a lamp
+  uniform float uLampK;  // 1: this material's halos are lamps
+  varying float vLamp;
+  ${LAMP_GLSL}
   #ifdef USE_TINT
     attribute vec3 aTint;
     varying vec3 vTint;
@@ -34,6 +46,7 @@ const VERT = /* glsl */ `
       vTint = aTint;
     #endif
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vLamp = (uLampK > 0.5 && aLamp >= 0.0) ? lampOn((modelMatrix * vec4(position, 1.0)).xyz, aLamp) : 1.0;
     float sc = length(modelMatrix[0].xyz);
     float s = aSize * sc * uScale;
     // pull the halo towards the camera so the lamp geometry never clips it
@@ -57,6 +70,7 @@ const FRAG = /* glsl */ `
   #endif
   varying vec2 vUv;
   varying float vFade;
+  varying float vLamp;
   void main() {
     float d2 = dot(vUv, vUv);
     if (d2 > 1.0) discard;
@@ -64,7 +78,7 @@ const FRAG = /* glsl */ `
     // exactly zero well inside the quad
     float a = exp(-d2 * 7.0) * 0.6 + exp(-d2 * 30.0) * 0.25;
     a *= 1.0 - smoothstep(0.3, 1.0, d2);
-    float k = mix(uDay, uNightI, uNight) * vFade;
+    float k = mix(uDay, uNightI, uNight * vLamp) * vFade;
     vec3 col = uColor * (a * k);
     #ifdef USE_TINT
       col *= vTint;
@@ -89,10 +103,6 @@ const _hsl = { h: 0, s: 0, l: 0 };
  * pulled to a soft amber so halos read as warm light, never as white discs.
  * Cool glows (cyan mushrooms, teal water) keep their hue.
  */
-export function isWarmLight(color) {
-  new THREE.Color(color).getHSL(_hsl, THREE.SRGBColorSpace);
-  return (_hsl.h < 0.17 || _hsl.h > 0.95) && _hsl.s > 0.25;
-}
 export function haloColor(color) {
   const c = new THREE.Color(color);
   if (isWarmLight(color)) {
@@ -109,11 +119,14 @@ const matCache = new Map();
  * opts: { day=0.18, night=1.1 } intensities, { pull } towards the camera (× size),
  * { tint } per-point colours (geometry attribute aTint, multiplied with `color`),
  * { warm = true } amber-ise warm colours (and draw their halos at `scale` = 0.72 of the
- * requested size: lamp & window halos were far too big), { cap = 0.55, knee = 0.3 } brightness cap.
+ * requested size: lamp & window halos were far too big), { cap = 0.55, knee = 0.3 } brightness cap,
+ * { lamp } light in the lamplighter cascade (default: warm colours, and tinted sets —
+ * where each point's own colour decides).
  */
-export function glowMaterial(color = palette.windowGlow, { day = 0.18, night = 1.1, pull = 0.6, tint = false, warm = true, cap = 0.55, knee = 0.3, scale = null } = {}) {
+export function glowMaterial(color = palette.windowGlow, { day = 0.18, night = 1.1, pull = 0.6, tint = false, warm = true, cap = 0.55, knee = 0.3, scale = null, lamp = null } = {}) {
   const sizeK = scale ?? (warm && !tint && isWarmLight(color) ? 0.72 : 1);
-  const key = `${new THREE.Color(color).getHexString()}|${day}|${night}|${pull}|${tint}|${warm}|${cap}|${knee}|${sizeK}`;
+  const isLamp = lamp ?? (tint || isWarmLight(color));
+  const key = `${new THREE.Color(color).getHexString()}|${day}|${night}|${pull}|${tint}|${warm}|${cap}|${knee}|${sizeK}|${isLamp}`;
   let m = matCache.get(key);
   if (m) return m;
   m = new THREE.ShaderMaterial({
@@ -127,6 +140,8 @@ export function glowMaterial(color = palette.windowGlow, { day = 0.18, night = 1
       uScale: { value: sizeK },
       uKnee: { value: Math.min(knee, cap * 0.9) },
       uCap: { value: cap },
+      uLampK: { value: isLamp ? 1 : 0 },
+      ...lampUniforms,
     },
     defines: tint ? { USE_TINT: '' } : {},
     vertexShader: VERT,
@@ -145,14 +160,16 @@ export function glowMaterial(color = palette.windowGlow, { day = 0.18, night = 1
 }
 
 /**
- * Geometry with one billboard quad per point. points: [{ x, y, z, size }]
- * (size = halo radius in local units).
+ * Geometry with one billboard quad per point. points: [{ x, y, z, size, color?, delay?, lamp? }]
+ * (size = halo radius in local units; delay = extra lamplighter delay in seconds;
+ * lamp: false — or a cool `color` — keeps the point out of the cascade).
  */
 export function glowGeometry(points, { tint = false } = {}) {
   const n = points.length;
   const pos = new Float32Array(n * 12);
   const corner = new Float32Array(n * 8);
   const size = new Float32Array(n * 4);
+  const lamp = new Float32Array(n * 4);
   const tints = tint ? new Float32Array(n * 12) : null;
   const tc = new THREE.Color();
   const idx = new Uint16Array(n * 6);
@@ -166,6 +183,7 @@ export function glowGeometry(points, { tint = false } = {}) {
       corner[i * 8 + k * 2 + 1] = C[k * 2 + 1];
       size[i * 4 + k] = p.size;
     }
+    lamp.fill(p.lamp === false || (p.color && !isWarmLight(p.color)) ? -1 : Math.max(0, p.delay ?? 0), i * 4, i * 4 + 4);
     if (tints) {
       if (p.color) tc.copy(haloColor(p.color));
       else tc.setRGB(1, 1, 1);
@@ -179,6 +197,7 @@ export function glowGeometry(points, { tint = false } = {}) {
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('aCorner', new THREE.BufferAttribute(corner, 2));
   g.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+  g.setAttribute('aLamp', new THREE.BufferAttribute(lamp, 1));
   if (tints) g.setAttribute('aTint', new THREE.BufferAttribute(tints, 3));
   g.setIndex(new THREE.BufferAttribute(idx, 1));
   box.expandByScalar(maxS * 1.5);

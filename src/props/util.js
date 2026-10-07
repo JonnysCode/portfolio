@@ -18,6 +18,7 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { materials } from '../core/materials.js';
+import { lampGlow, isWarmLight, withLampDelay } from './lamplighter.js';
 
 // ── caching ──────────────────────────────────────────────────────────────────
 const cache = new Map();
@@ -42,7 +43,10 @@ export const vcWind = (strength = 0.05, base = 0.1) =>
 
 /**
  * Layer definitions: material + shadow flags. Glow layers are named
- * 'glow:<hex>' (materials.glow of that colour) and never cast shadows.
+ * 'glow:<hex>[:day:night]' and never cast shadows: warm colours are LAMPS
+ * (lamplighter.js lampGlow — they light in the dusk cascade; a part may carry
+ * its own 'aLampDelay' in seconds, see withLampDelay), cool ones are
+ * materials.glow (mushrooms, crystals: they simply follow the night).
  */
 export const LAYERS = {
   paint: { mat: vcMat, cast: true, receive: true },
@@ -53,15 +57,19 @@ export const LAYERS = {
   plantCast: { mat: () => vcWind(0.06, 0.05), cast: true, receive: true },
 };
 
+const glowDefs = new Map();
 function layerDef(name) {
   if (LAYERS[name]) return LAYERS[name];
   if (name.startsWith('glow:')) {
-    const [, color, day, night] = name.split(':');
-    return {
-      mat: () => materials.glow(color, { day: day ? +day : 0.35, night: night ? +night : 1.8 }),
-      cast: false,
-      receive: false,
-    };
+    let def = glowDefs.get(name);
+    if (!def) {
+      const [, color, day, night] = name.split(':');
+      const o = { day: day ? +day : 0.35, night: night ? +night : 1.8 };
+      const lamp = isWarmLight(color);
+      def = { mat: () => (lamp ? lampGlow(color, o) : materials.glow(color, o)), cast: false, receive: false, lamp };
+      glowDefs.set(name, def);
+    }
+    return def;
   }
   throw new Error(`unknown props layer ${name}`);
 }
@@ -224,7 +232,7 @@ export function grainUV(geo, along = 'y', scale = 0.55, offset = 0) {
 }
 
 // ── merging ──────────────────────────────────────────────────────────────────
-function normalise(geo, keepUv) {
+function normalise(geo, keepUv, lamp = false) {
   if (geo.index === null) {
     const n = geo.attributes.position.count;
     const idx = new (n > 65535 ? Uint32Array : Uint16Array)(n);
@@ -235,8 +243,10 @@ function normalise(geo, keepUv) {
   for (const name of Object.keys(geo.attributes)) {
     if (name === 'position' || name === 'normal' || name === 'color') continue;
     if (name === 'uv' && keepUv) continue;
+    if (name === 'aLampDelay' && lamp) continue;
     geo.deleteAttribute(name);
   }
+  if (lamp) withLampDelay(geo, 0);
   if (keepUv && !geo.attributes.uv) geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count * 2), 2));
   geo.morphAttributes = {};
   geo.clearGroups();
@@ -256,7 +266,7 @@ export class Parts {
     const def = layerDef(layer);
     if (color !== null && color !== undefined) paint(geo, color);
     else if (!geo.attributes.color) paint(geo, '#ffffff');
-    normalise(geo, !!def.uv);
+    normalise(geo, !!def.uv, !!def.lamp);
     if (!this.layers.has(layer)) this.layers.set(layer, []);
     this.layers.get(layer).push(geo);
     return this;

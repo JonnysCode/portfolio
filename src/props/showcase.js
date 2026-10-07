@@ -4,6 +4,7 @@
 //   snails   "snails:6,2.4,9:6,1,3"          signs   "signs:0,2.6,19:0,1.3,12"
 //   decorA   "decorA:0,2.2,23:0,0.5,18"      decorB  "decorB:0,2.2,28:0,0.4,23"
 //   strings  "strings:0,3,35:0,1,29"
+//   smoke    "smoke:-22,3.2,40:-22,3.2,32"  (shared soft chimney smoke on three stacks)
 //   npm run shots -- --prefix props- --param scene=showcase --custom "signs:0,2.6,19:0,1.3,12" --views spawn
 import * as THREE from 'three';
 import * as props from './index.js';
@@ -142,6 +143,18 @@ export default async function build(ctx) {
     pole.position.set(x, 0, z - 0.2);
     ctx.scene.add(pole);
   }
+
+  // row 8: the shared soft chimney smoke (props/smoke.js) on three little stone stacks
+  const stackMat = materials.toon(palette.stoneDark ?? '#6b6660');
+  const smokeSrc = [];
+  [[-25, 0.9], [-22, 1.2], [-19, 0.75]].forEach(([x, sc], i) => {
+    const h = 1.2 + i * 0.35;
+    const stack = new THREE.Mesh(new THREE.BoxGeometry(0.45, h, 0.45), stackMat);
+    stack.position.set(x, h / 2, 32);
+    ctx.scene.add(stack);
+    smokeSrc.push({ x, y: h + 0.05, z: 32, scale: sc, rise: 2.6 * sc + 0.4 });
+  });
+  ctx.scene.add(props.makeSoftSmoke(smokeSrc, { quality: ctx.quality, reducedMotion: ctx.engine?.reducedMotion }));
 
   window.__props = { houses, people, snails, signs, decorA, decorB };
   return {};

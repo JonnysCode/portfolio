@@ -22,6 +22,12 @@
 //   decor: lanterns & lamp posts, fences, benches, tables, chairs, barrels, crates, logs,
 //          rocks, stumps, bushes, flowers, mushrooms, mailbox, well, wheelbarrow, bunting,
 //          string lights, stone circles, stepping stones, parcels, glow sprites
+//   makeSoftSmoke([{ x, y, z, scale, rise, wind }], { quality, reducedMotion }) — the ONE shared
+//          chimney-smoke look (soft overlapping puffs, one draw call for many chimneys);
+//          makeChimneySmoke(ctx, { position, rise, scale, wind }) → { object, update }
+//   lamplighter: at dusk the warm lamps light one after another, outwards from the
+//          Schreinerei door (lampOnAt(position) for point lights, LAMP_GLSL /
+//          lampUniforms for shaders, lampGlow(color, { day, night }) for emissive glass)
 // ─────────────────────────────────────────────────────────────────────────────
 export { makeMushroomHouse } from './mushroomHouse.js';
 export { makePerson, PERSON_HEIGHT } from './person.js';
@@ -30,6 +36,8 @@ export { makeSign, makeSignpost, makePlaque, makeTextTexture } from './sign.js';
 export { paintWood, drawFittedText, canvasTexture, whenFontsReady, FONT_DISPLAY, FONT_HAND } from './text.js';
 export { makeTool, TOOL_NAMES } from './tools.js';
 export { makeGlowSprite, glowQuads } from './glow.js';
+export { makeSoftSmoke, makeChimneySmoke } from './smoke.js';
+export { LAMP, LAMP_GLSL, lampUniforms, lampOnAt, lampGlow, withLampDelay, isWarmLight } from './lamplighter.js';
 export {
   makeLantern,
   makeLampPost,

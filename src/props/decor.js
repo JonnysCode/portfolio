@@ -21,6 +21,7 @@ import { createNoise2D } from '../core/noise.js';
 import { Parts, cached, xf, strut, grainUV, groupFor, shade, mix, opt, blob, paintFn, deform, revolve, sagCurve, noRaycast, smooth } from './util.js';
 import { addFlower, addTuft, addFlowerBox, addTinyMushroom, addStone, FLOWER_COLORS } from './bits.js';
 import { glowQuads, makeGlowSprite } from './glow.js';
+import { withLampDelay } from './lamplighter.js';
 import { registerAnimated, propsSettings } from './ticker.js';
 
 export { makeLantern, makeLampPost } from './lantern.js';
@@ -1103,7 +1104,9 @@ export function makeBunting(points = [], opts = {}) {
 
 /**
  * Fairy lights: glowing bulbs along sagging wires between local points [{x, y, z}, …].
- * opts: { sag = 0.07, spacing = 0.35, colors = warm mix, seed }
+ * opts: { sag = 0.07, spacing = 0.35, colors = warm mix, seed, chase = 0.09 }
+ * At dusk the strand lights bulb by bulb from its first point (the lamplighter
+ * cascade + `chase` seconds per bulb, the whole strand within ~1.2 s).
  */
 export function makeStringLights(points = [], opts = {}) {
   const sagK = opt(opts, 'sag', 0.07);
@@ -1114,6 +1117,7 @@ export function makeStringLights(points = [], opts = {}) {
   if (points.length < 2) return g;
   const P = new Parts();
   const halos = [];
+  const bulbs = [];
   for (let i = 0; i < points.length - 1; i++) {
     const a = new THREE.Vector3(points[i].x, points[i].y, points[i].z);
     const b = new THREE.Vector3(points[i + 1].x, points[i + 1].y, points[i + 1].z);
@@ -1121,15 +1125,16 @@ export function makeStringLights(points = [], opts = {}) {
     const curve = sagCurve(a, b, span * sagK, 16);
     P.add('detail', new THREE.TubeGeometry(curve, 24, 0.008, 3, false), '#3b3633');
     const n = Math.max(1, Math.floor(span / spacing));
-    for (let k = 0; k < n; k++) {
-      const p = curve.getPointAt((k + 0.5) / n);
-      const c = colors[(i * 7 + k) % colors.length];
-      P.add('detail', new THREE.CylinderGeometry(0.016, 0.016, 0.03, 5).translate(p.x, p.y - 0.02, p.z), '#3b3633');
-      P.add(`glow:${c}:0.6:2.4`, blob(0.035, [1, 1.3, 1], 6, 5).translate(p.x, p.y - 0.06, p.z), c);
-      // small, soft amber halo (tinted per bulb; one halo mesh for the whole string)
-      halos.push({ x: p.x, y: p.y - 0.06, z: p.z, size: 0.2, color: c });
-    }
+    for (let k = 0; k < n; k++) bulbs.push({ p: curve.getPointAt((k + 0.5) / n), c: colors[(i * 7 + k) % colors.length] });
   }
+  // the lamplighter's chase: bulb by bulb along the wire
+  const chase = Math.min(opt(opts, 'chase', 0.09), 1.2 / Math.max(1, bulbs.length - 1));
+  bulbs.forEach(({ p, c }, j) => {
+    P.add('detail', new THREE.CylinderGeometry(0.016, 0.016, 0.03, 5).translate(p.x, p.y - 0.02, p.z), '#3b3633');
+    P.add(`glow:${c}:0.6:2.4`, withLampDelay(blob(0.035, [1, 1.3, 1], 6, 5).translate(p.x, p.y - 0.06, p.z), j * chase), c);
+    // small, soft amber halo (tinted per bulb; one halo mesh for the whole string)
+    halos.push({ x: p.x, y: p.y - 0.06, z: p.z, size: 0.2, color: c, delay: j * chase });
+  });
   g.add(groupFor(P.finish(), { name: 'lights', cast: false }));
   if (halos.length) g.add(glowQuads(halos, '#ffffff', { day: 0.06, night: 0.85 }));
   return g;

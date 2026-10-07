@@ -978,7 +978,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
   let mechanic = null;
   try {
     mechanic = ctx.props.makePerson({ seed: 'velo-mechanic', name: 'Mechanic', holding: 'wrench', action: 'work', apron: true, apronColor: '#3f5f73', hat: 'bandana', hatColor: '#b03a2e', hair: 'curly', shirt: '#e8a838', beard: true });
-    const mp = new THREE.Vector3(-1.28, 0, heroPos.z - 0.62);
+    const mp = new THREE.Vector3(-1.28, 0, heroPos.z - 0.7);
     mechanic.group.position.copy(mp);
     mechanic.group.rotation.y = 0.3;
     group.add(mechanic.group);

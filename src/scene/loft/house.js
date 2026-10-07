@@ -483,10 +483,11 @@ export function buildHouse(ctx, B, mats, env, screens) {
     // a thick sill board sticking out
     F.add(mats.wood(WOOD.oak), xf(board(w + 0.24, 0.05, 0.24, { along: 'x', rng }), [(u0 + u1) / 2, v0 - 0.02, 0.1]));
     // transom bar with three little upper panes (glazed, fixed)
-    const tv = v1 - 0.3;
+    // (kept low: the 'This Woodland' camera looks in under it at the screens)
+    const th = 0.24, tv = v1 - th;
     F.add(frameMat, xf(beamBox(w, 0.05, 0.06), [(u0 + u1) / 2, tv, 0.02]), { color: WOOD.walnut, cast: false });
-    for (let i = 1; i < 3; i++) F.add(frameMat, xf(beamBox(0.025, 0.28, 0.04), [u0 + (w * i) / 3, tv + 0.15, 0.02]), { color: WOOD.walnut, cast: false });
-    F.add(litGlass, xf(pane(w, 0.27), [(u0 + u1) / 2, tv + 0.15, 0.0]), { cast: false });
+    for (let i = 1; i < 3; i++) F.add(frameMat, xf(beamBox(0.025, th - 0.02, 0.04), [u0 + (w * i) / 3, tv + th / 2, 0.02]), { color: WOOD.walnut, cast: false });
+    F.add(litGlass, xf(pane(w, th - 0.03), [(u0 + u1) / 2, tv + th / 2, 0.0]), { cast: false });
     // casements: hinged at the outer jambs, opened outwards ~70°
     const cw = w / 2, chh = tv - v0 - 0.03;
     for (const s of [-1, 1]) {
