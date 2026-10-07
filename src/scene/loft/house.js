@@ -29,7 +29,7 @@ export const HOUSE = {
   PITCH: 57 * DEG,
 };
 /** the big window's transom panes: the warm room light glowing through them (emissive by day / at night) */
-export const LIT_GLASS = { color: '#ffb35a', day: 0, night: 1.5 };
+export const LIT_GLASS = { color: '#ffb35a', day: 0, night: 1.35 };
 const T = 0.12; // timber section
 const SILL = 0.14;
 
@@ -908,6 +908,10 @@ function buildInterior(ctx, B, mats, env, { house, H, toWorldUp, screens }) {
   }
   // the interior light (warm, from the lamp): one point light
   out.light = toWorldUp(0.1, 1.45, -0.2);
+  // …which the light budget may not grant: a soft warm glow low over the rug
+  // makes the room behind the open casements read lamp-lit at night either way
+  // (depth-tested, so only seen through the openings; below the screens)
+  halos.push(toWorldUp(0.2, 0.32, -0.15), 0.8, '#ffb066', { day: 0, night: 0.9 });
   out.screenCentre = toWorldUp(deskX + 0.05, deskTop + 0.38, -0.62);
   out.duckWorld = toWorldUp(deskX + 0.1, deskTop + 0.05, 0.02);
   return out;

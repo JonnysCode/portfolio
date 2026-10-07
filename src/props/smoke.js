@@ -66,7 +66,7 @@ const VERT = /* glsl */ `
     vLife = life;
     vSeed = seed;
     // opacity: a quick fade-in, then 0.35 → 0 as it spreads
-    vAlpha = smoothstep(0.0, 0.07, life) * pow(1.0 - life, 1.25);
+    vAlpha = smoothstep(0.0, 0.06, life) * pow(1.0 - life, 0.85);
     #include <fog_vertex>
   }
 `;
@@ -93,7 +93,7 @@ const FRAG = /* glsl */ `
     float k = vSeed * 37.0;
     // a soft radial puff with a few lobes drifting apart as it ages (wispy, never round beads)
     float spread = 0.22 + 0.16 * vLife;
-    float a = lobe(p, vec2(0.0), 0.62) * 0.7;
+    float a = lobe(p, vec2(0.0), 0.62) * 0.85;
     a += lobe(p, spread * vec2(cos(k), sin(k)), 0.46) * 0.4;
     a += lobe(p, spread * vec2(cos(k + 2.3), sin(k + 2.3)), 0.4) * 0.35;
     a += lobe(p, spread * vec2(cos(k + 4.4), sin(k + 4.4)), 0.42) * 0.3;
@@ -106,7 +106,7 @@ const FRAG = /* glsl */ `
     float lit = smoothstep(-0.9, 0.9, p.y * 0.85 - p.x * 0.3);
     vec3 day = mix(uDayShade, uDayLit, lit) * mix(vec3(1.0), uKeyColor, 0.18);
     vec3 night = mix(uNightShade, uNightLit, lit);
-    vec3 col = mix(day, night, uNight) * mix(0.84, 1.0, smoothstep(0.0, 0.3, vLife));
+    vec3 col = mix(day, night, uNight) * mix(0.9, 1.0, smoothstep(0.0, 0.3, vLife));
     gl_FragColor = vec4(col, alpha);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -128,8 +128,8 @@ function smokeMaterial(reduced, opacity) {
       uKeyColor: envUniforms.uKeyColor,
       uOpacity: { value: opacity },
       // painterly greys: warm sunlit top, cooler shade (kept well under the bloom threshold)
-      uDayLit: { value: new THREE.Color('#d8d2c8') },
-      uDayShade: { value: new THREE.Color('#8f8c88') },
+      uDayLit: { value: new THREE.Color('#ece6db') },
+      uDayShade: { value: new THREE.Color('#a9a49c') },
       uNightLit: { value: new THREE.Color('#47506a') },
       uNightShade: { value: new THREE.Color('#1c2130') },
     },

@@ -986,14 +986,16 @@ export class Halos {
   constructor() {
     this.sets = new Map();
   }
-  push(p, size = 0.6, color = '#ffc46e') {
-    if (!this.sets.has(color)) this.sets.set(color, []);
-    this.sets.get(color).push({ x: p.x, y: p.y, z: p.z, size });
+  /** A halo at `p` (world) of radius `size`; `level` = { day, night } gives it its own intensity (its own set). */
+  push(p, size = 0.6, color = '#ffc46e', level = null) {
+    const key = level ? `${color}|${level.day}|${level.night}` : color;
+    if (!this.sets.has(key)) this.sets.set(key, { color, level, pts: [] });
+    this.sets.get(key).pts.push({ x: p.x, y: p.y, z: p.z, size });
   }
   build(ctx, parent, opts = {}) {
-    for (const [color, pts] of this.sets) {
+    for (const { color, level, pts } of this.sets.values()) {
       if (!pts.length) continue;
-      const m = ctx.props.glowQuads(pts, color, { day: opts.day ?? 0.1, night: opts.night ?? 0.95 });
+      const m = ctx.props.glowQuads(pts, color, { day: level?.day ?? opts.day ?? 0.1, night: level?.night ?? opts.night ?? 0.95 });
       m.name = 'loft-halos';
       parent.add(m);
     }
