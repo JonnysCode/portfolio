@@ -23,7 +23,7 @@
 import * as THREE from 'three';
 import { OAK } from '../../world/layout.js';
 import { getHeight } from '../../world/ground.js';
-import { DEG, TAU, IRON, BRASS, BARK, WARM_WOOD, addFlowerTuft, addToadstool, Batch, smallBitsRemap, polar, radial, board, timber, branch, tubeAlong, xf, stoneGeo, mossGeo, ivyCard, lashing } from './kit.js';
+import { DEG, TAU, IRON, BRASS, WARM_WOOD, POLE_WOOD, addFlowerTuft, addToadstool, Batch, smallBitsRemap, polar, radial, board, timber, branch, tubeAlong, xf, stoneGeo, mossGeo, ivyCard, lashing } from './kit.js';
 import { ELEVATOR_AZ, LIFT } from './deck.js';
 import { addSignPlate } from './props.js';
 
@@ -160,8 +160,9 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
   // boarding platform: warm planks on crooked branch posts, a short stair of
   // chunky treads up from the moss (rustic woodland joinery — no ladder, no
   // X-bracing)
-  const barkMat = mats.bark(BARK.warm);
   const ropeMat = mats.rope();
+  /** a crooked peeled pole (warm honey wood with grain UVs) */
+  const pole = (pts, r0, r1, opts = {}, bopts = {}) => B.add(mats.wood(rng.pick(POLE_WOOD)), branch(pts, r0, r1, { ...opts, uv: true }), bopts);
   /** ground (or root) height under (x, z) */
   const floorAt = (p) => {
     const t = rootTop(p.x, p.z);
@@ -190,7 +191,7 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
         if (top.y - g > 0.08) {
           const foot = top.clone().setY(g - 0.1).addScaledVector(lat, s * 0.07);
           const mid = top.clone().lerp(foot, 0.5).add(new THREE.Vector3(rng.jitter(0.05), 0, rng.jitter(0.05)));
-          B.add(barkMat, branch([foot, mid, top.clone().add(new THREE.Vector3(0, 0.06, 0))], 0.085, 0.07, { radial: 7, seed: u * 3 + s }));
+          pole([foot, mid, top.clone().add(new THREE.Vector3(0, 0.06, 0))], 0.085, 0.07, { radial: 7, seed: u * 3 + s });
           for (const lg of lashing(top.clone().add(new THREE.Vector3(0, -0.02, 0)), new THREE.Vector3(0, 1, 0), 0.07, { turns: 2 })) B.add(ropeMat, lg, { cast: false });
           B.add(mats.moss(), xf(mossGeo(rng, { r: 0.16, h: 0.06 }), [foot.x, g + 0.02, foot.z]), { cast: false });
         }
@@ -199,9 +200,9 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
       const r0p = p0.clone().lerp(p1, 0.5).add(new THREE.Vector3(0, 0.1, 0));
       const r1p = p1.clone().add(new THREE.Vector3(0, 0.1, 0));
       const t0 = r0p.clone().add(new THREE.Vector3(0, 0.55, 0)), t1 = r1p.clone().add(new THREE.Vector3(0, 0.55, 0));
-      B.add(barkMat, branch([r0p, t0], 0.036, 0.03, { radial: 6, seed: s }), { cast: false });
-      B.add(barkMat, branch([r1p, t1], 0.036, 0.03, { radial: 6, seed: s + 2 }), { cast: false });
-      B.add(barkMat, branch([t0, t0.clone().lerp(t1, 0.5).add(new THREE.Vector3(0, 0.02, 0)), t1], 0.03, 0.027, { radial: 6, seed: s + 4 }), { cast: false });
+      pole([r0p, t0], 0.036, 0.03, { radial: 6, seed: s }, { cast: false });
+      pole([r1p, t1], 0.036, 0.03, { radial: 6, seed: s + 2 }, { cast: false });
+      pole([t0, t0.clone().lerp(t1, 0.5).add(new THREE.Vector3(0, 0.02, 0)), t1], 0.03, 0.027, { radial: 6, seed: s + 4 }, { cast: false });
       // ivy trailing from the side bearer
       for (let j = 0; j < 3; j++) {
         const base = p0.clone().lerp(p1, rng.range(0.5, 0.95)).addScaledVector(lat, s * 0.05);
@@ -212,7 +213,7 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     // treads on two crooked bough stringers, moss and a toadstool at the foot
     {
       const topC = polar(a, r0 + Dp - 0.06, yP - 0.06);
-      const run = THREE.MathUtils.clamp(yP * 0.72, 0.8, 1.9);
+      const run = THREE.MathUtils.clamp(yP * 0.9, 0.8, 2.9);
       const footC = polar(a, r0 + Dp + run, 0);
       footC.y = floorAt(footC);
       const rise = topC.y - footC.y;
@@ -223,7 +224,7 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
           const t = topC.clone().addScaledVector(lat, s * H);
           const f = footC.clone().addScaledVector(lat, s * (H + 0.04)).add(new THREE.Vector3(0, -0.12, 0));
           const m = f.clone().lerp(t, 0.5).add(new THREE.Vector3(rng.jitter(0.03), -0.03, rng.jitter(0.03)));
-          B.add(barkMat, branch([f, m, t], 0.07, 0.06, { radial: 7, seed: 70 + s }));
+          pole([f, m, t], 0.085, 0.07, { radial: 7, seed: 70 + s });
           B.add(mats.moss(), xf(mossGeo(rng, { r: 0.15, h: 0.05 }), [f.x, footC.y + 0.02, f.z]), { cast: false });
         }
         const nT = Math.max(2, Math.round(rise / 0.3));
@@ -231,7 +232,7 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
         for (let k = 1; k <= nT; k++) {
           const u = k / (nT + 0.6);
           const c = footC.clone().addScaledVector(slope, u);
-          const g = board(2 * H + 0.16, 0.08, 0.27, { along: 'x', rng, c: 0.02 });
+          const g = board(2 * H + 0.16, 0.09, 0.34, { along: 'x', rng, c: 0.02 });
           const m = basis.clone().multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rng.jitter(0.03), rng.jitter(0.05), rng.jitter(0.03))));
           m.setPosition(c.clone().add(new THREE.Vector3(0, 0.1, 0)));
           B.add(mats.wood(rng.pick(WARM_WOOD)), g.applyMatrix4(m));
@@ -248,9 +249,9 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     {
       const bp = polar(a, r0 + Dp - 0.1, yP).addScaledVector(lat, 0.56);
       const top = bp.clone().add(new THREE.Vector3(0, 1.05, 0));
-      B.add(barkMat, branch([bp, bp.clone().add(new THREE.Vector3(0.02, 0.5, 0)), top], 0.04, 0.032, { radial: 6, seed: 61 }));
+      pole([bp, bp.clone().add(new THREE.Vector3(0.02, 0.5, 0)), top], 0.04, 0.032, { radial: 6, seed: 61 });
       const armEnd = top.clone().addScaledVector(lat, -0.25);
-      B.add(barkMat, branch([top, top.clone().addScaledVector(lat, -0.12).add(new THREE.Vector3(0, 0.03, 0)), armEnd], 0.028, 0.022, { radial: 5, seed: 62 }), { cast: false });
+      pole([top, top.clone().addScaledVector(lat, -0.12).add(new THREE.Vector3(0, 0.03, 0)), armEnd], 0.028, 0.022, { radial: 5, seed: 62 }, { cast: false });
       B.add(mats.metal(BRASS), xf(new THREE.CylinderGeometry(0.03, 0.065, 0.1, 10, 1, true), [armEnd.x, armEnd.y - 0.1, armEnd.z]));
       B.add(mats.metal(BRASS), xf(new THREE.SphereGeometry(0.02, 6, 4), [armEnd.x, armEnd.y - 0.16, armEnd.z]), { cast: false });
       B.add(ropeMat, tubeAlong([armEnd.clone().add(new THREE.Vector3(0, -0.15, 0)), armEnd.clone().add(new THREE.Vector3(0.03, -0.45, 0)), armEnd.clone().add(new THREE.Vector3(0.02, -0.7, 0.02))], 0.008, 4), { cast: false });
@@ -295,7 +296,7 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
       for (let y = y0; y <= y1 + 0.001; y += 0.5) pts.push(polar(a, bark(a, y) + 0.07, y).addScaledVector(lat, s * 0.2));
       // one long pole per side, a gentle wander, tapering towards the top
       const wander = pts.map((p, k) => p.clone().addScaledVector(lat, Math.sin(k * 0.7 + s) * 0.012));
-      B.add(mats.bark(BARK.warmLight), branch(wander, 0.036, 0.03, { radial: 6, seed: 80 + s, lump: 0.08 }), { cast: false });
+      pole(wander, 0.036, 0.03, { radial: 6, seed: 80 + s, lump: 0.08 }, { cast: false });
       // lashed to short wooden pegs in the bark every ~1.5
       for (let j = 1; j < pts.length - 1; j += 3) {
         const p = pts[j];
@@ -320,7 +321,7 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
       const nL = radial(aL);
       const p0 = polar(aL, bark(aL, yL) - 0.04, yL);
       const tip = polar(aL, bark(aL, yL) + 0.32, yL + 0.12);
-      B.add(barkMat, branch([p0, p0.clone().lerp(tip, 0.5).add(new THREE.Vector3(0, 0.07, 0)), tip], 0.035, 0.022, { radial: 5, seed: 83 }), { cast: false });
+      pole([p0, p0.clone().lerp(tip, 0.5).add(new THREE.Vector3(0, 0.07, 0)), tip], 0.035, 0.022, { radial: 5, seed: 83 }, { cast: false });
       const l = ctx.props.makeLantern({ hanging: true, color: '#ffc46b', halo: false });
       l.scale.setScalar(0.62);
       l.position.copy(tip).add(new THREE.Vector3(0, -0.01, 0));

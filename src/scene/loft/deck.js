@@ -20,7 +20,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { OAK } from '../../world/layout.js';
-import { DEG, TAU, WOOD, IRON, polar, radial, board, timber, branch, tubeAlong, sagCurve, mossGeo, ivyCard, addToadstool, xf, alongX } from './kit.js';
+import { DEG, TAU, WOOD, IRON, BARK, polar, radial, board, timber, branch, tubeAlong, sagCurve, mossGeo, ivyCard, addToadstool, xf, alongX } from './kit.js';
 
 /** Azimuth (deg) of the snail lift's track on the bark. */
 export const ELEVATOR_AZ = 56;
@@ -292,7 +292,7 @@ export function buildDeck(ctx, B, mats, env) {
   }
 
   // ── railing of crooked branches ───────────────────────────────────────────
-  const barkMat = mats.bark();
+  const barkMat = mats.bark(BARK.warm); // warm, sun-bleached branches (like the stair's)
   const openings = [
     // around this bark point the railing stays open — where the stair arrives
     { a: STAIR_WELL.a0 * DEG, r: 1.15 },

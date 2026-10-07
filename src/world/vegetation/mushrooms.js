@@ -382,7 +382,7 @@ export class MushroomKit {
     ], seg, { flip: true, color: () => C('#d8c47a') });
   }
 
-  /** A tuft of slender bonnets (glowing ones light up at night). opts: { count, height, glow, color } */
+  /** A tuft of slender bonnets (glowing ones light up at night). opts: { count, height, glow, halo (night halo sprite, default on), color } */
   bonnets(x, y, z, opts = {}) {
     const rng = this.rng;
     const n = opts.count ?? rng.int(2, 5);
@@ -411,7 +411,7 @@ export class MushroomKit {
         { r: R * 0.95, y: -R * 0.08, v: 0 },
         { r: R * 0.12, y: R * 0.3, v: 1 },
       ], 5, { flip: true, disc: R, color: () => C(glow ? '#cfeee4' : '#e8d8bc') });
-      if (glow) this.glowPoints.push({ x: tip.x, y: tip.y + R * 0.4, z: tip.z, size: R * 3.2 });
+      if (glow && opts.halo !== false) this.glowPoints.push({ x: tip.x, y: tip.y + R * 0.4, z: tip.z, size: R * 3.2 });
     }
   }
 

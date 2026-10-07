@@ -290,6 +290,32 @@ export function inShot(x, y, z, r = 0.3) {
   return false;
 }
 
+// ─── the lenses' near field ─────────────────────────────────────────────────
+// Well in front of a shot's focus the depth of field turns anything bright
+// (glowing mushrooms, fireflies) into a big soft blob: glowing things keep
+// out of the cone in front of every composed shot (spot and -wide).
+const lenses = [];
+for (const s of SPOTS) {
+  const P = new THREE.Vector3(...s.camera.position), T = new THREE.Vector3(...s.camera.target);
+  const dir = T.clone().sub(P);
+  const dist = dir.length();
+  dir.normalize();
+  lenses.push({ P, dir, dist });
+  if (s.id !== 'glen') lenses.push({ P: T.clone().addScaledVector(dir, -dist * 1.8), dir, dist: dist * 1.8 });
+}
+const _nf = new THREE.Vector3();
+/** True if (x, y, z) sits in the near field of a composed shot (closer than k × its focus distance, inside a generous cone). */
+export function inNearField(x, y, z, k = 0.6, pad = 1) {
+  for (const l of lenses) {
+    _nf.set(x, y, z).sub(l.P);
+    const along = _nf.dot(l.dir);
+    if (along < -pad || along > l.dist * k + pad) continue;
+    const perp = Math.sqrt(Math.max(0, _nf.lengthSq() - along * along));
+    if (perp < Math.max(0, along) * 0.75 + pad) return true;
+  }
+  return false;
+}
+
 /** Path distance (normalised) re-exported for convenience. */
 export { getPathDistance, getStreamDistance };
 

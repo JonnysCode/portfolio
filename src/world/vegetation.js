@@ -54,7 +54,7 @@ import { getHeight, getPathDistance, getStreamDistance, pathPolylines } from './
 import { STREAM, SPOTS } from './layout.js';
 import { glowQuads } from '../props/glow.js';
 import { fieldBroad, fieldMid, fieldFine, fieldAlt, GeoBuilder, instanced, staticMesh, TAU } from './vegetation/common.js';
-import { canGrow, isClearOfViews, isClearOfSubjects, blocksView, oakDist, cameraClearance, viewDistance, viewDetail, inShot } from './vegetation/zones.js';
+import { canGrow, isClearOfViews, isClearOfSubjects, blocksView, oakDist, cameraClearance, viewDistance, viewDetail, inShot, inNearField } from './vegetation/zones.js';
 import { forestPlan } from './vegetation/plan.js';
 import { buildLitter } from './vegetation/litter.js';
 import { buildTree, clumpTemplate } from './vegetation/trees.js';
@@ -755,6 +755,8 @@ export default async function build(ctx) {
         const off = p.halfWidth * rng.range(1.45, 2.1);
         const cx = q.x - tz * off * side, cz = q.z + tx * off * side;
         if (!canGrow(cx, cz, { path: 1.3 })) continue;
+        // (never right in front of a lens: out of focus they would bloom into blobs)
+        if (inNearField(cx, getHeight(cx, cz) + 0.2, cz, 0.42, 0.8)) continue;
         if (lanterns.some((o) => Math.hypot(o.x - cx, o.z - cz) < 4.2)) continue;
         if (occ.clearance(cx, cz, 2) < 0.2) continue;
         lanterns.push({ x: cx, z: cz });
@@ -764,7 +766,8 @@ export default async function build(ctx) {
         for (let k = 0; k < tufts; k++) {
           const a = rng.range(0, TAU), d = rng.range(0, 0.45);
           const x = cx + Math.sin(a) * d, z = cz + Math.cos(a) * d;
-          smallKit.bonnets(x, getHeight(x, z), z, { height: rng.range(0.1, 0.17), count: rng.int(3, 5), glow: true, spread: 1.4 });
+          // (no halo sprites: seen out of focus from a -wide shot they would bloom into blobs)
+          smallKit.bonnets(x, getHeight(x, z), z, { height: rng.range(0.1, 0.17), count: rng.int(3, 5), glow: true, spread: 1.4, halo: false });
         }
         const toads = rng.int(1, 2);
         for (let k = 0; k < toads; k++) {
@@ -772,7 +775,7 @@ export default async function build(ctx) {
           const x = cx + Math.sin(a) * d, z = cz + Math.cos(a) * d;
           if (!canGrow(x, z, { path: 1.2 })) continue;
           const h = rng.range(0.22, 0.42);
-          smallKit.amanita(x, getHeight(x, z), z, { height: h, capR: h * rng.range(0.5, 0.65), color: rng.pick(CAP_REDS), glowGills: true, glowSpots: true, haloK: 2.4, lod });
+          smallKit.amanita(x, getHeight(x, z), z, { height: h, capR: h * rng.range(0.5, 0.65), color: rng.pick(CAP_REDS), glowGills: true, glowSpots: true, haloK: 1.6, lod });
         }
         occ.add(cx, cz, 0.35, 'toadstool');
         glowSpots.push({ x: cx, y: cy + 0.15, z: cz });

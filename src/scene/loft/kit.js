@@ -59,6 +59,8 @@ export const BARK = {
   warm: '#9a7a56',
   warmLight: '#a88a64',
 };
+/** Peeled, sun-bleached branch poles (stair bough, braces, balusters, lift posts & rails). */
+export const POLE_WOOD = ['#b8915f', '#ad8657', '#c09a6c', '#a98052'];
 /** Warm, weathered oak tones for the stair treads, the lift's planks and rails. */
 export const WARM_WOOD = ['#b48c5e', '#a8804f', '#bd9868', '#9f7a4e', '#b08a5a', '#a57d52', '#c09a6a'];
 export const IRON = '#36312c';
@@ -612,15 +614,18 @@ export function peg(r = 0.016, len = 0.03) {
 /**
  * A crooked, tapering branch through `points` (Vector3 list): a tube with
  * lumps and a slight twist — bark-covered railings, twigs, knee braces.
- * Indexed, position + normal (no UVs needed: bark is world-mapped).
+ * Indexed, position + normal (no UVs needed: bark is world-mapped); uv: true
+ * adds grain UVs along it for a PEELED pole in the wood material.
  */
-export function branch(points, r0, r1 = r0 * 0.7, { radial = 6, seg = null, lump = 0.12, seed = 0, capStart = true, capEnd = true } = {}) {
+export function branch(points, r0, r1 = r0 * 0.7, { radial = 6, seg = null, lump = 0.12, seed = 0, capStart = true, capEnd = true, uv = false } = {}) {
   const curve = points instanceof THREE.Curve ? points : new THREE.CatmullRomCurve3(points, false, 'centripetal');
   const len = curve.getLength();
   const segments = seg ?? Math.max(3, Math.ceil(len / 0.18));
   const frames = curve.computeFrenetFrames(segments, false);
   const pos = [];
   const idx = [];
+  const uvs = uv ? [] : null;
+  const u0 = (seed * 0.37) % 5;
   const P = new THREE.Vector3();
   for (let i = 0; i <= segments; i++) {
     const t = i / segments;
@@ -632,6 +637,8 @@ export function branch(points, r0, r1 = r0 * 0.7, { radial = 6, seg = null, lump
       const k = 1 + lump * noiseA(t * len * 2.2 + seed * 3.1, j * 0.9 + seed) + 0.06 * Math.sin(ang * 2 + t * 5 + seed);
       const c = Math.cos(ang) * r * k, s = Math.sin(ang) * r * k;
       pos.push(P.x + N.x * c + Bn.x * s, P.y + N.y * c + Bn.y * s, P.z + N.z * c + Bn.z * s);
+      // peeled-wood UVs: grain (U) along the branch, V around it (world units / tile)
+      if (uvs) uvs.push(u0 + (t * len) / TILE.wood, (Math.min(j, radial - j) / radial) * ((TAU * r) / TILE.wood));
     }
   }
   for (let i = 0; i < segments; i++) {
@@ -648,6 +655,7 @@ export function branch(points, r0, r1 = r0 * 0.7, { radial = 6, seg = null, lump
     centre.add(T);
     const ci = pos.length / 3;
     pos.push(centre.x, centre.y, centre.z);
+    if (uvs) uvs.push(u0 + (t * len) / TILE.wood + 0.05 * dir, 0);
     for (let j = 0; j < radial; j++) {
       const a = i * radial + j, b = i * radial + ((j + 1) % radial);
       if (dir < 0) idx.push(ci, b, a);
@@ -658,6 +666,7 @@ export function branch(points, r0, r1 = r0 * 0.7, { radial = 6, seg = null, lump
   if (capEnd) capAt(segments, 1);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  if (uvs) g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   g.setIndex(idx);
   g.computeVertexNormals();
   return g;

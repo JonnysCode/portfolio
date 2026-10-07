@@ -24,7 +24,7 @@
 import * as THREE from 'three';
 import { OAK } from '../../world/layout.js';
 import { getHeight } from '../../world/ground.js';
-import { DEG, TAU, BARK, WARM_WOOD, polar, radial, board, timber, branch, tubeAlong, xf, deform, stoneGeo, mossGeo, addToadstool, ivyCard, shelfFungus, lashing } from './kit.js';
+import { DEG, TAU, BARK, WARM_WOOD, POLE_WOOD, polar, radial, board, timber, branch, tubeAlong, xf, deform, stoneGeo, mossGeo, addToadstool, ivyCard, shelfFungus, lashing } from './kit.js';
 import { ELEVATOR_AZ, STAIR_WELL, LIFT } from './deck.js';
 
 /** The stair's course: azimuths in degrees around the oak (it climbs clockwise). */
@@ -74,6 +74,8 @@ export function buildStairs(ctx, B, mats, env) {
   // seen against the dark trunk from the workshop that read as a fire escape)
   const barkMat = mats.bark(BARK.warm);
   const ropeMat = mats.rope();
+  /** a crooked peeled pole (warm honey wood with grain UVs) */
+  const pole = (pts, r0, r1, opts = {}, bopts = {}) => B.add(mats.wood(rng.pick(POLE_WOOD)), branch(pts, r0, r1, { ...opts, uv: true }), bopts);
   const fungusSpots = []; // shelf fungi on the bark beside some brackets
   const outerTops = []; // baluster tops (outer rope)
   const flights = [[], []]; // the stringer bough's course under each flight (bottom → top)
@@ -137,7 +139,7 @@ export function buildStairs(ctx, B, mats, env) {
     if (i % 3 === 0) {
       const b0 = polar(a, r1 - 0.1, s.y - 0.05);
       const top = b0.clone().add(new THREE.Vector3(rng.jitter(0.04), 0.74 + rng.jitter(0.05), rng.jitter(0.04)));
-      B.add(barkMat, branch([b0.clone().setY(s.y - TH - 0.12), b0.clone().lerp(top, 0.45).add(new THREE.Vector3(rng.jitter(0.03), 0, rng.jitter(0.03))), top], 0.042, 0.032, { radial: 6, seed: i }), { cast: false });
+      pole([b0.clone().setY(s.y - TH - 0.12), b0.clone().lerp(top, 0.45).add(new THREE.Vector3(rng.jitter(0.03), 0, rng.jitter(0.03))), top], 0.042, 0.032, { radial: 6, seed: i }, { cast: false });
       outerTops.push(top);
     }
     // moss on some treads near the bark, a toadstool here and there
@@ -154,7 +156,7 @@ export function buildStairs(ctx, B, mats, env) {
     const pts = [ext(fl[0].p, fl[1].p, 0.18), ...fl.map((f) => f.p), ext(fl[fl.length - 1].p, fl[fl.length - 2].p, 0.14)];
     // a natural bough: smooth, with a gentle wander
     const course = pts.map((p, k) => p.clone().add(new THREE.Vector3(0, Math.sin(k * 0.9) * 0.015, 0)));
-    B.add(barkMat, branch(course, SR, SR * 0.82, { radial: 7, seed: fl[0].i * 3 + 1, lump: 0.1 }));
+    pole(course, SR, SR * 0.82, { radial: 7, seed: fl[0].i * 3 + 1, lump: 0.1 });
     // ivy spilling over the bough between the braces (softens the stack of
     // treads seen edge-on from the workshop)
     fl.forEach((f, k) => {
@@ -176,13 +178,13 @@ export function buildStairs(ctx, B, mats, env) {
         const g0 = floorAt(head);
         if (!isFinite(g0) || head.y - g0 < 0.15) return;
         const foot = head.clone().setY(g0 - 0.1).addScaledVector(radial(f.a), rng.jitter(0.05));
-        B.add(barkMat, branch([foot, head.clone().lerp(foot, 0.5).add(new THREE.Vector3(rng.jitter(0.04), 0, rng.jitter(0.04))), head], 0.06, 0.05, { radial: 7, seed: f.i }));
+        pole([foot, head.clone().lerp(foot, 0.5).add(new THREE.Vector3(rng.jitter(0.04), 0, rng.jitter(0.04))), head], 0.06, 0.05, { radial: 7, seed: f.i });
         B.add(mats.moss(), xf(mossGeo(rng, { r: 0.14, h: 0.05 }), [foot.x, g0 + 0.02, foot.z]), { cast: false });
       } else {
         const yF = f.y - 1.25;
         const foot = polar(f.a, bark(f.a, yF) - 0.02, yF);
         const mid = foot.clone().lerp(head, 0.5).addScaledVector(radial(f.a), -0.06).add(new THREE.Vector3(0, -0.05, 0));
-        B.add(barkMat, branch([foot, mid, head], 0.07, 0.05, { radial: 7, seed: f.i * 1.7 }));
+        pole([foot, mid, head], 0.07, 0.05, { radial: 7, seed: f.i * 1.7 });
       }
       // the lashing where they meet the bough
       for (const g of lashing(head, dir, SR, { turns: 3 })) B.add(ropeMat, g, { cast: false });
@@ -230,14 +232,14 @@ export function buildStairs(ctx, B, mats, env) {
       const foot = polar(a, bark(a, ly - 1.5) - 0.02, ly - 1.5);
       const head = polar(a, rIn(a) + W - 0.25, ly - 0.14);
       const mid = foot.clone().lerp(head, 0.5).addScaledVector(radial(a), -0.08).add(new THREE.Vector3(0, -0.06, 0));
-      B.add(barkMat, branch([foot, mid, head], 0.085, 0.06, { radial: 7, seed: d }));
+      pole([foot, mid, head], 0.085, 0.06, { radial: 7, seed: d });
       B.add(mats.wood('#8f6a44'), timber(polar(a, rIn(a) - 0.03, ly - 0.14), polar(a, rIn(a) + W - 0.1, ly - 0.14), 0.1, 0.13, { rng }));
       for (const g of lashing(head, radial(a), 0.07, { turns: 3 })) B.add(ropeMat, g, { cast: false });
     }
     {
       const pts = [];
       for (let d = a0 + 1; d <= a1 - 1; d += 4) pts.push(polar(d * DEG, rIn(d * DEG) + W - 0.2, ly - 0.15));
-      B.add(barkMat, branch(pts, 0.07, 0.065, { radial: 7, seed: 91 }));
+      pole(pts, 0.07, 0.065, { radial: 7, seed: 91 });
     }
     // railing around the outer edge
     const tops = [];
@@ -245,7 +247,7 @@ export function buildStairs(ctx, B, mats, env) {
       const a = d * DEG;
       const b0 = polar(a, rIn(a) + W - 0.08, ly - 0.05);
       const top = b0.clone().add(new THREE.Vector3(0, 0.74, 0));
-      B.add(barkMat, branch([b0, b0.clone().lerp(top, 0.5).add(new THREE.Vector3(rng.jitter(0.02), 0, rng.jitter(0.02))), top], 0.045, 0.036, { radial: 6, seed: d }), { cast: false });
+      pole([b0, b0.clone().lerp(top, 0.5).add(new THREE.Vector3(rng.jitter(0.02), 0, rng.jitter(0.02))), top], 0.045, 0.036, { radial: 6, seed: d }, { cast: false });
       tops.push(top);
     }
     landing.tops = tops;
@@ -365,7 +367,7 @@ export function buildStairs(ctx, B, mats, env) {
     const sp = polar(a + 9 * DEG, bark(a, 0.2) + 1.35, 0);
     sp.y = getHeight(sp.x, sp.z);
     const top = sp.clone().add(new THREE.Vector3(0.04, 1.1, 0.02));
-    B.add(barkMat, branch([sp, sp.clone().add(new THREE.Vector3(-0.03, 0.55, 0.02)), top, top.clone().addScaledVector(n, 0.22).add(new THREE.Vector3(0, 0.06, 0))], 0.045, 0.025, { radial: 6, seed: 5 }));
+    pole([sp, sp.clone().add(new THREE.Vector3(-0.03, 0.55, 0.02)), top, top.clone().addScaledVector(n, 0.22).add(new THREE.Vector3(0, 0.06, 0))], 0.045, 0.025, { radial: 6, seed: 5 });
     const lantern = ctx.props.makeLantern({ hanging: true, color: '#ffc46b', halo: false });
     const hook = top.clone().addScaledVector(n, 0.22).add(new THREE.Vector3(0, 0.03, 0));
     lantern.position.copy(hook);
