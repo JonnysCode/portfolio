@@ -14,9 +14,16 @@ texture files). Every corner of the glen is one of my passions:
 | 🚲 | **Velowerkstatt** | across the stone bridge: bike builds, restorations, wheels |
 
 Glide between spots with the spot bar (or ← → / 1–6), drag to look around,
-scroll to zoom, and click whatever looks interesting. A few secrets are
-hidden in the glen. Prefer reading? The 📖 guidebook lists everything on one
-page.
+scroll to zoom, and click whatever looks interesting. Press **N** for night:
+moonbeams, fireflies, a glow-worm canopy and glowing mushrooms. Ten secrets
+hide in the glen (three only come out after dark). Prefer reading? The 📖
+guidebook lists everything on one page, and the 🗺 map jumps anywhere.
+
+Under the hood: a sculpted Great Oak, GPU-baked painterly textures (bark,
+moss, stone, wood grain…), instanced forests of giants, ferns and mushroom
+families, a golden-hour light rig with dappled shadows, height fog, light
+shafts, bloom and a miniature depth of field — and quality tiers so phones stay
+smooth.
 
 ## ✏️ Make it yours
 
@@ -46,8 +53,10 @@ tier), `?debug`, `?only=oak,terrain` (build only some modules). In the browser
 console, `__woodland.debug` has helpers such as `goTo('woodworking')`,
 `view('bikes-close')` and `stats()`.
 
-`npm run shots` renders headless screenshots of every area into `shots/` and
+`npm run shots` renders headless screenshots of every spot into `shots/` and
 fails on console errors — see [`scripts/shots.mjs`](scripts/shots.mjs).
+[`scripts/flow.mjs`](scripts/flow.mjs) runs multi-step interaction flows
+(clicks, keys, glides) and screenshots each step.
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains how the glen is put
 together (layout & anchors, module contract, art bible, performance budget).
 

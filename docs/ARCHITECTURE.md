@@ -95,10 +95,12 @@ mushroom houses on platforms in a giant tree with rope bridges). Look at them.
   `ctx.materials.foliage(opts)` for leaf cards, `ctx.materials.glow(color, {day, night})`
   for everything that lights up. Characters (villagers, snails) keep their cute
   stylised look. Never mutate a cached material.
-* **Light budget:** only `world/lighting.js` creates directional/hemisphere
-  lights. Builders may add **warm point lights only through
-  `ctx.lights.addPoint(position, opts)`** (budget-managed; see lighting.js), never
-  `new THREE.PointLight` directly. Glow = emissive + bloom + glow sprites.
+* **Light budget:** only `world/lighting.js` creates lights (sun/moon key,
+  hemisphere, rim, the canopy-gap sunbeam). Builders may add **warm point lights
+  only through `ctx.lights.addPoint(position, { color, day, night, priority, spot })`**,
+  requested during the build; `ctx.lights.allocate()` then hands the tier's budget
+  out (one per spot first, then by priority) — a request may never go live, so
+  always pair it with emissive glow. Glow = emissive + bloom + glow sprites.
 * **Life:** villagers busy with tasks, snails crawling (one is the treehouse
   elevator), smoke, swaying lanterns, fireflies, butterflies, the stream
   flowing, the waterfall foaming, motes drifting in sunbeams.
@@ -163,6 +165,10 @@ skipped (the rest of the glen still loads).
 ## Performance budget
 
 * Desktop target 60 fps (mid GPU), phones 30 fps at `medium`/`low` tier.
+  `ctx.quality.post` is `'full'` (bloom, AO, depth of field, grade), `'lite'`
+  (bloom + grade) or `false`; `density` scales scatter counts.
+  `__woodland.ctx.moduleStats()` reports draw calls / triangles / shadow casters
+  per module.
 * Whole scene ≲ 2.5 M triangles and ≲ 450 draw calls at `high`.
   Per scene module ≲ 60 draw calls. Merge static meshes per material
   (`mergeGeometries`), `InstancedMesh` for repeats (shingles, stones, leaves,
