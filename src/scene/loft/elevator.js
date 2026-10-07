@@ -5,13 +5,15 @@
 // down, rest. It passes through the slot in the stair landing on the way. A
 // faint silvery slime trail glistens between the rails.
 //
-// Everything about the station is rustic woodland joinery in warm weathered
-// wood (seen from the workshop it once read as a dark steel fire escape): the
-// track is two crooked bark poles rope-lashed to pegs in the bark with ivy
-// twining up them (no rungs), the platform stands on crooked branch posts
-// (no X-bracing) and is reached by a short stair of chunky treads on bough
-// stringers (no ladder); a bell
-// on a gallows, lanterns on the railing and half way up the track.
+// Everything about the station is rustic woodland joinery in silvered,
+// lichened old oak and bark-on branches (seen from the workshop it once read
+// as a dark steel fire escape, then — in honey-orange planks on straight
+// posts — as a painted one): the track is two crooked weathered poles
+// rope-lashed to pegs in the bark with ivy twining up them (no rungs), the
+// platform stands on crooked forked branch posts (no X-bracing, no milled
+// posts) with a rope rail, and is reached by a short stair of chunky treads
+// resting on two bark-on bough stringers propped on little posts (no ladder);
+// a bell on a gallows, lanterns on the railing and half way up the track.
 //
 // The basket hangs from a brass hook on the saddle and always stays level,
 // swinging gently when the snail starts and stops. Clicking the snail glides
@@ -23,7 +25,7 @@
 import * as THREE from 'three';
 import { OAK } from '../../world/layout.js';
 import { getHeight } from '../../world/ground.js';
-import { DEG, TAU, IRON, BRASS, WARM_WOOD, POLE_WOOD, addFlowerTuft, addToadstool, Batch, smallBitsRemap, polar, radial, board, timber, branch, tubeAlong, xf, stoneGeo, mossGeo, ivyCard, lashing } from './kit.js';
+import { DEG, TAU, IRON, BRASS, OLD_OAK, OLD_POLE, BOUGH_BARK, DARK_OAK, LICHEN, addFlowerTuft, addToadstool, Batch, smallBitsRemap, polar, radial, board, timber, branch, tubeAlong, xf, stoneGeo, mossGeo, ivyCard, lashing, weatherPaint, lichenGeo, crookedPath, sagCurve } from './kit.js';
 import { ELEVATOR_AZ, LIFT } from './deck.js';
 import { addSignPlate } from './props.js';
 
@@ -161,8 +163,16 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
   // chunky treads up from the moss (rustic woodland joinery — no ladder, no
   // X-bracing)
   const ropeMat = mats.rope();
-  /** a crooked peeled pole (warm honey wood with grain UVs) */
-  const pole = (pts, r0, r1, opts = {}, bopts = {}) => B.add(mats.wood(rng.pick(POLE_WOOD)), branch(pts, r0, r1, { ...opts, uv: true }), bopts);
+  /** a crooked weathered peeled pole (grain UVs) — the track rails */
+  const pole = (pts, r0, r1, opts = {}, bopts = {}) => B.add(mats.wood(rng.pick(OLD_POLE)), branch(pts, r0, r1, { ...opts, uv: true }), bopts);
+  /** a crooked bark-on branch (posts, stringers, rails, stakes) */
+  const bough = (pts, r0, r1, opts = {}, bopts = {}) => B.add(mats.bark(rng.pick(BOUGH_BARK)), branch(pts, r0, r1, { lump: 0.18, ...opts }), bopts);
+  /** a pale lichen rosette on a surface */
+  const lichen = (p, nrm, r = 0.035) => {
+    const g = lichenGeo(rng, r * rng.range(0.7, 1.3));
+    g.applyMatrix4(new THREE.Matrix4().compose(p, new THREE.Quaternion().setFromUnitVectors(up, nrm.clone().normalize()), new THREE.Vector3(1, 1, 1)));
+    B.add(mats.paint(), g, { color: rng.pick(LICHEN), cast: false });
+  };
   /** ground (or root) height under (x, z) */
   const floorAt = (p) => {
     const t = rootTop(p.x, p.z);

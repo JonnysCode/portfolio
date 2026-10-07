@@ -59,10 +59,24 @@ export const BARK = {
   warm: '#9a7a56',
   warmLight: '#a88a64',
 };
-/** Peeled, sun-bleached branch poles (stair bough, braces, balusters, lift posts & rails). */
-export const POLE_WOOD = ['#b8915f', '#ad8657', '#c09a6c', '#a98052'];
-/** Warm, weathered oak tones for the stair treads, the lift's planks and rails. */
-export const WARM_WOOD = ['#b48c5e', '#a8804f', '#bd9868', '#9f7a4e', '#b08a5a', '#a57d52', '#c09a6a'];
+/**
+ * Weathered oak: the silver-grey-brown of boards that have stood out in the
+ * forest for years (stair treads, landing & lift planks). Honey/orange tones
+ * read as a painted steel fire escape in the golden sun — these never do.
+ */
+export const OLD_OAK = ['#7d6a57', '#8a7662', '#6f5e4c', '#958169', '#83705d', '#76644f', '#8e7b66'];
+/** Weathered peeled poles (the snail-lift track, small sticks). */
+export const OLD_POLE = ['#8c7a64', '#958470', '#7f6e5a', '#9a8a74'];
+/** Bark-on branches (stringer boughs, posts, balusters, braces): grey-brown, lighter than the oak's own bark. */
+export const BOUGH_BARK = ['#86765f', '#7b6c58', '#8f7f68', '#756552'];
+/** Bearers, chocks and wedges: darker, older oak. */
+export const DARK_OAK = '#6a5947';
+/** A recently replaced tread: still pale, not yet silvered. */
+export const NEW_WOOD = ['#b29a76', '#a99171'];
+/** Crustose lichen & moss stains on old wood (sRGB). */
+export const LICHEN = ['#b9bf98', '#a9b386', '#c6c7a6', '#9eab7c', '#cfc79a'];
+const MOSS_STAIN = new THREE.Color('#5d6d36');
+const LICHEN_STAIN = new THREE.Color('#aab08a');
 export const IRON = '#36312c';
 export const BRASS = '#b88a3e';
 export const COPPER = '#a8603a';
@@ -789,6 +803,65 @@ export function shelfFungus(r, rng) {
   under.scale(1, 1, 0.85);
   under.translate(0, 0.002, 0);
   return { top, under };
+}
+
+/**
+ * Weather a board built along X (before it is transformed): pale lichen
+ * blotches on the top, a green moss stain creeping in from one end
+ * (mossEnd −1 / +1, 0 = none), darker damp undersides and end grain.
+ * Writes the colour attribute (so the Batch keeps it instead of the proxy colour).
+ */
+export function weatherPaint(geo, base, { mossEnd = 0, seed = 0, lichen = 0.45 } = {}) {
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  const len = bb.max.x - bb.min.x || 1;
+  const c0 = new THREE.Color(base);
+  const c = new THREE.Color();
+  return paintBy(geo, (x, y, z, nx, ny) => {
+    c.copy(c0);
+    const t = (x - bb.min.x) / len;
+    if (ny > 0.5) {
+      const n = noiseA(x * 4.3 + seed * 1.7, z * 4.3 - seed);
+      if (n > 0.2) c.lerp(LICHEN_STAIN, Math.min(1, (n - 0.2) * 1.8) * lichen);
+      if (mossEnd) c.lerp(MOSS_STAIN, Math.max(0, (mossEnd > 0 ? t : 1 - t) - 0.72) * 2.2);
+    } else if (ny < -0.5) c.multiplyScalar(0.8);
+    if (Math.abs(nx) > 0.6) c.multiplyScalar(0.74); // end grain
+    return c;
+  });
+}
+
+/** A crusty lichen rosette (flat, lobed disc lying on y = 0, facing +Y). */
+export function lichenGeo(rng, r = 0.04) {
+  const g = new THREE.CircleGeometry(r, 7);
+  g.rotateX(-Math.PI / 2);
+  const o = rng.next() * 20, sx = rng.range(0.7, 1.3);
+  deform(g, (v) => {
+    const k = 1 + 0.3 * Math.sin(Math.atan2(v.z, v.x) * 3 + o);
+    v.set(v.x * k * sx, 0.004, v.z * k);
+  });
+  return g;
+}
+
+/**
+ * Points for a crooked, hand-cut branch from a to b: a knee somewhere along it
+ * and a little wander — posts and balusters that were found, not milled.
+ */
+export function crookedPath(a, b, rng, { bend = 0.06, n = 4 } = {}) {
+  const d = b.clone().sub(a);
+  const len = d.length() || 1;
+  const side = Math.abs(d.y) > len * 0.6 ? new THREE.Vector3(rng.jitter(1), 0, rng.jitter(1)) : new THREE.Vector3(0, 1, 0);
+  side.addScaledVector(d, -side.dot(d) / (len * len)).normalize();
+  const side2 = new THREE.Vector3().crossVectors(d, side).normalize();
+  const knee = rng.range(0.3, 0.7);
+  const amp = bend * len * rng.range(0.6, 1.2);
+  const pts = [a.clone()];
+  for (let i = 1; i < n; i++) {
+    const t = i / n;
+    const env = t < knee ? t / knee : (1 - t) / (1 - knee);
+    pts.push(a.clone().lerp(b, t).addScaledVector(side, env * amp).addScaledVector(side2, rng.jitter(amp * 0.35)));
+  }
+  pts.push(b.clone());
+  return pts;
 }
 
 /**

@@ -406,6 +406,11 @@ export function createUI(ctx) {
   /** Write the current state into history: 'push' a new entry or 'replace' the current one. */
   function record(mode = 'push') {
     if (!hist.ready || hist.syncing || !ctx.cameraRig) return;
+    if (hist.expectPop) {
+      // our own step back is still on its way: write this once it has landed
+      hist.pending = hist.pending === 'push' || mode === 'push' ? 'push' : 'replace';
+      return;
+    }
     const st = navState();
     if (hist.replaceNext) {
       hist.replaceNext = false;
@@ -438,8 +443,19 @@ export function createUI(ctx) {
     const now = navState();
     if (below && same(below, now) && history.state?.woodland && history.state.i === hist.i) {
       hist.expectPop = true;
+      clearTimeout(hist.popTimer);
+      hist.popTimer = setTimeout(landedBack, 1500); // (in case the browser never reports it)
       history.back();
     } else record('replace');
+  }
+  /** Our own step back has landed: anything the visitor opened meanwhile is recorded now. */
+  function landedBack() {
+    if (!hist.expectPop) return;
+    hist.expectPop = false;
+    clearTimeout(hist.popTimer);
+    const p = hist.pending;
+    hist.pending = null;
+    if (p) record(p);
   }
   /** Make the glen show a history state (Back / Forward / a followed link) — without recording it again. */
   function applyState(st) {
@@ -481,9 +497,9 @@ export function createUI(ctx) {
       }
     }
     if (hist.expectPop) {
-      // our own step back after a close: the glen already shows it
-      hist.expectPop = false;
-      if (same(st, navState())) return;
+      // our own step back after a close: the glen already shows where we are
+      landedBack();
+      return;
     }
     applyState(st);
   });

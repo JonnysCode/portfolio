@@ -74,8 +74,8 @@ const VERT = /* glsl */ `
     vec4 mv = viewMatrix * vec4(p, 1.0);
     gl_Position = projectionMatrix * mv;
     float dist = -mv.z;
-    // twinkle: mostly a soft glow with sharp bright flashes
-    float s = 0.5 + 0.5 * sin(uTime * aSeed.w + aSeed.x * 47.0);
+    // twinkle: mostly a soft glow with sharp bright flashes (slower with reduced motion)
+    float s = 0.5 + 0.5 * sin(uTime * max(uMotion, 0.3) * aSeed.w + aSeed.x * 47.0);
     float tw = 0.4 + 0.6 * pow(s, 5.0);
     a *= tw * smoothstep(0.6, 2.2, dist) * (1.0 - smoothstep(70.0, 110.0, dist)) * uStrength;
     vA = a;

@@ -206,7 +206,9 @@ export default async function build(ctx) {
   const warmDay = new THREE.Color('#cfa565');
   const warmNight = new THREE.Color('#3d5a8c');
   const isLow = (ctx.quality?.tier ?? 'high') === 'low';
-  const noDof = ctx.quality?.post !== 'full';
+  // (quality.post may be `true` = the tier's default chain: 'full' only on high)
+  const postMode = ctx.quality?.post === true ? (ctx.quality?.tier === 'high' ? 'full' : 'lite') : ctx.quality?.post;
+  const noDof = postMode !== 'full';
 
   function applyNight(n) {
     for (const k of colourKeys) colourTargets[k].copy(pairs[k][0]).lerp(pairs[k][1], n);

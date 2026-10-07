@@ -65,7 +65,7 @@ export function groundPatches(x, z, out = {}) {
   out.cushion = sst(0.59, 0.67, c);
   const ax = x * 0.8 + z * 0.6, az = -x * 0.6 + z * 0.8;
   out.drift = sst(0.63, 0.73, 0.5 + 0.5 * fbm(nF, ax * 0.09, az * 0.22, 3)) * (1 - out.cushion * 0.8);
-  out.clover = sst(0.64, 0.74, 0.5 + 0.5 * fbm(nG, x * 0.2 - 2.2, z * 0.2 + 5.1, 2)) * (1 - out.cushion);
+  out.clover = sst(0.61, 0.71, 0.5 + 0.5 * fbm(nG, x * 0.2 - 2.2, z * 0.2 + 5.1, 2)) * (1 - out.cushion);
   out.soil = sst(0.67, 0.77, 0.5 + 0.5 * fbm(nH, x * 0.18 + 8.8, z * 0.18 + 1.3, 2)) * (1 - out.cushion);
   return out;
 }

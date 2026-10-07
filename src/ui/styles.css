@@ -297,7 +297,8 @@ button { font: inherit; color: inherit; }
 
 /* ── journal page (entry panel) ─────────────────────────────────────────── */
 .journal {
-  position: fixed; top: 124px; right: 18px; bottom: 92px; width: min(440px, 40vw); z-index: 4;
+  /* as tall as the page's words (a short page is a short page), at most down to the spot bar */
+  position: fixed; top: 124px; right: 18px; bottom: auto; max-height: calc(100vh - 216px); width: min(440px, 40vw); z-index: 4;
   transform: translateX(calc(100% + 40px)) rotate(2deg); transform-origin: 100% 0; opacity: 0; visibility: hidden;
   transition: transform 0.6s cubic-bezier(.2, .85, .25, 1), opacity 0.4s ease, visibility 0s linear 0.6s;
   filter: drop-shadow(0 18px 26px rgba(20, 12, 4, 0.4)) drop-shadow(0 3px 5px rgba(20, 12, 4, 0.3));
@@ -306,7 +307,7 @@ button { font: inherit; color: inherit; }
 .journal.is-flip .journal__sheet { animation: flip 0.5s ease; }
 @keyframes flip { 0% { transform: perspective(900px) rotateY(0); } 40% { transform: perspective(900px) rotateY(-9deg) translateX(-6px); opacity: 0.6; } 100% { transform: none; } }
 .journal__sheet {
-  position: relative; height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: 30px 30px 26px 34px; border-radius: 3px;
+  position: relative; height: auto; max-height: inherit; overflow-y: auto; overscroll-behavior: contain; padding: 30px 30px 26px 34px; border-radius: 3px;
   background-color: var(--kraft);
   background-image:
     var(--noise), var(--blotch),
@@ -636,7 +637,7 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px 4px; text-align: 
   .ui.has-panel .toasts { bottom: 14px; left: 30%; }
   .banner { top: 58px; }
   .banner__title { font-size: 40px; }
-  .journal { top: 8px; right: 8px; bottom: 8px; width: min(380px, 46vw); z-index: 5; }
+  .journal { top: 8px; right: 8px; bottom: auto; max-height: calc(100vh - 16px); width: min(380px, 46vw); z-index: 5; }
   .journal__sheet { padding: 20px 22px 18px 26px; }
   .journal__close { width: 34px; height: 34px; margin: -10px -12px 0 8px; }
   .journal__title { font-size: 34px; }

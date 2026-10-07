@@ -79,7 +79,7 @@ const SETTINGS = {
   exposure: 1.06,
   saturation: 1.12,
   /** Yellow-greens (hue 70–140°): saturation × this (sage, not neon) — 0..1 strength in `sage`. */
-  greenSaturation: 0.8,
+  greenSaturation: 0.84,
   sage: 1,
   /** Highlights keep their hue (0..1) instead of bleaching to white — warm lights stay warm. */
   highlightHueDay: 0.2,

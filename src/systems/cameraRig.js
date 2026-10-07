@@ -483,30 +483,38 @@ export function createCameraRig(ctx) {
         const eye = new THREE.Vector3(), side = new THREE.Vector3(), upv = new THREE.Vector3(), q = new THREE.Vector3();
         const skip = Math.min(0.5, radius * 0.6);
         const tanV = Math.tan(THREE.MathUtils.degToRad(fovNow) / 2);
-        let best = { az: az0, pol, clear: -1, score: -1 };
+        let best = { az: az0, pol, clear: -1, score: -1, dist };
         const wide = opts.search === 'wide';
-        for (const [dAz, dPol] of wide ? FOCUS_TRIES_WIDE : FOCUS_TRIES) {
-          const pp = clamp(pol + dPol, wide ? 0.6 : 0.75, 1.45);
-          eye.setFromSphericalCoords(dist, pp, az0 + dAz).add(p);
-          if (eye.y < getHeight(eye.x, eye.z) + 0.5 || obstacles.penetration(eye) > 0.05) continue;
-          const clear = sightClear(p, eye, subject, skip);
-          let score = clear;
-          if (clear >= 0.999) {
-            // the near field: rays to points a fifth of the frame beside / above / below the lens
-            fV.subVectors(p, eye).normalize();
-            side.crossVectors(fV, F_UP).normalize();
-            upv.crossVectors(side, fV);
-            const k = dist * tanV * 0.2;
-            let off = 1;
-            for (const [a, b] of wide ? NEAR_RAYS_WIDE : NEAR_RAYS) {
-              q.copy(eye).addScaledVector(side, a * k * camera.aspect).addScaledVector(upv, b * k);
-              off = Math.min(off, sightClear(p, q, subject, skip));
+        // (a wide search also steps back — a secret wedged between a trunk and a deck
+        // may only be seen from a little further away, over the things around it)
+        search: for (const kd of wide ? [1, 1.45, 1.9] : [1]) {
+          const dd = dist * kd;
+          for (const [dAz, dPol] of wide ? FOCUS_TRIES_WIDE : FOCUS_TRIES) {
+            const pp = clamp(pol + dPol, wide ? 0.55 : 0.75, 1.45);
+            eye.setFromSphericalCoords(dd, pp, az0 + dAz).add(p);
+            if (eye.y < getHeight(eye.x, eye.z) + 0.5 || obstacles.penetration(eye) > 0.05) continue;
+            const clear = sightClear(p, eye, subject, skip);
+            let score = clear;
+            if (clear >= 0.999) {
+              // the near field: rays to points a fifth of the frame beside / above / below the lens
+              fV.subVectors(p, eye).normalize();
+              side.crossVectors(fV, F_UP).normalize();
+              upv.crossVectors(side, fV);
+              const k = dd * tanV * 0.2;
+              let off = 1;
+              for (const [a, b] of wide ? NEAR_RAYS_WIDE : NEAR_RAYS) {
+                q.copy(eye).addScaledVector(side, a * k * camera.aspect).addScaledVector(upv, b * k);
+                off = Math.min(off, sightClear(p, q, subject, skip));
+              }
+              score = 1 + off;
             }
-            score = 1 + off;
+            if (score > best.score + 0.02) best = { az: az0 + dAz, pol: pp, clear, score, dist: dd };
+            if (score >= 1.97) break search;
           }
-          if (score > best.score + 0.02) best = { az: az0 + dAz, pol: pp, clear, score };
-          if (score >= 1.97) break;
         }
+        // a secret with no clear look from anywhere: better to stay put than to park inside something
+        if (wide && best.score < 0) return Promise.resolve(false);
+        dist = best.dist;
         az = best.az;
         polF = best.pol;
         // still blocked: move in front of the obstacle (never closer than the detail's own size)

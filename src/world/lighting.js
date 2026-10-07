@@ -396,7 +396,7 @@ export default async function build(ctx) {
     /** The sunbeam (day) / moonbeam (night) geometry: { day: {pos, target}, night: {pos, target} }. */
     beams: { day: beamDay, night: beamNight },
     envMaps,
-    /** Live canopy-cookie parameters (env/canopy.js: a = time, strength, plane y, fade y; b = shade, gain, freq, bias). */
+    /** Live canopy-cookie parameters (env/canopy.js: a = time, strength, plane y, fade y; b = shade, gain, freq, detail octave). */
     canopy: canopyParams,
     /** Live multipliers (debug & tuning): canopy = strength of the dappled-sunlight cookie. */
     settings: { canopy: 1 },

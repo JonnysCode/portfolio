@@ -411,7 +411,8 @@ export class MushroomKit {
     const lod = THREE.MathUtils.clamp(opts.lod ?? 1, 0.4, 1);
     const seg = Math.max(7, Math.round((H > 1.2 ? 26 : H > 0.6 ? 18 : H > 0.3 ? 12 : 8) * lod));
     const sseg = Math.max(5, Math.round(seg * 0.5));
-    const rings = Math.max(3, Math.round((H > 1.2 ? 9 : H > 0.5 ? 6 : 4) * (0.6 + 0.4 * lod)));
+    // (enough rings for the snakeskin bands to read)
+    const rings = Math.max(4, Math.round((H > 1.2 ? 16 : H > 0.5 ? 9 : 5) * (0.6 + 0.4 * lod)));
     const leanAz = opts.leanAz ?? rng.range(0, TAU);
     const lean = opts.lean ?? rng.range(0.05, 0.16);
     const curve = opts.curve ?? rng.range(0.04, 0.09);
@@ -425,7 +426,7 @@ export class MushroomKit {
     const rs = Math.max(0.006, H * (stage === 'bud' ? 0.05 : 0.042));
     const phase = rng.range(0, TAU);
     const cream = C('#eee2c6');
-    const band = C('#8c6a48');
+    const band = C('#7a5638');
     // ── stem: bulbous foot, slender shaft, snakeskin chevrons ──
     {
       const B = this.stems;
@@ -441,9 +442,9 @@ export class MushroomKit {
         for (let i = 0; i <= sseg; i++) {
           const th = (i / sseg) * TAU;
           // zig-zag brown bands, finer and fainter towards the cap
-          const zig = Math.sin(t * 15 + Math.abs(Math.sin(th * 1.5 + phase)) * 2.6 + phase);
-          const b = THREE.MathUtils.smoothstep(zig, 0.2, 0.75) * (1 - THREE.MathUtils.smoothstep(t, 0.72, 0.9)) * (t > 0.08 ? 1 : 0.3);
-          const c = cream.clone().lerp(band, b * 0.75);
+          const zig = Math.sin(t * (H > 0.5 ? 34 : 18) + Math.abs(Math.sin(th * 1.5 + phase)) * 3.2 + phase);
+          const b = THREE.MathUtils.smoothstep(zig, 0.05, 0.6) * (1 - THREE.MathUtils.smoothstep(t, 0.74, 0.9)) * (t > 0.08 ? 1 : 0.3);
+          const c = cream.clone().lerp(band, b * 0.85);
           if (t < 0.08) c.lerp(C('#a08868'), 0.35);
           const cx = Math.cos(th), sx = Math.sin(th);
           _p.copy(p).addScaledVector(F.x, cx * r).addScaledVector(F.z, sx * r);
@@ -524,9 +525,9 @@ export class MushroomKit {
         const t = k / (n - 1); // 0 rim → 1 apex
         if (stage === 'bud') return umbo.clone().lerp(scale, 0.3 * Math.abs(Math.sin(th * 4 + k)));
         // the brown skin cracks into concentric rings of scales on the cream flesh
-        const crack = Math.abs(Math.sin(th * (5 + k * 2) + k * 1.9 + phase));
-        const sc = THREE.MathUtils.smoothstep(crack, 0.35, 0.8) * (0.35 + 0.65 * t);
-        return tan.clone().lerp(scale, sc * 0.55).lerp(umbo, THREE.MathUtils.smoothstep(t, 0.62, 0.9));
+        const crack = Math.abs(Math.sin(th * (5 + k * 2) + k * 1.9 + phase)) * (0.75 + 0.25 * Math.sin(th * 13 + k * 3.1));
+        const sc = THREE.MathUtils.smoothstep(crack, 0.3, 0.7) * (0.45 + 0.55 * t);
+        return tan.clone().lerp(scale, sc * 0.7).lerp(umbo, THREE.MathUtils.smoothstep(t, 0.6, 0.85));
       },
     });
     // gills: cream lamellae, a deep shadow line just inside the drooping rim
@@ -551,7 +552,7 @@ export class MushroomKit {
     }
     // raised scale flakes in concentric rings (fewer on small ones)
     if (stage !== 'bud' && lod > 0.45) {
-      const nW = Math.round((H > 1 ? 60 : H > 0.4 ? 22 : 8) * (0.5 + 0.5 * lod) * this.detail * this.detail);
+      const nW = Math.round((H > 1 ? 110 : H > 0.4 ? 30 : 10) * (0.5 + 0.5 * lod) * this.detail * this.detail);
       for (let i = 0; i < nW; i++) {
         const t = 0.12 + Math.pow(rng.next(), 0.8) * 0.62; // rim … umbo edge
         const th = rng.range(0, TAU);
@@ -565,7 +566,7 @@ export class MushroomKit {
         const dr = prof[k1].r - prof[k0].r, dy = prof[k1].y - prof[k0].y;
         const l = Math.hypot(dr, dy) || 1;
         const nn = new THREE.Vector3().addScaledVector(F.x, c * (dy / l)).addScaledVector(F.z, sn * (dy / l)).addScaledVector(F.y, -dr / l).normalize();
-        wart(this.warts, pp, nn, R * rng.range(0.035, 0.06) * (1.1 - t * 0.4), C('#8a6644').multiplyScalar(rng.range(0.85, 1.1)), rng, 4);
+        wart(this.warts, pp, nn, R * rng.range(0.025, 0.045) * (1.1 - t * 0.4), C(rng.chance(0.5) ? '#9a7450' : '#7e5a3a').multiplyScalar(rng.range(0.85, 1.1)), rng, 4);
       }
     }
     return { top, capR: R, capTop: top.y + (prof[n - 1].y) };

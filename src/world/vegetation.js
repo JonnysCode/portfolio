@@ -91,7 +91,7 @@ import { mossyRock, mossMound, fallenLog, smallRoot, twig, stump, setGroundDetai
 import { fernTemplate, grassTemplate, cloverTemplate, flowerTemplate, broadleafTemplate, bilberryTemplate, brambleTemplate, FLOWER_KINDS } from './vegetation/plants.js';
 
 /** Triangle budgets per quality tier (checked into stats.overBudget; ctx.modules.vegetation.budget). */
-export const VEG_BUDGET = { high: 680000, medium: 340000, low: 250000 };
+export const VEG_BUDGET = { high: 700000, medium: 360000, low: 270000 };
 
 /** Spatial hash of solid things (trunks, rocks, logs, giant stems) for spacing. */
 class Occupancy {
@@ -1002,7 +1002,7 @@ export default async function build(ctx) {
       if (beds.some((b) => Math.hypot(b.x - x, b.z - z) < 3.6)) continue;
       beds.push({ x, z });
       const damp = getStreamDistance(x, z) < 6.5 || Math.hypot(x - STREAM.pond.x, z - STREAM.pond.z) < 8;
-      const n = rng.int(5, 11);
+      const n = Math.max(3, Math.round(rng.int(5, 11) * thinK));
       const spread = rng.range(1.3, 2.6);
       for (let i = 0; i < n; i++) {
         const a = rng.range(0, TAU), d = Math.sqrt(rng.next()) * spread;
@@ -1275,6 +1275,7 @@ export default async function build(ctx) {
         const x = gx + rng.range(0, big), z = gz + rng.range(0, big);
         const r = Math.hypot(x, z);
         if (r < 33 || r > 47) continue;
+        if (thinK < 1 && !rng.chance(0.4 + 0.6 * thinK)) continue;
         if (!canGrow(x, z, { margin: 0.4 }) || occ.clearance(x, z, 4) < 0.35) continue;
         if (coverGap(x, z) < 0.9) continue;
         const y = getHeight(x, z);
@@ -1333,7 +1334,7 @@ export default async function build(ctx) {
   //  never come close enough to see a fiddlehead's coil)
   const FERN_T = {
     high: { L: { fronds: [14, 15], segs: 4, young: [2, 2], youngSegs: 5 }, M: { fronds: [10, 11] } },
-    medium: { L: { fronds: [12, 13], segs: 3, young: [1, 1], youngSegs: 4 }, M: { fronds: [9, 10] } },
+    medium: { L: { fronds: [11, 12], segs: 3, young: [1, 1], youngSegs: 4 }, M: { fronds: [8, 9] } },
     low: { L: { fronds: [10, 11], segs: 3, young: [1, 1], youngSegs: 3 }, M: { fronds: [7, 8] } },
   }[tier] ?? null;
   const fT = FERN_T ?? { L: { fronds: [14, 15], segs: 4, young: [2, 2], youngSegs: 5 }, M: { fronds: [10, 11] } };
@@ -1424,7 +1425,14 @@ export default async function build(ctx) {
     for (const g of giants) ctx.colliders.addCircle(g.x, g.z, g.R * 0.25, 'giant-mushroom');
   }
 
-  stats.triangles = Math.round(stats.triangles);
+  // (counted like moduleStats(): every mesh of the module, fairy ring & lights included)
+  let tris = 0;
+  group.traverse((o) => {
+    if (!o.isMesh || !o.geometry) return;
+    const g = o.geometry;
+    tris += ((g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3) * (o.isInstancedMesh ? o.count : 1);
+  });
+  stats.triangles = Math.round(tris);
   stats.budget = VEG_BUDGET[tier] ?? VEG_BUDGET.high;
   stats.overBudget = stats.triangles > stats.budget;
   stats.ms = Math.round(performance.now() - t0);

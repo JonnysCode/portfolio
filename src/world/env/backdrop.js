@@ -14,7 +14,7 @@
 // Only the arc the camera can ever look at is filled (the camera always looks
 // roughly north: view azimuths within ±105° of −Z); the front stays open.
 // The nearer forest (r ≲ 36) is built by the vegetation module; between it and
-// the giants a fogged UNDERSTOREY band (r ≈ 36–54: shrub & fern cards with
+// the giants a fogged UNDERSTOREY band (r ≈ 36–54: shrub cards with soft,
 // ragged leafy silhouettes, young trunks) closes every gap, so no bright open
 // meadow ever reads through (+1 draw call).
 //
@@ -322,7 +322,7 @@ function buildMist(rng, tier) {
 }
 
 const UNDER_VERT = /* glsl */ `
-  attribute vec2 aSeed; // seed, kind (0 shrub, 1 fern)
+  attribute vec2 aSeed; // seed, kind (0 shrub, 1 low wide bush)
   varying vec2 vUv;
   varying vec2 vSeed;
   varying vec3 vW;
@@ -340,7 +340,7 @@ const UNDER_VERT = /* glsl */ `
 
 const UNDER_FRAG = /* glsl */ `
   uniform vec3 uKeyColor, uSkyCol, uShadeCol;
-  uniform float uNight, uDepthK;
+  uniform float uNight, uDepthK, uCut;
   varying vec2 vUv;
   varying vec2 vSeed;
   varying vec3 vW;
@@ -349,19 +349,22 @@ const UNDER_FRAG = /* glsl */ `
   void main() {
     float x = vUv.x * 2.0 - 1.0;
     float sd = vSeed.x * 37.0;
-    float h;
-    if (vSeed.y < 0.5) {
-      // shrub: a lumpy dome with a ragged, leafy outline
-      h = sqrt(max(1.0 - x * x, 0.0)) * (0.62 + 0.38 * envFbm(vec2(vUv.x * 3.1 + sd, sd)));
-      h -= 0.16 * envNoise(vUv * vec2(16.0, 11.0) + sd);
-    } else {
-      // fern clump: fronds fanning out of the middle, tips drooping
-      float ang = atan(x, max(vUv.y, 0.02) * 1.3);
-      float frond = pow(abs(cos(ang * 4.5 + sd)), 0.6);
-      h = (1.0 - x * x * 0.85) * (0.45 + 0.55 * frond) * (0.75 + 0.25 * envNoise(vec2(vUv.x * 9.0 + sd, 2.0)));
-      h -= 0.12 * envNoise(vUv * vec2(26.0, 7.0) + sd);
+    // a shrub: a few overlapping round leaf masses (kind 1: a lower, wider
+    // bush) with a finely ragged leafy outline — no single dome, no spikes
+    float h = 0.0;
+    for (int i = 0; i < 4; i++) {
+      float fi = float(i);
+      float cx = (envHash(vec2(sd, fi * 7.1)) * 2.0 - 1.0) * 0.55;
+      float r = mix(0.32, 0.55, envHash(vec2(fi * 3.3, sd + 1.7)));
+      float cy = mix(0.25, 0.5, envHash(vec2(sd + fi, 5.3))) * (1.0 - 0.45 * vSeed.y);
+      float dx = (x - cx) / r;
+      h = max(h, cy + r * sqrt(max(1.0 - dx * dx, 0.0)) * (1.0 - 0.3 * vSeed.y));
     }
-    if (vUv.y > h) discard;
+    h *= 1.0 - 0.15 * x * x;
+    h -= 0.07 * envNoise(vUv * vec2(22.0, 15.0) + sd) + 0.04 * envNoise(vUv * vec2(48.0, 31.0) - sd);
+    // a soft edge (alpha to coverage where there is MSAA, a clean cut elsewhere)
+    float alpha = smoothstep(h, h - 0.06, vUv.y);
+    if (alpha < uCut) discard;
     // never loom in front of the lens
     float camD = length(vW - cameraPosition);
     float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
@@ -369,24 +372,25 @@ const UNDER_FRAG = /* glsl */ `
     // deep shaded greens, a little light catching the tops
     // leafy greens like the glen's own undergrowth (not a teal cut-out):
     // clumps of lighter and darker leaves, darker towards the ground
-    vec3 base = mix(vec3(0.16, 0.24, 0.07), vec3(0.24, 0.3, 0.09), envNoise(vW.xz * 0.4 + sd));
+    vec3 base = mix(vec3(0.15, 0.23, 0.07), vec3(0.22, 0.29, 0.08), envNoise(vW.xz * 0.4 + sd));
     float top = vUv.y / max(h, 0.05);
     base *= (0.45 + 0.75 * top) * (0.7 + 0.6 * envNoise(vUv * vec2(9.0, 6.0) + sd * 3.0));
     // warm-neutral leaf-filtered ambient by day (the backdrop's moonlit shade by night)
     vec3 amb = mix(vec3(0.34, 0.38, 0.27), uShadeCol * 0.9, uNight);
     float sunPatch = smoothstep(0.35, 0.75, envNoise(vW.xz * 0.21 + 5.0));
-    vec3 col = base * (amb + uKeyColor * (0.15 + 0.45 * sunPatch) * top + uSkyCol * 0.15 * top);
+    vec3 col = base * (amb + uKeyColor * (0.08 + 0.3 * sunPatch) * top + uSkyCol * 0.12 * top);
     // where there is no depth of field the band also sinks a little into the haze
+    // (and the feet melt into the ground mist)
     vec4 hazeV = woodlandFog(vW);
-    col = mix(col, hazeV.rgb, 0.2 * uDepthK);
-    gl_FragColor = vec4(col, 1.0);
+    col = mix(col, hazeV.rgb, 0.2 * uDepthK + 0.25 * (1.0 - smoothstep(0.0, 0.45, top)));
+    gl_FragColor = vec4(col, alpha);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #include <fog_fragment>
   }
 `;
 
-/** Shrub & fern cards of the understorey band (crossed vertical quads). */
+/** Shrub cards of the understorey band (crossed vertical quads). */
 function understoreyGeometry(rng, tier, feet = []) {
   const clumps = tier === 'low' ? 70 : tier === 'medium' ? 110 : 170;
   const pos = [];
@@ -408,9 +412,9 @@ function understoreyGeometry(rng, tier, feet = []) {
       big = f.s / 2.2;
     }
     const y0 = farHeight(x, z) - 0.35;
-    const fern = rng.next() < 0.4;
-    const w = (fern ? rng.range(2.2, 4) : rng.range(3, 6.5)) * big;
-    const h = (fern ? rng.range(1.4, 2.6) : rng.range(1.8, 4.2)) * big;
+    const low = rng.next() < 0.4; // a low, wide bush
+    const w = (low ? rng.range(3, 5.5) : rng.range(3, 6.5)) * big;
+    const h = (low ? rng.range(1.4, 2.4) : rng.range(1.8, 4.2)) * big;
     const sd = rng.next();
     const rot = rng.range(0, Math.PI);
     for (let q = 0; q < 2; q++) {
@@ -418,7 +422,7 @@ function understoreyGeometry(rng, tier, feet = []) {
       const dx = Math.cos(a) * w * 0.5, dz = Math.sin(a) * w * 0.5;
       pos.push(x - dx, y0, z - dz, x + dx, y0, z + dz, x + dx, y0 + h, z + dz, x - dx, y0 + h, z - dz);
       uv.push(0, 0, 1, 0, 1, 1, 0, 1);
-      for (let c = 0; c < 4; c++) seed.push(sd, fern ? 1 : 0);
+      for (let c = 0; c < 4; c++) seed.push(sd, low ? 1 : 0);
       idx.push(v, v + 1, v + 2, v, v + 2, v + 3);
       v += 4;
     }
@@ -536,13 +540,13 @@ export function buildBackdrop(ctx) {
   }
   // young trees of the understorey band: slim trunks standing in front of the
   // giants' feet, their small crowns lost up in the canopy ceiling
-  const young = tier === 'low' ? 10 : tier === 'medium' ? 18 : 28;
+  const young = tier === 'low' ? 8 : tier === 'medium' ? 14 : 20;
   for (let k = 0; k < young; k++) {
     const az = -ARC + ((k + rng.range(0.1, 0.9)) / young) * 2 * ARC;
-    const r = rng.range(38, 54);
+    const r = rng.range(44, 58);
     const { x, z } = polar(r, az);
     const y0 = farHeight(x, z);
-    const radius = rng.range(0.35, 0.7);
+    const radius = rng.range(0.65, 1.15);
     const height = rng.range(30, 42);
     const lean = rng.range(0.004, 0.03);
     const leanAz = rng.range(0, Math.PI * 2);
@@ -583,7 +587,9 @@ export function buildBackdrop(ctx) {
 
   const U = envUniforms;
   // depth haze of the far forest: stronger where there is no depth of field
-  const depthK = ctx.quality?.post === 'full' ? 0.32 : 0.62;
+  const q = ctx.quality ?? {};
+  const fullPost = q.post === 'full' || (q.post === true && q.tier === 'high');
+  const depthK = fullPost ? 0.42 : 0.62;
   const forestMat = new THREE.ShaderMaterial({
     name: 'backdrop-forest',
     uniforms: {
@@ -628,6 +634,8 @@ export function buildBackdrop(ctx) {
   mist.frustumCulled = false;
   mist.raycast = () => {};
 
+  // (the post chain renders into a multisampled target; 'low' has no MSAA)
+  const msaa = !!ctx.quality?.post;
   const underMat = new THREE.ShaderMaterial({
     name: 'backdrop-understorey',
     uniforms: {
@@ -637,10 +645,13 @@ export function buildBackdrop(ctx) {
       uSkyCol: forestMat.uniforms.uSkyCol,
       uShadeCol: forestMat.uniforms.uShadeCol,
       uDepthK: { value: depthK },
+      // soft leafy edges through alpha-to-coverage where the scene is multisampled
+      uCut: { value: msaa ? 0.02 : 0.5 },
     },
     vertexShader: UNDER_VERT,
     fragmentShader: UNDER_FRAG,
     side: THREE.DoubleSide,
+    alphaToCoverage: msaa,
     fog: true,
   });
   const under = new THREE.Mesh(understoreyGeometry(rng, tier, feet), underMat);
