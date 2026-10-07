@@ -94,7 +94,9 @@ mushroom houses on platforms in a giant tree with rope bridges). Look at them.
   mushroomStem, gills, leaf, fabric, rope, metal, glass, paper, thatch, clay),
   `ctx.materials.foliage(opts)` for leaf cards, `ctx.materials.glow(color, {day, night})`
   for everything that lights up. Characters (villagers, snails) keep their cute
-  stylised look. Never mutate a cached material.
+  stylised look. Never mutate a cached material. The vertex-coloured oak
+  `wood` keeps an orange hue whatever its vertex colours; for grey, weathered
+  or silvered wood use the vertex-coloured `timber`, which normalises to white.
 * **Light budget:** only `world/lighting.js` creates lights (sun/moon key,
   hemisphere, rim, the canopy-gap sunbeam). Builders may add **warm point lights
   only through `ctx.lights.addPoint(position, { color, day, night, priority, spot })`**,
@@ -119,7 +121,10 @@ discoveries. Content lives only in `src/content/content.js`.
   `onArrive(fn)`, `focus(object, { distance, height, azimuth, polar })`, `release()`,
   `setInset(...)` (keeps the subject centred beside an open panel/bottom sheet),
   `holdIntro()` / `playIntro()`, `focusDistance` (drives depth of field). Glides are
-  planned around obstacles by `systems/cameraObstacles.js` (oak, giants, caps, houses).
+  planned around obstacles by `systems/cameraObstacles.js` (oak, giants, caps, houses):
+  any Object3D whose `userData` has numeric `capRadius` and `rimY` is treated as a
+  mushroom cap (`makeMushroomHouse` sets them). `focus(obj, { search: 'wide' })` widens
+  the occluder search. Phones use each spot's `portrait` camera override (layout.js).
 * **Hotspots** (`ctx.interactions`): `add(object, { entryId, area, label, focus, kind })`,
   `forSpot(id)`, `findByEntry(id)`, `markVisited(id)`, `progress()`. `kind: 'secret'`
   hotspots get no marker, sparkle on hover and count as discoveries. Entries with
@@ -128,6 +133,13 @@ discoveries. Content lives only in `src/content/content.js`.
   `showMap`, `speech(text, object3d)`, `toast`, `bindWorld()` (called once the world exists).
 * **Audio** (`ctx.audio`): `play(name)`, `playMusic('record')`, `stopMusic()`,
   `startAmbience()`; off until the visitor enters, preference remembered.
+* **Deep links:** `#<spotId>`, `#<spotId>/<entryId>` and `#guidebook` open straight
+  into a spot or entry, and Back/Forward walk the history.
+* **DRAFT content** (`src/ui/draft.js`): entries marked DRAFT in `content.js` are
+  flagged in dev and hidden in production builds, together with the placeholder
+  `example.com` mail button. `?drafts=show|hide` overrides this.
+* **Link previews:** `public/og.jpg` (1200 × 630). The `og:image` URL in `index.html`
+  is absolute and assumes GitHub Pages at `jonnyscode.github.io/portfolio`.
 
 ## Running & checking
 
@@ -140,6 +152,8 @@ npm run shots -- --prefix me- --param only=oak --views glen      # build only on
 
 Views: `overview`, `top`, and for every spot `<id>`, `<id>-wide`, `<id>-close`.
 Custom: `--custom "name:px,py,pz:tx,ty,tz"`. Night: `--night`. UI: `--ui`, `--panel <entryId>`.
+`node scripts/flow.mjs scripts/flows/tour.json` runs a multi-step interaction flow
+(clicks, keys, waits, screenshots; see its header).
 In page JS: `window.__woodland.debug` (`view`, `free`, `goTo`, `step`, `stats`, `hotspots`,
 `activateHotspot`, `setNight`). In `?shots` mode time only advances via `debug.step(n)`.
 

@@ -313,13 +313,8 @@ export function buildDoor(ctx, B, mats) {
     }
     g.computeVertexNormals();
     uvBox(g, 'z', 1.2);
-    D.add(mats.bark(), g);
-    for (let i = 0; i < 6; i++) {
-      const t = rng.range(0.08, 0.85);
-      const p = curve.getPointAt(t);
-      const r = 0.34 * (1 - t * 0.7);
-      D.add(mats.moss(), xf(mossGeo(rng, { r: r * rng.range(0.9, 1.3), h: 0.06 }), [p.x, p.y + r * 0.62, p.z], [rng.jitter(0.2), rng.next() * 6, rng.jitter(0.2)], [1, 1, 1.6]), { cast: false });
-    }
+    // moss creeps over the root's back (shader overlay) — flat cushions stood off the tube like shelves
+    D.add(mats.mossyBark(), g);
     // a couple of toadstools nestled at the root's foot
     for (let i = 0; i < 3; i++) {
       addToadstool(D, mats, rng, x0 + s * (0.75 + rng.range(0.1, 0.4)), 0, 0.9 + rng.jitter(0.3), { size: rng.range(0.07, 0.13) });
