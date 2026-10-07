@@ -21,6 +21,7 @@
 import * as THREE from 'three';
 import { OAK } from '../../world/layout.js';
 import { DEG, TAU, WOOD, IRON, BARK, polar, radial, board, timber, branch, tubeAlong, sagCurve, mossGeo, ivyCard, addToadstool, xf, alongX } from './kit.js';
+import { HOUSE } from './house.js';
 
 /** Azimuth (deg) of the snail lift's track on the bark. */
 export const ELEVATOR_AZ = 56;
@@ -62,6 +63,15 @@ export function buildDeck(ctx, B, mats, env) {
     return p.a > STAIR_WELL.a0 * DEG && p.a < STAIR_WELL.a1 * DEG && p.r - bark(p.a, DECK_Y) < STAIR_WELL.depth;
   };
   const deckOK = (x, z) => insideOutline(x, z) && barkGap(x, z) > 0.04 && !inSlot(x, z) && !inWell(x, z);
+  /** inside the treehouse's walls (its back is against the bark: no moss, leaves or toadstools on its floor) */
+  const hc = Math.cos(HOUSE.yaw), hs = Math.sin(HOUSE.yaw);
+  const inHouse = (x, z) => {
+    const dx = x - HOUSE.x, dz = z - HOUSE.z;
+    return Math.abs(dx * hc - dz * hs) < HOUSE.D2 + 0.08 && Math.abs(dx * hs + dz * hc) < HOUSE.W2 + 0.08;
+  };
+  // (what lands in the house is still generated, into this sink: the shared rng
+  // stream — and so every later prop of the loft — stays exactly as it was)
+  const SINK = { add() {} };
 
   // ── planks ────────────────────────────────────────────────────────────────
   const plankTones = ['#857563', '#80725f', '#776a5b', '#8c7e6c', '#8a8378', '#746656', '#867868', '#6a5f52'];
@@ -402,7 +412,7 @@ export function buildDeck(ctx, B, mats, env) {
       if (!nearBark && !nearRim && rng.next() > 0.08) continue;
       if (inSlot(x, z) || inWell(x, z)) continue;
       const s = nearBark ? rng.range(0.12, 0.3) : rng.range(0.08, 0.18);
-      F.add(mossMat, xf(mossGeo(rng, { r: s, h: s * 0.35, sx: rng.range(0.8, 1.6), sz: rng.range(0.7, 1.2) }), [x, 0.005, z], [0, rng.next() * TAU, 0]), { cast: false });
+      (inHouse(x, z) ? SINK : F).add(mossMat, xf(mossGeo(rng, { r: s, h: s * 0.35, sx: rng.range(0.8, 1.6), sz: rng.range(0.7, 1.2) }), [x, 0.005, z], [0, rng.next() * TAU, 0]), { cast: false });
       placed++;
     }
     for (const run of railRuns) {
@@ -475,7 +485,7 @@ export function buildDeck(ctx, B, mats, env) {
       // curled a little
       for (let v = 0, pos = g.attributes.position; v < pos.count; v++) pos.setY(v, Math.abs(pos.getX(v)) * 0.4 * rng.next());
       xf(g, [x, 0.018 + rng.next() * 0.012, z], [rng.jitter(0.12), rng.next() * TAU, rng.jitter(0.12)], s);
-      F.add(paintMat, g, { color: rng.pick(leafCols), cast: false });
+      (inHouse(x, z) ? SINK : F).add(paintMat, g, { color: rng.pick(leafCols), cast: false });
       placed++;
     }
   }
@@ -489,7 +499,7 @@ export function buildDeck(ctx, B, mats, env) {
       const gap = barkGap(x, z);
       if (gap < 0.05 || gap > 0.35) continue;
       const cluster = rng.int(1, 3);
-      for (let k = 0; k < cluster; k++) addToadstool(F, mats, rng, x + rng.jitter(0.08), 0, z + rng.jitter(0.08), { size: rng.range(0.06, 0.12), color: rng.pick(['#c9352a', '#c9352a', '#d0662e', '#b98a4e']) });
+      for (let k = 0; k < cluster; k++) addToadstool(inHouse(x, z) ? SINK : F, mats, rng, x + rng.jitter(0.08), 0, z + rng.jitter(0.08), { size: rng.range(0.06, 0.12), color: rng.pick(['#c9352a', '#c9352a', '#d0662e', '#b98a4e']) });
       placed++;
     }
   }

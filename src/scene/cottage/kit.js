@@ -181,8 +181,26 @@ function limewash(base) {
     u.sfDetail.value = maps.detail;
     u.sfP.value.w *= 0.5; // calmer painterly breakup: the bake already carries the mottling
   }
+  // the room sits deep in the cap's shade, lit by cool sky fill; its lamps and the oak floor
+  // bounce warm light onto the pale walls — a small albedo-tinted warm term keeps the
+  // limewash reading as warm off-white instead of grey (follows day/night, setCottageNight)
+  c.emissive = new THREE.Color(LIME_BOUNCE.color);
+  c.emissiveIntensity = LIME_BOUNCE.day;
+  const patch = c.onBeforeCompile;
+  c.onBeforeCompile = (shader, renderer) => {
+    patch(shader, renderer);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      '#include <emissivemap_fragment>\n  totalEmissiveRadiance *= diffuseColor.rgb; // warm bounce, tinted by the albedo'
+    );
+  };
+  const key = c.customProgramCacheKey();
+  c.customProgramCacheKey = () => key + '|lime-bounce';
+  limeMat = c;
   return c;
 }
+const LIME_BOUNCE = { color: '#ffcf9a', day: 0.2, night: 0.24 };
+let limeMat = null;
 
 /**
  * Rice-paper lantern (the Wohnatelier's globe pendant): warm amber, glowing
@@ -191,7 +209,7 @@ function limewash(base) {
  * (painted into the vertex colours). Its emissive follows day/night through
  * setCottageNight().
  */
-const PAPER_LAMP = { color: '#ffc98a', day: 0.54, night: 0.96 };
+const PAPER_LAMP = { color: '#ffc98a', day: 0.54, night: 0.86 };
 let paperMat = null;
 function paperLantern() {
   const c = new THREE.Color(PAPER_LAMP.color);
@@ -214,6 +232,7 @@ function paperLantern() {
 export function setCottageNight(night) {
   if (gillMat) gillMat.emissiveIntensity = GILL_BOUNCE.day + (GILL_BOUNCE.night - GILL_BOUNCE.day) * night;
   if (paperMat) paperMat.emissiveIntensity = PAPER_LAMP.day + (PAPER_LAMP.night - PAPER_LAMP.day) * night;
+  if (limeMat) limeMat.emissiveIntensity = LIME_BOUNCE.day + (LIME_BOUNCE.night - LIME_BOUNCE.day) * night;
 }
 
 // ─── batching ────────────────────────────────────────────────────────────────

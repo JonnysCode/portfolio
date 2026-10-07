@@ -1,9 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The little things on the Great Oak that reward a closer look:
-//   bracket fungi on the bark and limbs, fly agarics on the roots, glowing
-//   glow-caps between the roots, two little round windows (someone lives up
-//   there), lanterns hanging on chains from the low limbs, fairy lights draped
-//   over the trunk, along the low limb and down the roots, a rope swing, a
+//   bracket fungi on the bark and limbs (their lamellae glow mint at night),
+//   fly agarics on the roots, glowing glow-caps between the roots, glow-worms
+//   in the ivy, two little round windows (someone lives up there), lanterns
+//   hanging on chains from the low limbs, fairy lights draped over the trunk
+//   (one garland spirals from the door up to the loft stairs), along the low
+//   limb and down the roots, a rope swing, a
 //   bird house with its tenant, an owl blinking in its hollow (eyes glow at
 //   night) and — the secret — a tiny mouse door in the front-right root
 //   (its door swings open and the resident peeks out when clicked).
@@ -11,12 +13,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { DEG, TAU, polar, trunkRadius, inCertZone } from './shape.js';
+import { DEG, TAU, CX, CZ, polar, trunkRadius, inCertZone } from './shape.js';
 import { rootSurfacePoint, mouseDoorFrame, MOUSE_DOOR } from './roots.js';
 import { getHeight } from '../../world/ground.js';
 import { smoothstep } from '../../core/rng.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
+/** Above this the trunk forks into the limbs (strand clearance only below). */
+const TRUNK_LIFT_MAX_Y = 16;
 
 // ─── batching ────────────────────────────────────────────────────────────────
 /** Normalise a geometry to indexed position/normal/uv (+ color when asked). */
@@ -185,7 +189,7 @@ function toadstool(B, mats, h, capR, rng, m) {
  * hanging under it (two warm tones alternating). Everything goes into the
  * shared batch; every other bulb adds a small soft halo to `halos`.
  */
-function fairyLights(B, mats, halos, points, { sag = 0.1, spacing = 0.36 } = {}) {
+function fairyLights(B, mats, halos, points, { sag = 0.1, spacing = 0.36, clear = 0, haloEvery = 2, haloSize = 0.17 } = {}) {
   let n = 0;
   for (let i = 0; i < points.length - 1; i++) {
     const a = new THREE.Vector3().copy(points[i]);
@@ -193,7 +197,20 @@ function fairyLights(B, mats, halos, points, { sag = 0.1, spacing = 0.36 } = {})
     const span = a.distanceTo(b);
     const ctrl = a.clone().lerp(b, 0.5);
     ctrl.y -= span * sag * 2; // quadratic bezier: the middle sags by span × sag
-    const curve = new THREE.QuadraticBezierCurve3(a, ctrl, b);
+    let curve = new THREE.QuadraticBezierCurve3(a, ctrl, b);
+    if (clear > 0) {
+      // strands draped over the trunk: the bark's cords and lobes must never
+      // swallow the wire or a bulb between two nails — lift it over the bark
+      const pts = curve.getSpacedPoints(Math.max(6, Math.ceil(span / 0.1)));
+      for (const q of pts) {
+        if (q.y > TRUNK_LIFT_MAX_Y) continue;
+        const az = Math.atan2(q.x - CX, q.z - CZ);
+        const need = trunkRadius(az, q.y) + clear;
+        const rr = Math.hypot(q.x - CX, q.z - CZ);
+        if (rr < need) polar(az, need, q.y, q);
+      }
+      curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+    }
     B.add(mats.wire, new THREE.TubeGeometry(curve, Math.max(6, Math.ceil(span / 0.12)), 0.009, 3, false));
     const k = Math.max(1, Math.floor(span / spacing));
     for (let j = 0; j < k; j++) {
@@ -203,7 +220,7 @@ function fairyLights(B, mats, halos, points, { sag = 0.1, spacing = 0.36 } = {})
       const bulb = new THREE.SphereGeometry(0.024, 6, 5);
       bulb.scale(1, 1.3, 1);
       B.add(n % 2 ? mats.bulbB : mats.bulbA, bulb.translate(p.x, p.y - 0.02, p.z));
-      if (n % 2 === 0) halos.push({ x: p.x, y: p.y - 0.02, z: p.z, size: 0.17 });
+      if (n % haloEvery === 0) halos.push({ x: p.x, y: p.y - 0.02, z: p.z, size: haloSize });
       n++;
     }
   }
@@ -351,7 +368,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
     // a small soft halo under every other shelf (a cluster glows, it does not blob)
     if (shelves++ % 2 === 0) {
       const hp = new THREE.Vector3(0, -0.14 * r, 0.36 * r).applyMatrix4(m);
-      fungusHalos.push({ x: hp.x, y: hp.y, z: hp.z, size: 0.14 + r * 0.85 });
+      fungusHalos.push({ x: hp.x, y: hp.y, z: hp.z, size: 0.15 + r * 0.95 });
     }
   };
 
@@ -571,13 +588,13 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
   {
     const pts = [];
     for (let d = -78, i = 0; d <= 42; d += 20, i++) pts.push(bark(d, 4.65 + (i % 2) * 0.25 + Math.sin(d * 0.1) * 0.1));
-    strand(pts, { sag: 0.1, spacing: 0.36 });
+    strand(pts, { sag: 0.1, spacing: 0.36, clear: 0.09 });
   }
   // a higher garland on the left flank, under the owl's hollow
   {
     const pts = [];
     for (let d = -100, i = 0; d <= -52; d += 16, i++) pts.push(bark(d, 8.15 + (i % 2) * 0.3));
-    strand(pts, { sag: 0.12, spacing: 0.4 });
+    strand(pts, { sag: 0.12, spacing: 0.4, clear: 0.09 });
   }
   // …and one that spirals from the door festoon's left end up across the
   // front of the trunk to the top of the loft stairs (links door and loft at
@@ -589,13 +606,14 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
       const t = i / n;
       pts.push(bark(-78 + 70 * t, 4.7 + 5.75 * Math.pow(t, 1.15), 0.15));
     }
-    strand(pts, { sag: 0.09, spacing: 0.34 });
+    // (every bulb gets a halo: this is the strand that must read from the glen)
+    strand(pts, { sag: 0.09, spacing: 0.32, clear: 0.1, haloEvery: 1, haloSize: 0.2 });
   }
   // a second, lower loop at the back-left, between the roots
   {
     const pts = [];
     for (let d = 196, i = 0; d <= 268; d += 18, i++) pts.push(bark(d, 3.3 + (i % 2) * 0.35));
-    strand(pts, { sag: 0.12, spacing: 0.38 });
+    strand(pts, { sag: 0.12, spacing: 0.38, clear: 0.09 });
   }
   // along the underside of the low limb
   {
@@ -866,7 +884,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
     }
     dot.dispose();
   }
-  if (fungusHalos.length && props.glowQuads) parent.add(props.glowQuads(fungusHalos, '#86ecc4', { day: 0.0, night: 0.42 }));
+  if (fungusHalos.length && props.glowQuads) parent.add(props.glowQuads(fungusHalos, '#86ecc4', { day: 0.0, night: 0.5 }));
 
   for (const g of hollowLinings ?? []) B.add(mats.dark, g);
   if (warmHalos.length) parent.add(props.glowQuads(warmHalos, '#ffa94d', { day: 0.04, night: 0.6 }));

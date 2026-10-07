@@ -7,11 +7,14 @@
 //                         boulders, moss, planks, leaf cards, ivy, toadstools …
 //   riverside/water.js    ONE animated water surface for stream + plunge pool +
 //                         lily pond (flow-aligned ripples, foam, depth tint,
-//                         sparkles, night glints) — exports flowAt/depthAt/calmAt
-//   riverside/falls.js    the mossy boulder outcrop, three falling tiers, spray
+//                         sparkles, night glints, lantern reflections) —
+//                         exports flowAt/depthAt/calmAt
+//   riverside/falls.js    the layered mossy outcrop, ONE continuous falling
+//                         ribbon over three ledges, spray
 //   riverside/bridge.js   the humpbacked stone arch bridge with lanterns
-//   riverside/banks.js    stream rocks, bank vegetation, the lily pond (pads,
-//                         lilies, jetty, frog, duck family), drifting leaves
+//   riverside/banks.js    stream rocks, bank vegetation, the outlet log & bank,
+//                         the lily pond (pads, glowing lilies, jetty, frog, duck
+//                         family, candle boats), drifting leaves
 //   riverside/workshop.js the Velowerkstatt (stone drum, arched doors, bell cap)
 //   riverside/bike.js     makeBike({ style: 'gravel'|'road'|'vintage', … }), makeWheel()
 //   riverside/puffs.js    makePuffs() — vertex-animated spray / smoke clouds
@@ -102,8 +105,22 @@ export default async function build(ctx) {
   // warm light from the bridge's east lantern (by the workshop)
   const east = bridge.anchors.lanterns.reduce((a, b) => (b.x > a.x ? b : a), bridge.anchors.lanterns[0]);
   if (east) ctx.lights?.addPoint?.(east.clone().add(new THREE.Vector3(0, -0.1, 0)), { color: '#ffbf70', day: 0, night: 3.5, distance: 6 });
-  if (halos.length) root.add(ctx.props.glowQuads(halos, '#ffc46e', { day: 0.05, night: 0.5 }));
-  if (falls.halos.length) root.add(ctx.props.glowQuads(falls.halos, '#86e6d6', { day: 0.02, night: 0.45 }));
+  // ALL the riverside's static halos in ONE draw call, tinted per halo (the tint
+  // carries each kind's strength relative to the warm lamps' 0.5 at night):
+  // lanterns, windows & fairy lights (warm, drawn at 0.72 of their size like
+  // any warm halo), the water lilies' soft lilac glow, the falls' blue mushrooms
+  const tinted = [];
+  for (const h of halos) tinted.push({ x: h.x, y: h.y, z: h.z, size: h.size * 0.72, color: '#ffc46e' });
+  const lilac = new THREE.Color('#e6dcff').multiplyScalar(0.64);
+  for (const h of pond.lilies ?? []) tinted.push({ ...h, color: lilac });
+  const teal = new THREE.Color('#86e6d6').multiplyScalar(0.9);
+  for (const h of falls.halos) tinted.push({ ...h, color: teal });
+  if (tinted.length) root.add(ctx.props.glowQuads(tinted, '#ffffff', { day: 0.05, night: 0.5 }));
+  // night reflections: the lanterns, the workshop's lit doorway and the candle boats mirrored in the water
+  for (const p of bridge.anchors.lanterns) water.addLamp(p, { radius: 0.2, color: '#ffb35c', strength: 1.1 });
+  if (pond.lantern) water.addLamp(pond.lantern, { radius: 0.18, color: '#ffb35c', strength: 1.2 });
+  if (shop.anchors.door) water.addLamp(shop.anchors.door.clone().add(new THREE.Vector3(0, 0.3, 0)), { radius: 0.7, color: '#ff9f4a', strength: 0.4 });
+  const flameLamps = (pond.flames ?? []).map((f) => water.addLamp(f, { radius: 0.09, color: '#ffb35c', strength: 1.0 }));
 
   // ── hotspots ──
   const area = 'bikes';
@@ -142,6 +159,7 @@ export default async function build(ctx) {
       water.update(dt, t);
       falls.update(dt, t);
       pond.update(dt, t);
+      for (let i = 0; i < flameLamps.length; i++) water.moveLamp(flameLamps[i], pond.flames[i].x, pond.flames[i].y, pond.flames[i].z);
       drifters.update(dt, t);
       shop.update(dt, t);
     },

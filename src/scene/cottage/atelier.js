@@ -1,11 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The Wohnatelier — an ochre mushroom house opened up at the front by a big
 // arched loggia (folding glazed doors pushed back), revealing a beautifully
-// designed little living room: warm oak floor, a Berber-ish rug, a sage
-// velvet sofa with cushions and a knitted throw, a walnut lounge chair with
-// ottoman (the reading nook), a tripod lamp and a paper globe pendant that
-// glow, a bookcase full of books and ceramics, a joiner-made sideboard with a
-// mushroom lamp, a gallery wall, a monstera and a hanging pothos.
+// designed little living room behind crack-free warm limewash walls: warm oak
+// floor, a big Berber-ish rug under the front legs of the seating, a sage
+// velvet sofa with cushions and a knitted throw draped over its arm, a walnut
+// lounge chair with ottoman (the reading nook), a tripod lamp and a ribbed
+// rice-paper globe pendant that glow, a bookcase full of books and ceramics, a
+// joiner-made sideboard with a mushroom lamp, a tight gallery-wall cluster
+// over the sofa, a monstera and a hanging pothos.
 //
 // On the stone terrace outside: a designer's easel with a mood board (colour
 // chips, fabric samples, sketches — hotspot 'moodboards'), a little trestle
@@ -323,12 +325,12 @@ function sofa(F, rng, m, { len = 1.9, depth = 0.82, color }) {
  */
 function knitThrow(rng, len, width) {
   const ax = len / 2 - 0.08; // arm centre
-  const top = 0.625;
+  const top = 0.626; // just over the arm's puffed top (≈ 0.614)
   // cross-section (x, y) in the sofa's x-y plane, from the seat end to the outer hanging end
   const path = [
-    [ax - 0.36, 0.5], [ax - 0.22, 0.505], [ax - 0.11, 0.55], [ax - 0.085, top - 0.01],
-    [ax - 0.03, top + 0.02], [ax + 0.04, top + 0.02], [ax + 0.095, top - 0.02],
-    [ax + 0.11, top - 0.14], [ax + 0.115, top - 0.27],
+    [ax - 0.36, 0.5], [ax - 0.22, 0.503], [ax - 0.12, 0.535], [ax - 0.09, top - 0.025],
+    [ax - 0.04, top], [ax + 0.04, top], [ax + 0.09, top - 0.03],
+    [ax + 0.105, top - 0.14], [ax + 0.11, top - 0.28],
   ];
   const curve = new THREE.CatmullRomCurve3(path.map(([x, y]) => new THREE.Vector3(x, y, 0)), false, 'centripetal');
   const nu = 26, nz = 12, th = 0.022;
@@ -677,12 +679,22 @@ function gallery(F, rng, I, wallPos) {
     { x: sx, y: y0 + 0.12, w: sw, h: 0.24, kind: 'hills' },
   ];
   for (const a of art) {
-    const r0 = I.radiusAt(Math.PI, I.floorY + a.y);
+    const yc = I.floorY + a.y;
+    const r0 = I.radiusAt(Math.PI, yc);
     const phi = Math.PI - Math.asin(THREE.MathUtils.clamp(a.x / r0, -0.9, 0.9));
-    // flat frames on a concave wall: inset by the sagitta so the corners stay clear of the plaster
-    const sag = (a.w / 2) ** 2 / (2 * r0);
-    const [x, , z] = wallPos(phi, I.floorY + a.y, 0.012 + sag);
-    const m = mat4([x, I.floorY + a.y, z], [0, phi + Math.PI, 0]);
+    // a flat frame on a concave, hand-wobbled wall that leans in towards the top: hang it
+    // where the plaster comes closest anywhere behind it (sampled over its whole face)
+    let dist = Infinity;
+    for (let i = 0; i <= 6; i++) {
+      const dx = (i / 6 - 0.5) * a.w;
+      for (let j = 0; j <= 4; j++) {
+        const y = yc + (j / 4 - 0.5) * a.h;
+        const d = Math.asin(THREE.MathUtils.clamp(dx / r0, -0.9, 0.9));
+        dist = Math.min(dist, I.radiusAt(phi + d, y) * Math.cos(d));
+      }
+    }
+    dist -= 0.014;
+    const m = mat4([Math.sin(phi) * dist, yc, Math.cos(phi) * dist], [0, phi + Math.PI, 0]);
     frameArt(local(F, m), [0, 0, 0], a.w - FW * 2, a.h - FW * 2, a.kind, rng);
   }
   // round mirror with a brass frame

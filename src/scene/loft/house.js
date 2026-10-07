@@ -28,6 +28,8 @@ export const HOUSE = {
   EAVE: 1.85, // top of the wall plates
   PITCH: 57 * DEG,
 };
+/** the big window's transom panes: the warm room light glowing through them (emissive by day / at night) */
+export const LIT_GLASS = { color: '#ffb35a', day: 0, night: 1.5 };
 const T = 0.12; // timber section
 const SILL = 0.14;
 
@@ -446,6 +448,11 @@ export function buildHouse(ctx, B, mats, env, screens) {
 
   // ── openings: big front window (casements open), side windows, the door ───
   const glass = mats.paint('#9fb8b0');
+  // the big window's fixed transom panes look straight into the lamp-lit room:
+  // old glass by day, glowing warm at night (emissive follows the night, loft.js)
+  const litGlass = ctx.materials.standard('#ffffff', { vertexColors: true, roughness: 0.72, emissive: LIT_GLASS.color }).clone();
+  litGlass.name = 'loft-lit-glass';
+  litGlass.emissiveIntensity = LIT_GLASS.day;
   // old glass: the sky's sheen at the top of each pane, the dark room below
   const gTop = new THREE.Color('#b4cdd0'), gLow = new THREE.Color('#566f74'), gc = new THREE.Color();
   const pane = (w, h) => paintBy(new THREE.PlaneGeometry(w, h, 1, 2), (x, y) => gc.copy(gLow).lerp(gTop, THREE.MathUtils.clamp(y / h + 0.5, 0, 1) ** 1.6));
@@ -479,7 +486,7 @@ export function buildHouse(ctx, B, mats, env, screens) {
     const tv = v1 - 0.3;
     F.add(frameMat, xf(beamBox(w, 0.05, 0.06), [(u0 + u1) / 2, tv, 0.02]), { color: WOOD.walnut, cast: false });
     for (let i = 1; i < 3; i++) F.add(frameMat, xf(beamBox(0.025, 0.28, 0.04), [u0 + (w * i) / 3, tv + 0.15, 0.02]), { color: WOOD.walnut, cast: false });
-    F.add(glass, xf(pane(w, 0.27), [(u0 + u1) / 2, tv + 0.15, 0.0]), { cast: false });
+    F.add(litGlass, xf(pane(w, 0.27), [(u0 + u1) / 2, tv + 0.15, 0.0]), { cast: false });
     // casements: hinged at the outer jambs, opened outwards ~70°
     const cw = w / 2, chh = tv - v0 - 0.03;
     for (const s of [-1, 1]) {
@@ -668,6 +675,8 @@ export function buildHouse(ctx, B, mats, env, screens) {
     front: frontInfo,
     dormer: dormerInfo,
     interior,
+    /** the transom's own material: loft.js sets its emissiveIntensity from the night (LIT_GLASS) */
+    litGlass,
     /** footprint in deck-local coords (for keeping props off it) */
     footprint: { x: HOUSE.x, z: HOUSE.z, yaw: HOUSE.yaw, hx: D2 + 0.45, hz: W2 + 0.4 },
   };
@@ -756,6 +765,9 @@ function buildInterior(ctx, B, mats, env, { house, H, toWorldUp, screens }) {
     S.add(mats.metal(BRASS), alongX(new THREE.CylinderGeometry(0.01, 0.01, 0.25, 5).rotateZ(Math.PI / 2), j1, j2), { cast: false });
     const shade = new THREE.ConeGeometry(0.075, 0.12, 12, 1, true);
     S.add(mats.metal('#2f4f3f'), xf(shade, [j2[0] + 0.02, j2[1] - 0.04, j2[2]], [0, 0, 0.5]));
+    // the shade's lit inside (an inside-out cone just within it), seen through the window
+    const inner = new THREE.ConeGeometry(0.069, 0.11, 12, 1, true).scale(-1, 1, 1);
+    S.add(mats.warmBright(), xf(inner, [j2[0] + 0.02, j2[1] - 0.042, j2[2]], [0, 0, 0.5]), { cast: false });
     S.add(mats.warmBright(), xf(new THREE.SphereGeometry(0.03, 8, 6), [j2[0] + 0.04, j2[1] - 0.09, j2[2]]), { cast: false });
     halos.push(toWorldUp(j2[0] + 0.04, j2[1] - 0.1, j2[2]), 0.5);
     out.lamp = toWorldUp(j2[0] + 0.05, j2[1] - 0.15, j2[2]);
@@ -766,16 +778,27 @@ function buildInterior(ctx, B, mats, env, { house, H, toWorldUp, screens }) {
   // wall, floor), so a click anywhere on the glowing window opens
   // 'this-portfolio', while the rubber duck in front of them still wins.
   // (material.visible = false → never drawn, still raycast)
-  {
-    const g = new THREE.BoxGeometry(2 * D2 - 0.06, 1.6, 1.45).translate(0.01, 0.82, -0.03);
-    const proxy = new THREE.Mesh(g, ctx.materials.basic('#000000', { visible: false, side: THREE.BackSide }));
-    proxy.name = 'loft-workstation-proxy';
-    screenGroup.add(proxy);
-  }
-  // put the hotspot's origin at the monitors (the camera frames the hotspot's
-  // origin when its panel opens, and the hover "boing" scales around it)
+  const proxy = new THREE.Mesh(
+    new THREE.BoxGeometry(2 * D2 - 0.06, 1.6, 1.45).translate(0.01, 0.82, -0.03),
+    ctx.materials.basic('#000000', { visible: false, side: THREE.BackSide }),
+  );
+  proxy.name = 'loft-workstation-proxy';
+  screenGroup.add(proxy);
+  // put the hotspot's origin at the monitors (the hover "boing" scales around it)
   const pivot = new THREE.Vector3(deskX + 0.05, deskTop + 0.32, -0.38);
   for (const m of screenGroup.children) m.geometry.translate(-pivot.x, -pivot.y, -pivot.z);
+  // The camera frames the CENTRE of the hotspot's bounds when 'This Woodland'
+  // opens (and its sparkle floats over it). The room-sized click proxy would
+  // put that centre in the middle of the room, a metre in front of the desk:
+  // declare the proxy's bounds symmetric around the glowing screens instead (a
+  // superset of the real box, so raycasts are unaffected).
+  {
+    const g = proxy.geometry;
+    g.computeBoundingBox();
+    const c = new THREE.Vector3(deskX - 0.04, deskTop + 0.36, -0.3).sub(pivot);
+    const half = new THREE.Vector3().subVectors(g.boundingBox.max, c).max(new THREE.Vector3().subVectors(c, g.boundingBox.min));
+    g.boundingBox.set(c.clone().sub(half), c.clone().add(half));
+  }
   screenGroup.matrix.multiply(new THREE.Matrix4().makeTranslation(pivot.x, pivot.y, pivot.z));
   screenGroup.matrix.decompose(screenGroup.position, screenGroup.quaternion, screenGroup.scale);
   screenGroup.matrixAutoUpdate = true; // so the hover "boing" (scale) works

@@ -10,7 +10,7 @@ import { COTTAGE } from '../../world/layout.js';
 import { createRng } from '../../core/rng.js';
 import { makeMushroomHouse } from '../../props/mushroomHouse.js';
 import { mats, mat4, xf, board, boardBetween, rod, deform, uvBox, addFern, addGrass, addFlower, addToadstool, mossGeo, TAU, WOOD, IRON } from './kit.js';
-import { local, pot, wateringCan } from './garden.js';
+import { local, pot, wateringCan, stringLights } from './garden.js';
 
 /** World azimuth the shed's door faces (towards the cottage gardens). */
 const SHED_DOOR_AZ = 1.35;
@@ -52,6 +52,18 @@ export function buildShed(ctx, B, root, halos = null, rimHalos = null) {
   const M = mats();
   const F = B.at(frame); // shed-local: door faces +Z
   const R = shed.userData.radius;
+
+  // a short strand of fairy lights sagging along the front of the rim (towards the gardens
+  // and the 'home' camera): at night the little brown shed twinkles with its neighbours
+  {
+    const line = [];
+    for (let i = 0; i <= 6; i++) {
+      const p = shed.userData.rimPoint(-1.0 + (i / 6) * 2.4).multiplyScalar(0.985);
+      p.y -= 0.08;
+      line.push(p);
+    }
+    stringLights(F, [line], halos, { spacing: 0.26, sag: 0.1, transform: frame });
+  }
 
   // moss cushions & a few fallen leaves on the cap
   {

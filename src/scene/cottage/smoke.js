@@ -29,12 +29,13 @@ const VERT = /* glsl */ `
     float life = fract(uTime * 0.065 / max(aPuff.z, 0.4) + aPuff.x);
     vec3 p = position;
     float s = aPuff.z;
-    // rise fast at first, then slow down and lean away with the breeze
-    p.y += aPuff.w * mix(life, 1.0 - (1.0 - life) * (1.0 - life), 0.55);
+    // rise steadily and lean away with the breeze
+    p.y += aPuff.w * life;
     p.xz += uWind.xz * life * life * s * 2.4;
     p.x += sin(life * 6.0 + aPuff.y * 13.0 + uTime * 0.35) * 0.16 * s * life;
     p.z += cos(life * 4.7 + aPuff.y * 7.0 + uTime * 0.3) * 0.16 * s * life;
-    float size = mix(0.26, 0.72, pow(life, 0.8)) * s;
+    // big enough from the start that consecutive puffs always overlap into one plume
+    float size = mix(0.42, 1.15, pow(life, 0.7)) * s;
     vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
     float a = aPuff.y * 6.2831 + life * (aPuff.y > 0.5 ? 1.4 : -1.4);
     vec2 c = vec2(cos(a) * aCorner.x - sin(a) * aCorner.y, sin(a) * aCorner.x + cos(a) * aCorner.y);
@@ -66,13 +67,12 @@ const FRAG = /* glsl */ `
     vec2 p = vUv;
     float k = vSeed * 31.0;
     float spread = 1.0 + vLife * 0.35;
-    float a = blob(p, vec2(0.0), 0.58);
-    a += blob(p, spread * vec2(0.34 * cos(k), 0.3 * sin(k)), 0.4) * 0.7;
-    a += blob(p, spread * vec2(-0.3 * sin(k * 1.7), 0.32 * cos(k * 1.3)), 0.36) * 0.6;
-    a += blob(p, spread * vec2(0.18 * cos(k * 2.3), -0.36 * sin(k * 0.7)), 0.32) * 0.5;
-    a = smoothstep(0.05, 1.25, a);
-    a *= a * (3.0 - 2.0 * a); // feathered falloff, no hard rim
-    a *= 1.0 - smoothstep(0.55, 1.0, length(p)); // never show the quad's edge
+    float a = blob(p, vec2(0.0), 0.85);
+    a += blob(p, spread * vec2(0.36 * cos(k), 0.32 * sin(k)), 0.55) * 0.6;
+    a += blob(p, spread * vec2(-0.32 * sin(k * 1.7), 0.34 * cos(k * 1.3)), 0.5) * 0.5;
+    a += blob(p, spread * vec2(0.2 * cos(k * 2.3), -0.38 * sin(k * 0.7)), 0.45) * 0.45;
+    a = smoothstep(0.08, 1.3, a);
+    a *= 1.0 - smoothstep(0.6, 1.0, length(p)); // never show the quad's edge
     if (a * vAlpha < 0.01) discard;
     // light from above-left, darker bottom; warm by day, moonlit at night
     float lit = 0.72 + 0.28 * smoothstep(-0.8, 0.8, p.y - p.x * 0.4);
@@ -101,7 +101,7 @@ function smokeMaterial(reduced) {
       uTime: reduced ? { value: 3.7 } : sharedUniforms.uTime,
       uNight: sharedUniforms.uNight,
       uWind: { value: new THREE.Vector3(0.55, 0, 0.2) },
-      uOpacity: { value: 0.38 },
+      uOpacity: { value: 0.34 },
     },
     vertexShader: VERT,
     fragmentShader: FRAG,
@@ -142,7 +142,7 @@ export function makeSmoke(sources, { reducedMotion = false } = {}) {
     box.expandByPoint(new THREE.Vector3(q.x, q.y, q.z));
     box.expandByPoint(new THREE.Vector3(q.x + 3.0 * q.scale, q.y + q.rise + 1.2, q.z + 1.6 * q.scale));
   });
-  box.expandByScalar(1);
+  box.expandByScalar(1.5);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('aCorner', new THREE.BufferAttribute(corner, 2));

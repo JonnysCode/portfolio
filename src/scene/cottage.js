@@ -3,7 +3,7 @@
 // (spots 'home' and 'interior'; anchors COTTAGE.home / atelier / shed).
 //
 //   home      a tall red fly-agaric house with a shorter wing mushroom, fairy
-//             lights, a fenced garden with a rose-arch gate, vegetable bed,
+//             lights along the rim and spiralling up the cap, a fenced garden with a rose-arch gate, vegetable bed,
 //             bench & sleeping cat, the carved "Jonny's Woodland" sign and the
 //             mailbox (cottage/home.js)
 //   atelier   an ochre mushroom opened up at the front by a big arched loggia,
@@ -17,7 +17,10 @@
 // front-door leaf + Jonny's portrait in the window), contact (mailbox),
 // living-room (the sofa, picking the whole room), moodboards (easel),
 // small-space (model table), a secret cat.
-// Perf (high): ≈ 202k triangles, 43 draw calls, 12 shadow casters (moduleStats).
+// Night: the caps' cream flakes glow faintly mint (the glen's enchanted-agaric
+// spot material), warm "bounce" halos sit under the rims above lit windows and
+// the porch, and the fairy-light spiral keeps the tall red cap a landmark.
+// Perf (high): ≈ 207k triangles, 46 draw calls, 12 shadow casters (moduleStats).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { Batch, setCottageNight } from './cottage/kit.js';

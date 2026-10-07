@@ -33,13 +33,14 @@ import { OAK } from '../world/layout.js';
 import { getHeight } from '../world/ground.js';
 import { Batch, Halos, smallBitsRemap, makeMats, makeBark, makeRootTop, deckFrame, mergeByMaterial } from './loft/kit.js';
 import { buildDeck } from './loft/deck.js';
-import { buildHouse } from './loft/house.js';
+import { buildHouse, LIT_GLASS } from './loft/house.js';
 import { createScreens } from './loft/screens.js';
 import { createBoards } from './loft/boards.js';
 import { buildProps } from './loft/props.js';
 import { buildStairs } from './loft/stairs.js';
 import { buildElevator } from './loft/elevator.js';
 import { makeSmoke } from './cottage/smoke.js';
+import { sharedUniforms } from '../core/materials.js';
 
 export default async function build(ctx) {
   const root = new THREE.Group();
@@ -92,9 +93,28 @@ export default async function build(ctx) {
   ctx.lights?.addPoint?.(house.interior.light, { color: '#ffb866', day: 0.5, night: 4.2, distance: 4.5 });
   if (props.lanternLight) ctx.lights?.addPoint?.(props.lanternLight, { color: '#ffb35c', day: 0.0, night: 5, distance: 8 });
 
+  // the lamp-lit room glows through the big window's transom at night
+  if (house.litGlass) {
+    const m = house.litGlass;
+    updates.push(() => {
+      m.emissiveIntensity = LIT_GLASS.day + (LIT_GLASS.night - LIT_GLASS.day) * sharedUniforms.uNight.value;
+    });
+  }
+
   // ── hotspots ──────────────────────────────────────────────────────────────
   const area = 'code';
-  ctx.interactions?.add?.(house.interior.workstation, { entryId: 'this-portfolio', area, focus: { distance: 3.4, height: 0.1 }, approach: false, markerHeight: 0.85 });
+  // 'This Woodland' (the featured project): the camera looks straight in
+  // through the big front window (faceAzimuth: from the house front, +X local,
+  // turned a touch towards the window's middle), nearly level so the line of
+  // sight passes under the transom and between the open casements, and lands
+  // on the glowing screens (the hotspot's bounds are centred on them, house.js).
+  ctx.interactions?.add?.(house.interior.workstation, {
+    entryId: 'this-portfolio',
+    area,
+    focus: { faceAzimuth: Math.PI / 2 - 0.135, polar: 1.45, distance: 3.2, radius: 0.55 },
+    approach: false,
+    markerHeight: 0.85,
+  });
   if (props.server) ctx.interactions?.add?.(props.server, { entryId: 'project-backend', area, focus: { distance: 3, height: 0.4 }, approach: false });
   if (props.bench) ctx.interactions?.add?.(props.bench, { entryId: 'project-side', area, focus: { distance: 3, height: 0.4 }, approach: false });
   const duck = house.interior.duck;

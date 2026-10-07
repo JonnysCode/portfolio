@@ -4,20 +4,28 @@
 // hill, runs over a broad slab and pours down three tiers into the plunge
 // pool:
 //
-//   tier A  the main fall from an overhanging lip slab (~2 units)
-//   tier B  from the first basin ledge (~1.4)
-//   tier C  from the second basin ledge into the pool (~1.5)
+//   tier A  the main fall from an overhanging mossy lip slab (~2 units)
+//   tier B  from the first ledge (~1.4)
+//   tier C  from the second ledge into the pool (~1.5)
 //
 // Rocks: ONE sculpted outcrop — a terraced heightfield amphitheatre around
 // the pool (a terrace per water tier, the lips exactly on its edges), its
 // faces bent by noise so they bulge like weathered sandstone, moss on every
-// terrace (triplanar mossy rock), a gully for the spring; then tumbled
-// boulders, river-worn stones in the pool, scree, moss mats, big ferns, ivy
-// curtains over the lips, toadstools and a few softly glowing blue mushrooms.
+// terrace (triplanar mossy rock), a gully for the spring; a flat wet lip slab
+// overhanging the face under every spill (mossy shoulders, ferns arching over,
+// ivy hanging beside the water), two mossy stones framing the spout; flat
+// layered slabs stacked on the terraces (never round boulders), thin strata
+// shelves jutting from the faces with moss, ferns and ivy, pale roots creeping
+// down from the top; river-worn stones in the pool, scree, moss mats, ferns,
+// toadstools and a few softly glowing blue mushrooms.
 //
-// Water: ONE mesh for all falling sheets, the spring channel and the little
-// basin pools, drawn with a custom fogged ShaderMaterial: fast streaks
-// scrolling down, translucent edges, white churn at the bottom of each sheet.
+// Water: ONE mesh — ONE continuous ribbon from the top lip to the pool (no
+// seams between the tiers: it falls, foams across each ledge and spills over
+// the next lip, narrow at the top and fanning out, its edges ragged, parting
+// into ropes of water low in each drop), the spring channel and a ring of
+// foam on each ledge, drawn with a custom fogged ShaderMaterial: streaks
+// scrolling in travel time (so they stretch as the water speeds up), a glassy
+// bend at each lip, translucent edges, white churn where it lands.
 // Spray: ONE Points cloud whose particles are animated entirely in the vertex
 // shader (no per-frame CPU work) — puffs rising from every impact and
 // drifting off as mist.
@@ -33,7 +41,7 @@ import { fogUniforms } from '../../world/env/fog.js';
 import { envUniforms } from '../../world/env/celestial.js';
 import { sharedUniforms } from '../../core/materials.js';
 import { makePuffs } from './puffs.js';
-import { M, TAU, xf, boulderGeo, stoneGeo, mossGeo, plantFern, plantGrass, addToadstool, addFlower, addIvy, Cards, flushCards, noiseA, noiseB, smooth01 } from './kit.js';
+import { M, TAU, xf, boulderGeo, stoneGeo, mossGeo, plantFern, plantGrass, addToadstool, addFlower, addIvy, wallFern, taperTube, Cards, flushCards, noiseA, noiseB, smooth01 } from './kit.js';
 
 const WL = STREAM.waterLevel;
 const ROCK_TINTS = ['#8e8b80', '#858579', '#97917f', '#7c7e74', '#9a9483', '#888476', '#7a786c'];
@@ -56,6 +64,61 @@ const TIERS = [
   { lipW: 0.78, lipY: 2.42, landW: 1.06, landY: 1.0, hw0: 0.6, hw1: 0.7, strength: 0.75 },
   { lipW: 1.28, lipY: 0.97, landW: 1.58, landY: WL, hw0: 0.7, hw1: 0.86, strength: 1 },
 ];
+/** How far each lip slab overhangs the rock face (the water leaps off its front edge). */
+const LIP_OUT = 0.1;
+
+/**
+ * The fall's centre line in the frame's (w, y) — ONE continuous ribbon from
+ * the top lip to the pool: { w, y, b (fall progress, −1 on a ledge), churn,
+ * tau (travel time), g (0..1 along) } — and its ragged edges(row, k) → [left, right] u.
+ */
+let RIBBON = null;
+function ribbon() {
+  if (RIBBON) return RIBBON;
+  const line = [];
+  let ta = 0, prev = null;
+  const add = (w, y, b, churn, v) => {
+    if (prev) ta += Math.hypot(w - prev.w, y - prev.y) / v;
+    prev = { w, y, b, churn, tau: ta, g: 0, tier: tierNow };
+    line.push(prev);
+  };
+  let tierNow = 0;
+  TIERS.forEach((T, i) => {
+    tierNow = i;
+    const drop = T.lipY - T.landY;
+    const w0 = T.lipW + LIP_OUT, w1 = T.landW;
+    const NF = 18;
+    for (let k = i === 0 ? 0 : 1; k <= NF; k++) {
+      const s = k / NF;
+      const carry = i > 0 ? 0.35 * (1 - smooth01(s / 0.3)) : 0; // foam carried over the lip
+      add(w0 + (w1 - w0) * s, T.lipY + 0.035 * (1 - s) ** 2 - drop * s * s, s, Math.max(carry, smooth01((s - 0.74) / 0.26)), 1 + 3.2 * s);
+    }
+    const N2 = TIERS[i + 1];
+    if (N2) {
+      // across the ledge to the next lip: foaming, slowing, spreading
+      for (let k = 1; k < 4; k++) {
+        const s = k / 4;
+        add(w1 + (N2.lipW + LIP_OUT - w1) * s, T.landY + 0.03 + (N2.lipY - T.landY) * s, -1, 1 - 0.6 * s, 0.9);
+      }
+    }
+  });
+  let len = 0;
+  for (let k = 1; k < line.length; k++) {
+    len += Math.hypot(line[k].w - line[k - 1].w, line[k].y - line[k - 1].y);
+    line[k].g = len;
+  }
+  for (const r of line) r.g /= len;
+  // half widths: narrow at the lip, fanning out as it falls, ragged on each side
+  const edges = (r, k = 1) => {
+    const hw = (0.3 + 0.62 * Math.pow(r.g, 0.9)) * (r.b < 0 ? 1.08 : 1) * k;
+    const c = 0.07 * noiseB(r.g * 4 + 3.1, 1.7) * (0.3 + r.g);
+    return [c - hw * (1 + 0.16 * noiseA(r.g * 9, 1.3)), c + hw * (1 + 0.16 * noiseA(r.g * 9, 7.7))];
+  };
+  /** The ribbon's row where tier i leaves its lip. */
+  const lipRow = (i) => line.find((r) => r.tier === i && r.b === 0) ?? line.find((r) => r.tier === i);
+  RIBBON = { line, edges, lipRow };
+  return RIBBON;
+}
 
 export function planFalls() {
   const { m } = makeFrame();
@@ -70,12 +133,15 @@ export function planFalls() {
 const VERT = /* glsl */ `
 #include <common>
 #include <fog_pars_vertex>
-attribute vec4 aInfo; // x: kind (0 sheet, 1 channel, 2 basin), y: across 0..1, z: along 0..1, w: layer seed
+attribute vec4 aInfo; // x: kind (0 ribbon, 0.3 its back layer, 1 channel, 2 ledge foam), y: across 0..1, z: fall progress (−1 on a ledge) / along, w: churn
+attribute float aTau; // travel time from the top (streaks scroll in it)
 varying vec4 vInfo;
+varying float vTau;
 varying vec3 vWPos;
 varying vec3 vNrm;
 void main() {
   vInfo = aInfo;
+  vTau = aTau;
   vec4 wp = modelMatrix * vec4(position, 1.0);
   vWPos = wp.xyz;
   vNrm = normalize(mat3(modelMatrix) * normal);
@@ -95,6 +161,7 @@ uniform vec3 uKeyDir;
 uniform vec3 uSkyHorizon;
 uniform vec3 uFogColor;
 varying vec4 vInfo;
+varying float vTau;
 varying vec3 vWPos;
 varying vec3 vNrm;
 float fHash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -106,53 +173,67 @@ float fNoise(vec2 p) {
 void main() {
   float kind = vInfo.x;
   float across = vInfo.y;
-  float along = vInfo.z;
-  float layer = vInfo.w;
   float t = uTime;
-  vec3 deep = vec3(0.30, 0.55, 0.58);
+  vec3 deep = vec3(0.26, 0.5, 0.52);
   vec3 white = vec3(0.96, 0.98, 1.0);
   float a;
   vec3 col;
-  if (kind < 0.5) {
-    // falling sheet: white strands racing down over a thin, clear veil (the
-    // back layer gets its own strands, so the fall has depth)
-    vec2 q = vec2(across * 11.0 + layer * 17.0, along * 2.0 - t * (2.8 - layer * 0.5));
+  if (kind < 0.9) {
+    // the ribbon: white strands racing down over a thin, clear green-blue veil;
+    // glassy where it bends over a lip, parting into ropes of water as it
+    // falls, churning white where it lands and foaming across each ledge
+    float layer = step(0.15, kind);
+    float b = vInfo.z;
+    float churn = vInfo.w;
+    float fall = step(0.0, b);
+    vec2 q = vec2(across * 11.0 + layer * 17.0, vTau * 2.4 - t * 2.6);
     float s1 = fNoise(q);
-    float s2 = fNoise(vec2(across * 23.0 + 5.0 + layer * 31.0, along * 3.5 - t * 3.6));
+    float s2 = fNoise(vec2(across * 23.0 + 5.0 + layer * 31.0, vTau * 4.0 - t * 3.8));
     float streak = smoothstep(0.42, 0.9, s1 * 0.6 + s2 * 0.5);
-    // pulses travelling down the sheet
-    float pulse = smoothstep(0.55, 0.9, fNoise(vec2(across * 3.0, along * 5.0 - t * 4.0)));
+    float pulse = smoothstep(0.58, 0.92, fNoise(vec2(across * 3.0 + layer * 5.0, vTau * 4.5 - t * 4.2)));
     float mid = min(across, 1.0 - across);
-    float rag = fNoise(vec2(across * 4.0 + 9.0, along * 6.0 - t * 2.0));
-    float edge = smoothstep(0.02, 0.1 + 0.18 * rag, mid);
-    float churn = smoothstep(0.7, 1.0, along);
-    col = mix(deep * 1.1, white, clamp(streak + pulse * 0.5, 0.0, 1.0));
-    col = mix(col, white, churn);
-    a = (0.16 + streak * 0.75 + pulse * 0.25) * edge;
-    a = max(a, churn * 0.85 * edge * (0.6 + 0.4 * rag));
-    // the lip: glassy where the water bends over
-    float lip = 1.0 - smoothstep(0.0, 0.1, along);
-    col = mix(col, deep * 1.25 + 0.12, lip * 0.5);
-    a = mix(a, 0.7 * edge, lip * 0.6);
+    float rag = fNoise(vec2(across * 4.0 + 9.0, vTau * 5.0 - t * 2.2));
+    float edge = smoothstep(0.0, 0.06 + 0.24 * rag, mid);
+    // ropes: gaps open between strands in the lower part of each fall
+    float rope = fNoise(vec2(across * 6.5 + layer * 13.0, vTau * 0.7 - t * 0.7));
+    float part = mix(1.0, 0.25 + 0.75 * smoothstep(0.28, 0.55, rope), fall * smoothstep(0.2, 0.75, b) * (1.0 - churn));
+    col = mix(deep * 1.1, white, clamp(streak + pulse * 0.45, 0.0, 1.0));
+    a = (0.14 + streak * 0.72 + pulse * 0.22) * edge * part;
+    // foam where it lands and across the ledges (bubbly, never a flat white sheet)
+    float bub = fNoise(vWPos.xz * 9.0 + vec2(t * 0.8, -t * 1.1)) * 0.6 + fNoise(vec2(across * 9.0, vTau * 6.0 - t * 3.0)) * 0.4;
+    float foam = churn * smoothstep(0.25, 0.7, bub + churn * 0.35);
+    col = mix(col, white, foam);
+    a = max(a, foam * 0.9 * edge * (0.65 + 0.35 * rag));
+    // the lip: a clear, glassy green bend where the water leaves the rock
+    float lip = fall * (1.0 - smoothstep(0.0, 0.14, b));
+    col = mix(col, deep * 1.15 + vec3(0.05, 0.09, 0.07) + streak * 0.25, lip * 0.6);
+    a = mix(a, (0.42 + streak * 0.4) * edge, lip * 0.7);
     // the back layer is a fainter, bluer veil
     col = mix(col, col * vec3(0.85, 0.95, 1.0), layer);
-    a *= 1.0 - 0.4 * layer;
+    a *= 1.0 - 0.45 * layer;
   } else if (kind < 1.5) {
     // the spring channel: quick ripples and white riffles running downhill
+    float along = vInfo.z;
     vec2 q = vec2(across * 5.0, along * 6.0 - t * 1.6);
     float r = fNoise(q) * 0.6 + fNoise(q * 2.2 + 3.0) * 0.4;
     float riffle = smoothstep(0.62, 0.8, r);
-    float edge = smoothstep(0.0, 0.2, across) * smoothstep(1.0, 0.8, across);
-    col = mix(deep * 0.9, white, riffle * 0.85 + 0.12);
-    a = (0.6 + riffle * 0.35) * edge;
+    float edge = smoothstep(0.0, 0.25, across) * smoothstep(1.0, 0.75, across);
+    col = mix(deep * 0.8 + vec3(0.02, 0.06, 0.04), white, riffle * 0.85);
+    a = (0.3 + riffle * 0.55) * edge;
   } else {
-    // basin pools: churning white water
+    // ledge foam: churning white water with rings spreading from the landing
+    float rr = vInfo.z;
     vec2 q = vWPos.xz * 4.0;
     float c = fNoise(q + vec2(t * 0.9, -t * 1.3)) * 0.6 + fNoise(q * 2.4 - vec2(t * 1.7, 0.0)) * 0.4;
-    float foam = smoothstep(0.35, 0.75, c);
-    float edge = smoothstep(0.0, 0.25, 1.0 - along);
-    col = mix(deep, white, 0.3 + foam * 0.7);
-    a = (0.7 + foam * 0.3) * edge;
+    float foam = smoothstep(0.38, 0.78, c + (1.0 - rr) * 0.25);
+    float ring = 0.0;
+    for (int k = 0; k < 2; k++) {
+      float ph = fract(t * 0.5 + float(k) * 0.5);
+      ring += smoothstep(0.09, 0.0, abs(rr - (0.25 + ph * 0.75))) * (1.0 - ph);
+    }
+    float edge = smoothstep(0.0, 0.35, 1.0 - rr) * (0.75 + 0.25 * fNoise(q * 1.7 + 5.0));
+    col = mix(deep, white, 0.35 + foam * 0.65);
+    a = (0.16 + foam * 0.55 + ring * 0.35) * edge;
   }
   // lighting: soft key light + sky fill, a cool tint at night
   float ndl = max(dot(normalize(vNrm), normalize(uKeyDir)), 0.0) * 0.5 + 0.5;
@@ -180,10 +261,11 @@ export function buildFalls(ctx, B, rng) {
   // ── rocks ────────────────────────────────────────────────────────────────
   /** One layered rock slab: wider than tall, strata ledges, moss on top. */
   const tops = [];
+  const hangers = []; // shelf & lip edges that ivy and roots hang from
   const rockSlab = (u, w, y0, y1, sx, sz, opts = {}) => {
     const h = y1 - y0;
-    if (h < 0.12) return;
-    tops.push({ u, w, y: y1 - h * 0.08, sx, sz });
+    if (h < 0.08) return;
+    if (!opts.noTop) tops.push({ u, w, y: y1 - h * 0.08, sx, sz });
     const g = boulderGeo(rng, sx, h, sz, { strata: Math.max(1, Math.round(h / 0.42)), lump: opts.lump ?? 0.2, round: opts.round ?? 0.38, detail: sx > 1.1 ? 3 : 2 });
     xf(g, [u, y0, w], [rng.jitter(0.06), opts.rot ?? rng.jitter(0.6), rng.jitter(0.07)]);
     R.add(MM.rock, g, { color: opts.color ?? rng.pick(ROCK_TINTS), cast: opts.cast ?? true });
@@ -295,6 +377,43 @@ export function buildFalls(ctx, B, rng) {
     // (the rock material is triplanar: no UVs needed)
     R.add(MM.rock, g, { cast: true });
   }
+  // the lips: a flat, wet slab under each spill, overhanging the face so the
+  // water leaps clear of it, with mossy shoulders either side (ferns arching
+  // over the edge, ivy hanging down beside the water)
+  {
+    const { edges, lipRow } = ribbon();
+    TIERS.forEach((T, i) => {
+      const [l, r] = edges(lipRow(i));
+      const half = Math.max(-l, r);
+      const front = T.lipW + LIP_OUT;
+      const width = 2 * half + 0.75, depth = 0.85, th = 0.24 + i * 0.03;
+      const g = boulderGeo(rng, width, th, depth, { strata: 1, lump: 0.1, round: 0.3, detail: 3 });
+      xf(g, [(l + r) / 2, T.lipY - th * 1.06 - 0.01, front - depth / 2 + 0.05], [rng.jitter(0.03), rng.jitter(0.06), 0]);
+      R.add(MM.rock, g, { color: '#77746a', cast: true });
+      for (const sgn of [-1, 1]) {
+        const su = sgn < 0 ? l - 0.2 : r + 0.2;
+        // a velvet moss cushion on the shoulder, spilling over the front edge
+        const m = mossGeo(rng, { r: 0.24, h: 0.1, sx: 1.4, sz: 1.1, seg: 10 });
+        xf(m, [su + sgn * 0.05, T.lipY - 0.02, front - 0.22], [0, rng.jitter(0.4), 0]);
+        R.add(MM.moss, m, { color: rng.pick(['#6f8f3a', '#5d7d30', '#7f9a44']), cast: false });
+        const lip = mossGeo(rng, { r: 0.12, h: 0.05, sx: 2.2, sz: 0.8, seg: 8 });
+        xf(lip, [su, T.lipY - 0.06, front - 0.02], [-0.7, 0, 0]);
+        R.add(MM.moss, lip, { color: '#6a8a36', cast: false });
+        wallFern(R, rng, [su + sgn * 0.08, T.lipY - 0.02, front - 0.08], [sgn * 0.45, -0.15, 1], { size: rng.range(0.3, 0.42), fronds: rng.int(6, 8) });
+        hangers.push({ u: su + sgn * 0.05, w: front - 0.02, top: T.lipY - 0.05, ou: 0, ow: 1, len: 0.5, lip: true });
+        if (i === 0) {
+          // the spout: two mossy stones framing where the spring water leaves the hilltop
+          const bu = sgn < 0 ? l - 0.3 : r + 0.3;
+          const sg = boulderGeo(rng, 0.62, 0.34, 0.8, { strata: 1, lump: 0.14, round: 0.4, detail: 2 });
+          xf(sg, [bu, T.lipY - 0.12, front - 0.5], [rng.jitter(0.06), rng.jitter(0.4), sgn * 0.08]);
+          R.add(MM.rock, sg, { color: '#807c70', cast: true });
+          const cap = mossGeo(rng, { r: 0.26, h: 0.1, sx: 1.1, sz: 1.3, seg: 10 });
+          xf(cap, [bu, T.lipY + 0.2, front - 0.5], [0, rng.jitter(0.4), 0]);
+          R.add(MM.moss, cap, { color: '#6f8f3a', cast: false });
+        }
+      }
+    });
+  }
   // terrace tops (for moss, ferns & flowers) and lip edges (for ivy curtains)
   const faces = [];
   {
@@ -313,16 +432,60 @@ export function buildFalls(ctx, B, rng) {
       else if (tops.length < 120) tops.push({ u, w, y: h - 0.02, sx: rng.range(0.5, 1.1), sz: rng.range(0.5, 1.0) });
     }
   }
-  // loose boulders: tumbled onto the terraces and the pool's rim, half sunk
+  // loose rock: flat, layered sandstone slabs tumbled onto the terraces and
+  // the pool's rim, stacked two or three high like broken strata
+  const slabStack = (u, w, base, s, { height = null, color = null } = {}) => {
+    const n = height ? Math.max(2, Math.round(height / (s * 0.3))) : rng.int(1, 3);
+    let y = base - 0.06;
+    for (let k = 0; k < n; k++) {
+      const th = height ? height / n : s * rng.range(0.2, 0.32);
+      const shrink = 1 - k * (height ? 0.08 : 0.2);
+      rockSlab(u + rng.jitter(0.1 * s), w + rng.jitter(0.1 * s), y, y + th + 0.03, s * rng.range(1.15, 1.5) * shrink, s * rng.range(0.8, 1.05) * shrink, {
+        round: 0.28, lump: 0.12, color: color ?? rng.pick(ROCK_TINTS), noTop: k < n - 1, rot: rng.jitter(0.5),
+      });
+      y += th;
+    }
+  };
   for (let i = 0; i < 16; i++) {
     const side = i % 2 ? 1 : -1;
     const u = side * rng.range(0.95, 4.2), w = rng.range(-2.2, 2.9);
     const h = Math.max(rockH(u, w), groundAt(u, w));
-    const s = rng.range(0.55, 1.35) * (w > 2 ? 0.8 : 1);
-    rockSlab(u, w, h - s * 0.3, h + s * rng.range(0.35, 0.6), s * rng.range(0.9, 1.2), s * rng.range(0.8, 1.05), { round: 0.72, lump: 0.16 });
+    slabStack(u, w, h, rng.range(0.55, 1.2) * (w > 2 ? 0.8 : 1));
   }
-  // the spring: two boulders on the hilltop with a crevice between
-  for (const sgn of [-1, 1]) rockSlab(sgn * 0.72, -1.55, 4.55, 5.6 + rng.range(0, 0.2), 0.95, 1.0, { color: '#7f7d72', round: 0.62 });
+  // the spring wells up between two stacks of slabs on the hilltop
+  for (const sgn of [-1, 1]) slabStack(sgn * 0.74, -1.55, 4.55, 0.85, { height: 1.0 + rng.range(0, 0.2), color: '#7f7d72' });
+  // strata: thin shelves of harder rock jutting from the cliff faces, each
+  // with a strip of moss and something hanging from it
+  const shelves = [];
+  {
+    const e = 0.1;
+    for (let tries = 0; tries < 900 && shelves.length < 24; tries++) {
+      const u = rng.jitter(3.8), w = rng.range(-1.6, 2.6);
+      if (Math.abs(u) < 0.95) continue; // beside the water, never in it
+      const gu = (rockH(u + e, w) - rockH(u - e, w)) / (2 * e), gw = (rockH(u, w + e) - rockH(u, w - e)) / (2 * e);
+      const sl = Math.hypot(gu, gw);
+      if (sl < 1.4) continue; // steep faces only
+      const h = rockH(u, w);
+      if (h < groundAt(u, w) + 0.3 || h < WL + 0.35) continue;
+      if (shelves.some((q) => Math.hypot(q.u - u, q.w - w) < 0.75 && Math.abs(q.y - h) < 0.45)) continue;
+      const ou = -gu / sl, ow = -gw / sl;
+      shelves.push({ u: u + ou * 0.1, w: w + ow * 0.1, y: h, ou, ow });
+    }
+    for (const sh of shelves) {
+      const len = rng.range(0.7, 1.5), dep = rng.range(0.38, 0.55), th = rng.range(0.1, 0.17);
+      const g = boulderGeo(rng, len, th, dep, { strata: 1, lump: 0.14, round: 0.25, detail: 2 });
+      xf(g, [sh.u, sh.y - th * 0.7, sh.w], [rng.jitter(0.05), Math.atan2(sh.ou, sh.ow) + rng.jitter(0.15), rng.jitter(0.06)]);
+      R.add(MM.rock, g, { color: rng.pick(ROCK_TINTS), cast: true });
+      const top = sh.y + th * 0.35;
+      const m = mossGeo(rng, { r: dep * 0.42, h: 0.06, sx: len / dep * 0.8, seg: 8 });
+      xf(m, [sh.u + sh.ou * 0.05, top, sh.w + sh.ow * 0.05], [0, Math.atan2(sh.ou, sh.ow), 0]);
+      R.add(MM.moss, m, { color: rng.pick(['#6f8f3a', '#5d7d30', '#7f9a44']), cast: false });
+      const fx = sh.u + sh.ou * dep * 0.45, fz = sh.w + sh.ow * dep * 0.45;
+      if (rng.chance(0.5)) wallFern(R, rng, [fx + rng.jitter(len * 0.3) * sh.ow, top, fz - rng.jitter(len * 0.3) * sh.ou], [sh.ou, -0.1, sh.ow], { size: rng.range(0.28, 0.42), fronds: rng.int(5, 8) });
+      else if (rng.chance(0.5)) addFlower(R, rng, fx, top, fz, { size: 0.045, color: rng.pick(['#f4f0e6', '#7fa7e0', '#f29bb8']) });
+      hangers.push({ u: fx, w: fz, top, ou: sh.ou, ow: sh.ow, len });
+    }
+  }
   // boulders standing in the pool at the foot of the cliff (round, river-worn)
   for (const [u, w, s] of [[-1.35, 2.35, 0.8], [1.45, 2.25, 0.7], [-2.5, 2.75, 0.9], [2.6, 2.95, 0.85], [0.95, 2.95, 0.55]]) {
     const gy = Math.max(groundAt(u, w), WL - 0.9);
@@ -342,8 +505,8 @@ export function buildFalls(ctx, B, rng) {
   const glowSpots = [];
   const ledgePlant = (u, y, w) => {
     const k = rng.next();
-    if (k < 0.36) plantFern(R, rng, u, y, w, { size: rng.range(0.45, 0.95), fronds: rng.int(7, 11), tilt: 1.0 });
-    else if (k < 0.54) plantGrass(R, rng, u, y, w, { size: rng.range(0.25, 0.45), blades: 5 });
+    if (k < 0.24) plantFern(R, rng, u, y, w, { size: rng.range(0.4, 0.75), fronds: rng.int(8, 12), tilt: 1.35 });
+    else if (k < 0.5) plantGrass(R, rng, u, y, w, { size: rng.range(0.25, 0.45), blades: 5 });
     else if (k < 0.72) {
       const m = mossGeo(rng, { r: rng.range(0.15, 0.35), h: rng.range(0.06, 0.12) });
       xf(m, [u, y - 0.02, w], [0, rng.next() * TAU, 0]);
@@ -391,13 +554,57 @@ export function buildFalls(ctx, B, rng) {
     }
     flushCards(R, ivy, MM.ivy, null, 0);
   }
+  // ivy and pale roots hanging down the cliff from the shelves and the lips,
+  // hugging the rock face
+  {
+    const ivy = new Cards();
+    for (const hg of hangers) {
+      const strands = hg.lip ? 2 : rng.int(1, 2);
+      for (let k = 0; k < strands; k++) {
+        const u0 = hg.u + rng.jitter(hg.len * 0.35) * hg.ow, w0 = hg.w - rng.jitter(hg.len * 0.35) * hg.ou;
+        addIvy(R, rng, [u0, hg.top, w0], [hg.ou * 0.2 + rng.jitter(0.15), -1, hg.ow * 0.2], {
+          length: rng.range(0.6, hg.lip ? 1.3 : 1.1),
+          droop: 1.4,
+          size: 0.13,
+          density: 1.6,
+          normal: [hg.ou, 0, hg.ow],
+          cards: ivy,
+        });
+      }
+    }
+    flushCards(R, ivy, MM.ivy, null, 0);
+    // roots: from the hill above, over the top edges and down the faces
+    const rootFaces = faces.filter((f) => Math.abs(f.u) < 2.8).filter((f, i) => i % 2 === 0).slice(0, 9);
+    for (const f of rootFaces) {
+      const pts = [new THREE.Vector3(f.u + rng.jitter(0.2), f.top + 0.02, f.w - 0.35)];
+      let w = f.w - 0.05, u = f.u;
+      for (let y = f.top - 0.02, k = 0; k < 9 && y > groundAt(u, w) + 0.1; k++, y -= 0.22) {
+        // find the face at this height, then sit just outside it (give up
+        // where the face runs off sideways rather than down)
+        let tries = 0;
+        const w0 = w;
+        while (rockH(u, w) > y && tries++ < 12) w += 0.035;
+        if (rockH(u, w) > y || w - w0 > 0.4) break;
+        u += rng.jitter(0.07);
+        pts.push(new THREE.Vector3(u, y, w + 0.03));
+      }
+      if (pts.length < 3) continue;
+      R.add(MM.wood, taperTube(pts, 0.035, 0.008, 5, pts.length * 4), { color: '#4a3d31', cast: false });
+      // a rootlet or two
+      for (let k = 0; k < 2; k++) {
+        const p = pts[1 + rng.int(0, pts.length - 2)];
+        const q = [p, new THREE.Vector3(p.x + rng.jitter(0.25), p.y - rng.range(0.15, 0.35), p.z + 0.03)];
+        R.add(MM.wood, taperTube(q, 0.012, 0.004, 4, 4), { color: '#55463a', cast: false });
+      }
+    }
+  }
   // big fern clumps at the foot of the outcrop, where it meets the pool and the hill
   for (let i = 0; i < Math.round(16 * density); i++) {
     const side = rng.chance(0.5) ? 1 : -1;
     const u = side * rng.range(2.2, 4.8), w = rng.range(1.2, 3.6);
     const gy = groundAt(u, w);
     if (gy < WL + 0.08) continue;
-    plantFern(R, rng, u, gy, w, { size: rng.range(0.8, 1.25), fronds: rng.int(8, 12), tilt: 0.85 });
+    plantFern(R, rng, u, gy, w, { size: rng.range(0.75, 1.15), fronds: rng.int(10, 14), tilt: 1.1 });
   }
   // and on the hill slopes around the outcrop
   for (let i = 0; i < Math.round(50 * density); i++) {
@@ -423,92 +630,77 @@ export function buildFalls(ctx, B, rng) {
     }
   }
 
-  // ── water: sheets, spring channel, basin pools ───────────────────────────
-  const pos = [], nrm = [], info = [], idx = [];
-  const push = (p, n, i3) => {
+  // ── water: ONE ribbon from the lip to the pool, the spring channel, ledge foam ──
+  // The fall is a single continuous strip — no seams between the tiers: it
+  // leaps off the mossy lip, falls onto the first ledge, foams across it,
+  // spills over the next lip … widening as it goes, its edges ragged. Per
+  // vertex aInfo = (kind, across 0..1, fall progress b (−1 on a ledge), churn)
+  // and aTau = travel time from the top (the streaks scroll in it, so they
+  // stretch as the water accelerates).
+  const pos = [], info = [], tau = [], idx = [];
+  const pushV = (u, y, w, i4, ta) => {
+    const p = toWorld(u, y, w);
     pos.push(p.x, p.y, p.z);
-    nrm.push(n.x, n.y, n.z);
-    info.push(i3[0], i3[1], i3[2], i3[3] ?? 0);
+    info.push(i4[0], i4[1], i4[2], i4[3]);
+    tau.push(ta);
     return pos.length / 3 - 1;
   };
-  const grid = (fn, nu, nv, kind, layer = 0) => {
+  const strip = (rows, nu, rowFn) => {
     const base = pos.length / 3;
-    const p = new THREE.Vector3(), q = new THREE.Vector3(), n = new THREE.Vector3();
-    for (let j = 0; j <= nv; j++) {
-      for (let i = 0; i <= nu; i++) {
-        const a = i / nu, b = j / nv;
-        fn(a, b, p);
-        fn(Math.min(1, a + 0.01), b, q);
-        const du = q.clone().sub(p);
-        fn(a, Math.min(1, b + 0.01), q);
-        const dv = q.clone().sub(p);
-        n.crossVectors(du, dv).normalize();
-        if (n.lengthSq() < 0.5) n.set(0, 1, 0);
-        push(p.clone().applyMatrix4(frame), n.transformDirection(frame), [kind, a, b, layer]);
-      }
-    }
-    for (let j = 0; j < nv; j++) {
+    rows.forEach((r, j) => {
+      for (let i = 0; i <= nu; i++) rowFn(r, j, i / nu);
+    });
+    for (let j = 0; j < rows.length - 1; j++) {
       for (let i = 0; i < nu; i++) {
-        const a = base + j * (nu + 1) + i, b2 = a + 1, c = a + nu + 1, d = c + 1;
-        idx.push(a, c, b2, b2, c, d);
+        const a0 = base + j * (nu + 1) + i, b0 = a0 + 1, c0 = a0 + nu + 1, d0 = c0 + 1;
+        idx.push(a0, c0, b0, b0, c0, d0);
       }
     }
   };
-  // falling sheets: a ballistic curve from the lip, slightly convex across
-  for (const T of TIERS) {
-    const drop = T.lipY - T.landY;
-    // front sheet + a slightly narrower back layer just behind it
-    for (const layer of [0, 1]) {
-      const k = layer ? 0.88 : 1;
-      grid(
-        (a, b, out) => {
-          const hw = (T.hw0 + (T.hw1 - T.hw0) * b) * k;
-          const u = (a - 0.5) * 2 * hw + layer * 0.03;
-          const w = T.lipW + (T.landW - T.lipW) * Math.sqrt(b) * (layer ? 0.82 : 1) + 0.04 * Math.sin(a * Math.PI) - layer * 0.04;
-          const y = T.lipY + 0.04 * (1 - b) * (1 - b) - drop * b * b * (1 - 0.15 * (1 - b)) - 0.01 - layer * 0.02;
-          out.set(u, y, w + 0.025 * Math.cos(a * Math.PI * 2) * b);
-        },
-        10,
-        20,
-        0,
-        layer
-      );
-    }
+  const { line, edges: ribbonEdges } = ribbon();
+  // front sheet, then a narrower back veil just behind it (depth)
+  for (const layer of [0, 1]) {
+    const k = layer ? 0.82 : 1;
+    strip(line, layer ? 8 : 12, (r, j, a) => {
+      const [l, rr] = ribbonEdges(r, k);
+      const u = l + (rr - l) * a;
+      const bow = Math.sin(a * Math.PI);
+      const y = r.y + (r.b < 0 ? 0.025 * bow : 0) - layer * 0.015;
+      const w = r.w + (r.b >= 0 ? 0.045 * bow * Math.min(1, r.b * 4) : 0) - layer * 0.05;
+      pushV(u, y, w, [layer ? 0.3 : 0, a, r.b, r.churn], r.tau);
+    });
   }
-  // the spring channel: from the spring down over the lip slab to tier A's lip
+  // the spring channel: from the spring down the gully to the lip (its end matches the ribbon's top)
   {
-    const pts = [new THREE.Vector3(0.05, TIERS[0].lipY + 0.42, -1.4), new THREE.Vector3(-0.05, TIERS[0].lipY + 0.2, -0.95), new THREE.Vector3(0.04, TIERS[0].lipY + 0.07, -0.45), new THREE.Vector3(0, TIERS[0].lipY + 0.03, TIERS[0].lipW)];
-    const c = new THREE.CatmullRomCurve3(pts);
-    grid(
-      (a, b, out) => {
-        const p = c.getPointAt(b);
-        const hw = 0.22 + b * 0.14;
-        out.set(p.x + (a - 0.5) * 2 * hw, p.y + Math.sin(a * Math.PI) * 0.015, p.z);
-      },
-      5,
-      14,
-      1
-    );
+    const T = TIERS[0];
+    const c = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0.05, T.lipY + 0.42, -1.4), new THREE.Vector3(-0.05, T.lipY + 0.2, -0.95), new THREE.Vector3(0.04, T.lipY + 0.08, -0.45), new THREE.Vector3(0, T.lipY + 0.04, T.lipW + LIP_OUT - 0.02),
+    ]);
+    const [l0, r0] = ribbonEdges(line[0], 1);
+    const rows = Array.from({ length: 15 }, (_, j) => j / 14);
+    strip(rows, 5, (b, j, a) => {
+      const p = c.getPointAt(b);
+      const hw = 0.2 + b * ((r0 - l0) / 2 - 0.2);
+      pushV(p.x + (a - 0.5) * 2 * hw, p.y + Math.sin(a * Math.PI) * 0.015, p.z, [1, a, b, 0], b);
+    });
   }
-  // basin pools on the ledges (discs, churning)
+  // foam on the ledges where the falls land (rings spreading, like the plunge pool)
   for (const [k, T] of [[1, TIERS[1]], [2, TIERS[2]]]) {
-    const cw = (TIERS[k - 1].landW + T.lipW) / 2;
-    grid(
-      (a, b, out) => {
-        const ang = a * TAU;
-        const r = b * (0.3 + 0.06 * k) * (1 + 0.12 * Math.sin(ang * 3 + k));
-        out.set(Math.cos(ang) * r * 1.5, T.lipY + 0.035, cw + Math.sin(ang) * r * 0.7);
-      },
-      14,
-      3,
-      2
-    );
+    const P0 = TIERS[k - 1];
+    const cw = (P0.landW + T.lipW + LIP_OUT) / 2;
+    const rows = Array.from({ length: 4 }, (_, j) => j / 3);
+    strip(rows, 16, (b, j, a) => {
+      const ang = a * TAU;
+      const r = b * (0.32 + 0.06 * k) * (1 + 0.14 * Math.sin(ang * 3 + k));
+      pushV(Math.cos(ang) * r * 1.45, P0.landY + 0.04, cw + Math.sin(ang) * r * 0.7, [2, a, b, 0], 0);
+    });
   }
   const wg = new THREE.BufferGeometry();
   wg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  wg.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   wg.setAttribute('aInfo', new THREE.Float32BufferAttribute(info, 4));
+  wg.setAttribute('aTau', new THREE.Float32BufferAttribute(tau, 1));
   wg.setIndex(idx);
+  wg.computeVertexNormals();
   wg.computeBoundingSphere();
   const wu = {
     ...fogUniforms(),
@@ -532,7 +724,7 @@ export function buildFalls(ctx, B, rng) {
     name: 'falls-spray',
     seed: 'falls-spray',
     emitters: [
-      ...TIERS.map((T, i) => ({ p: toWorld(0, T.landY + 0.02, T.landW + 0.02), n: [80, 70, 170][i], spread: T.hw1, across })),
+      ...TIERS.map((T, i) => ({ p: toWorld(0, T.landY + 0.02, T.landW + 0.02), n: [48, 48, 170][i], spread: T.hw1 * 0.8, across })),
       // a low, slow veil of mist over the plunge pool
       { p: toWorld(0, WL + 0.05, TIERS[2].landW + 0.5), n: 40, spread: 1.3, depth: 0.7, across },
     ],

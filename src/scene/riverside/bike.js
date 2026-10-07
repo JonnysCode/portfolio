@@ -362,11 +362,24 @@ function buildDrive(F, s, style, rng) {
     pts.push(v3([BB[0] + Math.cos(a) * rRing, BB[1] + Math.sin(a) * rRing, z]));
   }
   if (LOD.chain[0] === 0) return;
-  F.add(B.metal, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true, 'centripetal'), LOD.chain[0], 0.0042 * (LOD === LODS.full ? 1 : 1.2), LOD.chain[1], true), { color: '#4a4744', cast: false });
-  // rear derailleur: cage plates + pulleys + body
-  for (const p of [pulley1, pulley2]) F.add(B.metal, new THREE.CylinderGeometry(0.012, 0.012, 0.006, 10).rotateX(Math.PI / 2).translate(...p), { color: '#2d2d2d', cast: false });
-  F.add(B.metal, new THREE.BoxGeometry(0.016, 0.085, 0.004).rotateZ(-0.35).translate(REAR[0] + 0.022, REAR[1] - 0.105, z + 0.02), { color: '#3a3a3a', cast: false });
-  F.add(B.metal, new THREE.BoxGeometry(0.03, 0.022, 0.016).rotateZ(0.5).translate(REAR[0] - 0.005, REAR[1] - 0.035, z + 0.02), { color: '#4a4a4a', cast: false });
+  F.add(B.metal, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true, 'centripetal'), LOD.chain[0], 0.0055 * (LOD === LODS.full ? 1 : 1.15), LOD.chain[1], true), { color: '#8a8d90', cast: false });
+  // rear derailleur: B-knuckle on the hanger, a parallelogram of two links,
+  // the P-knuckle, and the cage — two plates with the jockey wheels between
+  const DR = '#3c3d3f';
+  const bk = [REAR[0] - 0.004, REAR[1] - 0.026, z + 0.022];
+  const pk = [REAR[0] + 0.024, REAR[1] - 0.06, z + 0.024];
+  F.add(B.metal, new THREE.BoxGeometry(0.02, 0.03, 0.014).rotateZ(0.3).translate(...bk), { color: DR, cast: false });
+  for (const dy of [-0.007, 0.007]) F.add(B.metal, rod([bk[0] + 0.004, bk[1] + dy, bk[2] + 0.002], [pk[0] - 0.004, pk[1] + dy, pk[2] + 0.002], 0.0055, 0.0055, 5), { color: '#5a5c5f', cast: false });
+  F.add(B.metal, new THREE.BoxGeometry(0.018, 0.026, 0.016).rotateZ(-0.4).translate(...pk), { color: DR, cast: false });
+  const cageA = new THREE.Vector3(...pulley1), cageB = new THREE.Vector3(...pulley2);
+  const cageMid = cageA.clone().add(cageB).multiplyScalar(0.5);
+  const cageLen = cageA.distanceTo(cageB);
+  const cageRot = Math.atan2(cageB.y - cageA.y, cageB.x - cageA.x) - Math.PI / 2;
+  for (const dz of [-0.009, 0.009]) {
+    F.add(B.metal, new THREE.BoxGeometry(0.022, cageLen, 0.0025).rotateZ(cageRot).translate(cageMid.x, cageMid.y, z + 0.012 + dz), { color: DR, cast: false });
+    for (const c of [cageA, cageB]) F.add(B.metal, new THREE.CylinderGeometry(0.011, 0.011, 0.0025, 10).rotateX(Math.PI / 2).translate(c.x, c.y, z + 0.012 + dz), { color: DR, cast: false });
+  }
+  for (const p of [pulley1, pulley2]) F.add(B.metal, new THREE.CylinderGeometry(0.0125, 0.0125, 0.006, 12).rotateX(Math.PI / 2).translate(...p), { color: '#1f1f20', cast: false });
   if (style === 'vintage') {
     // chainguard over the top run
     const cg = [];
@@ -385,12 +398,35 @@ function buildDrive(F, s, style, rng) {
 function buildCrank(F, s, style) {
   const B = bm();
   const z = 0.045;
-  // chainring + spider
-  F.add(B.metal, new THREE.TorusGeometry(0.093, 0.005, LOD === LODS.full ? 4 : 3, LOD.ring).translate(0, 0, z), { color: '#2e2e2e', cast: false });
-  F.add(B.metal, new THREE.CylinderGeometry(0.098, 0.098, 0.0025, LOD.ring, 1, true).rotateX(Math.PI / 2).translate(0, 0, z), { color: '#3a3a3a', cast: false });
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * TAU + 0.4;
-    F.add(B.metal, rod([0, 0, z], [Math.cos(a) * 0.088, Math.sin(a) * 0.088, z], 0.009, 0.006, 4), { color: style === 'vintage' ? '#d8dcdf' : '#2b2b2b', cast: false });
+  // chainring: a solid machined ring with real teeth, on a darker four-arm spider
+  {
+    const teeth = LOD === LODS.full ? 40 : LOD.ring >= 18 ? 28 : 0;
+    const rTip = 0.1, rRoot = 0.093, rIn = 0.074;
+    if (teeth) {
+      const sh = new THREE.Shape();
+      for (let k = 0; k < teeth; k++) {
+        const a0 = (k / teeth) * TAU, st = TAU / teeth;
+        const pt = (a, r) => [Math.cos(a) * r, Math.sin(a) * r];
+        const pts = [pt(a0, rRoot), pt(a0 + st * 0.3, rTip - 0.0015), pt(a0 + st * 0.42, rTip), pt(a0 + st * 0.58, rTip), pt(a0 + st * 0.7, rTip - 0.0015)];
+        pts.forEach(([x, y], i) => (k === 0 && i === 0 ? sh.moveTo(x, y) : sh.lineTo(x, y)));
+      }
+      sh.closePath();
+      const hole = new THREE.Path();
+      hole.absarc(0, 0, rIn, 0, TAU, true);
+      sh.holes.push(hole);
+      const ring = new THREE.ExtrudeGeometry(sh, { depth: 0.004, bevelEnabled: false, curveSegments: 6 });
+      ring.translate(0, 0, z - 0.002);
+      F.add(B.metal, ring, { color: style === 'vintage' ? '#c9cdd0' : '#8d9195', cast: false });
+    } else {
+      F.add(B.metal, new THREE.TorusGeometry(0.093, 0.006, 3, LOD.ring).translate(0, 0, z), { color: '#8d9195', cast: false });
+    }
+    // chainring bolts and the spider arms
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * TAU + 0.4;
+      F.add(B.metal, rod([0, 0, z + 0.003], [Math.cos(a) * 0.08, Math.sin(a) * 0.08, z + 0.003], 0.011, 0.008, 5), { color: style === 'vintage' ? '#d8dcdf' : '#1c1c1d', cast: false });
+      if (teeth) F.add(B.metal, new THREE.CylinderGeometry(0.0045, 0.0045, 0.008, 6).rotateX(Math.PI / 2).translate(Math.cos(a) * 0.08, Math.sin(a) * 0.08, z + 0.004), { color: '#b9bdc0', cast: false });
+    }
+    F.add(B.metal, new THREE.CylinderGeometry(0.022, 0.022, 0.012, 12).rotateX(Math.PI / 2).translate(0, 0, z + 0.002), { color: style === 'vintage' ? '#d8dcdf' : '#1c1c1d', cast: false });
   }
   // spindle
   F.add(B.metal, new THREE.CylinderGeometry(0.01, 0.01, 0.14, 8).rotateX(Math.PI / 2), { color: '#9ea2a5', cast: false });

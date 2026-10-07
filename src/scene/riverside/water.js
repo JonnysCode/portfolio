@@ -21,18 +21,24 @@
 // Look: shallow turquoise → deep teal, painted flow streaks, foam streaks
 // behind rocks, a breathing foam lip along the banks, splash rings where the
 // falls land, sun sparkles (only where the sun actually reaches — shadow
-// aware) and, at night, a few drifting blue-green glints.
+// aware) and, at night, a few drifting blue-green glints, the lanterns, the
+// workshop's lit doorway and the candle boats mirrored in the water (addLamp:
+// a tall streak towards the viewer broken by the ripples, in a soft halo) and
+// a faint cool glitter path under the moon.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { STREAM } from '../../world/layout.js';
 import { getHeight, streamPolyline } from '../../world/ground.js';
 import { sharedUniforms } from '../../core/materials.js';
+import { envUniforms } from '../../world/env/celestial.js';
 import { smoothstep, clamp } from '../../core/rng.js';
 
 const WL = STREAM.waterLevel;
 const GRID = 0.25;
 const TEXEL = 0.1;
 const DEPTH_MIN = -0.25, DEPTH_RANGE = 1.75;
+/** Warm lights mirrored in the water at night (lanterns, the workshop door, candle boats). */
+export const MAX_LAMPS = 8;
 
 /** The stream centre line, extended a little beyond both ends so the pool and the far end get straight flow. */
 function extendedLine() {
@@ -257,6 +263,9 @@ uniform vec3 wDeep;
 uniform vec3 wFoam;
 uniform vec3 wStreak;
 uniform vec4 wImpact[3];  // x, z, radius, strength
+uniform vec4 wLamp[${MAX_LAMPS}];    // warm lights mirrored in the water: x, y, z, radius (0 = off)
+uniform vec3 wLampCol[${MAX_LAMPS}]; // their colour × strength (linear)
+uniform vec3 wMoonDir;
 varying vec4 vFlow;
 varying vec3 vWPos;
 
@@ -390,6 +399,44 @@ const FRAG_LIGHT = /* glsl */ `
   totalEmissiveRadiance += vec3(0.35, 0.95, 0.85) * wGl * smoothstep(0.16, 0.0, length(wcf)) * wNight * 1.6 * (1.0 - wFoamT);
   // foam stays readable in the shade and at night
   totalEmissiveRadiance += wFoam * wFoamT * (0.05 + 0.08 * wNight);
+
+  // night: the lanterns mirrored in the water. Point-light speculars at these
+  // grazing angles are a pixel at most, so each warm light gets a painted
+  // reflection: where the ray reflected off the RIPPLED surface points at the
+  // lamp, measured in azimuth (narrow, the lamp's angular size) and elevation
+  // (wide) — a tall streak towards the viewer, broken up by the ripples, in a
+  // soft halo. Plus a faint cool glitter path under the moon.
+  if (wNight > 0.02) {
+    vec3 wV = normalize(vWPos - cameraPosition);
+    vec3 wR = reflect(wV, wN);
+    vec2 wRh = normalize(wR.xz + vec2(1e-5));
+    float wFres = 0.45 + 0.55 * pow(1.0 - clamp(-wV.y, 0.0, 1.0), 2.0);
+    vec3 wRefl = vec3(0.0);
+    for (int i = 0; i < ${MAX_LAMPS}; i++) {
+      vec4 L = wLamp[i];
+      if (L.w <= 0.0) continue;
+      vec3 d = L.xyz - vWPos;
+      float dist = length(d);
+      vec3 ld = d / dist;
+      // angular distances: azimuth (scaled by the horizontal share) and elevation
+      float th2 = 2.0 * (1.0 - dot(wRh, normalize(ld.xz + vec2(1e-5)))) * dot(ld.xz, ld.xz);
+      float de = wR.y - ld.y;
+      float rho = L.w / dist;
+      float sa = rho * 0.9 + 0.012;
+      float se = rho * 1.6 + 0.085;
+      float core = exp(-th2 / (sa * sa) - de * de / (se * se));
+      float halo = exp(-th2 / (sa * sa * 12.0) - de * de / (se * se * 5.0));
+      wRefl += wLampCol[i] * (core * 1.15 + halo * 0.16) * (1.0 - smoothstep(7.0, 12.0, dist));
+    }
+    // the moon: a column of glints in its azimuth, where ripple facets tilt the
+    // reflected ray up towards it (a soft sheen along the path in between)
+    vec2 wMh = normalize(wMoonDir.xz);
+    float wPath = exp(-2.0 * (1.0 - dot(normalize(wV.xz + vec2(1e-5)), wMh)) / 0.012);
+    float wTilt = -(wR.y + wV.y) / (wAmp * 2.0 + 1e-3);
+    float wMoon = wPath * (smoothstep(0.7, 1.6, wTilt) * 0.9 + 0.1);
+    wRefl += vec3(0.5, 0.68, 1.0) * wMoon * 0.32;
+    totalEmissiveRadiance += wRefl * wFres * wNight * (1.0 - 0.8 * wFoamT) * smoothstep(0.0, 0.05, wDepth);
+  }
 }
 `;
 
@@ -417,6 +464,9 @@ export function buildWater(ctx, { rocks = [], impacts = [] } = {}) {
     wFoam: { value: new THREE.Color(DAY.foam) },
     wStreak: { value: new THREE.Color(DAY.streak) },
     wImpact: { value: [0, 1, 2].map((i) => (impacts[i] ? new THREE.Vector4(impacts[i].x, impacts[i].z, impacts[i].r, impacts[i].strength ?? 1) : new THREE.Vector4(0, 0, 0, 0))) },
+    wLamp: { value: Array.from({ length: MAX_LAMPS }, () => new THREE.Vector4(0, 0, 0, 0)) },
+    wLampCol: { value: Array.from({ length: MAX_LAMPS }, () => new THREE.Color(0, 0, 0)) },
+    wMoonDir: envUniforms.uMoonDir,
   };
   const material = new THREE.MeshStandardMaterial({
     color: '#ffffff',
@@ -438,7 +488,7 @@ export function buildWater(ctx, { rocks = [], impacts = [] } = {}) {
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${FRAG_NORMAL}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${FRAG_LIGHT}`);
   };
-  material.customProgramCacheKey = () => 'riverside-water-v2';
+  material.customProgramCacheKey = () => 'riverside-water-v3';
 
   const mesh = new THREE.Mesh(geo, material);
   mesh.position.y = WL;
@@ -454,11 +504,30 @@ export function buildWater(ctx, { rocks = [], impacts = [] } = {}) {
   const night = Object.fromEntries(Object.entries(NIGHT).map(([k, v]) => [k, new THREE.Color(v)]));
   let lastNight = -1;
   const animate = !ctx.engine?.reducedMotion;
+  let lamps = 0;
+  // phones on the low tier mirror only the first few lights (the lanterns)
+  const lampLimit = detail ? MAX_LAMPS : 4;
   return {
     mesh,
     material,
     uniforms: u,
     bounds: B,
+    /**
+     * Mirror a warm light in the water at night. Returns its slot (move it with
+     * moveLamp) or -1 when all MAX_LAMPS slots are taken.
+     * @param {{x:number,y:number,z:number}} p  the light's centre (world)
+     * @param {{ radius?: number, color?: string, strength?: number }} [o]
+     */
+    addLamp(p, { radius = 0.2, color = '#ffb35c', strength = 1 } = {}) {
+      if (lamps >= lampLimit) return -1;
+      const i = lamps++;
+      u.wLamp.value[i].set(p.x, p.y, p.z, radius);
+      u.wLampCol.value[i].set(color).multiplyScalar(strength);
+      return i;
+    },
+    moveLamp(i, x, y, z) {
+      if (i >= 0) u.wLamp.value[i].set(x, y, z, u.wLamp.value[i].w);
+    },
     update(dt, t) {
       u.wTime.value = animate ? t : t * 0.15;
       const n = ctx.env?.night ?? 0;

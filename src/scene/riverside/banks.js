@@ -8,10 +8,15 @@
 //                                 glinting through the shallows, reed &
 //                                 cattail clumps, ferns, moss, grass, flowers
 //                                 and toadstools on the banks, a mossy fallen
-//                                 log, stepping stones across the outlet
-//   buildPond(ctx, B, rng)        lily pads & water lilies, a little timber
-//                                 jetty with a lantern, a fishing rod & bucket,
-//                                 a frog on a stone, a duck family paddling loops
+//                                 log, stepping stones across the outlet, and
+//                                 where the stream leaves the glen an old
+//                                 trunk across the water with a mossy bank
+//                                 behind it (the stream slips under the log)
+//   buildPond(ctx, B, rng)        lily pads & water lilies (glowing softly at
+//                                 night), a little timber jetty with a lantern,
+//                                 a fishing rod & bucket, a frog on a stone, a
+//                                 duck family paddling loops, and three leaf
+//                                 boats with candles drifting round the middle
 //   buildDrifters(ctx, rng)       leaves (and a paper boat) drifting downstream
 //
 // Everything static lands in the shared Batch. Vegetation stays within ~2.5
@@ -24,7 +29,7 @@ import { getHeight, getPathDistance, getPadAt, getStreamDistance, streamPolyline
 import { materials } from '../../core/materials.js';
 import {
   M, TAU, WOOD, IRON, PEBBLE_TINTS, xf, deform, stoneGeo, mossGeo, board, rod, tube, taperTube, Cards, flushCards,
-  plantFern, plantGrass, addFlower, addToadstool, smooth01,
+  plantFern, plantGrass, addFlower, addToadstool, addIvy, smooth01, paint, noiseA,
 } from './kit.js';
 import { flowAt, depthAt, calmAt } from './water.js';
 
@@ -32,6 +37,7 @@ const WL = STREAM.waterLevel;
 const BRIDGE = { x: RIVERSIDE.bridge.x, z: RIVERSIDE.bridge.z };
 const FALLS = STREAM.falls;
 const POND = STREAM.pond;
+const noiseOf = (x, z) => noiseA(x, z);
 
 /** Keep-out tests for bank dressing. */
 function nearBridge(x, z, pad = 0) {
@@ -233,7 +239,6 @@ export function buildBanks(ctx, B, rng, rocks) {
       placed++;
     }
   }
-  flushCards(B, reedCards, MM.reed, null, 0.3);
 
   // ── bank vegetation: ferns, grass, moss, flowers, toadstools ──
   {
@@ -313,6 +318,181 @@ export function buildBanks(ctx, B, rng, rocks) {
       B.add(MM.pebble, g);
     }
   }
+
+  buildOutlet(B, rng, reedClump);
+  flushCards(B, reedCards, MM.reed, null, 0.3);
+}
+
+/**
+ * Where the stream leaves the glen: an old fallen trunk lies across the water
+ * from bank to bank, and behind it a mossy bank fills the channel, so the
+ * stream slips under the log into a dark, ferny hollow — never into a trench
+ * with sheer walls. Reeds and cattails crowd the log's upstream face.
+ */
+function buildOutlet(B, rng, reedClump) {
+  const MM = M();
+  const sLog = LENGTH - 4.0;
+  const c = lineAt(sLog);
+  const ax = -c.dz, az = c.dx; // across the stream
+  const R = 0.42;
+  const at = (u, along = 0) => [c.x + ax * u + c.dx * along, c.z + az * u + c.dz * along];
+  // ── the log: its ends bedded in the banks, sagging a little over the water ──
+  const us = [-3.7, -1.9, 0, 1.8, 3.5];
+  const axis = us.map((u, i) => {
+    const [x, z] = at(u, 0.12 * Math.sin(i * 1.7));
+    const gy = getHeight(x, z);
+    const y = Math.abs(u) > 3 ? Math.max(gy + R * 0.45, WL + R + 0.2) : WL + R + 0.2 + 0.06 * Math.abs(u) / 1.9;
+    return new THREE.Vector3(x, y, z);
+  });
+  B.add(MM.wood, taperTube(axis, R * 1.08, R * 0.86, 12, 28), { color: '#5d5044' });
+  const A = axis[0], Z = axis[axis.length - 1];
+  const dir = Z.clone().sub(A).normalize();
+  // the root plate at one end: a flare of gnarled roots and a clod of earth
+  for (let k = 0; k < 7; k++) {
+    const a = (k / 7) * TAU + rng.jitter(0.3);
+    const side = new THREE.Vector3(-dir.z, 0, dir.x);
+    const out = side.clone().multiplyScalar(Math.cos(a)).add(new THREE.Vector3(0, Math.sin(a), 0));
+    const p0 = A.clone().addScaledVector(dir, 0.15);
+    const p1 = A.clone().addScaledVector(out, R * 0.9).addScaledVector(dir, -0.25);
+    const p2 = A.clone().addScaledVector(out, R * 1.6 + rng.range(0, 0.4)).addScaledVector(dir, -0.45 - rng.range(0, 0.3));
+    p2.y = Math.max(p2.y, getHeight(p2.x, p2.z) - 0.05);
+    B.add(MM.wood, taperTube([p0, p1, p2], 0.12, 0.025, 5, 8), { color: '#5f4b39', cast: false });
+  }
+  {
+    const m = mossGeo(rng, { r: R * 1.3, h: 0.35, sx: 0.8, sz: 1.2, seg: 10 });
+    xf(m, [A.x - dir.x * 0.3, A.y - R * 0.9, A.z - dir.z * 0.3], [0, Math.atan2(dir.x, dir.z), 0]);
+    B.add(MM.soil, m, { color: '#4a3a2a', cast: false });
+  }
+  // the broken far end: pale end grain and a few splinters
+  B.add(MM.vc, new THREE.CircleGeometry(R * 0.84, 12).lookAt(dir).translate(Z.x + dir.x * 0.01, Z.y, Z.z + dir.z * 0.01), { color: '#b9936a', cast: false });
+  for (let k = 0; k < 5; k++) {
+    const a = rng.next() * TAU;
+    const off = new THREE.Vector3(-dir.z * Math.cos(a), Math.sin(a), dir.x * Math.cos(a)).multiplyScalar(R * rng.range(0.3, 0.75));
+    const g = new THREE.ConeGeometry(0.05, rng.range(0.15, 0.32), 4).translate(0, 0.08, 0);
+    g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().add(new THREE.Vector3(rng.jitter(0.3), rng.jitter(0.3), rng.jitter(0.3))).normalize()));
+    g.translate(Z.x + off.x, Z.y + off.y, Z.z + off.z);
+    B.add(MM.vc, g, { color: '#a8865f', cast: false });
+  }
+  // moss along the top, ferns and toadstools sprouting from it, shelf fungi on the flank,
+  // and strands of moss trailing down to the water
+  const curve = new THREE.CatmullRomCurve3(axis, false, 'centripetal');
+  const P = new THREE.Vector3();
+  const strands = new Cards();
+  for (let i = 0; i < 14; i++) {
+    const t = 0.04 + (i / 13) * 0.92;
+    curve.getPointAt(t, P);
+    const m = mossGeo(rng, { r: rng.range(0.22, 0.32), h: rng.range(0.07, 0.12), sx: 1.5, seg: 9 });
+    xf(m, [P.x, P.y + R * 0.86, P.z], [rng.jitter(0.1), Math.atan2(dir.x, dir.z) + Math.PI / 2 + rng.jitter(0.3), rng.jitter(0.1)]);
+    B.add(MM.moss, m, { color: rng.pick(['#6f8f3a', '#5d7d30', '#7f9a44']), cast: false });
+    if (i % 4 === 1) plantFern(B, rng, P.x, P.y + R * 0.9, P.z, { size: rng.range(0.35, 0.55), fronds: rng.int(6, 9), tilt: 1.2 });
+    if (i % 5 === 3) addToadstool(B, rng, P.x + rng.jitter(0.1), P.y + R * 0.92, P.z + rng.jitter(0.1), { size: rng.range(0.07, 0.11), color: rng.chance(0.6) ? '#c4301f' : '#d7832e' });
+    if (i % 3 === 0) {
+      const sd = rng.chance(0.5) ? 1 : -1;
+      B.add(MM.cap, new THREE.SphereGeometry(0.12, 10, 4, 0, TAU, 0, Math.PI / 2).scale(1, 0.32, 0.75).translate(P.x + c.dx * sd * R * 0.95, P.y + rng.range(-0.1, 0.12), P.z + c.dz * sd * R * 0.95), { color: '#c08a4a', cast: false });
+    }
+    if (i > 3 && i < 11 && i % 2 === 0) {
+      addIvy(B, rng, [P.x + c.dx * R * 0.8, P.y + R * 0.4, P.z + c.dz * R * 0.8], [c.dx * 0.2, -1, c.dz * 0.2], {
+        length: rng.range(0.3, 0.55), droop: 1.5, size: 0.11, density: 1.4, normal: [c.dx, 0, c.dz], cards: strands, stemColor: '#4f5f2a',
+      });
+    }
+  }
+  flushCards(B, strands, MM.ivy, null, 0);
+
+  // ── the bank behind the log: a mossy heightfield filling the channel ──
+  const fillH = (x, z, f) => {
+    const t = f.s - (sLog + 0.15);
+    const k = smooth01(t / 1.5);
+    const hb = 0.12 + 0.08 * noiseOf(x * 0.7, z * 0.7);
+    return WL - 0.08 + (hb - WL + 0.08) * k + k * 0.07 * noiseOf(x * 1.9 + 3, z * 1.9);
+  };
+  {
+    const STEP = 0.15;
+    const x0 = c.x - 5.5, x1 = c.x + 5.5, z0 = c.z - 2.5, z1 = c.z + 10;
+    const nx = Math.round((x1 - x0) / STEP), nz = Math.round((z1 - z0) / STEP);
+    const W = nx + 1;
+    const hs = new Float32Array((nx + 1) * (nz + 1)), gs = new Float32Array((nx + 1) * (nz + 1));
+    const f = { s: 0, u: 0, dx: 0, dz: 1 };
+    for (let j = 0; j <= nz; j++) {
+      for (let i = 0; i <= nx; i++) {
+        const x = x0 + i * STEP, z = z0 + j * STEP;
+        flowAt(x, z, f);
+        gs[j * W + i] = getHeight(x, z);
+        hs[j * W + i] = f.s > sLog + 0.1 ? fillH(x, z, f) : -9;
+      }
+    }
+    const pos = [], col = [], idx = [];
+    const vid = new Int32Array((nx + 1) * (nz + 1)).fill(-1);
+    // (the moss texture brings its own green: these stay olive so the bank sits in the meadow)
+    const cc = new THREE.Color(), moss = new THREE.Color('#7b8650'), mossL = new THREE.Color('#939c5c'), wet = new THREE.Color('#4a4536');
+    const vert = (i, j) => {
+      const k = j * W + i;
+      if (vid[k] >= 0) return vid[k];
+      const x = x0 + i * STEP, z = z0 + j * STEP;
+      const y = Math.max(hs[k], gs[k] - 0.1);
+      vid[k] = pos.length / 3;
+      pos.push(x, y, z);
+      cc.copy(moss).lerp(mossL, 0.5 + 0.5 * noiseOf(x * 1.3, z * 1.3)).lerp(wet, 1 - smooth01((y - WL) / 0.3));
+      col.push(cc.r, cc.g, cc.b);
+      return vid[k];
+    };
+    for (let j = 0; j < nz; j++) {
+      for (let i = 0; i < nx; i++) {
+        const a = j * W + i, b = a + 1, d = a + W, e = d + 1;
+        if (Math.max(hs[a] - gs[a], hs[b] - gs[b], hs[d] - gs[d], hs[e] - gs[e]) < 0.03) continue;
+        const va = vert(i, j), vb = vert(i + 1, j), vd = vert(i, j + 1), ve = vert(i + 1, j + 1);
+        idx.push(va, vd, vb, vb, vd, ve);
+      }
+    }
+    if (idx.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      B.add(MM.moss, g, { cast: false });
+    }
+    // dress it: ferns, grass, cattails & reeds at the water, a mossy boulder or two, toadstools
+    const f2 = { s: 0, u: 0, dx: 0, dz: 1 };
+    let placed = 0;
+    for (let tries = 0; tries < 600 && placed < 70; tries++) {
+      const x = x0 + rng.next() * (x1 - x0), z = z0 + rng.next() * (z1 - z0);
+      flowAt(x, z, f2);
+      if (f2.s < sLog + 0.5 || Math.abs(f2.u) > 3.4) continue;
+      const gy = getHeight(x, z);
+      const y = fillH(x, z, f2);
+      if (y < gy - 0.02 && Math.abs(f2.u) < 2.2) continue; // (outside the channel the ground itself is dressed)
+      const top = Math.max(y, gy);
+      if (top < WL + 0.05) continue;
+      placed++;
+      const k = rng.next();
+      if (k < 0.34) plantFern(B, rng, x, top, z, { size: rng.range(0.45, 0.85), fronds: rng.int(7, 11), tilt: 1.0 });
+      else if (k < 0.58) plantGrass(B, rng, x, top, z, { size: rng.range(0.3, 0.55), blades: rng.int(3, 5) });
+      else if (k < 0.7) {
+        const m = mossGeo(rng, { r: rng.range(0.2, 0.4), h: rng.range(0.06, 0.12), sx: rng.range(1, 1.6) });
+        xf(m, [x, top - 0.02, z], [0, rng.next() * TAU, 0]);
+        B.add(MM.moss, m, { color: rng.pick(['#6f8f3a', '#5d7d30', '#7f9a44']), cast: false });
+      } else if (k < 0.82) for (let q = 0; q < rng.int(3, 6); q++) addFlower(B, rng, x + rng.jitter(0.2), top, z + rng.jitter(0.2), { color: rng.pick(['#7fa7e0', '#9fc0f0', '#f4f0e6', '#f2c14e']), size: 0.045, stem: 0.14 });
+      else if (k < 0.9) addToadstool(B, rng, x, top, z, { size: rng.range(0.07, 0.13), color: rng.chance(0.7) ? '#c4301f' : '#d7832e' });
+      else {
+        const r = rng.range(0.18, 0.36);
+        const g = stoneGeo(rng, { r, sy: rng.range(0.45, 0.65), detail: 1, lump: 0.25 });
+        xf(g, [x, top + r * 0.05, z], [0, rng.next() * TAU, 0]);
+        B.add(MM.pebble, g, { color: rng.pick(PEBBLE_TINTS), cast: r > 0.25 });
+        const m = mossGeo(rng, { r: r * 0.7, h: 0.05 });
+        xf(m, [x, top + r * 0.5, z], [0, rng.next() * TAU, 0]);
+        B.add(MM.moss, m, { color: '#6f8f3a', cast: false });
+      }
+    }
+  }
+  // reeds and cattails crowd the log's upstream face, and the hollow just below it
+  for (const u of [-2.0, -1.3, 1.2, 1.9]) {
+    const [x, z] = at(u, -0.55 + rng.jitter(0.15));
+    reedClump(x, z, rng.int(7, 11));
+  }
+  for (const u of [-1.6, 1.7]) {
+    const [x, z] = at(u, 0.85);
+    reedClump(x, z, rng.int(6, 9));
+  }
 }
 
 // ─── the pond ────────────────────────────────────────────────────────────────
@@ -364,13 +544,13 @@ function addLilyFlower(B, x, y, z, s, rng) {
       }
       g.setAttribute('color', new THREE.BufferAttribute(cc, 3));
       g.scale(s, s, s);
-      B.add(MM.vc, g.translate(x, y, z), { cast: false });
+      B.add(MM.lily, g.translate(x, y, z), { cast: false });
     }
   };
   const pink = rng.pick(['#f2a0b8', '#f7c3d2', '#fff1f4', '#e98aa8']);
   petals(8, 0.13, 0.055, 0.35, rng.next(), pink);
   petals(6, 0.1, 0.045, 0.85, rng.next(), pink);
-  B.add(MM.vc, new THREE.SphereGeometry(0.045 * s, 8, 6).scale(1, 0.6, 1).translate(x, y + 0.04 * s, z), { color: '#efc85a', cast: false });
+  B.add(MM.lily, new THREE.SphereGeometry(0.045 * s, 8, 6).scale(1, 0.6, 1).translate(x, y + 0.04 * s, z), { color: '#efc85a', cast: false });
 }
 
 export function buildPond(ctx, B, rng) {
@@ -382,13 +562,15 @@ export function buildPond(ctx, B, rng) {
 
   // ── lily pads (+ flowers) across the calm water ──
   const spots = [];
+  const lilies = [];
   for (let tries = 0; tries < 900 && spots.length < Math.round(34 * density); tries++) {
     const a = rng.next() * TAU, d = Math.sqrt(rng.next()) * POND.radius * 1.15;
     const x = POND.x + (Math.cos(a) * d) / 0.9, z = POND.z + Math.sin(a) * d;
     const dep = depthAt(x, z);
     if (dep < 0.12 || calmAt(x, z) < 0.3 || nearJetty(x, z, 0.3)) continue;
-    // leave the duck lane free
-    if (Math.abs(Math.hypot((x - POND.x - 0.4) / 1.2, z - POND.z) - 2.5) < 0.55) continue;
+    // leave the duck lane and the candle boats' lane free
+    const lane = Math.hypot((x - POND.x - 0.4) / 1.2, z - POND.z);
+    if (Math.abs(lane - 2.5) < 0.55 || Math.abs(lane - BOAT_LANE) < 0.42) continue;
     const s = rng.range(0.22, 0.42);
     if (spots.some((p) => Math.hypot(p.x - x, p.z - z) < (p.s + s) * 1.02)) continue;
     spots.push({ x, z, s });
@@ -403,7 +585,11 @@ export function buildPond(ctx, B, rng) {
     const g = lilyPadGeometry(rng);
     xf(g, [sp.x, WL + 0.012, sp.z], [rng.jitter(0.03), rng.next() * TAU, rng.jitter(0.03)], [sp.s, 1, sp.s]);
     B.add(MM.vc, g, { cast: false });
-    if (rng.chance(0.3)) addLilyFlower(B, sp.x + rng.jitter(sp.s * 0.3), WL + 0.03, sp.z + rng.jitter(sp.s * 0.3), rng.range(0.8, 1.15), rng);
+    if (rng.chance(0.3)) {
+      const fx = sp.x + rng.jitter(sp.s * 0.3), fz = sp.z + rng.jitter(sp.s * 0.3);
+      addLilyFlower(B, fx, WL + 0.03, fz, rng.range(0.8, 1.15), rng);
+      lilies.push({ x: fx, y: WL + 0.08, z: fz, size: 0.3 });
+    }
   }
 
   // ── jetty: a little timber landing stage on the west shore ──
@@ -474,15 +660,150 @@ export function buildPond(ctx, B, rng) {
 
   // ── a duck family paddling slow loops ──
   const ducks = makeDucks(group, !!ctx.engine?.reducedMotion);
+  // ── little leaf boats carrying candles, drifting round the middle of the pond ──
+  const boats = makeCandleBoats(ctx, group, rng);
 
   return {
     group,
     lantern: group.userData.lantern ?? null,
+    /** Water-lily blossoms (world) — for their soft night halos. */
+    lilies,
+    /** The candle flames (world, updated every frame) — mirrored in the water at night. */
+    flames: boats.flames,
     update(dt, t) {
       frog?.update(t);
       ducks.update(t);
+      boats.update(t);
     },
   };
+}
+
+/**
+ * Candle boats: curled autumn leaves with a stub of candle each, drifting a
+ * slow loop round the middle of the pond (a lane kept free of lily pads), the
+ * flames flickering. Two instanced meshes (leaf + candle, flame) and ONE halo
+ * mesh whose quads follow the boats.
+ */
+const BOAT_LANE = 1.25;
+function makeCandleBoats(ctx, parent, rng) {
+  const MM = M();
+  const N = 3;
+  // the leaf: an outer and an inner shell (a little bowl, pointed at both ends,
+  // its rim curling up), a midrib, a curled stalk at the stern, and the candle
+  const parts = [];
+  const leafCol = ['#d9822b', '#c4562a', '#e0a83a'];
+  const shell = (inner) => {
+    const g = new THREE.SphereGeometry(1, 14, 6, 0, TAU, Math.PI / 2, Math.PI / 2);
+    deform(g, (v) => {
+      // pointed bow & stern: narrow the bowl towards the ends
+      const k = 1 - Math.pow(Math.abs(v.z), 1.6) * 0.55;
+      v.x *= k;
+      v.y *= 1 - Math.abs(v.z) * 0.35;
+    });
+    g.scale(0.085, 0.05, 0.16);
+    if (inner) {
+      g.scale(0.9, 0.82, 0.92);
+      g.translate(0, 0.004, 0);
+      const idx = g.index.array;
+      for (let i = 0; i < idx.length; i += 3) [idx[i + 1], idx[i + 2]] = [idx[i + 2], idx[i + 1]];
+      g.computeVertexNormals();
+    }
+    return g;
+  };
+  const geos = [];
+  {
+    const outer = shell(false);
+    paint(outer, '#b9652a');
+    const inner = shell(true);
+    paintLeaf(inner, '#e09a3c', '#f2c062');
+    const rib = rod([0, -0.03, -0.15], [0, -0.03, 0.15], 0.004, 0.003, 3);
+    paint(rib, '#f4d48a');
+    const stalk = tube([new THREE.Vector3(0, -0.01, -0.15), new THREE.Vector3(0, 0.01, -0.2), new THREE.Vector3(0, 0.045, -0.21), new THREE.Vector3(0, 0.05, -0.18)], 0.006, 4, 8);
+    paint(stalk, '#7a5a32');
+    const candle = new THREE.CylinderGeometry(0.022, 0.024, 0.07, 10).translate(0, -0.005, 0.01);
+    paint(candle, '#f3e8cf');
+    const drip = new THREE.SphereGeometry(0.026, 10, 4, 0, TAU, 0, Math.PI / 2).scale(1, 0.35, 1).translate(0, 0.028, 0.01);
+    paint(drip, '#fbf3df');
+    const wick = new THREE.CylinderGeometry(0.0025, 0.0025, 0.018, 4).translate(0, 0.04, 0.01);
+    paint(wick, '#2b1d14');
+    geos.push(outer, inner, rib, stalk, candle, drip, wick);
+  }
+  for (const g of geos) {
+    for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'color'].includes(k)) g.deleteAttribute(k);
+    if (!g.index) g.setIndex([...Array(g.attributes.position.count).keys()]);
+  }
+  const hull = new THREE.InstancedMesh(mergeGeometries(geos, false), MM.vc, N);
+  hull.name = 'candle-boats';
+  hull.castShadow = false;
+  hull.frustumCulled = false;
+  const flameGeo = new THREE.SphereGeometry(0.016, 8, 6).scale(1, 2.0, 1);
+  deform(flameGeo, (v) => {
+    // a teardrop: pinched towards the tip
+    if (v.y > 0) {
+      v.x *= 1 - v.y / 0.05;
+      v.z *= 1 - v.y / 0.05;
+    }
+  });
+  flameGeo.translate(0, 0.066, 0.01);
+  const flames = new THREE.InstancedMesh(flameGeo, MM.lamp, N);
+  flames.name = 'candle-flames';
+  flames.castShadow = false;
+  flames.frustumCulled = false;
+  for (let i = 0; i < N; i++) hull.setColorAt?.(i, new THREE.Color('#ffffff').lerp(new THREE.Color(leafCol[i]), 0.25));
+  parent.add(hull, flames);
+  // halos: one quad per flame, moved with the boats
+  const halo = ctx.props?.glowQuads?.(Array.from({ length: N }, () => ({ x: 0, y: 0, z: 0, size: 0.42 })), '#ffb35c', { day: 0.0, night: 0.62 });
+  if (halo) {
+    halo.frustumCulled = false;
+    parent.add(halo);
+  }
+  const hp = halo?.geometry.attributes.position;
+  const cx = POND.x + 0.4, cz = POND.z;
+  const reduced = !!ctx.engine?.reducedMotion;
+  const speed = reduced ? 0.012 : 0.04;
+  const boats = Array.from({ length: N }, (_, i) => ({ a0: (i / N) * TAU + rng.jitter(0.4), wob: rng.next() * TAU, spin: rng.jitter(0.25), yaw: rng.next() * TAU }));
+  const out = Array.from({ length: N }, () => new THREE.Vector3());
+  const o = new THREE.Object3D();
+  function update(t) {
+    for (let i = 0; i < N; i++) {
+      const b = boats[i];
+      const a = b.a0 + t * speed;
+      const r = BOAT_LANE * (1 + 0.1 * Math.sin(a * 3 + b.wob));
+      const x = cx + Math.cos(a) * r * 1.2, z = cz + Math.sin(a) * r;
+      const bob = reduced ? 0 : Math.sin(t * 1.9 + b.wob) * 0.006;
+      o.position.set(x, WL + 0.028 + bob, z);
+      o.rotation.set(reduced ? 0 : Math.sin(t * 1.3 + b.wob) * 0.05, b.yaw + t * b.spin, reduced ? 0 : Math.sin(t * 1.7 + b.wob * 2) * 0.05);
+      o.scale.setScalar(1);
+      o.updateMatrix();
+      hull.setMatrixAt(i, o.matrix);
+      // the flame flickers (a touch taller / shorter)
+      const fl = reduced ? 1 : 1 + 0.12 * Math.sin(t * 13.0 + i * 2.1) * Math.sin(t * 7.3 + i);
+      o.scale.set(1, fl, 1);
+      o.updateMatrix();
+      flames.setMatrixAt(i, o.matrix);
+      out[i].set(0, 0.07, 0.01).applyMatrix4(o.matrix);
+      if (hp) for (let k = 0; k < 4; k++) hp.setXYZ(i * 4 + k, out[i].x, out[i].y + 0.02, out[i].z);
+    }
+    hull.instanceMatrix.needsUpdate = true;
+    flames.instanceMatrix.needsUpdate = true;
+    if (hp) hp.needsUpdate = true;
+  }
+  update(0);
+  return { flames: out, update };
+}
+
+/** Leaf colouring inside the boat: warm gold towards the middle, deeper at the rim. */
+function paintLeaf(geo, edge, mid) {
+  const a = new THREE.Color(edge), b = new THREE.Color(mid), c = new THREE.Color();
+  const pos = geo.attributes.position;
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const r = Math.min(1, Math.hypot(pos.getX(i) / 0.085, pos.getZ(i) / 0.16));
+    c.copy(b).lerp(a, smooth01(r));
+    col.set([c.r, c.g, c.b], i * 3);
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
 }
 
 // ─── little animals ──────────────────────────────────────────────────────────

@@ -19,8 +19,9 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { materials } from '../../core/materials.js';
+import { materials, sharedUniforms } from '../../core/materials.js';
 import { createNoise2D } from '../../core/noise.js';
+import { haloColor } from '../../props/glow.js';
 
 export const TAU = Math.PI * 2;
 export const noiseA = createNoise2D(5113);
@@ -82,10 +83,13 @@ export function M() {
     lamp: m.glow('#ffd9a0', { day: 1.1, night: 2.8 }),
     bulb: m.glow('#ffe2a6', { day: 0.9, night: 3.2 }),
     glowBlue: m.glow('#86e6d6', { day: 0.3, night: 2.4 }),
+    // fairy-light bulbs: amber (the halo colour of '#ffb35c'), gentler than the lamps
+    fairy: m.glow(`#${haloColor('#ffb35c').getHexString()}`, { day: 0.45, night: 1.9 }),
     fern: m.foliage({ variant: 'fern', wind: { strength: 0.03, base: 0, speed: 1.5 } }),
     grass: m.foliage({ variant: 'grass', wind: { strength: 0.05, base: 0, speed: 1.8 } }),
     ivy: m.foliage({ variant: 'ivy', wind: { strength: 0.006, base: 0, speed: 1.3 } }),
     reed: m.foliage({ variant: 'grass', color: '#7d9a48', wind: { strength: 0.06, base: 0, speed: 1.9 } }),
+    lily: lilyMaterial(),
   };
   // dressed stones share the wall material (one draw call for all masonry); a few
   // near-duplicates are folded together to keep the riverside's mesh count low
@@ -95,11 +99,29 @@ export function M() {
   MATS.stem = MATS.vc;
   // small-part materials never cast shadows (keeps the shadow pass and the mesh count down);
   // the gills do (double-sided) — they close a cap's shell so its shadow is solid
-  NEVER_CAST = new Set([MATS.moss, MATS.soil, MATS.stem, MATS.plaster, MATS.planks, MATS.fabric, MATS.rope, MATS.leafy, MATS.lamp, MATS.bulb, MATS.glowBlue, MATS.fern, MATS.grass, MATS.ivy, MATS.reed, MATS.pebble, MATS.metal]);
+  NEVER_CAST = new Set([MATS.lily, MATS.fairy, MATS.moss, MATS.soil, MATS.stem, MATS.plaster, MATS.planks, MATS.fabric, MATS.rope, MATS.leafy, MATS.lamp, MATS.bulb, MATS.glowBlue, MATS.fern, MATS.grass, MATS.ivy, MATS.reed, MATS.pebble, MATS.metal]);
   ALWAYS_CAST = new Set([MATS.cap, MATS.rock]);
   // stones get per-vertex shading variation (grimy undersides, mottling)
   VARIED = new Set([MATS.wallStone, MATS.rock, MATS.pebble]);
   return MATS;
+}
+
+/**
+ * Water-lily blossoms: vertex-coloured petals that glow softly at night (a
+ * lilac-white emissive tinted by each petal's own colour, following the shared
+ * night uniform — no per-frame work).
+ */
+function lilyMaterial() {
+  const mat = new THREE.MeshStandardMaterial({ color: '#ffffff', vertexColors: true, roughness: 0.55, emissive: '#e6dcff', emissiveIntensity: 1 });
+  mat.name = 'riverside-lily';
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uLilyNight = sharedUniforms.uNight;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uLilyNight;')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance = emissive * mix(vec3(1.0), vColor.rgb, 0.45) * 0.32 * uLilyNight;');
+  };
+  mat.customProgramCacheKey = () => 'riverside-lily';
+  return mat;
 }
 
 // ─── vertex colours ─────────────────────────────────────────────────────────

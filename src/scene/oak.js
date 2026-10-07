@@ -2,9 +2,12 @@
 // THE GREAT OAK — the hero of the glen.
 //
 // A colossal, gnarled, slowly twisting oak: buttress roots snaking over the
-// moss, a door niche at its foot (the Schreinerei door goes there), hollows,
-// burls and knots, a fork at y ≈ 17 into massive sweeping limbs, and a huge
-// crown of painterly leaf masses. All procedural (see ./oak/*).
+// moss, a bole of fused, wrung stems (broad lobes and cords spiralling a
+// quarter turn as it rises, big burls) that flares like a vase into the fork,
+// a door niche at its foot (the Schreinerei door goes there), hollows and
+// knots, massive limbs kinked at knobbly elbows, and a huge crown of painterly
+// leaf masses with windows onto the limbs and sun-kissed tops. All procedural
+// (see ./oak/*).
 //
 // Exposes for other builders:
 //   ctx.oak = {

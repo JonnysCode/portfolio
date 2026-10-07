@@ -335,8 +335,9 @@ export function buildWorkshop(ctx, B, rng, halos) {
     }
     // ledges & brace on the (now visible) inner face
     const ledges = [0.25, SPRING_Y - 0.32];
-    for (const ly of ledges) D.add(MM.wood, board(leafW - 0.06, 0.13, 0.04, { rng }).translate(leafW / 2, ly, zin * 0.045), { color: WOOD.oak });
-    D.add(MM.wood, boardBetween([0.1, ledges[0] + 0.06, zin * 0.045], [leafW - 0.1, ledges[1] - 0.06, zin * 0.045], 0.12, 0.035, { rng, up: [0, 0, 1] }), { color: WOOD.oak });
+    // (weathered like the planks they hold — a touch darker — never fresh orange oak)
+    for (const ly of ledges) D.add(MM.timber, board(leafW - 0.06, 0.13, 0.04, { rng }).translate(leafW / 2, ly, zin * 0.045), { color: rng.pick(['#76624f', '#7a6553']) });
+    D.add(MM.timber, boardBetween([0.1, ledges[0] + 0.06, zin * 0.045], [leafW - 0.1, ledges[1] - 0.06, zin * 0.045], 0.12, 0.035, { rng, up: [0, 0, 1] }), { color: '#735f4d' });
     // strap hinges on the outer face + a ring pull
     for (const ly of ledges) {
       D.add(MM.metal, new THREE.BoxGeometry(leafW * 0.62, 0.05, 0.012).translate(leafW * 0.31, ly, -zin * 0.032), { color: IRON, cast: false });
@@ -347,7 +348,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
     }
     D.add(MM.metal, new THREE.TorusGeometry(0.05, 0.009, 4, 12).translate(leafW - 0.12, leafH * 0.48, zin * 0.05), { color: IRON, cast: false });
     // a wooden prop wedge holding it open
-    D.add(MM.wood, new THREE.BoxGeometry(0.12, 0.06, 0.1).translate(leafW - 0.05, 0.03, zin * 0.08), { color: WOOD.oak, cast: false });
+    D.add(MM.timber, new THREE.BoxGeometry(0.12, 0.06, 0.1).translate(leafW - 0.05, 0.03, zin * 0.08), { color: '#6f5b49', cast: false });
   }
 
   // ── interior: floor, ceiling, lamp ───────────────────────────────────────
@@ -839,8 +840,9 @@ export function buildWorkshop(ctx, B, rng, halos) {
       F.add(MM.vc, new THREE.TubeGeometry(c, 16, 0.008, 3, false), { color: '#2a2622', cast: false });
       for (let k = 1; k < 5; k++) {
         const p = c.getPointAt(k / 5);
-        F.add(MM.bulb, new THREE.SphereGeometry(0.035, 6, 5).scale(1, 1.3, 1).translate(p.x, p.y - 0.05, p.z), { cast: false });
-        halos.push({ ...toWorld(p.x, p.y - 0.05, p.z), size: 0.42 });
+        // small amber bulbs (like the oak's and the cottages' strands), so the lit doorway stays the focus
+        F.add(MM.fairy, new THREE.SphereGeometry(0.021, 6, 5).scale(1, 1.3, 1).translate(p.x, p.y - 0.045, p.z), { cast: false });
+        halos.push({ ...toWorld(p.x, p.y - 0.045, p.z), size: 0.3 });
       }
     }
   }
@@ -947,7 +949,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
   // Jonny's own gravel build, cobalt blue with tan-wall tyres, up on the stand
   // at the front of the yard — big and side-on to the spot camera
   const hero = makeBike({ style: 'gravel', spin: true, spinFront: false, seed: 'hero', scale: 0.96, color: '#2f68d0', tape: '#6b4a2e' });
-  const heroPos = new THREE.Vector3(-1.72, 0.22, 3.82);
+  const heroPos = new THREE.Vector3(-1.72, 0.22, 3.42);
   hero.group.position.copy(heroPos);
   hero.group.rotation.y = 0.1;
   group.add(hero.group);
@@ -956,11 +958,11 @@ export function buildWorkshop(ctx, B, rng, halos) {
     // repair stand: tripod, mast, arm and clamp gripping the seatpost
     const post = hero.dims.saddle.clone().add(new THREE.Vector3(0.05, -0.14, 0)).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.1).add(heroPos);
     const mastX = post.x - 0.32, mastZ = post.z - 0.45;
-    const STAND = '#3a3d40';
-    F.add(MM.glossy, rod([mastX, 0.1, mastZ], [mastX, post.y + 0.05, mastZ], 0.024, 0.022, 8), { color: STAND });
+    const STAND = '#4a5057';
+    F.add(MM.glossy, rod([mastX, 0.1, mastZ], [mastX, post.y + 0.05, mastZ], 0.03, 0.026, 8), { color: STAND });
     for (let i = 0; i < 3; i++) {
       const a = (i / 3) * TAU + 0.4;
-      F.add(MM.glossy, rod([mastX, 0.16, mastZ], [mastX + Math.sin(a) * 0.45, 0.01, mastZ + Math.cos(a) * 0.45], 0.017, 0.015, 6), { color: STAND });
+      F.add(MM.glossy, rod([mastX, 0.16, mastZ], [mastX + Math.sin(a) * 0.45, 0.01, mastZ + Math.cos(a) * 0.45], 0.022, 0.018, 6), { color: STAND });
       F.add(MM.vc, new THREE.SphereGeometry(0.026, 6, 4).translate(mastX + Math.sin(a) * 0.45, 0.015, mastZ + Math.cos(a) * 0.45), { color: '#1f1e1d', cast: false });
     }
     F.add(MM.metal, rod([mastX, post.y + 0.05, mastZ], [post.x, post.y + 0.02, post.z], 0.017, 0.017, 6), { color: '#9ea2a5' });
@@ -971,13 +973,14 @@ export function buildWorkshop(ctx, B, rng, halos) {
     F.add(MM.metal, new THREE.BoxGeometry(0.02, 0.012, 0.16).translate(mastX - 0.06, 0.66, mastZ - 0.05), { color: '#c9cdd0', cast: false });
     F.add(MM.vc, new THREE.CylinderGeometry(0.015, 0.015, 0.12, 6).rotateZ(Math.PI / 2).translate(mastX + 0.05, 0.665, mastZ - 0.03), { color: '#d9a441', cast: false });
   }
-  // the mechanic, at the bars beside the front wheel (never in front of the bike)
+  // the mechanic, on the far side of the bike at the bars, facing it and
+  // working on the front hub (the bike stays clear in front of him)
   let mechanic = null;
   try {
     mechanic = ctx.props.makePerson({ seed: 'velo-mechanic', name: 'Mechanic', holding: 'wrench', action: 'work', apron: true, apronColor: '#3f5f73', hat: 'bandana', hatColor: '#b03a2e', hair: 'curly', shirt: '#e8a838', beard: true });
-    const mp = new THREE.Vector3(-0.5, 0, 3.55);
+    const mp = new THREE.Vector3(-1.28, 0, heroPos.z - 0.62);
     mechanic.group.position.copy(mp);
-    mechanic.group.rotation.y = -1.15;
+    mechanic.group.rotation.y = 0.3;
     group.add(mechanic.group);
     // only the body casts (one caster, not a handful)
     let first = true;
@@ -1161,7 +1164,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
       const x = rng.range(-3.6, 4.2), z = rng.range(0.5, 4.8);
       if (Math.hypot(x, z) < wallR(0) + 0.5) continue;
       if (Math.abs(x) < 1.6 && z > 1.6 && z < 4.0) continue; // the apron & the door
-      if (x < -0.4 && z > 2.6 && z < 4.7) continue; // the repair stand
+      if (x < -0.4 && z > 2.2 && z < 4.4) continue; // the repair stand & the mechanic
       if (x > 1.4 && x < 2.6 && z > 2.6 && z < 3.5) continue; // the truing stand
       const wp = toWorld(x, 0, z);
       if (getPathDistance(wp.x, wp.z) < 1.2 || isInWater(wp.x, wp.z, 0.3)) continue;
