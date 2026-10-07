@@ -55,7 +55,7 @@ export function makeMats(ctx) {
     moss: () => m.surface('moss'),
     bark: () => m.surface('bark'),
     /** Bark with moss creeping over its up-facing side (roots on the ground). */
-    mossyBark: () => m.surface('bark', { mossy: 0.55 }),
+    mossyBark: (mossy = 0.55) => m.surface('bark', { mossy }),
     leaf: () => m.surface('leaf', { side: THREE.DoubleSide }),
     paper: () => m.surface('paper'),
     fabric: (color = '#c9b79a') => proxy(vcSurface('fabric'), color),
