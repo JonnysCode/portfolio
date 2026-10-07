@@ -555,6 +555,8 @@ export function rod(a, b, r1, r2 = r1, radial = 6, open = false) {
 
 /** A lumpy stone (flattened noisy icosphere). opts: { r, sx, sy, sz, lump, detail, flatTop, flatBottom } */
 export function stoneGeo(rng, { r = 0.2, sx = 1, sy = 0.6, sz = 1, lump = 0.22, detail = 1, flatTop = 0.55, flatBottom = -0.6, uvScale = 1.6, sphere = null } = {}) {
+  // (lower tiers: a 6 × 4 sphere — 36 triangles — instead of a once-subdivided icosahedron's 80)
+  if (!sphere && detail === 1 && LOD.k < 1) sphere = [6, 4];
   // (sphere: [widthSegments, heightSegments] — a cheaper tessellation than icosahedron detail 2)
   let g = sphere ? new THREE.SphereGeometry(1, segs(sphere[0], 6), segs(sphere[1], 4)) : new THREE.IcosahedronGeometry(1, detail >= 2 ? icoDetail(detail) : detail);
   g.deleteAttribute('normal');
@@ -660,7 +662,7 @@ export function stoneTint(rng, tints = MASONRY_TINTS, spread = 1) {
  */
 export function cushionStone(rng, w, h, proud, { color = '#8a8273', segs: nSeg = 10, round = 3.2, lump = 0.1, tuck = 0.03, rim = 0.5 } = {}) {
   // (fewer outline points and one ring less on the lower tiers)
-  const segs = Math.max(6, Math.round(nSeg * (LOD.k < 1 ? LOD.k + 0.15 : 1)));
+  const segs = LOD.k < 1 ? 6 : nSeg;
   const RINGS = LOD.k < 0.8 ? [[0.62, 1.0], [1.0, 0]] : [[0.52, 1.0], [0.86, 0.74], [1.0, 0]]; // [radius fraction, height fraction]
   const n = round * rng.range(0.75, 1.3);
   const ox = rng.next() * 50, oy = rng.next() * 50;
@@ -717,7 +719,7 @@ export function cushionStone(rng, w, h, proud, { color = '#8a8273', segs: nSeg =
  * ≈ 80 triangles.
  */
 export function roundStone(rng, w, h, d, { color = '#8a8273', box = 0.42, lump = 0.07, under = 0.4, segs: nSeg = 8, rows = 6, sag = 0.05 } = {}) {
-  let g = new THREE.SphereGeometry(1, segs(nSeg, 6), segs(rows, 4));
+  let g = new THREE.SphereGeometry(1, segs(nSeg, Math.min(6, nSeg)), segs(rows, Math.min(4, rows)));
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -873,10 +875,10 @@ export class Cards {
     this.idx = [];
   }
   /** A card with its stem at `base`, growing along `up`, facing `normal`, height s (width s·aspect). */
-  add(base, up, normal, s, { aspect = 1, flip = false, bend = 0 } = {}) {
+  add(base, up, normal, s, { aspect = 1, flip = false, bend = 0, rows: nRows = 3 } = {}) {
     const across = _cx.crossVectors(up, normal).normalize();
     const n0 = this.pos.length / 3;
-    const rows = bend ? 3 : 1;
+    const rows = bend ? nRows : 1;
     for (let r = 0; r <= rows; r++) {
       const t = r / rows;
       const droop = bend * t * t;
@@ -922,7 +924,7 @@ export function addFlower(F, rng, x, y, z, { color = null, size = 0.06, stem = 0
   F.add(MM.vc, xf(new THREE.CylinderGeometry(0.006, 0.008, h, 3, 1, true).translate(0, h / 2, 0), [x, y, z], lean), { color: '#4f7a34', cast: false });
   const tip = new THREE.Vector3(0, h, 0).applyEuler(new THREE.Euler(lean[0], 0, lean[2])).add(new THREE.Vector3(x, y, z));
   const petals = rng.int(4, 5);
-  const head = new THREE.CircleGeometry(1, petals * 3);
+  const head = new THREE.CircleGeometry(1, petals * (LOD.k < 1 ? 2 : 3));
   deform(head, (v) => {
     const a = Math.atan2(v.y, v.x);
     const r = Math.hypot(v.x, v.y);
@@ -931,7 +933,7 @@ export function addFlower(F, rng, x, y, z, { color = null, size = 0.06, stem = 0
   });
   head.rotateX(-Math.PI / 2 + lean[0] * 0.8).rotateZ(lean[2] * 0.8).rotateY(rng.next() * TAU);
   F.add(MM.vc, head.translate(tip.x, tip.y, tip.z), { color: c, cast: false });
-  F.add(MM.vc, new THREE.ConeGeometry(size * 0.3, size * 0.22, 5, 1).translate(tip.x, tip.y + size * 0.1, tip.z), { color: '#e8b33a', cast: false });
+  F.add(MM.vc, new THREE.ConeGeometry(size * 0.3, size * 0.22, LOD.k < 1 ? 4 : 5, 1).translate(tip.x, tip.y + size * 0.1, tip.z), { color: '#e8b33a', cast: false });
 }
 
 /** A tuft of grass cards at (x, y, z) into `cards` (a Cards set). */
@@ -952,7 +954,7 @@ export function addFern(cards, rng, x, y, z, { size = 0.5, fronds = 7, tilt = 0.
     const up = new THREE.Vector3(out.x * tilt, 0.75 + rng.jitter(0.15), out.z * tilt).normalize();
     const nrm = new THREE.Vector3().crossVectors(up, new THREE.Vector3(Math.cos(a), 0, -Math.sin(a))).normalize();
     if (nrm.y < 0) nrm.negate();
-    cards.add(new THREE.Vector3(x, y, z), up, nrm, size * rng.range(0.75, 1.15), { aspect: 0.55, bend: 0.25 });
+    cards.add(new THREE.Vector3(x, y, z), up, nrm, size * rng.range(0.75, 1.15), { aspect: 0.55, bend: 0.25, rows: LOD.k < 0.5 ? 1 : LOD.k < 1 ? 2 : 3 });
   }
 }
 
@@ -962,22 +964,25 @@ export function addFern(cards, rng, x, y, z, { size = 0.5, fronds = 7, tilt = 0.
  */
 export function addToadstool(F, rng, x, y, z, { size = 0.12, color = '#c4301f', lean = 0.18, warts = true, gill = '#e3cfa8' } = {}) {
   const MM = M();
+  // (lower tiers: fewer segments, no stem ring, fewer warts — they are a few pixels tall on a phone)
+  const lo = LOD.k < 1, rad = LOD.k < 0.5 ? 5 : lo ? 6 : 8;
   const h = size * rng.range(1.1, 1.8);
   const rx = rng.jitter(lean), rz = rng.jitter(lean), ry = rng.next() * TAU;
-  const stem = new THREE.CylinderGeometry(size * 0.15, size * 0.22, h, 6, 1, true);
+  const stem = new THREE.CylinderGeometry(size * 0.15, size * 0.22, h, lo ? 5 : 6, 1, true);
   stem.translate(0, h / 2, 0);
-  const ring = new THREE.CylinderGeometry(size * 0.2, size * 0.24, size * 0.06, 6, 1, true).translate(0, h * 0.78, 0);
   const capR = size * rng.range(0.5, 0.62);
-  const cap = new THREE.SphereGeometry(capR, 8, 3, 0, TAU, 0, Math.PI / 2);
+  const cap = new THREE.SphereGeometry(capR, rad, lo ? 2 : 3, 0, TAU, 0, Math.PI / 2);
   cap.scale(1, rng.range(0.55, 0.85), 1);
   cap.translate(0, h - capR * 0.08, 0);
-  const under = new THREE.CircleGeometry(capR * 0.98, 8).rotateX(Math.PI / 2).translate(0, h - capR * 0.06, 0);
-  for (const [g, c, m] of [[stem, '#efe5cf', MM.stem], [ring, '#efe5cf', MM.stem], [cap, color, MM.cap], [under, gill, MM.vc]]) {
+  const under = new THREE.CircleGeometry(capR * 0.98, rad).rotateX(Math.PI / 2).translate(0, h - capR * 0.06, 0);
+  const parts = [[stem, '#efe5cf', MM.stem], [cap, color, MM.cap], [under, gill, MM.vc]];
+  if (!lo) parts.splice(1, 0, [new THREE.CylinderGeometry(size * 0.2, size * 0.24, size * 0.06, 6, 1, true).translate(0, h * 0.78, 0), '#efe5cf', MM.stem]);
+  for (const [g, c, m] of parts) {
     xf(g, [x, y, z], [rx, ry, rz]);
     F.add(m, g, { color: c, cast: false });
   }
   if (warts) {
-    const n = rng.int(3, 5);
+    const n = LOD.k < 0.5 ? 1 : lo ? rng.int(2, 3) : rng.int(3, 5);
     for (let i = 0; i < n; i++) {
       const a = rng.next() * TAU, el = rng.range(0.35, 1.25);
       const sp = new THREE.OctahedronGeometry(size * rng.range(0.045, 0.075), 0);
@@ -997,7 +1002,7 @@ export function addToadstool(F, rng, x, y, z, { size = 0.12, color = '#c4301f', 
  * with normal `normal` (gravity pulls hanging strands down), with ivy cards
  * into `cards`. `surface(p, nrm)` may snap p onto a surface and write its normal.
  */
-export function addIvy(F, rng, start, dir, { length = 1.2, droop = 0.6, size = 0.16, density = 1, normal = [0, 0, 1], surface = null, cards, stemColor = '#5a4a32' } = {}) {
+export function addIvy(F, rng, start, dir, { length = 1.2, droop = 0.6, size = 0.16, density = 1, normal = [0, 0, 1], surface = null, cards, stemColor = '#5a4a32', stem = true } = {}) {
   const pts = [];
   const p = new THREE.Vector3(start[0], start[1], start[2]);
   const d = new THREE.Vector3(dir[0], dir[1], dir[2]).normalize();
@@ -1014,7 +1019,7 @@ export function addIvy(F, rng, start, dir, { length = 1.2, droop = 0.6, size = 0
     p.addScaledVector(d, step);
   }
   // (a hair-thin stem: one tube segment per step is plenty; the low tier draws only the leaves)
-  if (pts.length >= 2 && LOD.k > 0.5) F.add(M().vc, tube(pts, 0.007, 3, Math.max(4, Math.round(pts.length * (LOD.k < 1 ? 0.6 : 1)))), { color: stemColor, cast: false });
+  if (stem && pts.length >= 2 && LOD.k > 0.5) F.add(M().vc, tube(pts, 0.007, 3, Math.max(4, Math.round(pts.length * (LOD.k < 1 ? 0.6 : 1)))), { color: stemColor, cast: false });
   const count = Math.round(n * 0.75 * density);
   const up = new THREE.Vector3();
   const nn = new THREE.Vector3();

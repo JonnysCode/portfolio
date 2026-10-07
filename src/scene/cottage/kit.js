@@ -55,9 +55,9 @@ export function mats() {
   const m = materials;
   M = {
     cap: velvetCap(m.surface('mushroomCap', { color: '#ffffff', vertexColors: true, roughness: 1.55 })),
-    // the white flakes on the caps: the glen's enchanted-agaric spot material (faint
-    // cream-mint glow at night, see world/vegetation/mushrooms.js updateMushroomGlow)
-    warts: mushroomGlowMaterials({ materials: m }).warts,
+    // the cream warts on the caps: the glen's enchanted-agaric spot material (faint
+    // cream-mint glow at night) with a warm lift by day — see creamWarts()
+    warts: creamWarts(mushroomGlowMaterials({ materials: m }).warts),
     gills: bounceGills(m.surface('gills', { gills: 'cone', side: THREE.DoubleSide, vertexColors: true })),
     stem: m.surface('mushroomStem', { vertexColors: true }),
     plaster: m.surface('plaster', { vertexColors: true }),
@@ -119,6 +119,29 @@ function bounceGills(base) {
   gillMat = g;
   return g;
 }
+
+/**
+ * The caps' warts: raised cream domes in the cap's shade would read khaki-grey
+ * with a plain standard material (the cap itself has a soft wrap/velvet term),
+ * so this clone (never the cached original; same shader program) is white with
+ * the true cream in the vertex colours, plus a faint warm-white "subsurface"
+ * lift by day that hands over to the glen's cream-mint enchanted-agaric glow at
+ * night (same levels & ramp as world/vegetation/mushrooms.js updateMushroomGlow,
+ * driven here by setCottageNight()).
+ */
+const WART_GLOW = { day: '#fff1d8', night: '#e4ffd8', dayI: 0.07, nightI: 0.42 };
+let wartMat = null;
+function creamWarts(base) {
+  const w = base.clone();
+  w.name = 'cottage-warts';
+  w.color.set('#ffffff');
+  w.emissive = new THREE.Color(WART_GLOW.day);
+  w.emissiveIntensity = WART_GLOW.dayI;
+  wartMat = w;
+  return w;
+}
+const _wDay = new THREE.Color(WART_GLOW.day);
+const _wNight = new THREE.Color(WART_GLOW.night);
 
 /**
  * The caps' skin: velvety rather than plastic — the texture's roughness is
@@ -233,6 +256,11 @@ export function setCottageNight(night) {
   if (gillMat) gillMat.emissiveIntensity = GILL_BOUNCE.day + (GILL_BOUNCE.night - GILL_BOUNCE.day) * night;
   if (paperMat) paperMat.emissiveIntensity = PAPER_LAMP.day + (PAPER_LAMP.night - PAPER_LAMP.day) * night;
   if (limeMat) limeMat.emissiveIntensity = LIME_BOUNCE.day + (LIME_BOUNCE.night - LIME_BOUNCE.day) * night;
+  if (wartMat) {
+    const k = THREE.MathUtils.smoothstep(night, 0.1, 0.85);
+    wartMat.emissive.lerpColors(_wDay, _wNight, k);
+    wartMat.emissiveIntensity = WART_GLOW.dayI + (WART_GLOW.nightI - WART_GLOW.dayI) * k;
+  }
 }
 
 // ─── batching ────────────────────────────────────────────────────────────────

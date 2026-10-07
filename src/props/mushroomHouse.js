@@ -15,10 +15,12 @@
 //     on a ring of footing stones, darkened under the cap and mossy at the foot
 //   • a tall cone / bell / dome / parasol cap with a soft tip, a rolled rim
 //     (optionally flared a little so the gill fringe shows from above), real
-//     radial GILLS underneath (lamella fins + short lamellulae at the margin over
-//     a gill texture), flat torn cream flakes lying in the velvety skin (they
-//     glow a faint cream-mint at night, like the glen's enchanted agarics) and a
-//     few moss cushions
+//     radial GILLS underneath (a thin warm-cream margin band of crowded lamella
+//     ends with dark gaps under the rolled edge, fine lamellae + lamellulae running
+//     in from it over a gill texture), raised cream WARTS — low rounded domes,
+//     big at the crown and small towards the rim, each in a soft contact shadow
+//     (they glow a faint cream-mint at night, like the glen's enchanted agarics)
+//     and a few moss cushions
 //   • a ledged-and-braced plank door with strap hinges and a ring handle in an
 //     arch of individual voussoirs on quoined jambs, a threshold and worn steps
 //   • small framed windows (arched, square or round) with mullions, sills,
@@ -102,7 +104,7 @@ let houseCount = 0;
  * @param {'stem'|'plaster'|'stone'} [opts.stem='stem']  wall material
  * @param {string} [opts.stemColor]
  * @param {boolean|number} [opts.warts=true]    number of warts (true = auto)
- * @param {string} [opts.wartColor='#f3e5c6']
+ * @param {string} [opts.wartColor='#efe6cf']
  * @param {string} [opts.gillColor]             tint of the gills (warm tan by default)
  * @param {false|object} [opts.door]            { phi = 0, width = 1, height = 1.7, color } (false = no door)
  * @param {Array|number} [opts.windows]         [{ phi, y, w, h, shape: 'arch'|'rect'|'round', shutters, box, color, mullions }] or a count
@@ -147,7 +149,7 @@ export function makeMushroomHouse(opts = {}) {
     stemColor: opts.stemColor ?? (opts.stem === 'plaster' ? '#f1e4c8' : opts.stem === 'stone' ? '#b3aa98' : '#f2e2c2'),
     capColor: opts.capColor ?? '#c4301f',
     warts: opts.warts ?? true,
-    wartColor: opts.wartColor ?? '#f3e5c6',
+    wartColor: opts.wartColor ?? '#efe6cf',
     door: opts.door === false ? null : { phi: 0, width: 1.0, height: 1.72, color: WOOD.door, ...(opts.door || {}) },
     windows: opts.windows,
     dormer: opts.dormer ?? H >= 7.5,
@@ -428,7 +430,8 @@ function buildHouse(F, o, rng) {
   capBase.getHSL(capHSL);
   const capLight = new THREE.Color().setHSL(capHSL.h + 0.012, Math.min(1, capHSL.s * 1.05), Math.min(0.9, capHSL.l * 1.18));
   const capDark = new THREE.Color().setHSL(capHSL.h - 0.008, capHSL.s, capHSL.l * 0.68);
-  paintFn(capGeo, o.capColor, (x, y, z, i, c) => {
+  /** The cap skin's painted colour at a (house-local, un-bent) cap point — also used by the warts' contact shadows. */
+  const capPaint = (x, y, z, c) => {
     const k = (y - rimY) / capH; // 0 rim … 1 apex
     c.copy(capBase);
     c.lerp(capLight, smooth01((k - 0.45) / 0.5) * 0.55);
@@ -438,8 +441,9 @@ function buildHouse(F, o, rng) {
     // darker streaks running down the cap
     const phi = Math.atan2(x, z);
     const st = noiseB(Math.cos(phi) * 6 + oy, Math.sin(phi) * 6 + y * 0.15);
-    c.lerp(capDark, Math.max(0, st) * 0.18 * (1 - k * 0.5));
-  });
+    return c.lerp(capDark, Math.max(0, st) * 0.18 * (1 - k * 0.5));
+  };
+  paintFn(capGeo, o.capColor, (x, y, z, i, c) => capPaint(x, y, z, c));
   put(M.cap, capGeo, { cast: true });
 
   // underside: gill surface from the curl's inner end up to the collar
@@ -456,60 +460,125 @@ function buildHouse(F, o, rng) {
     closedU: true,
     uv: (u, v) => [u * gRep, v],
   });
-  // warm ochre gills (as in the references): the surface between the fins is a little
-  // deeper in tone so the lighter fin edges read as crisp lines; darker towards the collar.
-  // (M.gills adds a warm bounce term on top — the underside only sees cool fill light.)
-  const gillC = new THREE.Color(o.gillColor ?? '#eab275');
-  const gillDeep = new THREE.Color('#9a5f34');
+  // warm-cream gills (as in the references): the surface between the lamellae is deep
+  // in tone, so the pale lamella edges read as fine radial lines with dark gaps between
+  // them; darker still towards the collar. (M.gills adds a warm bounce term on top — the
+  // underside only sees cool fill light.)
+  const gillC = new THREE.Color(o.gillColor ?? '#e6c493');
+  const gillDeep = new THREE.Color('#7a4a2a');
   paintFn(underGeo, gillC, (x, y, z, i, c) => {
     const rho = Math.hypot(x, z);
-    c.lerp(gillDeep, 0.6 * (1 - smooth01((rho - rCollar) / (Rc * 0.5))));
-    c.multiplyScalar(1.3);
+    c.lerp(gillDeep, 0.3 + 0.45 * (1 - smooth01((rho - rCollar) / (Rc * 0.5))));
+    c.multiplyScalar(1.15);
   });
   put(M.gills, underGeo, { cast: false, color: null });
 
-  // real lamella fins hanging under the gill surface
+  // ── the gill margin ──
+  // Every spot camera sees the rim from about its height or above, so what shows of
+  // the gills is their margin: the ends of crowded lamellae as a thin warm-cream band
+  // just below the rolled edge, with a dark gap between each pair. It is a pleated ring
+  // (ridges = lamella ends, grooves = the gaps) hanging from inside the curl to a clean,
+  // even line a little below it — it closes the margin, so the bright stem never shows
+  // through between the lamellae (which read as saw teeth). From below, fine lamellae
+  // run in from each ridge towards the stem: full ones, lamellulae and short ones.
+  const gillEdge = new THREE.Color(o.gillColor ?? '#f2dfba').lerp(new THREE.Color('#fff4de'), 0.25).multiplyScalar(1.3);
+  const gillGap = gillDeep.clone().multiplyScalar(0.55);
+  const gillRoot = new THREE.Color(o.gillColor ?? '#e6c493').lerp(gillDeep, 0.55);
   {
-    const nF = Math.round(Rc * (40 + 30 * det));
-    const pos = [];
-    const uv = [];
-    const idx = [];
-    const depth = 0.05 + 0.022 * Rc; // deep enough to read as fins from the spot cameras
+    const nP = Math.max(60, Math.round((TAU * Rc) / (0.056 / (0.55 + 0.45 * det)))); // lamella pitch ≈ 0.056 at full detail
+    const rhoC = Rc - 0.58 * rt; // just inside the curl's lowest point
+    const groove = 0.02 + 0.005 * Rc;
+    const bandH = 0.04 + 0.006 * Rc; // how far the band shows below the rolled edge
+    const yTop = rimY - 0.8 * rt; // hidden in the hollow of the curl
+    const yMid = rimY - 1.0 * rt; // ≈ the curl's lowest line
+    const yBot = rimY - 1.06 * rt - bandH;
+    const ridgePhi = [];
+    for (let i = 0; i < nP; i++) ridgePhi.push(((i + rng.jitter(0.18)) / nP) * TAU);
+    const pos = [], col = [], uv = [], idx = [];
     const a = new THREE.Vector3();
-    const segs = 5;
-    for (let f = 0; f < nF; f++) {
-      const u = (f + rng.jitter(0.25)) / nF;
-      const phi = u * TAU;
-      // every other fin is a short lamellula running in from the rim, so the margin — the part
-      // the cameras see as a fringe under the rolled edge — is densely gilled
-      const half = f % 2 === 1;
-      const v0 = 0.02, v1 = half ? 0.5 : 0.97;
-      const uT = Math.round(u * gRep * 120) / 120;
-      const base = pos.length / 3;
+    const rows = [
+      // [y, ridge colour, gap colour]
+      [yTop, gillRoot.clone().multiplyScalar(0.6), gillGap.clone().multiplyScalar(0.7)],
+      [yMid, gillEdge.clone().multiplyScalar(0.82), gillGap],
+      [yBot, gillEdge, gillGap.clone().multiplyScalar(1.5)],
+    ];
+    const n2 = nP * 2;
+    for (const [y, cR, cG] of rows) {
+      for (let i = 0; i < nP; i++) {
+        const tone = 0.92 + 0.1 * rng.next();
+        const ph0 = ridgePhi[i];
+        const ph1 = (ridgePhi[i] + ridgePhi[(i + 1) % nP] + (i === nP - 1 ? TAU : 0)) / 2;
+        capDeform(ph0, rhoC, y, a);
+        pos.push(a.x, a.y, a.z);
+        col.push(cR.r * tone, cR.g * tone, cR.b * tone);
+        capDeform(ph1, rhoC - groove, y, a);
+        pos.push(a.x, a.y, a.z);
+        col.push(cG.r, cG.g, cG.b);
+        // (a fixed spot of the gill texture — its "lamella face" — so only the pleats draw lines)
+        uv.push(0, 0.5, 0, 0.5);
+      }
+    }
+    for (let r = 0; r < rows.length - 1; r++) {
+      const r0 = r * n2, r1 = (r + 1) * n2;
+      for (let j = 0; j < n2; j++) {
+        const j1 = (j + 1) % n2;
+        idx.push(r0 + j, r1 + j, r1 + j1, r0 + j, r1 + j1, r0 + j1);
+      }
+    }
+    const bg = new THREE.BufferGeometry();
+    bg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    bg.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    bg.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    bg.setIndex(idx);
+    bg.computeVertexNormals();
+    // normals out of the cap (the gills material is double-sided: only the shading needs it)
+    const bn = bg.attributes.normal;
+    const bp = bg.attributes.position;
+    const nIdx = n2; // a mid-row ridge vertex
+    if (bn.getX(nIdx) * bp.getX(nIdx) + bn.getZ(nIdx) * bp.getZ(nIdx) < 0) {
+      const ia = bg.index.array;
+      for (let i = 0; i < ia.length; i += 3) [ia[i + 1], ia[i + 2]] = [ia[i + 2], ia[i + 1]];
+      bg.computeVertexNormals();
+    }
+    put(M.gills, bg, { cast: false, color: null });
+
+    // fine lamellae running in from the margin band (seen from below)
+    const fpos = [], fcol = [], fuv = [], fidx = [];
+    const segs = 4;
+    const dEdge = uStart[1] - yBot; // at the margin a lamella reaches down to the band's lower line
+    const concave = 0.05 * (stemTop - rimY + 0.4);
+    for (let f = 0; f < nP; f++) {
+      const phi = ridgePhi[f];
+      // full lamella / lamellula / short lamellula (the margin is crowded, the collar is not)
+      const kind = f % 4 === 0 ? 0 : f % 2 === 0 ? 1 : 2;
+      const v1 = kind === 0 ? 0.96 : kind === 1 ? 0.5 : 0.22;
+      const uT = Math.round((phi / TAU) * gRep * 120) / 120;
+      const base = fpos.length / 3;
       for (let k = 0; k <= segs; k++) {
-        const v = lerp(v0, v1, k / segs);
-        underRaw(phi, v, a);
-        const t = (v - v0) / (v1 - v0);
-        // an even lower edge from the margin inwards (a clean fringe line, no saw teeth),
-        // tapering away towards the inner end
-        const d = depth * (0.88 + 0.12 * smooth01(t / 0.25)) * (1 - smooth01((t - 0.62) / 0.38)) ** 0.7 * (half ? 0.9 : 1);
-        pos.push(a.x, a.y + 0.01, a.z, a.x, a.y - d, a.z);
-        uv.push(uT, v, uT + 0.001, v);
+        const t = k / segs;
+        const v = v1 * t;
+        const rho = lerp(rhoC, rCollar, v);
+        const yU = lerp(uStart[1], stemTop - 0.02, v) - Math.sin(Math.PI * v) * concave;
+        // depth: the margin's full depth easing off inwards; tapering to nothing at the inner end
+        const d = dEdge * (1 - 0.55 * smooth01(v / 0.6)) * (1 - smooth01((t - 0.55) / 0.45)) ** 0.8;
+        capDeform(phi, rho, yU + 0.01, a);
+        fpos.push(a.x, a.y, a.z);
+        capDeform(phi, rho, yU - Math.max(d, 0.002), a);
+        fpos.push(a.x, a.y, a.z);
+        fcol.push(gillRoot.r, gillRoot.g, gillRoot.b, gillEdge.r, gillEdge.g, gillEdge.b);
+        fuv.push(uT, v, uT + 0.001, v);
       }
       for (let k = 0; k < segs; k++) {
         const i0 = base + k * 2;
-        idx.push(i0, i0 + 1, i0 + 2, i0 + 1, i0 + 3, i0 + 2);
+        fidx.push(i0, i0 + 1, i0 + 2, i0 + 1, i0 + 3, i0 + 2);
       }
     }
     const fg = new THREE.BufferGeometry();
-    fg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    fg.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-    fg.setIndex(idx);
+    fg.setAttribute('position', new THREE.Float32BufferAttribute(fpos, 3));
+    fg.setAttribute('color', new THREE.Float32BufferAttribute(fcol, 3));
+    fg.setAttribute('uv', new THREE.Float32BufferAttribute(fuv, 2));
+    fg.setIndex(fidx);
     fg.computeVertexNormals();
-    // fin roots in the shade of the underside, edges catching the bounce light
-    const finEdge = new THREE.Color(o.gillColor ?? '#f6d39c').multiplyScalar(1.45);
-    const finRoot = new THREE.Color(o.gillColor ?? '#eab275').lerp(gillDeep, 0.35).multiplyScalar(1.15);
-    paintFn(fg, '#ffffff', (x, y, z, i, c) => c.copy(i % 2 ? finEdge : finRoot));
     put(M.gills, fg, { cast: false, color: null });
   }
 
@@ -610,7 +679,7 @@ function buildHouse(F, o, rng) {
   const chim = o.chimney ? { phi: (dorm ? dorm.phi : 0) + rng.pick([-1, 1]) * rng.range(1.4, 2.2), s: o.chimney === 'mushroom' ? 0.42 : 0.38 } : null;
   if (dorm) capReserved.push({ phi: dorm.phi, s: dorm.s, r: 0.95 });
   if (chim) capReserved.push({ phi: chim.phi, s: chim.s, r: 0.55 });
-  if (o.warts) buildWarts(put, o, rng, { capRaw, capFrame, capReserved, count: typeof o.warts === 'number' ? o.warts : Math.round(Rc * Rc * (7 + 4.5 * det)) });
+  if (o.warts) buildWarts(put, o, rng, { capRaw, capFrame, capReserved, capPaint, count: typeof o.warts === 'number' ? o.warts : Math.round(Rc * Rc * (7 + 4.5 * det)) });
   // a few small cushions of moss that have taken hold on the cap
   if (o.capMoss > 0) {
     const tmpR = new THREE.Vector3();
@@ -981,103 +1050,181 @@ function buildWindow(put, o, rng, spec, { wallR, halos }) {
 }
 
 // ─── warts ───────────────────────────────────────────────────────────────────
-// Flat, torn cream flakes of the veil lying IN the cap skin (their rim sinks a
-// hair below the surface), bigger towards the crown — not raised pebbles. They
-// use the glen's enchanted-spot material: plain cream by day, a faint
-// cream-mint glow at night (world/vegetation/mushrooms.js updateMushroomGlow).
-function buildWarts(put, o, rng, { capRaw, capFrame, capReserved, count }) {
+// The veil remnants of a fly agaric: raised, rounded cream warts — low domes
+// with soft, slightly irregular outlines (an ellipse bent by a few low
+// harmonics, never a polygon), big at the crown and getting smaller towards
+// the rim, where a sprinkle of tiny speckles takes over. Every dome is built
+// on the cap's own parametrisation, so it hugs the skin (its foot sunk a hair
+// into it), and the bigger ones sit in a soft contact-shadow ring painted in
+// the cap material itself (same texture coordinates and colour as the skin
+// around it, darkening towards the wart). The cottage's wart material (kit.js)
+// is cream with a faint warm lift by day and the glen's cream-mint glow at night.
+const WART_DOME = [
+  // [radius, height] as fractions of the wart's radius / height, top → foot (the foot ring sinks into the skin)
+  [0.0, 1.0],
+  [0.36, 0.95],
+  [0.63, 0.8],
+  [0.82, 0.57],
+  [0.94, 0.3],
+  [1.0, 0],
+];
+const WART_DOT = [[0.0, 1.0], [0.6, 0.78], [0.9, 0.32], [1.0, 0]];
+/** contact shadow rings: [radius (× outline), darkening] from under the dome's foot outwards */
+const WART_AO = [[0.9, 0.42], [1.1, 0.16], [1.32, 0]];
+function buildWarts(put, o, rng, { capRaw, capFrame, capReserved, capPaint, count }) {
   const M = mats();
   const { Rc } = o;
+  const det = o.detail;
+  const aoR = WART_AO[WART_AO.length - 1][0];
   const placed = [];
-  const pos = [];
-  const col = [];
-  const uv = [];
-  const idx = [];
-  // (a touch brighter than the wart colour: the flakes use a plain standard material
-  //  without the cap's soft wrap lighting, so they would otherwise read greyish)
-  const cBase = new THREE.Color(o.wartColor).multiplyScalar(1.1);
-  const cEdge = new THREE.Color(o.wartColor).lerp(new THREE.Color('#dcc8a0'), 0.3);
-  const cTone = new THREE.Color();
   const tmp = new THREE.Vector3();
-  let tries = 0;
-  while (placed.length < count && tries < count * 40) {
-    tries++;
-    const s = Math.sqrt(rng.range(0.0006, 0.84)); // area-weighted towards the rim
+  /** a soft irregular outline: k points of an ellipse bent by low harmonics; returns { pts, ext } */
+  const makeOutline = (k) => {
+    const rot = rng.next() * TAU;
+    const ax = rng.range(0.85, 1.17);
+    const h2 = rng.range(0.04, 0.1), p2 = rng.next() * TAU;
+    const h3 = rng.range(0.02, 0.06), p3 = rng.next() * TAU;
+    const h5 = rng.range(0, 0.025), p5 = rng.next() * TAU;
+    const pts = [];
+    let ext = 0;
+    for (let i = 0; i < k; i++) {
+      const t = (i / k) * TAU;
+      const r = 1 + h2 * Math.sin(2 * t + p2) + h3 * Math.sin(3 * t + p3) + h5 * Math.sin(5 * t + p5);
+      const x = Math.cos(t + rot) * r * ax, y = (Math.sin(t + rot) * r) / ax;
+      pts.push([x, y]);
+      ext = Math.max(ext, Math.hypot(x, y));
+    }
+    return { pts, ext };
+  };
+  /** footprint radius on the cap (with the contact ring when it has one) */
+  const reach = (w) => w.size * w.ext * (w.ao ? aoR : 1);
+  const free = (w, margin) => {
+    for (const p of placed) if (p.c.distanceTo(w.c) < reach(p) + reach(w) + margin) return false;
+    for (const r of capReserved) if (capRaw(r.phi, r.s, tmp).distanceTo(w.c) < r.r + reach(w)) return false;
+    return true;
+  };
+  // 1. the warts proper, size-graded: big at the crown, small towards the rim
+  for (let tries = 0, n = 0; n < count && tries < count * 40; tries++) {
+    const s = Math.sqrt(rng.range(0.004, 0.8)); // area-weighted towards the rim
     const phi = rng.next() * TAU;
-    const size = Rc * 0.046 * rng.range(0.45, 1.5) * (1.5 - 0.85 * s) * (s < 0.1 ? 0.8 : 1);
-    const c = capRaw(phi, s);
-    let ok = true;
-    for (const p of placed) if (p.c.distanceTo(c) < (p.size + size) * 1.08) ok = false;
-    for (const r of capReserved) if (capRaw(r.phi, r.s, tmp).distanceTo(c) < r.r + size) ok = false;
-    if (!ok) continue;
-    placed.push({ c, size, s, phi });
+    const size = Rc * 0.05 * (1.6 - 1.15 * s) * rng.range(0.72, 1.22) * (s < 0.12 ? 0.75 : 1);
+    const k = Math.max(7, Math.round((size > Rc * 0.055 ? 13 : size > Rc * 0.035 ? 11 : 9) * (0.65 + 0.35 * det)));
+    const w = { c: capRaw(phi, s), size, s, phi, ao: true, k, ...makeOutline(k) };
+    if (!free(w, size * 0.15)) continue;
+    placed.push(w);
+    n++;
   }
+  // 2. a sprinkle of tiny speckles towards the rim (the veil breaks up finest at the margin)
+  const nSpeck = Math.round(count * 0.5 * (0.5 + 0.5 * det));
+  for (let tries = 0, n = 0; n < nSpeck && tries < nSpeck * 30; tries++) {
+    const s = rng.range(0.55, 0.95);
+    const phi = rng.next() * TAU;
+    const size = Rc * 0.016 * rng.range(0.75, 1.3);
+    const k = det > 0.7 ? 8 : 7;
+    const w = { c: capRaw(phi, s), size, s, phi, ao: false, k, ...makeOutline(k) };
+    if (!free(w, size * 0.6)) continue;
+    placed.push(w);
+    n++;
+  }
+  if (!placed.length) return;
+
+  const cTop = new THREE.Color(o.wartColor).multiplyScalar(1.05);
+  const cFoot = new THREE.Color(o.wartColor).lerp(new THREE.Color('#a88d70'), 0.6);
+  const cV = new THREE.Color();
+  const pos = [], col = [], uv = [], idx = [];
+  const aPos = [], aNor = [], aCol = [], aUv = [], aIdx = [];
+  const p = new THREE.Vector3();
   for (const w of placed) {
     const f = capFrame(w.phi, w.s);
-    const k = rng.int(6, 9);
-    const ang = [];
-    const rad = [];
-    const rot = rng.next() * TAU;
-    const ax = rng.range(0.75, 1.3);
-    const flaky = rng.chance(0.5); // half are torn, angular veil flakes, half soft rounded ones
-    for (let i = 0; i < k; i++) {
-      ang.push(rot + ((i + rng.jitter(0.3)) / k) * TAU);
-      rad.push(flaky ? rng.range(0.62, 1.0) : rng.range(0.84, 1.0));
-    }
-    // a thin flake: barely proud of the skin in the middle, its torn rim sunk just below it
-    const h = Math.min(0.035, Math.max(0.013, w.size * rng.range(0.1, 0.16)));
-    const rings = [
-      [0.0, h, 0],
-      [0.55, h * 0.95, 0],
-      [0.86, h * 0.78, 0],
-      [1.0, h * 0.42, 1],
-      [1.07, -0.012, 1],
-    ];
-    const tone = rng.range(0.94, 1.03);
-    const base = pos.length / 3;
-    const pushV = (a, b, hh, edge) => {
+    const { k, pts } = w;
+    /** the cap point at the tangent-plane offset (a, b) from the wart's centre → out; returns [φ, s] */
+    const onCap = (a, b, out) => {
       const ph = w.phi + a / f.lPhi;
       const ss = Math.min(1, Math.max(0.0005, w.s + b / f.lS));
-      const p = capRaw(ph, ss, tmp).addScaledVector(f.n, hh);
-      pos.push(p.x, p.y, p.z);
-      cTone.copy(edge ? cEdge : cBase).multiplyScalar(tone);
-      col.push(cTone.r, cTone.g, cTone.b);
-      uv.push(a * 3 + w.phi, 0.6 + b * 0.8);
+      capRaw(ph, ss, out);
+      return [ph, ss];
     };
-    pushV(0, 0, h, 0);
-    for (let ri = 1; ri < rings.length; ri++) {
-      const [rf, hh, edge] = rings[ri];
-      for (let i = 0; i < k; i++) {
-        const rr = rad[i] * rf * w.size;
-        const a = Math.cos(ang[i]) * rr * ax, b = Math.sin(ang[i]) * rr / ax;
-        pushV(a, b, hh, edge);
+    // the dome: about a third as high as wide (the tiny speckles a little flatter)
+    const prof = w.ao ? WART_DOME : WART_DOT;
+    const h = w.size * (w.ao ? rng.range(0.3, 0.4) : 0.3);
+    const tone = rng.range(0.95, 1.03);
+    const base = pos.length / 3;
+    for (let ri = 0; ri < prof.length; ri++) {
+      const [rf, hf] = prof[ri];
+      const last = ri === prof.length - 1;
+      const lift = last ? -0.012 : h * hf;
+      // cream on top, a little warmer & deeper towards the crease where it meets the skin
+      cV.copy(cTop).lerp(cFoot, smooth01((rf - 0.55) / 0.45) * 0.65).multiplyScalar(tone);
+      const n = ri === 0 ? 1 : k;
+      for (let i = 0; i < n; i++) {
+        const [ox, oz] = ri === 0 ? [0, 0] : pts[i];
+        const [ph, ss] = onCap(ox * rf * w.size, oz * rf * w.size, p);
+        p.addScaledVector(f.n, lift);
+        pos.push(p.x, p.y, p.z);
+        col.push(cV.r, cV.g, cV.b);
+        uv.push(ph * 0.5, ss);
       }
     }
     for (let i = 0; i < k; i++) idx.push(base, base + 1 + i, base + 1 + ((i + 1) % k));
-    for (let ri = 1; ri < rings.length - 1; ri++) {
+    for (let ri = 1; ri < prof.length - 1; ri++) {
       const a0 = base + 1 + (ri - 1) * k, b0 = base + 1 + ri * k;
       for (let i = 0; i < k; i++) {
         const i1 = (i + 1) % k;
         idx.push(a0 + i, b0 + i, b0 + i1, a0 + i, b0 + i1, a0 + i1);
       }
     }
+    // the soft contact shadow: rings in the cap material lying a hair above the skin, with the
+    // skin's own colour (darkened towards the wart), texture coordinates and analytic normals
+    if (w.ao) {
+      const aBase = aPos.length / 3;
+      for (const [rf, dark] of WART_AO) {
+        for (let i = 0; i < k; i++) {
+          const [ox, oz] = pts[i];
+          const [ph, ss] = onCap(ox * rf * w.size, oz * rf * w.size, p);
+          const fr = capFrame(ph, ss);
+          aPos.push(p.x + fr.n.x * 0.006, p.y + fr.n.y * 0.006, p.z + fr.n.z * 0.006);
+          aNor.push(fr.n.x, fr.n.y, fr.n.z);
+          capPaint(p.x, p.y, p.z, cV).multiplyScalar(1 - dark);
+          aCol.push(cV.r, cV.g, cV.b);
+          aUv.push((ph / TAU) * 2, 1 - ss);
+        }
+      }
+      for (let r = 0; r < WART_AO.length - 1; r++) {
+        const r0 = aBase + r * k, r1 = aBase + (r + 1) * k;
+        for (let i = 0; i < k; i++) {
+          const i1 = (i + 1) % k;
+          aIdx.push(r0 + i, r1 + i, r1 + i1, r0 + i, r1 + i1, r0 + i1);
+        }
+      }
+    }
   }
-  if (!idx.length) return;
+  /** flip the winding of `g` when its first triangle faces against `nrm` */
+  const faceOut = (g, nrm) => {
+    const P = g.attributes.position, I = g.index.array;
+    const A = new THREE.Vector3().fromBufferAttribute(P, I[0]);
+    const B = new THREE.Vector3().fromBufferAttribute(P, I[1]).sub(A);
+    const C = new THREE.Vector3().fromBufferAttribute(P, I[2]).sub(A);
+    if (B.cross(C).dot(nrm) < 0) for (let i = 0; i < I.length; i += 3) [I[i + 1], I[i + 2]] = [I[i + 2], I[i + 1]];
+  };
+  const f0 = capFrame(placed[0].phi, placed[0].s);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(idx);
+  faceOut(g, f0.n);
   g.computeVertexNormals();
-  // make sure the winding faces outwards (check the first wart's apex)
-  const n = g.attributes.normal;
-  const f0 = capFrame(placed[0].phi, placed[0].s);
-  if (n.getX(0) * f0.n.x + n.getY(0) * f0.n.y + n.getZ(0) * f0.n.z < 0) {
-    const a = g.index.array;
-    for (let i = 0; i < a.length; i += 3) [a[i + 1], a[i + 2]] = [a[i + 2], a[i + 1]];
-    g.computeVertexNormals();
-  }
   put(M.warts, g, { cast: false, color: null });
+  if (aIdx.length) {
+    const ag = new THREE.BufferGeometry();
+    ag.setAttribute('position', new THREE.Float32BufferAttribute(aPos, 3));
+    ag.setAttribute('normal', new THREE.Float32BufferAttribute(aNor, 3));
+    ag.setAttribute('color', new THREE.Float32BufferAttribute(aCol, 3));
+    ag.setAttribute('uv', new THREE.Float32BufferAttribute(aUv, 2));
+    ag.setIndex(aIdx);
+    faceOut(ag, new THREE.Vector3(aNor[0], aNor[1], aNor[2]));
+    put(M.cap, ag, { cast: false, color: null });
+  }
 }
 
 // ─── dormer ──────────────────────────────────────────────────────────────────

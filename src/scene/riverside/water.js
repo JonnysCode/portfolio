@@ -34,7 +34,7 @@ import { envUniforms } from '../../world/env/celestial.js';
 import { smoothstep, clamp } from '../../core/rng.js';
 
 const WL = STREAM.waterLevel;
-const GRID = 0.25;
+let GRID = 0.25;
 const TEXEL = 0.1;
 const DEPTH_MIN = -0.25, DEPTH_RANGE = 1.75;
 /** Warm lights mirrored in the water at night (lanterns, the workshop door, candle boats). */
@@ -262,6 +262,7 @@ uniform vec3 wShallow;
 uniform vec3 wDeep;
 uniform vec3 wFoam;
 uniform vec3 wStreak;
+uniform vec3 wSoil;
 uniform vec4 wImpact[3];  // x, z, radius, strength
 uniform vec4 wLamp[${MAX_LAMPS}];    // warm lights mirrored in the water: x, y, z, radius (0 = off)
 uniform vec3 wLampCol[${MAX_LAMPS}]; // their colour × strength (linear)
@@ -330,8 +331,9 @@ float wSl = wNoise(vec2(vFlow.y * 2.1, (vFlow.x - wT * wSpeed * 1.15) * 0.45));
 float wStreakM = smoothstep(0.035, 0.0, abs(wSl - 0.5)) * (1.0 - wCalm) * smoothstep(0.15, 0.45, wDepth);
 wStreakM *= smoothstep(0.5, 0.78, wNoise(vec2(vFlow.y * 1.3 + 3.0, (vFlow.x - wT * wSpeed) * 1.6)));
 wCol = mix(wCol, wStreak, wStreakM * 0.28);
-// the shallows by the banks turn pale and clear
-wCol = mix(wCol, wStreak * 0.85, (1.0 - smoothstep(0.02, 0.22, wDepth)) * 0.35);
+// the shallows by the banks: the water thins over dark, wet soil (never a pale
+// lens laid on the grass)
+wCol = mix(wCol, wSoil, (1.0 - smoothstep(0.0, 0.28, wDepth)) * 0.6);
 
 // ── foam ──
 float wFn = wNoise(vec2(vFlow.y * 4.2, (vFlow.x - wT * wSpeed * 1.3) * 1.6));
@@ -361,14 +363,18 @@ wRing *= 0.8 * wDetail;
 float wWob = (wNoise(vWPos.xz * 3.0 + wT * 0.35) - 0.5) * 0.05;
 float wFringe = 1.0 - smoothstep(0.0, 0.06, wDepth + wWob + 0.012 * sin(wT * 1.1 + vFlow.x * 0.7));
 wFringe *= smoothstep(0.35, 0.7, wNoise(vWPos.xz * 7.0 + vec2(wT * 0.2, 0.0)));
+// broken into patches along the shore: long stretches without any froth
+float wShoreMask = smoothstep(0.42, 0.72, wNoise(vWPos.xz * 0.85 + 17.0) * 0.75 + wNoise(vWPos.xz * 2.3 - 5.0) * 0.25);
+wFringe *= wShoreMask;
 float wBand = smoothstep(0.03, 0.0, abs(wDepth + wWob - (0.12 + 0.03 * sin(wT * 1.3 + vFlow.x * 0.4))));
-wBand *= smoothstep(0.55, 0.8, wNoise(vWPos.xz * 5.0 - vec2(0.0, wT * 0.25))) * 0.4 * (1.0 - wCalm * 0.7);
-float wFoamT = clamp(max(max(wFoamA, wFoamB), max(wRing, max(wFringe * 0.7, wBand * wDetail))), 0.0, 1.0);
+wBand *= smoothstep(0.55, 0.8, wNoise(vWPos.xz * 5.0 - vec2(0.0, wT * 0.25))) * 0.4 * (1.0 - wCalm * 0.7) * wShoreMask;
+float wFoamT = clamp(max(max(wFoamA, wFoamB), max(wRing, max(wFringe * 0.55, wBand * wDetail))), 0.0, 1.0);
 
-// shallow water is clear, deep water more opaque; the edge fades into the bank
-float wAlpha = mix(0.32, 0.9, smoothstep(0.0, 0.75, wDepth));
+// shallow water is clear, deep water more opaque; the edge soaks into the bank
+// (alpha reaches 0 over the last ~0.13 of depth, along a ragged, lapping line)
+float wAlpha = mix(0.3, 0.9, smoothstep(0.06, 0.8, wDepth));
 wAlpha = max(wAlpha, wFoamT * 0.92);
-wAlpha *= smoothstep(-0.01, 0.035, wDepth);
+wAlpha *= smoothstep(0.0, 0.13, wDepth + wWob * 0.6);
 diffuseColor.rgb = mix(wCol, wFoam, wFoamT);
 diffuseColor.a = wAlpha;
 `;
@@ -449,6 +455,9 @@ const NIGHT = { shallow: '#3f7f8a', deep: '#123e52', foam: '#cad9ee', streak: '#
  * @param {{ rocks: Array<{x:number,z:number,r:number}>, impacts: Array<{x:number,z:number,r:number,strength?:number}> }} opts
  */
 export function buildWater(ctx, { rocks = [], impacts = [] } = {}) {
+  // (the surface's detail is in the shader: a coarser grid on the lower tiers)
+  const tierQ = ctx.quality?.tier ?? 'high';
+  GRID = tierQ === 'low' ? 0.4 : tierQ === 'medium' ? 0.32 : 0.25;
   const B = bounds();
   const geo = buildGeometry(B);
   const mask = bakeMask(B, rocks, impacts);
@@ -463,6 +472,7 @@ export function buildWater(ctx, { rocks = [], impacts = [] } = {}) {
     wDeep: { value: new THREE.Color(DAY.deep) },
     wFoam: { value: new THREE.Color(DAY.foam) },
     wStreak: { value: new THREE.Color(DAY.streak) },
+    wSoil: { value: new THREE.Color('#4f4a36') },
     wImpact: { value: [0, 1, 2].map((i) => (impacts[i] ? new THREE.Vector4(impacts[i].x, impacts[i].z, impacts[i].r, impacts[i].strength ?? 1) : new THREE.Vector4(0, 0, 0, 0))) },
     wLamp: { value: Array.from({ length: MAX_LAMPS }, () => new THREE.Vector4(0, 0, 0, 0)) },
     wLampCol: { value: Array.from({ length: MAX_LAMPS }, () => new THREE.Color(0, 0, 0)) },
@@ -488,7 +498,7 @@ export function buildWater(ctx, { rocks = [], impacts = [] } = {}) {
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${FRAG_NORMAL}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${FRAG_LIGHT}`);
   };
-  material.customProgramCacheKey = () => 'riverside-water-v3';
+  material.customProgramCacheKey = () => 'riverside-water-v4';
 
   const mesh = new THREE.Mesh(geo, material);
   mesh.position.y = WL;

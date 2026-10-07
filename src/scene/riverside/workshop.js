@@ -790,7 +790,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
   {
     const p0 = new THREE.Vector3(), pu = new THREE.Vector3(), pv = new THREE.Vector3();
     const placed = [];
-    for (let tries = 0; tries < 900 && placed.length < 150; tries++) {
+    for (let tries = 0, want = LOD.k >= 1 ? 150 : LOD.k > 0.5 ? 110 : 80; tries < 900 && placed.length < want; tries++) {
       const v = Math.pow(rng.next(), 0.8) * 0.94 + 0.03;
       const phi = rng.next() * TAU;
       capPoint(phi, v, p0);
@@ -1166,6 +1166,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
       if (Math.abs(x) < 1.6 && z > 1.6 && z < 4.0) continue; // the apron & the door
       if (x < -0.4 && z > 2.2 && z < 4.4) continue; // the repair stand & the mechanic
       if (x > 1.4 && x < 2.6 && z > 2.6 && z < 3.5) continue; // the truing stand
+      if (x > 2.0 && x < 3.9 && z > -0.9 && z < 1.6) continue; // the bike rack
       const wp = toWorld(x, 0, z);
       if (getPathDistance(wp.x, wp.z) < 1.2 || isInWater(wp.x, wp.z, 0.3)) continue;
       const gy = getHeight(wp.x, wp.z);
@@ -1173,6 +1174,64 @@ export function buildWorkshop(ctx, B, rng, halos) {
       if (k < 0.5) plantGrass(F, rng, x, gy, z, { size: rng.range(0.22, 0.4), blades: rng.int(3, 5) });
       else if (k < 0.8) for (let f = 0; f < 3; f++) addFlower(F, rng, x + rng.jitter(0.15), gy, z + rng.jitter(0.15), { size: 0.045, stem: 0.14 });
       else plantFern(F, rng, x, gy, z, { size: rng.range(0.35, 0.6), fronds: 7 });
+    }
+  }
+
+  // a timber bike rack against the drum, right of the doors: a customer's
+  // vintage road bike, a cargo bike with a crate of flowers on the front and a
+  // green trail bike, front wheels in the slots; inner tubes hang on a peg above
+  {
+    const phi = 1.45;
+    const rr = 2.95;
+    const o = new THREE.Vector3(Math.sin(phi) * rr, 0, Math.cos(phi) * rr);
+    const inward = new THREE.Vector3(-Math.sin(phi), 0, -Math.cos(phi));
+    const along = new THREE.Vector3(Math.cos(phi), 0, -Math.sin(phi));
+    const yaw = Math.atan2(-inward.z, inward.x);
+    // the rack: two log posts, a rail and a low slotted sill for the wheels
+    const rk = o.clone().addScaledVector(inward, 0.42);
+    const ends = [-0.75, 0.75].map((t) => rk.clone().addScaledVector(along, t));
+    for (const e of ends) F.add(MM.timber, rod([e.x, -0.1, e.z], [e.x, 0.5, e.z], 0.045, 0.04, 6), { color: '#8d8274' });
+    F.add(MM.timber, boardBetween([ends[0].x, 0.46, ends[0].z], [ends[1].x, 0.46, ends[1].z], 0.07, 0.06, { rng, bow: 0.015 }), { color: '#9a8a76' });
+    for (const dz of [-0.06, 0.06]) {
+      const a0 = ends[0].clone().addScaledVector(inward, dz), a1 = ends[1].clone().addScaledVector(inward, dz);
+      F.add(MM.timber, boardBetween([a0.x, 0.07, a0.z], [a1.x, 0.07, a1.z], 0.05, 0.05, { rng, bow: 0.01 }), { color: '#8a7a66' });
+    }
+    const bikes = [
+      { t: -0.48, opts: { style: 'road', color: '#8fc9bd', tape: '#f1ece2', saddle: '#7a4a2a', seed: 'rack-celeste' } },
+      { t: 0.0, opts: { style: 'vintage', color: '#c0573a', basket: false, seed: 'rack-cargo' }, crate: true },
+      { t: 0.5, opts: { style: 'gravel', color: '#4f7a4a', tape: '#2b2b2b', seed: 'rack-trail' } },
+    ];
+    const S = 0.6;
+    for (const b of bikes) {
+      if (LOD.k < 0.5 && b.t > 0.4) continue; // (phones on the low tier: two bikes in the rack)
+      const p = o.clone().addScaledVector(along, b.t);
+      const m = new THREE.Matrix4().makeTranslation(p.x, 0, p.z).multiply(new THREE.Matrix4().makeRotationY(yaw)).multiply(new THREE.Matrix4().makeRotationX(rng.jitter(0.03)));
+      makeBike({ ...b.opts, lite: true, scale: S, batch: F, matrix: m });
+      if (b.crate) {
+        // a wooden crate on the front carrier, brimming with flowers and a fern
+        const C = F.at(m.clone().multiply(new THREE.Matrix4().makeScale(S, S, S)).multiply(new THREE.Matrix4().makeTranslation(0.66, 0.62, 0)));
+        for (const [w, h, d, x, y, z] of [[0.36, 0.03, 0.3, 0, 0, 0], [0.36, 0.17, 0.025, 0, 0.09, 0.14], [0.36, 0.17, 0.025, 0, 0.09, -0.14], [0.025, 0.17, 0.3, 0.17, 0.09, 0], [0.025, 0.17, 0.3, -0.17, 0.09, 0]]) {
+          C.add(MM.wood, board(w, h, d, { rng }).translate(x, y, z), { color: WOOD.spruce });
+        }
+        C.add(MM.soil, new THREE.BoxGeometry(0.32, 0.02, 0.26).translate(0, 0.15, 0), { color: '#5a4430', cast: false });
+        plantFern(C, rng, 0.06, 0.15, 0.02, { size: 0.3, fronds: 7, tilt: 0.9 });
+        for (let f = 0; f < 9; f++) addFlower(C, rng, rng.jitter(0.14), 0.15, rng.jitter(0.11), { color: rng.pick(['#f29bb8', '#f2c14e', '#f4f0e6', '#b48fd6', '#e86a5a']), size: 0.07, stem: 0.16 });
+        // carrier struts down to the fork crown
+        for (const sz of [-0.1, 0.1]) C.add(MM.metal, rod([0, 0, sz], [-0.06, -0.22, sz * 0.4], 0.008, 0.008, 4), { color: '#3a3a3a', cast: false });
+      }
+    }
+    // inner tubes hanging on a peg on the wall above the rack
+    {
+      const pp = 1.72, y = 1.55;
+      const r = wallR(y);
+      const peg = [Math.sin(pp) * (r + 0.02), y, Math.cos(pp) * (r + 0.02)];
+      const tip = [Math.sin(pp) * (r + 0.24), y + 0.03, Math.cos(pp) * (r + 0.24)];
+      F.add(MM.wood, rod(peg, tip, 0.022, 0.02, 6), { color: WOOD.walnut, cast: false });
+      for (let k = 0; k < 3; k++) {
+        const g = new THREE.TorusGeometry(0.2 - k * 0.012, 0.011, 4, 18);
+        g.scale(0.8, 1.25, 1).translate(0, -0.22, 0).rotateZ(rng.jitter(0.12)).rotateY(pp + rng.jitter(0.25));
+        F.add(MM.vc, g.translate(Math.sin(pp) * (r + 0.13 + k * 0.025), y + 0.02, Math.cos(pp) * (r + 0.13 + k * 0.025)), { color: k === 1 ? '#3a2f28' : '#26221f', cast: false });
+      }
     }
   }
 

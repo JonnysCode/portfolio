@@ -118,14 +118,17 @@ export function ridgeHeight(u, w, g) {
 
 export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
   const MM = M();
+  // the cliffs' own rock: bigger strata and cracks than the boulders, moss in every crevice
+  const cliffRock = materials.surface('rock', { vertexColors: true, mossy: 0.74, scale: 2.0 });
   const density = ctx.quality?.density ?? 1;
   const heightAt = (u, w) => ridgeHeight(u, w, groundAt(u, w));
   const glowCaps = [];
+  const springCaps = [];
 
   // ── the heightfield ───────────────────────────────────────────────────────
   // a non-uniform grid: fine over the cliffs by the falls, coarse out on the
   // arms and over the back slope (u columns / w rows)
-  const k = LOD.k >= 1 ? 1 : LOD.k > 0.5 ? 1.4 : 1.9;
+  const k = LOD.k >= 1 ? 1 : LOD.k > 0.5 ? 1.6 : 2.0;
   const axisSteps = (a0, a1, fine, coarse, f0, f1) => {
     const out = [a0];
     for (let x = a0; x < a1; ) {
@@ -149,10 +152,13 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
     }
   }
   {
-    const pos = [], col = [], mcol = [], idx = [];
+    const pos = [], col = [], idx = [];
     const vid = new Int32Array((nu + 1) * (nw + 1)).fill(-1);
-    const base = new THREE.Color('#74746a'), damp = new THREE.Color('#47513d'), ochre = new THREE.Color('#8a7c5e'), earth = new THREE.Color('#5f6248'), c = new THREE.Color();
-    const mossA = new THREE.Color('#7f8e55'), mossB = new THREE.Color('#9aa962'), mossD = new THREE.Color('#5b6840'), mossE = new THREE.Color('#77704c');
+    // (the material lays its own moss over every ledge and in soft curtains down
+    // the faces — per pixel, so its edges are never triangles; the vertex colour
+    // only tints: grey-brown sandstone on the faces, damp & dark by the falls,
+    // light on the flats so the moss there stays fresh and velvety)
+    const base = new THREE.Color('#7c7a6e'), damp = new THREE.Color('#4b5541'), ochre = new THREE.Color('#8f8062'), flat = new THREE.Color('#b9bb98'), back = new THREE.Color('#9b9772'), c = new THREE.Color();
     const at = (i, j) => hs[Math.min(nw, Math.max(0, j)) * W + Math.min(nu, Math.max(0, i))];
     const vert = (i, j) => {
       const k = j * W + i;
@@ -167,41 +173,21 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       w += wild * (0.24 * noiseB(y * 1.3 - 4, u * 0.8) + 0.06 * noiseA(y * 5 + 3, w * 2));
       vid[k] = pos.length / 3;
       pos.push(u, y, w);
-      // rock: grey-brown sandstone in strata bands, damp & dark near the falls
-      // and low down
       const band = Math.sin(y * 4.3 + noiseA(u * 0.5, w * 0.5) * 1.6);
-      c.copy(base).multiplyScalar(0.84 + 0.12 * band - 0.22 * smooth01((band - 0.75) / 0.25) + 0.08 * noiseB(u * 1.9 + y, w * 1.9));
+      c.copy(base).multiplyScalar(0.86 + 0.12 * band - 0.2 * smooth01((band - 0.75) / 0.25) + 0.08 * noiseB(u * 1.9 + y, w * 1.9));
       c.lerp(ochre, 0.3 * smooth01(noiseA(u * 0.21 + 4, y * 0.6) * 1.5));
-      c.lerp(earth, (1 - steep) * 0.4);
-      c.lerp(damp, 0.55 * (1 - smooth01((Math.abs(u) - 0.6) / 2.6)) * (0.4 + 0.6 * steep) + 0.25 * (1 - smooth01((y - gs[k]) / 1.5)));
+      c.lerp(damp, 0.55 * (1 - smooth01((Math.abs(u) - 0.6) / 2.6)) * (0.4 + 0.6 * steep) + 0.2 * (1 - smooth01((y - gs[k]) / 1.5)));
+      c.lerp(flat, (1 - steep) * 0.75);
+      c.lerp(back, 0.5 * smooth01((crestW(u) - w - 2.5) / 4));
       col.push(c.r, c.g, c.b);
-      // moss: a velvet carpet on the ledges, the crest and the slopes — darker
-      // where it tucks under a face, earthy on the back slope
-      c.copy(mossA).lerp(mossB, 0.5 + 0.5 * noiseA(u * 0.9 + 3, w * 0.9)).lerp(mossD, 0.6 * steep + 0.2 * smooth01(-noiseB(u * 0.4, w * 0.4)));
-      c.lerp(mossE, 0.5 * smooth01((crestW(u) - w - 2.5) / 4));
-      mcol.push(c.r, c.g, c.b);
       return vid[k];
-    };
-    // flat-ish triangles (ledges, crest, slopes) are moss, steep ones bare rock
-    const midx = [];
-    const tri = (a, b, cc) => {
-      const ax = pos[a * 3], ay = pos[a * 3 + 1], az = pos[a * 3 + 2];
-      const e1x = pos[b * 3] - ax, e1y = pos[b * 3 + 1] - ay, e1z = pos[b * 3 + 2] - az;
-      const e2x = pos[cc * 3] - ax, e2y = pos[cc * 3 + 1] - ay, e2z = pos[cc * 3 + 2] - az;
-      const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
-      const nyN = Math.abs(ny) / (Math.hypot(nx, ny, nz) || 1);
-      const cu = (ax + pos[b * 3] + pos[cc * 3]) / 3, cw = (az + pos[b * 3 + 2] + pos[cc * 3 + 2]) / 3;
-      // (bare rock breaks through the moss here and there, and stays bare by the falls)
-      const bare = 0.12 * noiseB(cu * 0.7 + 9, cw * 0.7) + (Math.abs(cu) < 1.3 && cw > -3.6 ? 0.2 : 0);
-      (nyN > 0.8 + bare ? midx : idx).push(a, b, cc);
     };
     for (let j = 0; j < nw; j++) {
       for (let i = 0; i < nu; i++) {
         const a = j * W + i, b = a + 1, cc = a + W, d = cc + 1;
         if (Math.max(hs[a] - gs[a], hs[b] - gs[b], hs[cc] - gs[cc], hs[d] - gs[d]) < 0.05) continue;
         const va = vert(i, j), vb = vert(i + 1, j), vc = vert(i, j + 1), vd = vert(i + 1, j + 1);
-        tri(va, vc, vb);
-        tri(vb, vc, vd);
+        idx.push(va, vc, vb, vb, vc, vd);
       }
     }
     const g = new THREE.BufferGeometry();
@@ -210,16 +196,10 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
     g.computeVertexNormals();
     // (an open surface: the shadow pass draws back faces, so add them for the ridge's shadow)
     const n0 = idx.length;
-    if (LOD.shadows) for (let i = 0; i < n0; i += 3) idx.push(idx[i], idx[i + 2], idx[i + 1]);
+    if (LOD.shadows && LOD.k >= 1) for (let i = 0; i < n0; i += 3) idx.push(idx[i], idx[i + 2], idx[i + 1]);
     g.setIndex(idx);
     g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    R.add(MM.rock, g, { cast: true });
-    const mg = new THREE.BufferGeometry();
-    mg.setAttribute('position', new THREE.Float32BufferAttribute(pos.slice(), 3));
-    mg.setIndex(midx);
-    mg.computeVertexNormals();
-    mg.setAttribute('color', new THREE.Float32BufferAttribute(mcol, 3));
-    R.add(MM.moss, mg, { cast: false });
+    R.add(cliffRock, g, { cast: true });
   }
 
   // slope of the ridge at (u, w): { s, nu, nw } (s = rise per unit, n = downhill direction)
@@ -267,15 +247,15 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
   {
     const ivy = new Cards();
     const edges = [];
-    for (let k = 0; k < 34; k++) {
-      const u = (rng.chance(0.5) ? 1 : -1) * rng.range(1.0, 11.5);
+    for (let k = 0; k < Math.round(44 * Math.max(0.5, density)); k++) {
+      const u = (rng.chance(0.5) ? 1 : -1) * rng.range(1.0, 12.5);
       const w = crestW(u) + 0.08;
       const y = heightAt(u, w - 0.15);
       if (y < groundAt(u, w) + 1.5) continue;
       edges.push({ u, w, top: y, ou: 0, ow: 1, len: 1.2 });
     }
     for (const hg of [...edges, ...hangers]) {
-      const strands = rng.int(1, 3);
+      const strands = LOD.k < 1 ? rng.int(1, 2) : rng.int(1, 3);
       for (let k = 0; k < strands; k++) {
         const ua = hg.u + rng.jitter(hg.len * 0.4) * hg.ow, wa = hg.w - rng.jitter(hg.len * 0.4) * hg.ou;
         const n = new THREE.Vector3();
@@ -286,6 +266,7 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
           density: 1.4,
           normal: [hg.ou, 0, hg.ow],
           cards: ivy,
+          stem: false,
           // hug the face: push the strand out of the rock wherever it sinks in
           surface: (p, nn) => {
             const h = heightAt(p.x, p.z);
@@ -304,6 +285,23 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       }
     }
     flushCards(R, ivy, MM.ivy, null, 0);
+  }
+
+  // ferns & little toadstools sprouting from the crevices of the faces
+  {
+    const want = Math.round(60 * Math.max(0.3, density * 0.7 + (density >= 1 ? 0.3 : 0)));
+    for (let tries = 0, placed = 0; tries < 1500 && placed < want; tries++) {
+      const u = rng.jitter(13), w = rng.range(-9.5, 2);
+      if (Math.abs(u) < 1.1) continue;
+      const sl = slopeAt(u, w);
+      if (sl.s < 1.8) continue;
+      const y = heightAt(u, w);
+      if (y < groundAt(u, w) + 0.5) continue;
+      placed++;
+      const p = [u + sl.ou * 0.06, y, w + sl.ow * 0.06];
+      if (rng.chance(0.85)) wallFern(R, rng, p, [sl.ou, 0.1, sl.ow], { size: rng.range(0.3, 0.6), fronds: rng.int(5, 8) });
+      else glowCaps.push([p[0] + sl.ou * 0.1, y - 0.05, p[2] + sl.ow * 0.1]);
+    }
   }
 
   // ── scree & tumbled blocks at the foot, stones on the slopes ────────────────
@@ -326,7 +324,7 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       }
       placed++;
     }
-    const nStones = Math.round(90 * Math.max(0.4, density));
+    const nStones = Math.round(90 * Math.max(0.3, density * 0.7 + (density >= 1 ? 0.3 : 0)));
     for (let i = 0, placed = 0; i < 900 && placed < nStones; i++) {
       const u = rng.jitter(13), w = rng.range(-10, 4);
       if (inWater(u, w) || !proud(u, w)) continue;
@@ -343,7 +341,7 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
 
   // ── greenery: ferns, grass, moss mats, flowers & toadstools on every ledge and slope ──
   {
-    const n = Math.round(230 * Math.max(0.4, density));
+    const n = Math.round(230 * Math.max(0.3, density * 0.8 + (density >= 1 ? 0.2 : 0)));
     for (let i = 0, placed = 0; i < 2400 && placed < n; i++) {
       const u = rng.jitter(14), w = rng.range(-14, 4.2);
       if (inWater(u, w) || !proud(u, w, 0.15)) continue;
@@ -376,8 +374,8 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
   const lobes = 7, lobePh = rng.next() * TAU;
   /** Trunk radius at height h above its base, azimuth phi (buttress lobes at the foot). */
   const trunkR = (h, phi) => {
-    const r = TREE.r * (1 + 0.32 * Math.exp(-Math.max(0, h) / 1.8)) * (1 - 0.0045 * Math.max(0, h));
-    const lobe = Math.pow(Math.max(0, Math.cos(lobes * phi * 0.5 + lobePh) ** 2), 2.5) * 0.5 * Math.exp(-Math.max(0, h) / 2.0);
+    const r = TREE.r * (1 + 0.26 * Math.exp(-Math.max(0, h) / 1.8)) * (1 - 0.0045 * Math.max(0, h));
+    const lobe = Math.pow(Math.max(0, Math.cos(lobes * phi * 0.5 + lobePh) ** 2), 2.5) * 0.32 * Math.exp(-Math.max(0, h) / 2.0);
     return r * (1 + lobe + 0.05 * noiseA(Math.cos(phi) * 2 + h * 0.15, Math.sin(phi) * 2));
   };
   const axis = (h) => [tb.u + lean.x * h * h * 0.02 + lean.x * h, tb.w + lean.y * h];
@@ -467,6 +465,7 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
     let d = new THREE.Vector2(du, dw).normalize();
     let travelled = 0, r = r0, mode = 'over';
     let pu = u, pw = w, py = y0;
+    const ph = rng.next() * TAU;
     for (let k = 0; k < 60 && travelled < len; k++) {
       r = r0 * (1 - travelled / len) + 0.03;
       if (mode === 'over') {
@@ -495,7 +494,10 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
         pu -= d.x * 0.05;
         pw -= d.y * 0.05;
       }
-      pu += rng.jitter(0.06);
+      // (wandering across the face as it creeps down, never a straight drip)
+      const lat = 0.16 * Math.sin(k * 1.15 + ph) + rng.jitter(0.05);
+      pu += -d.y * lat;
+      pw += d.x * lat;
       travelled += 0.36;
       pts.push(new THREE.Vector3(pu + d.x * r * 0.6, py, pw + d.y * r * 0.6));
       if (py < groundAt(pu, pw) + 0.2 || heightAt(pu + d.x * 0.4, pw + d.y * 0.4) > py + 0.4) break;
@@ -504,23 +506,26 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
   };
   const springAt = { u: 0.12, w: -4.5 };
   {
-    const nRoots = 11;
-    for (let k = 0; k < nRoots; k++) {
-      // spread round the trunk, but most of them reaching for the cliff (+w)
-      const a = k < 6 ? Math.PI * (-0.25 + (k / 5) * 0.5) * 1.15 + Math.PI * 0 : ((k - 6) / 5) * TAU + 0.9;
-      const phi = k < 6 ? a + rng.jitter(0.12) - 0.35 : a + rng.jitter(0.3);
-      const du = Math.sin(phi), dw = Math.cos(phi);
-      const start = trunkR(1.0, phi) * 0.82;
+    // big roots reaching for the cliff: over the brow, then creeping down the
+    // face either side of the falls; the rest grip the crest and plunge into the moss
+    const front = [-0.62, -0.36, 0.06, 0.42]; // azimuths off +w (towards the cliff)
+    const plan = [
+      ...front.map((a) => ({ phi: a + rng.jitter(0.08), len: rng.range(8, 11.5), r: rng.range(0.55, 0.72), lets: 3 })),
+      ...[1.25, 2.0, 2.75, 3.6, 4.4, 5.2].map((a) => ({ phi: a + rng.jitter(0.25), len: rng.range(3, 5.5), r: rng.range(0.5, 0.68), lets: 1 })),
+    ];
+    for (const rt of plan) {
+      const du = Math.sin(rt.phi), dw = Math.cos(rt.phi);
+      const start = trunkR(1.0, rt.phi) * 0.82;
       const su = tb.u + du * start, sw = tb.w + dw * start;
-      const pts = [new THREE.Vector3(tb.u + du * TREE.r * 0.6, tb.y + 3.2, tb.w + dw * TREE.r * 0.6), ...rootPath(su, sw, du, dw, tb.y + 1.3, k < 6 ? rng.range(7, 11) : rng.range(3, 5), 0.7)];
-      rootTube(pts, rng.range(0.6, 0.85), k < 6 ? 0.16 : 0.08);
-      // a rootlet or two branching off
-      for (let q = 0; q < (k < 6 ? 2 : 1); q++) {
-        const p = pts[2 + rng.int(0, Math.max(0, pts.length - 4))];
+      const pts = [new THREE.Vector3(tb.u + du * TREE.r * 0.62, tb.y + 3.0, tb.w + dw * TREE.r * 0.62), ...rootPath(su, sw, du, dw, tb.y + 1.2, rt.len, rt.r)];
+      rootTube(pts, rt.r, rt.lets > 1 ? 0.06 : 0.05);
+      // rootlets branching off sideways, creeping over the rock
+      for (let q = 0; q < rt.lets; q++) {
+        const p = pts[Math.min(pts.length - 2, 2 + Math.floor(((q + 0.5) / rt.lets) * (pts.length - 3)))];
         if (!p) continue;
-        const ph2 = phi + rng.jitter(1.2);
-        const sub = rootPath(p.x, p.z, Math.sin(ph2), Math.cos(ph2), p.y, rng.range(1.5, 3.5), 0.2);
-        rootTube([p, ...sub], 0.24, 0.04);
+        const ph2 = rt.phi + (q % 2 ? 1 : -1) * rng.range(0.7, 1.4);
+        const sub = rootPath(p.x, p.z, Math.sin(ph2), Math.cos(ph2), p.y, rng.range(1.5, 3.2), 0.16);
+        rootTube([p, ...sub], 0.16, 0.025);
       }
     }
     // the root arching over the spring: the water wells up from under it
@@ -543,7 +548,7 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       xf(m, [springAt.u + du, heightAt(springAt.u + du, springAt.w + dw) - 0.02, springAt.w + dw], [0, rng.next() * TAU, 0]);
       R.add(MM.moss, m, { color: rng.pick(MOSS), cast: false });
     }
-    glowCaps.push([springAt.u + 0.75, heightAt(springAt.u + 0.75, springAt.w + 0.35), springAt.w + 0.35], [springAt.u - 0.7, heightAt(springAt.u - 0.7, springAt.w + 0.5), springAt.w + 0.5], [1.4, heightAt(1.4, -3.4), -3.4], [-1.3, heightAt(-1.3, -3.2), -3.2]);
+    springCaps.push([springAt.u + 0.75, heightAt(springAt.u + 0.75, springAt.w + 0.35), springAt.w + 0.35], [springAt.u - 0.7, heightAt(springAt.u - 0.7, springAt.w + 0.5), springAt.w + 0.5], [1.4, heightAt(1.4, -3.4), -3.4], [-1.3, heightAt(-1.3, -3.2), -3.2]);
     // ferns arching over the spring and along the crest by the lip
     for (const [u, w] of [[-1.0, -4.6], [1.05, -4.0], [-0.9, -3.3], [1.0, -3.15], [2.2, -3.6], [-2.0, -3.8]]) plantFern(R, rng, u, heightAt(u, w) - 0.03, w, { size: rng.range(0.75, 1.05), fronds: rng.int(9, 12), tilt: 1.2 });
   }
@@ -582,7 +587,7 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
   return {
     heightAt,
     // (a handful of glowing clusters is magic; dozens would be a runway)
-    glowCaps: glowCaps.slice(0, 4).concat(glowCaps.slice(4).filter((_, i) => i % 3 === 0)).slice(0, 11),
+    glowCaps: springCaps.concat(glowCaps.filter((_, i) => i % 3 === 0)).slice(0, 12),
     /** The spring channel's course (u, y, w) from the hollow under the arching root towards the lip. */
     spring: [
       [springAt.u, RIDGE.lipY + 0.27, springAt.w + 0.05],

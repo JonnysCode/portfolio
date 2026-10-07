@@ -21,7 +21,7 @@ import * as THREE from 'three';
 import { PATHS } from '../../world/layout.js';
 import { getHeight } from '../../world/ground.js';
 import {
-  M, TAU, IRON, Cards, xf, mossGeo, arcSegment, paramSurface, taperTube, board, rod,
+  M, TAU, IRON, LOD, Cards, xf, mossGeo, arcSegment, paramSurface, taperTube, board, rod,
   plantFern, plantGrass, addFlower, addToadstool, addIvy, flushCards, noiseA, smooth01,
   cushionStone, roundStone, archStone, stoneTint, wallFern, paintFn, DRESSED_TINTS, MASONRY_TINTS, MORTAR,
 } from './kit.js';
@@ -152,10 +152,11 @@ export function buildBridge(ctx, B, rng) {
     let y = -0.75;
     let row = 0;
     while (y < DECK_CROWN) {
-      const hc = rng.range(0.19, 0.27);
+      // (courses of uneven height; long thin slabs among squarer blocks)
+      const hc = rng.chance(0.25) ? rng.range(0.12, 0.17) : rng.range(0.19, 0.29);
       let x = -END - 0.15 + (row % 2 ? rng.range(0.1, 0.25) : 0);
       while (x < END + 0.1) {
-        const wst = rng.range(0.26, 0.5);
+        const wst = hc < 0.18 ? rng.range(0.42, 0.78) : rng.chance(0.2) ? rng.range(0.5, 0.68) : rng.range(0.22, 0.46);
         const xc = x + wst / 2;
         x += wst + 0.02;
         if (Math.abs(xc) > END) continue;
@@ -168,7 +169,7 @@ export function buildBridge(ctx, B, rng) {
         if (topY < ground(xc, zf) - 0.12) continue;
         const h = topY - bot;
         if (h < 0.08) continue;
-        const g = cushionStone(rng, wst - 0.045, h - 0.04, rng.range(0.05, 0.09), { color: stoneTint(rng, bot < 0.1 ? ['#6e705f', '#77735f', '#7b7a68'] : RUBBLE_TINTS), segs: wst > 0.42 ? 12 : 10 });
+        const g = cushionStone(rng, wst - 0.045, h - 0.04, rng.range(0.03, 0.06), { color: stoneTint(rng, bot < 0.1 ? ['#6e705f', '#77735f', '#7b7a68'] : RUBBLE_TINTS), segs: wst > 0.42 ? 12 : 10, round: rng.range(3.6, 5.5) });
         xf(g, [xc + rng.jitter(0.01), bot + h / 2, zf + side * rng.range(-0.005, 0.02)], [rng.jitter(0.03), (side < 0 ? Math.PI : 0) + rng.jitter(0.05), rng.jitter(0.05)]);
         F.add(MM.wallStone, g);
         if (bot > 0.1 && h > 0.15 && rng.chance(0.03)) ferns.push([xc, topY, side]);
@@ -197,24 +198,28 @@ export function buildBridge(ctx, B, rng) {
     );
     F.add(MM.soil, bed, { color: '#8a7a62', cast: false });
   }
-  // flagstones in a loose pack along the deck
+  // cobbled with flat, squarish setts in rows across the deck (moss and grit
+  // in every joint)
   {
+    const SETT = LOD.k < 0.5 ? 0.3 : 0.22;
     let x = -END - 0.05;
     while (x < END + 0.05) {
-      const len = rng.range(0.28, 0.44);
+      const len = SETT * rng.range(0.85, 1.15);
       const xc = x + len / 2;
-      let z = -innerHalf + rng.range(0.0, 0.06);
-      while (z < innerHalf - 0.08) {
-        const wid = rng.range(0.26, 0.5);
-        const zc = Math.min(z + wid / 2, innerHalf - 0.1);
-        z += wid + rng.range(0.03, 0.07);
-        if (rng.chance(0.14)) continue; // a gap of gravel & moss
-        const s = roundStone(rng, len * 0.9, 0.06, wid * 0.88, { color: stoneTint(rng, ['#857e70', '#7c776c', '#8a826f', '#77736a', '#918774']), box: 0.32, lump: 0.1, under: 0.2, sag: -0.02 });
-        const sl = Math.atan(deckSlope(xc));
-        xf(s, [xc + rng.jitter(0.02), deckY(xc) + 0.012, zc], [rng.jitter(0.03), rng.jitter(0.25), sl + rng.jitter(0.03)]);
+      const sl = Math.atan(deckSlope(xc));
+      let z = -innerHalf + rng.range(0.0, 0.05);
+      while (z < innerHalf - 0.06) {
+        const wid = SETT * rng.range(0.8, 1.4);
+        const zc = Math.min(z + wid / 2, innerHalf - 0.08);
+        z += wid + rng.range(0.018, 0.04);
+        if (rng.chance(0.04)) continue; // a missing sett: grit & moss
+        // (a 4-segment rounded box: a square sett, 16 triangles)
+        const s = roundStone(rng, len * 0.86 * 1.41, 0.05 + rng.range(0, 0.02), wid * 0.84 * 1.41, { color: stoneTint(rng, ['#857e70', '#7c776c', '#8a826f', '#77736a', '#918774', '#6f7262']), box: 0.3, lump: 0.08, under: 0.22, sag: -0.015, segs: 4, rows: 3 });
+        s.rotateY(Math.PI / 4);
+        xf(s, [xc + rng.jitter(0.015), deckY(xc) + 0.012 + rng.jitter(0.006), zc], [rng.jitter(0.04), rng.jitter(0.12), sl + rng.jitter(0.04)]);
         F.add(MM.pebble, s, { cast: false });
       }
-      x += len + rng.range(0.03, 0.06);
+      x += len + rng.range(0.018, 0.04);
     }
     // moss tufts in the joints and along the parapet feet
     for (let i = 0; i < 46; i++) {
@@ -231,38 +236,45 @@ export function buildBridge(ctx, B, rng) {
   const piers = [];
   for (const side of [-1, 1]) {
     const zc = side * (HALF_W - PARAPET_T / 2);
-    for (let course = 0; course < 2; course++) {
-      const h0 = course === 0 ? 0 : 0.21;
-      const hc = course === 0 ? 0.21 : 0.18;
-      let x = -END + 0.32 + (course ? rng.range(0.08, 0.18) : 0);
+    // irregular coursed rubble: each column of the wall split at its own
+    // height (or one tall stone through both), so no joint runs straight
+    {
+      let x = -END + 0.32;
       while (x < END - 0.32) {
-        const len = Math.min(rng.range(0.28, 0.48), END - 0.32 - x);
-        if (len < 0.12) break;
+        const len = Math.min(rng.chance(0.25) ? rng.range(0.45, 0.66) : rng.range(0.18, 0.42), END - 0.32 - x);
+        if (len < 0.1) break;
         const xc = x + len / 2;
-        const g = roundStone(rng, len - 0.035, hc - 0.03, PARAPET_T - rng.range(0, 0.03), { color: tint(), box: 0.4 });
-        xf(g, [xc, deckY(xc) + h0 + hc / 2, zc + rng.jitter(0.012)], [rng.jitter(0.03), rng.jitter(0.04), Math.atan(deckSlope(xc)) + rng.jitter(0.04)]);
-        F.add(MM.wallStone, g);
+        const tall = rng.chance(0.2);
+        const split = rng.range(0.14, 0.25);
+        const parts = tall ? [[0, 0.38]] : [[0, split], [split, 0.38]];
+        for (const [h0, h1] of parts) {
+          const hc = h1 - h0;
+          const g = roundStone(rng, len - 0.03, hc - 0.028, PARAPET_T - rng.range(0, 0.04), { color: tint(), box: 0.24, lump: 0.1, sag: 0.01, under: 0.3 });
+          xf(g, [xc + rng.jitter(0.012), deckY(xc) + h0 + hc / 2, zc + rng.jitter(0.016)], [rng.jitter(0.035), rng.jitter(0.05), Math.atan(deckSlope(xc)) + rng.jitter(0.06)]);
+          F.add(MM.wallStone, g);
+        }
         x += len;
       }
     }
-    // capstones: wider, rounded, overhanging, mossy
+    // capstones: flat slabs of uneven length, overhanging a little, moss in patches
     let x = -END + 0.3;
     while (x < END - 0.3) {
-      const len = Math.min(rng.range(0.4, 0.62), END - 0.3 - x);
+      const len = Math.min(rng.range(0.3, 0.78), END - 0.3 - x);
       if (len < 0.15) break;
       const xc = x + len / 2;
-      const g = roundStone(rng, len - 0.03, 0.12, PARAPET_T + 0.1, { color: dressed(), box: 0.32, sag: 0.03 });
-      xf(g, [xc, deckY(xc) + 0.39 + 0.05, zc + rng.jitter(0.015)], [rng.jitter(0.03), rng.jitter(0.04), Math.atan(deckSlope(xc)) + rng.jitter(0.03)]);
+      const th = rng.range(0.07, 0.11);
+      const g = roundStone(rng, len - 0.025, th, PARAPET_T + rng.range(0.06, 0.15), { color: dressed(), box: 0.22, sag: 0.0, lump: 0.08 });
+      xf(g, [xc, deckY(xc) + 0.39 + th / 2 + 0.005, zc + rng.jitter(0.025)], [rng.jitter(0.04), rng.jitter(0.06), Math.atan(deckSlope(xc)) + rng.jitter(0.04)]);
       F.add(MM.wallStone, g);
-      // fat moss cushions on the capstones, some spilling over the edge
-      if (rng.chance(0.7)) {
-        const m = mossGeo(rng, { r: rng.range(0.08, 0.16), h: rng.range(0.035, 0.06), sx: 1.7, sz: 0.85 });
-        xf(m, [xc + rng.jitter(0.1), deckY(xc) + 0.495, zc + rng.jitter(0.06)], [0, rng.jitter(0.3), Math.atan(deckSlope(xc))]);
+      // a patch of moss off-centre, now and then spilling over the edge
+      if (rng.chance(0.38)) {
+        const m = mossGeo(rng, { r: rng.range(0.05, 0.1), h: rng.range(0.025, 0.045), sx: rng.range(1.2, 2), sz: 0.7 });
+        xf(m, [xc + rng.jitter(len * 0.35), deckY(xc) + 0.39 + th, zc + rng.jitter(0.07)], [0, rng.jitter(0.5), Math.atan(deckSlope(xc))]);
         F.add(MM.moss, m, { color: rng.pick(['#7a9640', '#62832f', '#6f8f3a']), cast: false });
       }
-      if (rng.chance(0.3)) {
-        const m = mossGeo(rng, { r: rng.range(0.06, 0.1), h: 0.05, sx: 1.4, sz: 0.6, seg: 7 });
-        xf(m, [xc + rng.jitter(0.12), deckY(xc) + 0.42, zc + side * (PARAPET_T / 2 + 0.05)], [side * 1.2, rng.jitter(0.3), 0]);
+      if (rng.chance(0.2)) {
+        const m = mossGeo(rng, { r: rng.range(0.05, 0.08), h: 0.04, sx: 1.4, sz: 0.6, seg: 7 });
+        xf(m, [xc + rng.jitter(0.12), deckY(xc) + 0.36, zc + side * (PARAPET_T / 2 + 0.05)], [side * 1.2, rng.jitter(0.3), 0]);
         F.add(MM.moss, m, { color: rng.pick(['#5d7d30', '#6f8f3a']), cast: false });
       }
       x += len;

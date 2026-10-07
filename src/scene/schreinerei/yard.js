@@ -329,11 +329,11 @@ export function buildYard(ctx, B, mats) {
       tp.push({ x: p.x, z: p.z });
     }
     tp.push({ x: end.x + 0.45, z: end.z + 0.25 });
-    // (the painterly soil surface, tinted per vertex: grain & tiny pebbles, never a flat fill)
-    const soil = ctx.materials.surface('soil', { vertexColors: true });
-    tracks.push(addTrack(B, mats, rng, getHeight, tp, { width: 0.78, material: soil }));
+    // (plain vertex-coloured soil: the painterly 'soil' surface carries leaves
+    // and melts straight back into the litter — the point is a clear, bare track)
+    tracks.push(addTrack(B, mats, rng, getHeight, tp, { width: 0.78 }));
     const a = annexToWorld(1.75, 0, hz + 2.0), b = annexToWorld(1.6, 0, hz + 2.55), c = curve.getPointAt(0.43);
-    tracks.push(addTrack(B, mats, rng, getHeight, [{ x: a.x, z: a.z }, { x: b.x, z: b.z }, { x: c.x, z: c.z }], { width: 0.52, lift: 0.011, material: soil }));
+    tracks.push(addTrack(B, mats, rng, getHeight, [{ x: a.x, z: a.z }, { x: b.x, z: b.z }, { x: c.x, z: c.z }], { width: 0.52, lift: 0.011 }));
     // a flagged apron in front of the workshop door
     for (let i = 0; i < 14; i++) {
       const x = -1.15 + rng.next() * 1.75, z = hz + 0.15 + rng.next() * 0.6;

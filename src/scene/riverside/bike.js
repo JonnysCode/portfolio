@@ -62,9 +62,9 @@ const STYLES = {
  * bike on the weathervane. Set per build (builds are synchronous).
  */
 const LODS = {
-  full: { isFull: true, rim: [6, 56], tyre: [8, 72], knobs: true, spokes: 32, saddle: [20, 10], chain: [90, 4], bar: [8, 30], tube: 10, loop: 28, cables: true, cassette: 8, ring: 40, petal: [6, 4] },
-  lite: { rim: [3, 28], tyre: [5, 32], knobs: false, spokes: 16, saddle: [10, 6], chain: [44, 3], bar: [5, 14], tube: 6, loop: 14, cables: false, cassette: 3, ring: 18, petal: [4, 2] },
-  mini: { isMini: true, rim: [3, 16], tyre: [3, 18], knobs: false, spokes: 6, saddle: [6, 4], chain: [0, 0], bar: [4, 8], tube: 4, loop: 8, cables: false, cassette: 0, ring: 10, petal: [4, 2] },
+  full: { isFull: true, k: 1, rim: [6, 56], tyre: [8, 72], knobs: true, spokes: 32, saddle: [20, 10], chain: [90, 4], bar: [8, 30], tube: 10, loop: 28, cables: true, cassette: 8, ring: 40, petal: [6, 4] },
+  lite: { k: 0.75, rim: [3, 28], tyre: [5, 32], knobs: false, spokes: 16, saddle: [10, 6], chain: [44, 3], bar: [5, 14], tube: 6, loop: 14, cables: false, cassette: 3, ring: 18, petal: [4, 2] },
+  mini: { isMini: true, k: 0.5, rim: [3, 16], tyre: [3, 18], knobs: false, spokes: 6, saddle: [6, 4], chain: [0, 0], bar: [4, 8], tube: 4, loop: 8, cables: false, cassette: 0, ring: 10, petal: [4, 2] },
 };
 // per quality tier: phones (medium) keep the hero's 32 spokes but drop the tread
 // knobs and thin the round sections; the background bikes lose the chainring
@@ -72,13 +72,13 @@ const LODS = {
 const TIER_LODS = {
   high: LODS,
   medium: {
-    full: { ...LODS.full, rim: [4, 36], tyre: [6, 44], knobs: false, saddle: [14, 8], chain: [56, 3], bar: [6, 18], tube: 8, loop: 18, cassette: 5, ring: 28, petal: [5, 3] },
-    lite: { ...LODS.lite, rim: [3, 20], tyre: [4, 22], spokes: 12, saddle: [8, 5], chain: [28, 3], bar: [4, 10], tube: 5, loop: 10, cassette: 2, ring: 14, petal: [4, 2] },
+    full: { ...LODS.full, k: 0.7, rim: [4, 36], tyre: [6, 44], knobs: false, saddle: [14, 8], chain: [56, 3], bar: [6, 18], tube: 8, loop: 18, cassette: 5, ring: 28, petal: [5, 3] },
+    lite: { ...LODS.lite, k: 0.45, rim: [3, 20], tyre: [4, 22], spokes: 12, saddle: [8, 5], chain: [28, 3], bar: [4, 10], tube: 5, loop: 10, cassette: 2, ring: 14, petal: [4, 2] },
     mini: LODS.mini,
   },
   low: {
-    full: { ...LODS.lite, spokes: 20, rim: [3, 24], tyre: [4, 28], ring: 18 },
-    lite: { ...LODS.mini, isMini: false, spokes: 10, rim: [3, 18], tyre: [3, 20], chain: [22, 3], loop: 8, bar: [4, 8], tube: 4, cassette: 1, ring: 12 },
+    full: { ...LODS.lite, k: 0.5, spokes: 20, rim: [3, 24], tyre: [4, 28], ring: 18 },
+    lite: { ...LODS.mini, isMini: false, k: 0.4, spokes: 10, rim: [3, 18], tyre: [3, 20], chain: [22, 3], loop: 8, bar: [4, 8], tube: 4, cassette: 1, ring: 12 },
     mini: LODS.mini,
   },
 };
@@ -88,6 +88,8 @@ export function setBikeTier(tier = 'high') {
   TIER = TIER_LODS[tier] ?? TIER_LODS.high;
 }
 let LOD = LODS.full;
+/** A fixed segment count scaled by the current level's geometry factor. */
+const q = (n, min = 4) => Math.max(min, Math.round(n * (LOD.k ?? 1)));
 const lodOf = (opts) => TIER[opts.detail] ?? (opts.lite ? TIER.lite : TIER.full);
 
 const RW = 0.34; // wheel radius incl. tyre (700c-ish)
@@ -242,7 +244,7 @@ function buildFrame(F, s, style, rng, G) {
     const lowCurve = [add(htBot, G.sAx, 0.02), [0.26, 0.47, 0], [0.08, 0.3, 0], add(BB, [0.03, -0.005, 0])];
     F.add(B.paint, tube(lowCurve.map(v3), tR(0.015), LOD.tube, LOD.loop), { color: paint });
     // chrome lugs at the head tube
-    for (const p of [add(htTop, G.sAx, -0.02), add(htBot, G.sAx, 0.03)]) F.add(B.metal, new THREE.SphereGeometry(tR(0.024), 10, 8).translate(...p), { color: '#d8dcdf' });
+    for (const p of [add(htTop, G.sAx, -0.02), add(htBot, G.sAx, 0.03)]) F.add(B.metal, new THREE.SphereGeometry(tR(0.024), q(10, 6), q(8, 4)).translate(...p), { color: '#d8dcdf' });
   } else {
     // diamond: top tube (sloping for gravel), down tube
     const ttFront = add(htTop, G.sAx, -0.025);
@@ -253,7 +255,7 @@ function buildFrame(F, s, style, rng, G) {
   // seat tube
   T(add(BB, [0, -0.01, 0]), stTop, 0.016);
   // bottom bracket shell
-  F.add(B.paint, new THREE.CylinderGeometry(tR(0.021), tR(0.021), 0.075, 12).rotateX(Math.PI / 2).translate(...BB), { color: paint });
+  F.add(B.paint, new THREE.CylinderGeometry(tR(0.021), tR(0.021), 0.075, q(12, 6)).rotateX(Math.PI / 2).translate(...BB), { color: paint });
   // chainstays & seatstays (pairs)
   for (const zz of [-1, 1]) {
     const drop = add(REAR, [0.0, 0.0, zz * 0.062]);
@@ -273,7 +275,7 @@ function buildFrame(F, s, style, rng, G) {
     F.add(B.paint, tube([v3(top), v3(bow), v3(tip)], tR(0.012), Math.min(8, LOD.tube), Math.min(12, LOD.loop)), { color: paint });
   }
   // steerer / headset spacers above the head tube
-  F.add(B.metal, rod(htTop, add(htTop, G.sAx, 0.035), 0.017, 0.017, 10), { color: '#2b2b2b' });
+  F.add(B.metal, rod(htTop, add(htTop, G.sAx, 0.035), 0.017, 0.017, q(10, 5)), { color: '#2b2b2b' });
 }
 
 function buildCockpit(F, s, style, rng, G) {
@@ -282,24 +284,24 @@ function buildCockpit(F, s, style, rng, G) {
   let clamp;
   if (style === 'vintage') {
     // quill stem rising, then a short forward extension
-    const q = add(top, G.sAx, 0.07);
-    F.add(B.metal, rod(G.htTop, q, 0.012, 0.012, 8), { color: '#d8dcdf' });
-    clamp = add(q, [0.05, 0.01, 0]);
-    F.add(B.metal, rod(q, clamp, 0.011, 0.011, 8), { color: '#d8dcdf' });
+    const quill = add(top, G.sAx, 0.07);
+    F.add(B.metal, rod(G.htTop, quill, 0.012, 0.012, LOD.tube), { color: '#d8dcdf' });
+    clamp = add(quill, [0.05, 0.01, 0]);
+    F.add(B.metal, rod(quill, clamp, 0.011, 0.011, LOD.tube), { color: '#d8dcdf' });
     // swept-back bars
     for (const zz of [-1, 1]) {
       const pts = [clamp, add(clamp, [0.0, 0.0, zz * 0.12]), add(clamp, [-0.07, 0.03, zz * 0.24]), add(clamp, [-0.17, 0.035, zz * 0.27])];
       F.add(B.metal, tube(pts.map(v3), 0.0105, LOD.bar[0], Math.round(LOD.bar[1] * 0.6)), { color: '#d8dcdf' });
       // cork grips
-      F.add(B.soft, rod(add(clamp, [-0.09, 0.034, zz * 0.262]), add(clamp, [-0.19, 0.035, zz * 0.272]), 0.016, 0.016, 8), { color: '#c79a62' });
+      F.add(B.soft, rod(add(clamp, [-0.09, 0.034, zz * 0.262]), add(clamp, [-0.19, 0.035, zz * 0.272]), 0.016, 0.016, q(8, 5)), { color: '#c79a62' });
     }
     // bell
-    F.add(B.metal, new THREE.SphereGeometry(0.024, 12, 6, 0, TAU, 0, Math.PI / 2).translate(clamp[0] - 0.01, clamp[1] + 0.014, clamp[2] + 0.12), { color: '#e6c25a' });
+    F.add(B.metal, new THREE.SphereGeometry(0.024, q(12, 6), q(6, 3), 0, TAU, 0, Math.PI / 2).translate(clamp[0] - 0.01, clamp[1] + 0.014, clamp[2] + 0.12), { color: '#e6c25a' });
   } else {
     // threadless stem forward & slightly up
     clamp = add(top, [0.095, 0.015, 0]);
-    F.add(B.metal, rod(add(top, [-0.01, 0, 0]), clamp, 0.016, 0.014, 10), { color: '#2b2b2b' });
-    F.add(B.metal, new THREE.CylinderGeometry(0.017, 0.017, 0.045, 10).rotateX(Math.PI / 2).translate(...clamp), { color: '#2b2b2b' });
+    F.add(B.metal, rod(add(top, [-0.01, 0, 0]), clamp, 0.016, 0.014, q(10, 5)), { color: '#2b2b2b' });
+    F.add(B.metal, new THREE.CylinderGeometry(0.017, 0.017, 0.045, q(10, 5)).rotateX(Math.PI / 2).translate(...clamp), { color: '#2b2b2b' });
     // drop bars with bar tape, hoods and levers
     const half = s.drops ?? 0.22;
     for (const zz of [-1, 1]) {
@@ -315,13 +317,13 @@ function buildCockpit(F, s, style, rng, G) {
       F.add(B.soft, tube(pts.map(v3), 0.0125, LOD.bar[0], LOD.bar[1]), { color: s.tape });
       // hood + lever
       const hood = add(clamp, [0.07, 0.012, zz * half]);
-      F.add(B.soft, new THREE.CapsuleGeometry(0.014, 0.035, 4, 8).rotateZ(Math.PI / 2 - 0.4).translate(...hood), { color: '#1f1e1d' });
-      F.add(B.metal, tube([v3(add(hood, [0.02, 0.0, 0])), v3(add(hood, [0.035, -0.06, 0])), v3(add(hood, [0.02, -0.11, 0]))], 0.0055, 5, 8), { color: '#3a3a3a' });
+      F.add(B.soft, new THREE.CapsuleGeometry(0.014, 0.035, q(4, 2), q(8, 5)).rotateZ(Math.PI / 2 - 0.4).translate(...hood), { color: '#1f1e1d' });
+      F.add(B.metal, tube([v3(add(hood, [0.02, 0.0, 0])), v3(add(hood, [0.035, -0.06, 0])), v3(add(hood, [0.02, -0.11, 0]))], 0.0055, q(5, 3), q(8, 4)), { color: '#3a3a3a' });
     }
     // cables looping to the frame
     for (const zz of LOD.cables ? [-1, 1] : []) {
       const a = add(clamp, [0.07, 0.0, zz * (s.drops ?? 0.22) * 0.9]);
-      F.add(B.soft, tube([v3(a), v3(add(clamp, [0.08, -0.08, zz * 0.08])), v3(add(G.htBot, [0.03, 0.02, zz * 0.03])), v3(add(G.htBot, [-0.04, -0.03, zz * 0.02]))], 0.0035, 4, 16), { color: '#1c1c1c' });
+      F.add(B.soft, tube([v3(a), v3(add(clamp, [0.08, -0.08, zz * 0.08])), v3(add(G.htBot, [0.03, 0.02, zz * 0.03])), v3(add(G.htBot, [-0.04, -0.03, zz * 0.02]))], 0.0035, q(4, 3), q(16, 6)), { color: '#1c1c1c' });
     }
   }
   return clamp;
@@ -330,9 +332,9 @@ function buildCockpit(F, s, style, rng, G) {
 function buildSeat(F, s, style, rng, G) {
   const B = bm();
   const postTop = add(G.stTop, G.stDir, style === 'vintage' ? 0.12 : 0.16);
-  F.add(B.metal, rod(add(G.stTop, G.stDir, -0.02), postTop, 0.0135, 0.0135, 10), { color: style === 'vintage' ? '#d8dcdf' : '#2b2b2b' });
+  F.add(B.metal, rod(add(G.stTop, G.stDir, -0.02), postTop, 0.0135, 0.0135, q(10, 5)), { color: style === 'vintage' ? '#d8dcdf' : '#2b2b2b' });
   // seat clamp
-  F.add(B.metal, new THREE.TorusGeometry(0.02, 0.005, 5, 12).rotateX(Math.PI / 2).translate(...add(G.stTop, G.stDir, 0.005)), { color: '#3a3a3a' });
+  F.add(B.metal, new THREE.TorusGeometry(0.02, 0.005, q(5, 3), q(12, 6)).rotateX(Math.PI / 2).translate(...add(G.stTop, G.stDir, 0.005)), { color: '#3a3a3a' });
   // saddle: tapered, slightly domed
   const L = style === 'vintage' ? 0.25 : 0.27;
   const sad = new THREE.SphereGeometry(1, LOD.saddle[0], LOD.saddle[1]);
@@ -349,7 +351,7 @@ function buildSeat(F, s, style, rng, G) {
     // (the toy bike on the weathervane has no saddle rails)
   } else if (style === 'vintage') {
     for (const zz of [-1, 1]) {
-      for (let k = 0; k < 5; k++) F.add(B.metal, new THREE.TorusGeometry(0.014, 0.0035, 4, 10).rotateX(Math.PI / 2).translate(seat[0] - 0.08, seat[1] - 0.025 - k * 0.009, zz * 0.055), { color: '#cfd3d6', cast: false });
+      for (let k = 0; k < 5; k++) F.add(B.metal, new THREE.TorusGeometry(0.014, 0.0035, q(4, 3), q(10, 5)).rotateX(Math.PI / 2).translate(seat[0] - 0.08, seat[1] - 0.025 - k * 0.009, zz * 0.055), { color: '#cfd3d6', cast: false });
       F.add(B.metal, rod([seat[0] - 0.08, seat[1] - 0.07, zz * 0.055], [postTop[0] + 0.01, postTop[1] + 0.005, 0], 0.004, 0.004, 4), { color: '#cfd3d6', cast: false });
       F.add(B.metal, rod([seat[0] + 0.1, seat[1] - 0.02, zz * 0.01], [postTop[0] + 0.01, postTop[1] + 0.005, zz * 0.01], 0.004, 0.004, 4), { color: '#cfd3d6', cast: false });
     }
@@ -398,9 +400,9 @@ function buildDrive(F, s, style, rng) {
   const cageRot = Math.atan2(cageB.y - cageA.y, cageB.x - cageA.x) - Math.PI / 2;
   for (const dz of [-0.009, 0.009]) {
     F.add(B.metal, new THREE.BoxGeometry(0.022, cageLen, 0.0025).rotateZ(cageRot).translate(cageMid.x, cageMid.y, z + 0.012 + dz), { color: DR, cast: false });
-    for (const c of [cageA, cageB]) F.add(B.metal, new THREE.CylinderGeometry(0.011, 0.011, 0.0025, 10).rotateX(Math.PI / 2).translate(c.x, c.y, z + 0.012 + dz), { color: DR, cast: false });
+    for (const c of [cageA, cageB]) F.add(B.metal, new THREE.CylinderGeometry(0.011, 0.011, 0.0025, q(10, 5)).rotateX(Math.PI / 2).translate(c.x, c.y, z + 0.012 + dz), { color: DR, cast: false });
   }
-  for (const p of [pulley1, pulley2]) F.add(B.metal, new THREE.CylinderGeometry(0.0125, 0.0125, 0.006, 12).rotateX(Math.PI / 2).translate(...p), { color: '#1f1f20', cast: false });
+  for (const p of [pulley1, pulley2]) F.add(B.metal, new THREE.CylinderGeometry(0.0125, 0.0125, 0.006, q(12, 6)).rotateX(Math.PI / 2).translate(...p), { color: '#1f1f20', cast: false });
   if (style === 'vintage') {
     // chainguard over the top run
     const cg = [];
@@ -408,7 +410,7 @@ function buildDrive(F, s, style, rng) {
       const t = i / 10;
       cg.push(v3([BB[0] + 0.11 - t * 0.5, BB[1] + 0.105 + t * 0.03 - Math.sin(t * Math.PI) * 0.0, z + 0.03]));
     }
-    const plate = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(cg), 20, 0.022, 6, false);
+    const plate = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(cg), q(20, 8), 0.022, q(6, 4), false);
     plate.scale(1, 1, 0.35);
     plate.translate(0, 0, (z + 0.03) * 0.65);
     F.add(B.paint, plate, { color: s.color, cast: false });
@@ -435,7 +437,7 @@ function buildCrank(F, s, style) {
       const hole = new THREE.Path();
       hole.absarc(0, 0, rIn, 0, TAU, true);
       sh.holes.push(hole);
-      const ring = new THREE.ExtrudeGeometry(sh, { depth: 0.004, bevelEnabled: false, curveSegments: 6 });
+      const ring = new THREE.ExtrudeGeometry(sh, { depth: 0.004, bevelEnabled: false, curveSegments: q(6, 3) });
       ring.translate(0, 0, z - 0.002);
       F.add(B.metal, ring, { color: style === 'vintage' ? '#c9cdd0' : '#8d9195', cast: false });
     } else {
@@ -444,19 +446,19 @@ function buildCrank(F, s, style) {
     // chainring bolts and the spider arms
     for (let i = 0; i < 4; i++) {
       const a = (i / 4) * TAU + 0.4;
-      F.add(B.metal, rod([0, 0, z + 0.003], [Math.cos(a) * 0.08, Math.sin(a) * 0.08, z + 0.003], 0.011, 0.008, 5), { color: style === 'vintage' ? '#d8dcdf' : '#1c1c1d', cast: false });
+      F.add(B.metal, rod([0, 0, z + 0.003], [Math.cos(a) * 0.08, Math.sin(a) * 0.08, z + 0.003], 0.011, 0.008, q(5, 3)), { color: style === 'vintage' ? '#d8dcdf' : '#1c1c1d', cast: false });
       if (teeth) F.add(B.metal, new THREE.CylinderGeometry(0.0045, 0.0045, 0.008, 6).rotateX(Math.PI / 2).translate(Math.cos(a) * 0.08, Math.sin(a) * 0.08, z + 0.004), { color: '#b9bdc0', cast: false });
     }
-    F.add(B.metal, new THREE.CylinderGeometry(0.022, 0.022, 0.012, 12).rotateX(Math.PI / 2).translate(0, 0, z + 0.002), { color: style === 'vintage' ? '#d8dcdf' : '#1c1c1d', cast: false });
+    F.add(B.metal, new THREE.CylinderGeometry(0.022, 0.022, 0.012, q(12, 6)).rotateX(Math.PI / 2).translate(0, 0, z + 0.002), { color: style === 'vintage' ? '#d8dcdf' : '#1c1c1d', cast: false });
   }
   // spindle
-  F.add(B.metal, new THREE.CylinderGeometry(0.01, 0.01, 0.14, 8).rotateX(Math.PI / 2), { color: '#9ea2a5', cast: false });
+  F.add(B.metal, new THREE.CylinderGeometry(0.01, 0.01, 0.14, q(8, 4)).rotateX(Math.PI / 2), { color: '#9ea2a5', cast: false });
   // arms + pedals (opposite)
   const armC = style === 'vintage' ? '#d8dcdf' : '#2b2b2b';
   for (const side of [1, -1]) {
     const zz = side * 0.068;
     const tip = [0, -side * 0.17, zz];
-    F.add(B.metal, rod([0, 0, zz], tip, 0.012, 0.009, 6), { color: armC, cast: false });
+    F.add(B.metal, rod([0, 0, zz], tip, 0.012, 0.009, q(6, 4)), { color: armC, cast: false });
     const ped = new THREE.BoxGeometry(0.075, 0.016, 0.09);
     ped.translate(tip[0], tip[1], tip[2] + side * 0.055);
     F.add(B.metal, ped, { color: style === 'vintage' ? '#3a3632' : '#2a2a2a', cast: false });
@@ -470,8 +472,8 @@ function buildAccessories(F, s, style, rng, G, clamp, seat) {
     const a = lerp3(G.htBot, BB, 0.42), b = lerp3(G.htBot, BB, 0.72);
     const d = new THREE.Vector3(...b).sub(new THREE.Vector3(...a)).normalize();
     const off = [-d.y * 0.04, d.x * 0.04, 0];
-    F.add(B.soft, rod(add(a, off), add(b, off), 0.032, 0.032, 12), { color: '#d9a441' });
-    F.add(B.soft, rod(add(b, off), add(add(b, off), [d.x, d.y, 0], 0.03), 0.016, 0.012, 8), { color: '#2b2b2b' });
+    F.add(B.soft, rod(add(a, off), add(b, off), 0.032, 0.032, q(12, 6)), { color: '#d9a441' });
+    F.add(B.soft, rod(add(b, off), add(add(b, off), [d.x, d.y, 0], 0.03), 0.016, 0.012, q(8, 5)), { color: '#2b2b2b' });
     F.add(B.metal, rod(add(a, off, 0.5), add(b, off, 0.5), 0.004, 0.004, 4), { color: '#3a3a3a', cast: false });
     // frame bag: a soft triangle in the main triangle
     const shape = new THREE.Shape();
@@ -480,13 +482,13 @@ function buildAccessories(F, s, style, rng, G, clamp, seat) {
     shape.lineTo(p1[0], p1[1] - 0.025);
     shape.lineTo(p2[0] - 0.02, p2[1] + 0.05);
     shape.lineTo(p0[0], p0[1] - 0.02);
-    const bag = new THREE.ExtrudeGeometry(shape, { depth: 0.05, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 2, curveSegments: 1 });
+    const bag = new THREE.ExtrudeGeometry(shape, { depth: 0.05, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: q(2, 1), curveSegments: 1 });
     bag.translate(0, 0, -0.025);
     F.add(B.soft, bag, { color: '#4e5b3a' });
     // a zip line
     F.add(B.soft, rod([p0[0] - 0.02, p0[1] - 0.05, 0.039], [p1[0] + 0.06, p1[1] - 0.06, 0.039], 0.003, 0.003, 3), { color: '#c9b27a', cast: false });
     // saddle bag
-    F.add(B.soft, new THREE.CapsuleGeometry(0.035, 0.09, 4, 10).rotateZ(Math.PI / 2 + 0.25).translate(seat[0] - 0.15, seat[1] - 0.05, 0), { color: '#6b4a2e' });
+    F.add(B.soft, new THREE.CapsuleGeometry(0.035, 0.09, q(4, 2), q(10, 6)).rotateZ(Math.PI / 2 + 0.25).translate(seat[0] - 0.15, seat[1] - 0.05, 0), { color: '#6b4a2e' });
   }
   if (style === 'road') {
     // rim brake calipers + a bottle
@@ -495,7 +497,7 @@ function buildAccessories(F, s, style, rng, G, clamp, seat) {
       F.add(B.metal, new THREE.BoxGeometry(0.02, 0.03, 0.1).translate(...p), { color: '#2b2b2b', cast: false });
     }
     const a = lerp3(G.htBot, BB, 0.45), b = lerp3(G.htBot, BB, 0.75);
-    F.add(B.soft, rod(add(a, [0.035, 0.03, 0]), add(b, [0.035, 0.03, 0]), 0.03, 0.03, 12), { color: '#f1ece2' });
+    F.add(B.soft, rod(add(a, [0.035, 0.03, 0]), add(b, [0.035, 0.03, 0]), 0.03, 0.03, q(12, 6)), { color: '#f1ece2' });
   }
   if (style === 'gravel') {
     // disc calipers
@@ -505,7 +507,7 @@ function buildAccessories(F, s, style, rng, G, clamp, seat) {
   if (style === 'vintage') {
     // chrome mudguards (partial tori over both wheels)
     for (const [ax, a0, a1] of [[FRONT, -0.35, 2.2], [REAR, 0.8, 3.55]]) {
-      const g = new THREE.TorusGeometry(RW + 0.03, 0.02, 4, 30, a1 - a0);
+      const g = new THREE.TorusGeometry(RW + 0.03, 0.02, q(4, 3), q(30, 10), a1 - a0);
       g.scale(1, 1, 1.6);
       g.rotateZ(a0);
       g.translate(ax[0], ax[1], 0);
@@ -522,8 +524,8 @@ function buildAccessories(F, s, style, rng, G, clamp, seat) {
     F.add(B.metal, rod(add(rk, [0.17, 0, -0.06]), add(G.stTop, [-0.03, -0.03, 0]), 0.004, 0.004, 4), { color: '#cfd3d6', cast: false });
     // headlamp (glows at night)
     const lamp = add(G.htBot, [0.06, 0.03, 0]);
-    F.add(B.metal, rod(add(lamp, [-0.04, 0, 0]), add(lamp, [0.02, 0, 0]), 0.026, 0.03, 12), { color: '#d8dcdf', cast: false });
-    F.add(B.glow, new THREE.CircleGeometry(0.026, 14).rotateY(Math.PI / 2).translate(lamp[0] + 0.022, lamp[1], lamp[2]), { cast: false });
+    F.add(B.metal, rod(add(lamp, [-0.04, 0, 0]), add(lamp, [0.02, 0, 0]), 0.026, 0.03, q(12, 6)), { color: '#d8dcdf', cast: false });
+    F.add(B.glow, new THREE.CircleGeometry(0.026, q(14, 6)).rotateY(Math.PI / 2).translate(lamp[0] + 0.022, lamp[1], lamp[2]), { cast: false });
   }
 }
 
@@ -535,29 +537,30 @@ function buildBasket(F, s, rng, G, flowers) {
   // woven walls: thin hoops with gaps between them, woven over the uprights
   for (let k = 0; k < 5; k++) {
     const y = base[1] + 0.02 + k * (h / 5.2);
-    const g = new THREE.TorusGeometry(1, 0.08, 4, 22);
+    const g = new THREE.TorusGeometry(1, 0.08, q(4, 3), q(22, 10));
     g.rotateX(Math.PI / 2);
     g.scale(w * 0.5 * (1 + k * 0.03), 0.09, d * 0.5 * (1 + k * 0.03));
     g.translate(base[0] + w * 0.5, y, base[2]);
     F.add(B.soft, g, { color: k % 2 ? '#c49a5c' : '#a77c45' });
   }
-  F.add(B.soft, new THREE.CylinderGeometry(1, 1, 0.012, 20).scale(w * 0.5, 1, d * 0.5).translate(base[0] + w * 0.5, base[1] + 0.006, base[2]), { color: '#8f6a3a' });
+  F.add(B.soft, new THREE.CylinderGeometry(1, 1, 0.012, q(20, 8)).scale(w * 0.5, 1, d * 0.5).translate(base[0] + w * 0.5, base[1] + 0.006, base[2]), { color: '#8f6a3a' });
   // a dark inside so the weave reads, and a cloth lining peeking over the rim
-  F.add(B.soft, new THREE.CylinderGeometry(1, 0.97, h * 0.92, 18, 1, true).scale(w * 0.47, 1, d * 0.47).translate(base[0] + w * 0.5, base[1] + h * 0.47, base[2]), { color: '#4e3a26', cast: false });
+  F.add(B.soft, new THREE.CylinderGeometry(1, 0.97, h * 0.92, q(18, 8), 1, true).scale(w * 0.47, 1, d * 0.47).translate(base[0] + w * 0.5, base[1] + h * 0.47, base[2]), { color: '#4e3a26', cast: false });
   // uprights
-  for (let i = 0; i < 14; i++) {
-    const a = (i / 14) * TAU;
+  const nUp = q(14, 8);
+  for (let i = 0; i < nUp; i++) {
+    const a = (i / nUp) * TAU;
     const x = base[0] + w * 0.5 + Math.cos(a) * w * 0.51, z = base[2] + Math.sin(a) * d * 0.51;
     F.add(B.soft, rod([x, base[1], z], [x * 1.0, base[1] + h, z], 0.005, 0.005, 3), { color: '#7d5a30', cast: false });
   }
   // handle-free rim
-  F.add(B.soft, new THREE.TorusGeometry(1, 0.06, 5, 26).rotateX(Math.PI / 2).scale(w * 0.52, 0.012 / 0.06, d * 0.52).translate(base[0] + w * 0.5, base[1] + h, base[2]), { color: '#c79a5a' });
+  F.add(B.soft, new THREE.TorusGeometry(1, 0.06, q(5, 3), q(26, 10)).rotateX(Math.PI / 2).scale(w * 0.52, 0.012 / 0.06, d * 0.52).translate(base[0] + w * 0.5, base[1] + h, base[2]), { color: '#c79a5a' });
   // bracket to the head tube
   F.add(B.metal, rod(add(G.htBot, [0.01, 0.03, 0]), [base[0] + 0.02, base[1] + 0.02, 0], 0.005, 0.005, 4), { color: '#cfd3d6', cast: false });
   if (!flowers) return;
   // a bunch of flowers + leaves spilling over the rim
   const COLORS = ['#f29bb8', '#f2c14e', '#e86a5a', '#f4f0e6', '#b48fd6', '#ffb37a', '#7fa7e0'];
-  const n = 22;
+  const n = q(22, 9);
   for (let i = 0; i < n; i++) {
     const a = rng.next() * TAU, r = Math.sqrt(rng.next()) * 0.85;
     const x = base[0] + w * 0.5 + Math.cos(a) * w * 0.45 * r, z = base[2] + Math.sin(a) * d * 0.45 * r;
@@ -571,7 +574,7 @@ function buildBasket(F, s, rng, G, flowers) {
     }
     F.add(B.soft, new THREE.SphereGeometry(fs * 0.3, LOD.petal[0], LOD.petal[1]).translate(x, y + 0.006, z), { color: '#e8b33a', cast: false });
   }
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0, nl = q(12, 6); i < nl; i++) {
     const a = rng.next() * TAU;
     const x = base[0] + w * 0.5 + Math.cos(a) * w * 0.48, z = base[2] + Math.sin(a) * d * 0.48;
     const leaf = new THREE.SphereGeometry(0.03, LOD.petal[0], LOD.petal[1]).scale(1, 0.25, 0.45).translate(0.03, 0, 0);

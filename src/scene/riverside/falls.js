@@ -344,7 +344,7 @@ export function buildFalls(ctx, B, rng) {
   };
   {
     // (coarser on the lower tiers: the terraces' edges carry the shape, not the cell size)
-    const STEP = LOD.k >= 1 ? 0.1 : LOD.k > 0.5 ? 0.13 : 0.16;
+    const STEP = LOD.k >= 1 ? 0.1 : LOD.k > 0.5 ? 0.15 : 0.18;
     const u0 = -5.6, u1 = 5.6, w0 = -3.6, w1 = 3.3;
     const nu = Math.round((u1 - u0) / STEP), nw = Math.round((w1 - w0) / STEP);
     const W = nu + 1;
@@ -388,9 +388,9 @@ export function buildFalls(ctx, B, rng) {
     // the heightfield is an open surface facing up; the shadow pass draws back
     // faces only, so add the same triangles reversed (culled in the main pass)
     // to let the outcrop cast its shadow
-    // (not on tiers without shadows)
+    // (only on the high tier: the coarse shadow maps below it barely show the outcrop's shadow)
     const n0 = idx.length;
-    if (LOD.shadows) for (let i = 0; i < n0; i += 3) idx.push(idx[i], idx[i + 2], idx[i + 1]);
+    if (LOD.shadows && LOD.k >= 1) for (let i = 0; i < n0; i += 3) idx.push(idx[i], idx[i + 2], idx[i + 1]);
     g.setIndex(idx);
     // colour: warm grey sandstone in strata bands, darker & damper low down
     // and in the steep faces near the water, lighter on the terrace lips
@@ -554,6 +554,7 @@ export function buildFalls(ctx, B, rng) {
   };
   for (const t of tops) {
     if (Math.abs(t.u) < 0.6 && t.w > -1.2) continue; // not in the water's path
+    if (density < 0.9 && !rng.chance(0.35 + 0.65 * density)) continue; // (thinner on phones)
     // a velvet moss mat over most boulder tops (the material adds moss to the
     // up-facing sides; the mats give the tops real thickness)
     if (rng.chance(0.7)) {
@@ -657,8 +658,8 @@ export function buildFalls(ctx, B, rng) {
       const x = u + rng.jitter(0.12), z = w + rng.jitter(0.12);
       const size = rng.range(0.05, 0.09);
       const h = size * rng.range(1.2, 2.0);
-      R.add(MM.stem, xf(new THREE.CylinderGeometry(size * 0.15, size * 0.2, h, 6).translate(0, h / 2, 0), [x, y, z], [rng.jitter(0.2), 0, rng.jitter(0.2)]), { color: '#d8e8e0', cast: false });
-      R.add(MM.glowBlue, new THREE.SphereGeometry(size * 0.6, 8, 5, 0, TAU, 0, Math.PI / 2).scale(1, 0.7, 1).translate(x, y + h, z), { cast: false });
+      R.add(MM.stem, xf(new THREE.CylinderGeometry(size * 0.15, size * 0.2, h, LOD.k < 1 ? 4 : 6, 1, true).translate(0, h / 2, 0), [x, y, z], [rng.jitter(0.2), 0, rng.jitter(0.2)]), { color: '#d8e8e0', cast: false });
+      R.add(MM.glowBlue, new THREE.SphereGeometry(size * 0.6, segs(8, 5), LOD.k < 1 ? 2 : 4, 0, TAU, 0, Math.PI / 2).scale(1, 0.7, 1).translate(x, y + h, z), { cast: false });
       const wp = toWorld(x, y + h, z);
       halos.push({ x: wp.x, y: wp.y, z: wp.z, size: 0.35 });
     }

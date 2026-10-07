@@ -48,8 +48,8 @@ export function addTrack(B, mats, rng, gh, pts, { width = 0.7, lift = 0.012, mat
   const mat = material ?? mats.vc();
   const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p.x, 0, p.z)), false, 'centripetal');
   const len = curve.getLength();
-  const n = Math.max(4, Math.ceil(len / 0.09));
-  const across = [-1, -0.62, -0.25, 0.25, 0.62, 1];
+  const n = Math.max(4, Math.ceil(len / 0.07));
+  const across = [-1, -0.7, -0.42, -0.14, 0.14, 0.42, 0.7, 1];
   const pos = [];
   const col = [];
   const uv = [];
@@ -81,8 +81,10 @@ export function addTrack(B, mats, rng, gh, pts, { width = 0.7, lift = 0.012, mat
       const k = 1 - Math.abs(a);
       c.copy(cEdge).lerp(cMid, Math.min(1, k * 1.4));
       const m = noiseA(x * 3.1 + seed, z * 3.1) * 0.5 + 0.5;
-      c.lerp(cDust, Math.max(0, m - 0.55) * k * 1.6);
-      c.multiplyScalar(0.92 + rng.next() * 0.12);
+      c.lerp(cDust, Math.max(0, m - 0.5) * k * 1.8);
+      // finer grain: damp darker dents and dry pale scuffs
+      const f = noiseB(x * 9.3 - seed, z * 9.3);
+      c.multiplyScalar(0.9 + f * 0.1 + rng.next() * 0.1);
       col.push(c.r, c.g, c.b);
       uv.push(a * 0.5 + 0.5, u * len);
     }
