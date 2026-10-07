@@ -17,7 +17,7 @@ function detectQuality() {
 }
 
 /**
- * Per tier. shadowMapSize: the sun's map (the beam gets a smaller one);
+ * Per tier. shadowMapSize: the sun's shadow map (fixed frustum over the glen);
  * post: 'full' (AO + DOF + bloom + grade), 'lite' (bloom + grade, 2× MSAA) or
  * false (plain renderer). 'medium' (phones, 30 fps) also re-renders its
  * shadow maps only every other frame (lighting.js).

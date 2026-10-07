@@ -309,12 +309,12 @@ export const LIMBS = [
     a0: 98,
     pts: [
       [1, 98, 14.8, 1.42],
-      [3, 96, 17.3, 1.24],
-      [5.4, 102, 18.9, 1.04, 0.24],
-      [7.9, 96, 18.0, 0.86],
-      [10.3, 104, 18.5, 0.72, 0.26],
-      [12.9, 112, 19.9, 0.54],
-      [14.8, 110, 21.2, 0.42, 0.2],
+      [3, 96, 17.5, 1.24],
+      [5.2, 102, 19.5, 1.04, 0.26],
+      [8.0, 96, 18.4, 0.86],
+      [10.2, 104, 19.9, 0.72, 0.28],
+      [12.9, 112, 20.2, 0.54],
+      [14.8, 108, 21.6, 0.42, 0.22],
       [16.6, 117, 22.8, 0.3],
     ],
     branches: 6,
@@ -493,6 +493,11 @@ export function trunkSample(a, y) {
     const ph = a - yc * LOBE_TWIST;
     const lobe = 0.62 * Math.cos(3 * ph + 0.4) + 0.38 * Math.cos(2 * ph - 1.1);
     r += lobe * R0 * (0.035 + 0.11 * free) * (1 - 0.6 * smoothstep(14, 17.5, yc));
+    // …wound with a few thick cords (the fused stems' fibre bundles) that
+    // follow the same twist, so the bole reads as wrung, not turned
+    const pc = 6 * ph + 1.4 * nBig(Math.cos(a) * 0.9 - 7, Math.sin(a) * 0.9, yc * 0.09 + 40);
+    const cord = 0.5 + 0.5 * Math.cos(pc);
+    r += (cord * cord - 0.36) * R0 * (0.015 + 0.12 * free) * (1 - smoothstep(15.5, 18.5, yc)) * smoothstep(-0.4, 1.2, yc);
   }
 
   // 2. Furrows: V-shaped fissures (zero crossings of noise), stretched along

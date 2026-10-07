@@ -170,6 +170,33 @@ function buildLookDev(ctx) {
   // cobble patch
   add(new THREE.BoxGeometry(5, 0.12, 3.2), materials.surface('cobble'), 13.5, 0.06, Z + 1.6);
   tag('cobble', 13.5, 0.9, Z + 1.6);
+
+  // row 6 (z = -32) — joinery at builder scale: a partition of single boards
+  // (each at its own UV offset, like the builders' board()), a glued-up top,
+  // a plank floor, and a patch of moss ground with a doorstep for scale.
+  //   --custom "joinery:0,1.6,-27.5:0,0.8,-32.5"   --custom "mossfloor:9,1.4,-29:9,0,-33"
+  const Z2 = -32;
+  const rand = (() => {
+    let s = 7;
+    return () => ((s = (s * 16807) % 2147483647) / 2147483647);
+  })();
+  const boardGeo = (w, h, d, grain) => materials.boxUV(new THREE.BoxGeometry(w, h, d), 1.4, { grain, offset: [rand() * 7, rand() * 7] });
+  const spruce = materials.surface('wood', { species: 'spruce' });
+  for (let i = 0; i < 9; i++) add(boardGeo(0.235, 2.3, 0.04, 'y'), spruce, -7.2 + i * 0.24, 1.15, Z2);
+  tag('partition (spruce boards)', -6.2, 2.6, Z2 + 0.1);
+  const oak = materials.surface('wood', { species: 'oak' });
+  for (let i = 0; i < 4; i++) add(boardGeo(1.6, 0.04, 0.18, 'x'), oak, -2.2, 0.9, Z2 - 0.27 + i * 0.181);
+  add(new THREE.BoxGeometry(1.4, 0.88, 0.5), materials.surface('wood', { species: 'walnut' }), -2.2, 0.44, Z2);
+  tag('glued-up oak top', -2.2, 1.6, Z2);
+  const planks = new THREE.PlaneGeometry(4, 3);
+  planks.rotateX(-Math.PI / 2);
+  add(materials.boxUV(planks, 1.6, { grain: 'x' }), materials.surface('wood', { species: 'oak', planks: true }), 2.4, 0.02, Z2);
+  tag('oak planks', 2.4, 0.9, Z2);
+  const ground = new THREE.PlaneGeometry(6, 5, 1, 1);
+  ground.rotateX(-Math.PI / 2);
+  add(ground, materials.surface('moss'), 9, 0.015, Z2);
+  add(new THREE.BoxGeometry(0.9, 0.18, 0.5), materials.surface('stone', { mossy: 0.3 }), 9.4, 0.09, Z2 - 0.6);
+  tag('moss ground', 9, 0.9, Z2 + 1.5);
 }
 
 export default async function build(ctx) {

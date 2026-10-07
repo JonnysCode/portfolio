@@ -155,18 +155,29 @@ function keyOf(kind, color, opts) {
   return kind + '|' + new THREE.Color(color).getHexString() + '|' + JSON.stringify(opts || {}, keyReplacer);
 }
 
+/** Program cache key of every wind-swayed material (the settings live in a uniform). */
+export const WIND_KEY = 'wind';
+
 /**
  * Inject a gentle wind sway into a built-in material's vertex shader.
  * Vertices above `base` (in local Y) sway proportionally to height × strength.
+ *
+ * strength / base / speed live in a per-material uniform (uWind), NOT in the
+ * shader source: every wind setting shares ONE compiled program per material
+ * type (cache key 'wind'), instead of one program per distinct setting.
+ * The live values: material.userData.wind (a Vector3: strength, base, speed).
  */
 export function applyWind(material, { strength = 0.06, base = 0, speed = 1.6 } = {}) {
+  const uWind = { value: new THREE.Vector3(strength, base, speed) };
+  material.userData.wind = uWind.value;
   const prev = material.onBeforeCompile;
   material.onBeforeCompile = (shader, renderer) => {
     if (prev) prev(shader, renderer);
     shader.uniforms.uTime = sharedUniforms.uTime;
     shader.uniforms.uWindStrength = sharedUniforms.uWindStrength;
+    shader.uniforms.uWind = uWind;
     shader.vertexShader =
-      'uniform float uTime;\nuniform float uWindStrength;\n' +
+      'uniform float uTime;\nuniform float uWindStrength;\nuniform vec3 uWind; // strength, base, speed\n' +
       shader.vertexShader.replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
@@ -176,14 +187,14 @@ export function applyWind(material, { strength = 0.06, base = 0, speed = 1.6 } =
             wPos = instanceMatrix * wPos;
           #endif
           wPos = modelMatrix * wPos;
-          float sway = max(transformed.y - ${base.toFixed(3)}, 0.0) * ${strength.toFixed(4)} * uWindStrength;
-          float ph = uTime * ${speed.toFixed(3)} + wPos.x * 0.17 + wPos.z * 0.13;
+          float sway = max(transformed.y - uWind.y, 0.0) * uWind.x * uWindStrength;
+          float ph = uTime * uWind.z + wPos.x * 0.17 + wPos.z * 0.13;
           transformed.x += (sin(ph) * 0.8 + sin(ph * 2.7 + 1.3) * 0.2) * sway;
           transformed.z += (cos(ph * 0.83) * 0.6) * sway;
         }`
       );
   };
-  material.customProgramCacheKey = () => `wind-${strength}-${base}-${speed}`;
+  material.customProgramCacheKey = () => WIND_KEY;
   return material;
 }
 

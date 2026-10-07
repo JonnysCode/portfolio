@@ -171,7 +171,7 @@ export const SPOTS = [
     focus: [-1.4, 1.1, -0.8],
     camera: { position: [0.9, 3.0, 11.4], target: [-0.6, 2.2, -0.7], fov: 40 },
     // phones: the Hobelbank with Jonny and the oak door (the deck is a swipe to the right)
-    portrait: { position: [-2.9, 4.2, 14.5], target: [-1.95, 2.3, -0.6] },
+    portrait: { position: [-2.0, 4.0, 13.9], target: [-1.95, 2.2, -0.6] },
   },
   {
     id: 'code',
@@ -192,7 +192,7 @@ export const SPOTS = [
     focus: [-15, 2.4, 4],
     camera: { position: [-2.6, 4.9, 9.9], target: [-14.6, 2.6, 3.9], fov: 40 },
     portrait: { position: [-0.9, 7.5, 17.7], target: [-13.8, 3.2, 4.4] },
-    close: { position: [-8.6, 4.4, 9.4], target: [-14.4, 2.2, 4.6] },
+    close: { position: [-10.4, 6.5, 10.2], target: [-14.3, 2.0, 4.7] },
   },
   {
     id: 'interior',
@@ -213,7 +213,7 @@ export const SPOTS = [
     focus: [16, 1.6, 6.6],
     camera: { position: [8.5, 4.6, 16.5], target: [15.2, 1.8, 6.2], fov: 40 },
     portrait: { position: [10.2, 7.3, 18.4], target: [16.4, 2.3, 7.8] },
-    close: { position: [11.4, 4.3, 13.0], target: [16.2, 1.7, 6.8] },
+    close: { position: [11.0, 6.6, 13.4], target: [16.2, 1.6, 6.8] },
   },
 ];
 export const SPOT_BY_ID = Object.fromEntries(SPOTS.map((s) => [s.id, s]));

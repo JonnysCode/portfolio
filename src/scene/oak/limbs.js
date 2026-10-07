@@ -13,6 +13,18 @@ import { organicTube, smoothTable } from './tubes.js';
 const _v = new THREE.Vector3();
 const _w = new THREE.Vector3();
 
+/**
+ * Windows in the crown: stretches of these limbs (arc-length fractions) carry
+ * no hanging leaf skirt, so from the glen the dark, kinked limbs show against
+ * the lit foliage beyond instead of one undivided green mass.
+ */
+const CROWN_GAPS = {
+  right: [[0.2, 0.58]],
+  front: [[0.22, 0.6]],
+  'front-right-high': [[0.28, 0.62]],
+  'back-left': [[0.3, 0.5]],
+};
+
 /** A main limb's curve and radius (u = arc-length fraction). */
 export function limbCurve(L) {
   const pts = L.pts.map(([rho, a, y]) => polar(a * DEG, rho, y));
@@ -156,10 +168,12 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
   /**
    * Leaf masses hanging along the outer part of a branch — the underside of
    * the crown is what most spot cameras look at, so it must be lush.
+   * `gaps`: [[u0, u1], …] stretches left bare so the limb shows.
    */
-  function skirt(b, from, step, scale) {
+  function skirt(b, from, step, scale, gaps = null) {
     const side = new THREE.Vector3();
     for (let u = from + rng.range(0, step * 0.5); u < 0.98; u += step * rng.range(0.8, 1.2)) {
+      if (gaps && gaps.some(([u0, u1]) => u > u0 && u < u1)) continue;
       const P = b.curve.getPointAt(u);
       const T = b.curve.getTangentAt(u);
       side.set(-T.z, 0, T.x);
@@ -187,7 +201,7 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
         furrows: 0.13,
         furrowFreq: 3.6,
         twist: 0.12,
-        lumps: 0.07,
+        lumps: 0.1,
         seed: li * 3 + 7,
         uvScale: 0.55,
         capEnd: true,
@@ -196,7 +210,7 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
     const limb = { id: L.id, curve, radiusAt, length: len, depth: 0 };
     limbs.push(limb);
     grow(limb, L.branches, 1);
-    skirt(limb, 0.3, 0.1, 1);
+    skirt(limb, 0.3, 0.1, 1, CROWN_GAPS[L.id]);
     const tip = curve.getPointAt(1);
     addClump(tip.add(new THREE.Vector3(0, 0.6, 0)), rng.range(2.6, 3.2), 0);
   });

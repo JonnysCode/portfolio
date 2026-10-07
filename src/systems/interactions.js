@@ -269,7 +269,8 @@ export function createInteractions(ctx) {
     for (const m of solidMeshes()) {
       const bs = m.geometry?.boundingSphere;
       if (!bs) continue;
-      if (!m.isInstancedMesh) {
+      // (skinned villagers are moved by their bones, not their matrix: their own raycast checks their bounds)
+      if (!m.isInstancedMesh && !m.isSkinnedMesh) {
         bsC.copy(bs.center).applyMatrix4(m.matrixWorld);
         const r = bs.radius * m.matrixWorld.getMaxScaleOnAxis();
         if (bsC.distanceTo(segC) > r + segR) continue;
@@ -277,7 +278,7 @@ export function createInteractions(ctx) {
       }
       if (ignore && within(m, ignore)) continue;
       if (!isLive({ enabled: true, object: m })) continue;
-      const grid = !m.isInstancedMesh && triCount(m) > GRID_MIN_TRIS ? triGrid(m) : null;
+      const grid = !m.isInstancedMesh && !m.isSkinnedMesh && triCount(m) > GRID_MIN_TRIS ? triGrid(m) : null;
       if (grid) {
         // the ray in the mesh's own space (scaled meshes: distances measured back in world space)
         invM.copy(m.matrixWorld).invert();
@@ -311,7 +312,7 @@ export function createInteractions(ctx) {
   // build the big meshes' triangle grids in idle time once the glen is up (not on the first tap)
   let gridQueue = null;
   function warmGrids(deadline) {
-    if (!gridQueue) gridQueue = solidMeshes().filter((m) => !m.isInstancedMesh && triCount(m) > GRID_MIN_TRIS);
+    if (!gridQueue) gridQueue = solidMeshes().filter((m) => !m.isInstancedMesh && !m.isSkinnedMesh && triCount(m) > GRID_MIN_TRIS);
     while (gridQueue.length && (!deadline || deadline.timeRemaining() > 8)) triGrid(gridQueue.pop());
     if (gridQueue.length) idle(warmGrids);
   }

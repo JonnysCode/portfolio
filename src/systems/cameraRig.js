@@ -68,6 +68,10 @@ const INTRO = {
 
 /** How much of the free part of the screen a framed detail may fill (its bounding sphere). */
 const FOCUS_FILL = 0.8;
+/** Camera positions tried around a framed detail: [azimuth offset, polar offset] (rad), best first. */
+const FOCUS_TRIES = [[0, 0], [0.3, 0], [-0.3, 0], [0, -0.22], [0.3, -0.2], [-0.3, -0.2], [0.55, 0], [-0.55, 0]];
+/** Rays beside the lens (in fifths of the frame: right, up) that sweep the near part of a framing. */
+const NEAR_RAYS = [[0, -1], [0, 1], [-1, 0], [1, 0]];
 
 /** Convert a composed shot (position + target) into orbit parameters. */
 function toOrbit(position, target) {
@@ -158,6 +162,7 @@ export function createCameraRig(ctx) {
   const fBox = new THREE.Box3();
   const fV = new THREE.Vector3();
   const fQ = new THREE.Quaternion();
+  const F_UP = new THREE.Vector3(0, 1, 0);
   /**
    * How far along the sight line target → eye the first solid thing sits
    * (0..1, 1 = clear). The subject itself and things hugging it are ignored.
@@ -448,26 +453,47 @@ export function createCameraRig(ctx) {
       const fovNow = b.fov;
       const minD = (opts.distance ?? 4) * (1 + portrait() * 0.12);
       let dist = Math.max(minD, radius ? Math.min(fitDistance(radius, fovNow), minD * 3) : 0);
-      // a clear line of sight: try the composed side first, then swing around it
-      let az = az0;
+      // a clear line of sight: try the composed side first, then swing around
+      // it (and a little higher). Besides the centre line, four rays towards
+      // points beside the lens sweep the near part of the frame, so a post, a
+      // lantern or a cap right in front of the camera counts as blocking too.
+      let az = az0, polF = pol;
       if (subject) {
-        const eye = new THREE.Vector3();
-        let best = { az: az0, clear: -1 };
-        for (const dAz of [0, 0.3, -0.3, 0.55, -0.55]) {
-          eye.setFromSphericalCoords(dist, pol, az0 + dAz).add(p);
+        const eye = new THREE.Vector3(), side = new THREE.Vector3(), upv = new THREE.Vector3(), q = new THREE.Vector3();
+        const skip = Math.min(0.5, radius * 0.6);
+        const tanV = Math.tan(THREE.MathUtils.degToRad(fovNow) / 2);
+        let best = { az: az0, pol, clear: -1, score: -1 };
+        for (const [dAz, dPol] of FOCUS_TRIES) {
+          const pp = clamp(pol + dPol, 0.75, 1.45);
+          eye.setFromSphericalCoords(dist, pp, az0 + dAz).add(p);
           if (eye.y < getHeight(eye.x, eye.z) + 0.5 || obstacles.penetration(eye) > 0.05) continue;
-          const clear = sightClear(p, eye, subject, Math.min(0.5, radius * 0.6));
-          if (clear > best.clear + 0.02) best = { az: az0 + dAz, clear };
-          if (clear >= 0.999) break;
+          const clear = sightClear(p, eye, subject, skip);
+          let score = clear;
+          if (clear >= 0.999) {
+            // the near field: rays to points a fifth of the frame beside / above / below the lens
+            fV.subVectors(p, eye).normalize();
+            side.crossVectors(fV, F_UP).normalize();
+            upv.crossVectors(side, fV);
+            const k = dist * tanV * 0.2;
+            let off = 1;
+            for (const [a, b] of NEAR_RAYS) {
+              q.copy(eye).addScaledVector(side, a * k * camera.aspect).addScaledVector(upv, b * k);
+              off = Math.min(off, sightClear(p, q, subject, skip));
+            }
+            score = 1 + off;
+          }
+          if (score > best.score + 0.02) best = { az: az0 + dAz, pol: pp, clear, score };
+          if (score >= 1.97) break;
         }
         az = best.az;
+        polF = best.pol;
         // still blocked: move in front of the obstacle (never closer than the detail's own size)
         if (best.clear >= 0 && best.clear < 0.999) dist = Math.max(radius * 1.25 + 0.4, Math.min(dist, dist * best.clear - 0.35));
       }
       focusBase = {
         target: p,
         azimuth: az,
-        polar: pol,
+        polar: polF,
         distance: dist,
         fov: fovNow,
         focus: p.clone(),

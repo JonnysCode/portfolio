@@ -37,7 +37,7 @@ export const KINDS = {
   stone: { mode: 'rgb', size: [512, 512], bump: 0.045, cavity: 1.8, mapping: 'triplanar', tile: 2, normal: 1.25, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#867d6e' },
   cobble: { mode: 'rgb', size: [512, 512], bump: 0.035, cavity: 0.9, mapping: 'triplanar', tile: 1.8, normal: 1.1, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#8c8671' },
   rock: { mode: 'rgb', size: [512, 512], bump: 0.05, cavity: 2, mapping: 'triplanar', tile: 5, normal: 1.1, ao: 1, breakup: 1, wrap: 0.1, mossy: 0.35, mean: '#8c8a82' },
-  moss: { mode: 'rgb', size: [512, 512], bump: 0.025, cavity: 2, mapping: 'triplanar', tile: 1.3, normal: 1, ao: 1, breakup: 1.2, velvet: 0.6, wrap: 0.35, mean: '#597320' },
+  moss: { mode: 'rgb', size: [512, 512], bump: 0.025, cavity: 1.1, mapping: 'triplanar', tile: 1.3, normal: 1, ao: 1, breakup: 1.2, velvet: 0.6, wrap: 0.35, mean: '#597320' },
   soil: { mode: 'rgb', size: [512, 512], bump: 0.02, cavity: 2, mapping: 'triplanar', tile: 2.2, normal: 1, ao: 1, breakup: 1, wrap: 0.15, mean: '#503720' },
   mushroomCap: { mode: 'colorize', size: [512, 512], bump: 0.008, cavity: 1, mapping: 'uv', tile: 1, wrapT: 'clamp', normal: 0.8, ao: 0.5, breakup: 0.6, velvet: 0.35, wrap: 0.25 },
   mushroomStem: { mode: 'rgb', size: [512, 512], bump: 0.01, cavity: 1.5, mapping: 'uv', tile: 1, normal: 0.9, ao: 0.8, breakup: 0.7, velvet: 0.15, wrap: 0.3, mean: '#e1d5bb' },

@@ -118,6 +118,7 @@ export default async function build(ctx) {
     roots: roots.roots,
     hollows: hollows.mouths,
     hollowLinings: hollows.parts,
+    ivyLeaves: ivy.leaves,
   });
 
   ctx.colliders?.addCircle?.(OAK.x, OAK.z, OAK.baseRadius + 0.3, 'oak');

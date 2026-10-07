@@ -24,7 +24,7 @@ const VB = { x: -33, y: -31, w: 66, h: 62 };
 const PIN = {
   interior: { x: -24.5, z: 1.2, label: 'above' },
   home: { x: -14.2, z: 5.6, label: 'below' },
-  woodworking: { x: -3.6, z: 0.4, label: 'below' },
+  woodworking: { x: -2.3, z: 0.4, label: 'below' },
   code: { x: 9.5, z: -10.5, label: 'right', leader: [OAK.loft.x, OAK.loft.z] },
   bikes: { x: 17.2, z: 7.4, label: 'below' },
   glen: { x: 0, z: 24, label: 'below' },

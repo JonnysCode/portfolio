@@ -11,6 +11,7 @@
 // the hanging underside, per-clump drift).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
+import { SUN_LIGHT_DIR } from '../../world/env/celestial.js';
 
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
@@ -183,6 +184,9 @@ export function buildCrown(ctx, rng, clumps, { density = 1 } = {}) {
   const warm = new THREE.Color('#5f9440');
   const deep = new THREE.Color('#3d7a47');
   const cool = new THREE.Color('#33685a');
+  // sun-kissed leaf tips on the tops of the masses (a painter's highlight)
+  const sunlit = new THREE.Color('#b9cc5c');
+  const sunDir = SUN_LIGHT_DIR.clone().normalize();
   const cc = new THREE.Color();
   const tmpC = new THREE.Color();
 
@@ -200,8 +204,11 @@ export function buildCrown(ctx, rng, clumps, { density = 1 } = {}) {
     const h = THREE.MathUtils.clamp((c.p.y - yMin) / Math.max(1, yMax - yMin) + rng.range(-0.2, 0.2), 0, 1);
     cc.copy(deep).lerp(warm, h);
     if (under) cc.lerp(cool, rng.range(0.15, 0.45));
-    if (rng.chance(0.12)) cc.lerp(sunny, 0.5);
+    // the crowning masses (limb & branch tips high up) are noticeably sunnier
+    if (!under && h > 0.42) cc.lerp(sunny, Math.min(0.75, (h - 0.42) * 1.5));
+    else if (rng.chance(0.12)) cc.lerp(sunny, 0.5);
     cc.multiplyScalar(rng.range(0.9, 1.08));
+    const topK = under ? 0.35 : 0.6 + 0.6 * h;
     const gp = g.attributes.position.array;
     const gn = g.attributes.normal.array;
     const gu = g.attributes.uv.array;
@@ -220,8 +227,11 @@ export function buildCrown(ctx, rng, clumps, { density = 1 } = {}) {
       nor[o] = n.x;
       nor[o + 1] = n.y;
       nor[o + 2] = n.z;
-      // a touch lighter where the mass faces up, darker deep underneath
+      // a touch lighter where the mass faces up, darker deep underneath…
       tmpC.copy(cc).multiplyScalar(0.86 + 0.24 * (n.y * 0.5 + 0.5));
+      // …and warm, light leaf tips where the top of a mass faces the sun
+      const sf = Math.max(0, n.dot(sunDir) * 0.7 + n.y * 0.45);
+      tmpC.lerp(sunlit, Math.min(0.62, sf * sf * topK));
       col[o] = tmpC.r;
       col[o + 1] = tmpC.g;
       col[o + 2] = tmpC.b;
