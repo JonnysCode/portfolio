@@ -209,7 +209,7 @@ export function createFlappers(ctx, { flowerPatches = [], butterflies = 18, bird
   wMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   const birdC = new THREE.Color(palette.ink).lerp(new THREE.Color(palette.skyTop), 0.25);
   for (let i = 0; i < Math.max(1, birds); i++) wMesh.setColorAt(i, c.copy(birdC).offsetHSL(0, 0, rng.jitter(0.04)));
-  ctx.scene.add(wMesh);
+  if (birds > 0) ctx.scene.add(wMesh); // (the glen's canopy is closed: no birds by default)
   const flocks = [{ x: 0, z: 0 }, { x: 0, z: 0 }];
   const W = Array.from({ length: birds }, (_, i) => ({
     flock: flocks[i % flocks.length], r: rng.range(14, 26), h: rng.range(24, 34), a: rng.range(0, Math.PI * 2),

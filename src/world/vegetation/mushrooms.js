@@ -140,7 +140,7 @@ export class MushroomKit {
     };
     const rs = R * (opts.stemRatio ?? rng.range(0.17, 0.22));
     const phase = rng.range(0, TAU);
-    const stemCol = C(opts.stemColor ?? rng.pick(['#e9dcc0', '#e4d6b8', '#ecdfc6', '#e0d0b0']));
+    const stemCol = C(opts.stemColor ?? rng.pick(['#efe0c0', '#ead9b6', '#f1e3c6', '#e6d3ae']));
     // stem: bulbous foot (volva), slimmer middle, flaring a little under the cap
     const stemProfile = [];
     const stemPts = [];
@@ -243,7 +243,7 @@ export class MushroomKit {
     }
     const wobPhase = rng.range(0, TAU);
     const capWob = (th, k) => 1 + (0.035 * Math.sin(th * 3 + wobPhase) + 0.02 * Math.sin(th * 7 + wobPhase * 2)) * (k < 3 ? 1 : 0.6);
-    const rimCol = capCol.clone().lerp(C('#f0a040'), 0.32);
+    const rimCol = capCol.clone().lerp(C('#f2c890'), 0.3);
     const topCol = capCol.clone().multiplyScalar(0.82);
     lathe(this.caps, F, prof, seg, {
       wob: capWob,
@@ -257,10 +257,15 @@ export class MushroomKit {
     const gProf = [
       { r: R * 0.93, y: -R * 0.045, v: 0 },
       { r: R * 0.62, y: gillTop * 0.35 - R * 0.03, v: 0.5 },
-      { r: rs * 1.15, y: gillTop * 0.6, v: 1 },
+      { r: rs * 1.15, y: gillTop * 0.6, v: 0.97 },
+      // …and down into the stem, closing the gap above the stem's open top
+      { r: rs * 0.85, y: -H * 0.06, v: 1 },
     ];
     // (some giants are bioluminescent: their gills glow softly at night)
-    lathe(opts.glowGills ? this.glow : this.gills, F, gProf, seg, { flip: true, disc: R, wob: (th, k) => (k === 0 ? capWob(th, 0) : 1), color: () => C(opts.gillColor ?? '#f1e4c8') });
+    // (the gills face the ground and sit in the cap's shadow: painted lighter
+    //  than white so they read warm cream like the references, not black)
+    const gillCol = C(opts.gillColor ?? '#f6ead2').multiplyScalar(opts.glowGills ? 1 : 1.7);
+    lathe(opts.glowGills ? this.glow : this.gills, F, gProf, seg, { flip: true, disc: R, wob: (th, k) => (k === 0 ? capWob(th, 0) : 1), color: () => gillCol });
     if (opts.glowGills) {
       const under = F.o.clone().addScaledVector(F.y, -R * 0.25);
       this.glowPoints.push({ x: under.x, y: under.y, z: under.z, size: R * 1.6 });
@@ -269,7 +274,7 @@ export class MushroomKit {
     // raised warts, denser towards the top, following the cap surface
     const density = opts.warts ?? 1;
     // (bold enough to read from across the glen: a few big flakes, many small spots)
-    const nW = Math.round(density * (H > 1 ? 150 : H > 0.4 ? 32 : 8) * Math.min(2.2, R / Math.max(0.05, H * 0.5)));
+    const nW = Math.round(density * (H > 1 ? 120 : H > 0.4 ? 28 : 8) * Math.min(2.2, R / Math.max(0.05, H * 0.5)));
     const wartCol = C('#f5ecd8');
     for (let i = 0; i < nW; i++) {
       // pick a profile position (area-weighted towards the rim, but keep the apex covered)
@@ -326,7 +331,7 @@ export class MushroomKit {
   /** A tuft of slender bonnets (glowing ones light up at night). opts: { count, height, glow, color } */
   bonnets(x, y, z, opts = {}) {
     const rng = this.rng;
-    const n = opts.count ?? rng.int(3, 7);
+    const n = opts.count ?? rng.int(2, 5);
     const glow = !!opts.glow;
     const capB = glow ? this.glow : this.caps;
     const col = C(opts.color ?? (glow ? '#ffffff' : rng.pick(['#a87a4a', '#b8885a', '#c09868', '#946640'])));

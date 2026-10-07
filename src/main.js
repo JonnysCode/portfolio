@@ -14,7 +14,7 @@ import { palette } from './core/palette.js';
 import { createRng } from './core/rng.js';
 import * as layout from './world/layout.js';
 import * as ground from './world/ground.js';
-import { buildWorld } from './world/index.js';
+import { buildWorld, moduleStats } from './world/index.js';
 import * as content from './content/content.js';
 import * as props from './props/index.js';
 import { createColliders } from './systems/colliders.js';
@@ -51,6 +51,8 @@ async function boot() {
     rng: createRng,
     sites: {},
     modules: {},
+    /** Per-module render cost (debug). */
+    moduleStats: () => moduleStats(ctx),
   };
 
   if (!webglAvailable()) {

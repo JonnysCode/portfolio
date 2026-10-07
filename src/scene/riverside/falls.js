@@ -188,25 +188,6 @@ export function buildFalls(ctx, B, rng) {
     xf(g, [u, y0, w], [rng.jitter(0.06), opts.rot ?? rng.jitter(0.6), rng.jitter(0.07)]);
     R.add(MM.rock, g, { color: opts.color ?? rng.pick(ROCK_TINTS), cast: opts.cast ?? true });
   };
-  /**
-   * A rock mass: a few BIG rounded boulders piled from the ground (or the pool
-   * bed) up to `top`, each a little smaller and stepped back (towards −w) like
-   * weathered strata — the outcrop is built from a handful of these.
-   */
-  const mass = (u, w, top, size, opts = {}) => {
-    let y = Math.max(groundAt(u, w), WL - 0.9) - 0.45;
-    // at most four slabs; a tall mass gets a taller (buried) foot instead of more slabs
-    const n = Math.min(4, Math.max(1, Math.ceil((top - y) / (size * 0.6))));
-    for (let k = 0; k < n && y < top - 0.18; k++) {
-      const shrink = 1 - k * 0.12;
-      const left = n - k;
-      const h = left === 1 ? top - y + 0.04 : Math.max(size * 0.4, Math.min(top - y + 0.04, ((top - y) / left) * rng.range(0.95, 1.15) + size * 0.08));
-      const sx = size * rng.range(0.92, 1.12) * shrink;
-      const sz = size * rng.range(0.78, 1.0) * shrink;
-      rockSlab(u + rng.jitter(0.1 * size), w - k * size * rng.range(0.05, 0.14), y, y + h, sx, sz, { round: 0.52, lump: 0.22, ...opts });
-      y += h - size * rng.range(0.06, 0.12);
-    }
-  };
   // ── the outcrop: ONE sculpted mass of terraced rock ─────────────────────
   // A heightfield in the falls frame: an amphitheatre of strata around the
   // pool, one terrace per water tier (the lips sit exactly on its edges),
@@ -244,8 +225,8 @@ export function buildFalls(ctx, B, rng) {
     if (w < 0.1 && gw > 0) h += (Math.min(h, gullyBed(w)) - h) * gw;
     // melt into the hill behind and at the sides
     const g = groundAt(u, w);
-    const fade = Math.max(smooth01((rho - 4.9) / 1.1), smooth01((au - 4.4) / 0.9));
-    return h + (g - 0.45 - h) * fade;
+    const fade = Math.max(smooth01((rho - 4.7) / 1.5), smooth01((au - 3.7) / 1.6));
+    return h + (g - 0.3 - h) * fade;
   };
   {
     const STEP = 0.085;
@@ -280,7 +261,7 @@ export function buildFalls(ctx, B, rng) {
       for (let i = 0; i < nu; i++) {
         const a = j * W + i, b = a + 1, c = a + W, d = c + 1;
         // keep only cells where the rock stands proud of the terrain
-        if (Math.max(hs[a] - gs[a], hs[b] - gs[b], hs[c] - gs[c], hs[d] - gs[d]) < 0.04) continue;
+        if (Math.max(hs[a] - gs[a], hs[b] - gs[b], hs[c] - gs[c], hs[d] - gs[d]) < 0.08) continue;
         const va = vert(i, j), vb = vert(i + 1, j), vc = vert(i, j + 1), vd = vert(i + 1, j + 1);
         idx.push(va, vc, vb, vb, vc, vd);
       }
@@ -289,6 +270,12 @@ export function buildFalls(ctx, B, rng) {
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setIndex(idx);
     g.computeVertexNormals();
+    // the heightfield is an open surface facing up; the shadow pass draws back
+    // faces only, so add the same triangles reversed (culled in the main pass)
+    // to let the outcrop cast its shadow
+    const n0 = idx.length;
+    for (let i = 0; i < n0; i += 3) idx.push(idx[i], idx[i + 2], idx[i + 1]);
+    g.setIndex(idx);
     // colour: warm grey sandstone in strata bands, darker & damper low down
     // and in the steep faces near the water, lighter on the terrace lips
     const col = new Float32Array(pos.length);

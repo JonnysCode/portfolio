@@ -34,7 +34,7 @@
 import * as THREE from 'three';
 import { materials } from '../../core/materials.js';
 import { createRng } from '../../core/rng.js';
-import { Batch, M, TAU, xf, rod, tube, deform, IDENTITY } from './kit.js';
+import { Batch, M, TAU, rod, tube, deform, IDENTITY } from './kit.js';
 
 let BM = null;
 /** Bike materials (shared, vertex-coloured). */

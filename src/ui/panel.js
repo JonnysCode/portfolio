@@ -10,7 +10,7 @@
 //     { el, open(entry, { siblings }), close(), isOpen, inset() → { right, bottom } }
 // ─────────────────────────────────────────────────────────────────────────────
 import { AREA_BY_ID } from '../world/layout.js';
-import { h, svg, trapFocus } from './dom.js';
+import { h, svg } from './dom.js';
 import { icon, spotIcon } from './icons.js';
 import { sketchFor } from './sketches.js';
 
@@ -25,8 +25,9 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
   const grip = h('div', { class: 'journal__grip', 'aria-hidden': 'true' }, h('span'));
   const sheet = h('div', { class: 'journal__sheet' }, grip, closeBtn, body);
   const el = h('aside', { class: 'journal', role: 'dialog', 'aria-modal': 'false', 'aria-labelledby': 'journal-title', 'aria-hidden': 'true', tabindex: '-1' }, h('i', { class: 'journal__tape is-left', 'aria-hidden': 'true' }), h('i', { class: 'journal__tape is-right', 'aria-hidden': 'true' }), sheet);
-  let releaseTrap = null;
   let isOpen = false;
+  let cachedInset = null;
+  let cachedAt = 0;
   let lastFocus = null;
 
   // ── pull the bottom sheet down to close it (phones) ──────────────────────
@@ -139,6 +140,7 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
     open(entry, { siblings } = {}) {
       const was = isOpen;
       if (!was) lastFocus = document.activeElement;
+      cachedInset = null;
       body.replaceChildren(...render(entry, siblings).filter(Boolean));
       sheet.scrollTop = 0;
       el.setAttribute('aria-hidden', 'false');
@@ -150,8 +152,7 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
         el.classList.add('is-flip');
       }
       isOpen = true;
-      releaseTrap?.();
-      releaseTrap = trapFocus(el);
+      // a non-modal page: Tab may still reach the spot bar & HUD (Esc closes it)
       requestAnimationFrame(() => body.querySelector('#journal-title')?.focus?.({ preventScroll: true }));
       body.querySelector('#journal-title')?.setAttribute('tabindex', '-1');
     },
@@ -160,16 +161,19 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
       isOpen = false;
       el.classList.remove('is-open', 'is-flip');
       el.setAttribute('aria-hidden', 'true');
-      releaseTrap?.();
-      releaseTrap = null;
       if (lastFocus && document.contains(lastFocus) && lastFocus !== document.body) lastFocus.focus?.({ preventScroll: true });
       else ctx.engine?.renderer?.domElement?.focus?.({ preventScroll: true });
     },
-    /** Screen space the page covers (for the camera's framing). */
+    /** Screen space the page covers (for the camera's framing; measured now and then, not every frame). */
     inset() {
       if (!isOpen) return { right: 0, bottom: 0 };
-      if (matchMedia('(max-width: 720px)').matches) return { right: 0, bottom: el.getBoundingClientRect().height * 0.92 };
-      return { right: el.getBoundingClientRect().width + 24, bottom: 0 };
+      const now = performance.now();
+      if (!cachedInset || now - cachedAt > 500) {
+        cachedAt = now;
+        const r = el.getBoundingClientRect();
+        cachedInset = matchMedia('(max-width: 720px)').matches ? { right: 0, bottom: r.height * 0.92 } : { right: r.width + 24, bottom: 0 };
+      }
+      return cachedInset;
     },
   };
   return api;

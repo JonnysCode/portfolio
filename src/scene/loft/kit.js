@@ -181,7 +181,7 @@ export function makeMats(ctx) {
     warmBright: () => m.glow('#ffc46e', { day: 0.45, night: 1.9 }), // (same as warm: one draw call)
     red: () => m.glow('#ff5a3c', { day: 1.2, night: 2.6 }),
     /** the cool will-o'-wisp light of the glow-caps and the firefly jars */
-    wisp: () => m.glow('#8ff3ff', { day: 0.35, night: 2.4 }),
+    wisp: () => m.glow('#8ff3ff', { day: 0.35, night: 1.9 }),
   };
 }
 

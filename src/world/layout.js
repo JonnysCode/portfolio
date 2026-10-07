@@ -180,7 +180,7 @@ export const SPOTS = [
     icon: '🍄',
     areas: ['home'],
     focus: [-15, 2.4, 4],
-    camera: { position: [-3.3, 3.6, 8.2], target: [-14.4, 4.2, 4.4], fov: 40 },
+    camera: { position: [-2.6, 4.9, 9.9], target: [-14.6, 2.6, 3.9], fov: 40 },
   },
   {
     id: 'interior',

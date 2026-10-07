@@ -463,7 +463,7 @@ function daisies(B, rng) {
 }
 
 function buttercups(B, rng) {
-  const n = rng.int(4, 8);
+  const n = rng.int(3, 6);
   for (let s = 0; s < n; s++) {
     const a = rng.range(0, TAU), d = rng.range(0, 0.18);
     const base = new THREE.Vector3(Math.sin(a) * d, 0, Math.cos(a) * d);
@@ -496,7 +496,7 @@ function meadow(B, rng) {
   daisies(B, rng);
   if (rng.chance(0.7)) buttercups(B, rng);
   // white clover heads
-  for (let i = 0; i < rng.int(2, 4); i++) {
+  for (let i = 0; i < rng.int(1, 3); i++) {
     const base = new THREE.Vector3(rng.jitter(0.2), 0, rng.jitter(0.2));
     const top = base.clone().add(new THREE.Vector3(rng.jitter(0.02), rng.range(0.06, 0.11), rng.jitter(0.02)));
     stem(B, base, top, 0.003, col(GREEN));

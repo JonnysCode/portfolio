@@ -168,7 +168,8 @@ function drawMap(ctx) {
     <rect x="${VB.x}" y="${VB.y}" width="${VB.w}" height="${VB.h}" fill="#ecdcb4"/>
     <rect x="${VB.x}" y="${VB.y}" width="${VB.w}" height="${VB.h}" filter="url(#map-paper)" opacity=".5"/>
     <ellipse cx="0" cy="2" rx="28" ry="27" fill="url(#map-clearing)" opacity=".8"/>
-    <g filter="url(#map-ink)">${parts.join('')}</g>
+    <clipPath id="map-clip"><rect x="${VB.x}" y="${VB.y}" width="${VB.w}" height="${VB.h}"/></clipPath>
+    <g clip-path="url(#map-clip)"><g filter="url(#map-ink)">${parts.join('')}</g></g>
     <rect x="${VB.x}" y="${VB.y}" width="${VB.w}" height="${VB.h}" fill="url(#map-burn)"/>
     <rect x="${VB.x + 0.8}" y="${VB.y + 0.8}" width="${VB.w - 1.6}" height="${VB.h - 1.6}" fill="none" stroke="#3d2f22" stroke-width=".22"/>
     <rect x="${VB.x + 1.3}" y="${VB.y + 1.3}" width="${VB.w - 2.6}" height="${VB.h - 2.6}" fill="none" stroke="#3d2f22" stroke-width=".08"/>

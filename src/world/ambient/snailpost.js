@@ -13,7 +13,6 @@
 // riverside builder's deck profile), faces its direction of travel and
 // pitches with the slope. CPU: one tiny update per frame, no allocations.
 // ─────────────────────────────────────────────────────────────────────────────
-import * as THREE from 'three';
 import { getHeight, pathPolylines } from '../ground.js';
 import { PATHS, OAK } from '../layout.js';
 import { palette } from '../../core/palette.js';

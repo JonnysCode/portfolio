@@ -69,6 +69,7 @@ export function createInteractions(ctx) {
   let nextId = 1;
   let lastPop = -1;
   let lastPick = -99;
+  let canvasRect = canvas.getBoundingClientRect();
   // markers pop in one by one after the camera lands
   let settledAt = 0;
   let wasMoving = false;
@@ -231,7 +232,7 @@ export function createInteractions(ctx) {
       if (v.z > 1) continue;
       const sx = r.left + ((v.x + 1) / 2) * r.width, sy = r.top + ((1 - v.y) / 2) * r.height;
       const pr = engine.renderer.getPixelRatio() || 1;
-      const px = Math.min(60 * pr, Math.max(15 * pr, ((h.__size ?? 1) * markerScale() * 0.42) / Math.max(dist, 0.1))) / pr;
+      const px = Math.min(84 * pr, Math.max(24 * (h.__size ?? 1) * pr, ((h.__size ?? 1) * markerScale() * 0.75) / Math.max(dist, 0.1))) / pr;
       const reach = px * 0.5 + (generous ? 22 : 6);
       const d = Math.hypot(sx - clientX, sy - clientY);
       if (d < reach && d < bestD) {
@@ -357,6 +358,7 @@ export function createInteractions(ctx) {
 
   // ─── per-frame ─────────────────────────────────────────────────────────────
   engine.addUpdate((dt, t) => {
+    canvasRect = canvas.getBoundingClientRect(); // once per frame (no layout thrash in the UI loop)
     const ui = ctx.ui;
     const panelOpen = !!ui?.isPanelOpen;
     if (!panelOpen) openHotspot = null;
@@ -377,9 +379,14 @@ export function createInteractions(ctx) {
     if (((pointerDirty && f - lastPick >= 2) || f - lastPick >= 12) && pointerInside && !isTouch && gestures.mode === 'none') {
       pointerDirty = false;
       lastPick = f;
-      setNdc(pointerX, pointerY);
-      const hit = pickHotspot();
-      setHovered(hit ? hit.hotspot : pickMarker(pointerX, pointerY, false));
+      // the pointer may rest on a panel or button that slid over the canvas
+      const top = document.elementFromPoint(pointerX, pointerY);
+      if (top && top !== canvas) setHovered(null);
+      else {
+        setNdc(pointerX, pointerY);
+        const hit = pickHotspot();
+        setHovered(hit ? hit.hotspot : pickMarker(pointerX, pointerY, false));
+      }
     }
     if (hovered && !isLive(hovered)) setHovered(null);
     if (focused && !isLive(focused)) api.setFocused(null);
@@ -416,17 +423,20 @@ export function createInteractions(ctx) {
       } else if (panelOpen && h === openHotspot) want = 0;
       else if (moving) want = 0;
       else {
-        if (h.area && h.area === spot) {
+        if (h.area && h.area === spot && (h.entryId || !h.onActivate)) {
           want = panelOpen ? 0.4 : 1;
           targetSize = isVisited ? 0.66 : 1;
         } else if (spot === 'glen' && isFeatured(h) && !featuredSeen.has(h.entryId)) {
           featuredSeen.add(h.entryId);
-          want = 0.85;
-          targetSize = 0.62;
-        } else if (!h.entryId && !isSecret && h.onActivate && h.area !== spot && spot !== 'glen') {
-          // little "action" hotspots (the snail lift) beckon from neighbouring spots
-          want = 0.8;
-          targetSize = 0.7;
+          want = 0.9;
+          targetSize = 0.8;
+        } else if (!h.entryId && h.onActivate && h.area !== spot && spot !== 'glen') {
+          // little "action" hotspots (the snail lift) beckon from neighbouring spots nearby
+          h.object.getWorldPosition(wp);
+          if (wp.distanceTo(camera.position) < 24) {
+            want = 0.8;
+            targetSize = 0.7;
+          }
         }
         if (want > 0) {
           // pop in one after another once the camera has landed
@@ -611,7 +621,8 @@ export function createInteractions(ctx) {
       const out = [];
       for (const h of hotspots) {
         if (h.kind === 'secret' || !h.enabled || h.area !== spotId) continue;
-        if (!h.entryId && !h.onActivate) continue;
+        // only things that open a journal page count here (the snail lift is a ride, not a story)
+        if (!h.entryId) continue;
         const key = h.entryId ?? `#${h.id}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -628,7 +639,7 @@ export function createInteractions(ctx) {
       markerWorld(h, v);
       v.y -= 0.25;
       v.project(camera);
-      const r = canvas.getBoundingClientRect();
+      const r = canvasRect;
       out.x = r.left + ((v.x + 1) / 2) * r.width;
       out.y = r.top + ((1 - v.y) / 2) * r.height;
       out.visible = v.z < 1 && Math.abs(v.x) < 1.02 && Math.abs(v.y) < 1.02;
@@ -740,7 +751,7 @@ function makeMarkerMaterial() {
         gl_Position = projectionMatrix * mv;
         float pulse = 1.0 + 0.07 * sin(uTime * 3.3 + aPhase * 1.7);
         // never smaller than a readable dot, never a blob filling the screen
-        gl_PointSize = clamp(aSize * pulse * uScale * 0.42 / max(0.1, -mv.z), 15.0 * uPx, 60.0 * uPx) * step(0.001, aAlpha);
+        gl_PointSize = clamp(aSize * pulse * uScale * 0.75 / max(0.1, -mv.z), 24.0 * aSize * uPx, 84.0 * uPx) * step(0.001, aAlpha);
         vAlpha = aAlpha;
         vKind = aKind;
         vSpin = aKind > 0.5 && aKind < 1.5 ? 0.5 + 0.25 * sin(uTime * 1.6 + aPhase) : sin(uTime * 0.9 + aPhase) * 0.35 + uTime * (aKind > 1.5 ? 0.8 : 0.0);
@@ -769,15 +780,19 @@ function makeMarkerMaterial() {
         if (vKind < 0.5) {
           // sparkle: astroid-like four-point star with a cream core and a soft halo
           float s = pow(abs(q.x), 0.55) + pow(abs(q.y), 0.55);
-          float star = 1.0 - smoothstep(0.78, 0.84, s);
-          float edge = smoothstep(0.62, 0.74, s);
+          float star = 1.0 - smoothstep(0.74, 0.8, s);
+          // a smaller diagonal star behind it: an eight-point twinkle
+          vec2 q2 = mat2(0.7071, -0.7071, 0.7071, 0.7071) * q;
+          float s2 = pow(abs(q2.x), 0.55) + pow(abs(q2.y), 0.55);
+          float star2 = (1.0 - smoothstep(0.44, 0.5, s2)) * (0.55 + 0.45 * vTw);
+          float edge = smoothstep(0.58, 0.72, s);
           float core = 1.0 - smoothstep(0.0, 0.5, length(q) * 1.8);
-          col = mix(uGold, uEdge, edge * 0.7);
+          col = mix(uGold, uEdge, edge * 0.55);
           col = mix(col, uCore, core);
-          float halo = exp(-r * r * 5.0) * 0.5;
-          a = max(star, halo);
-          col = mix(uGold * 1.15, col, star);
-          col *= 1.25;
+          float halo = exp(-r * r * 4.0) * 0.55;
+          a = max(max(star, star2), halo);
+          col = mix(uGold * 1.2, col, max(star, star2 * 0.8));
+          col *= 1.35;
         } else if (vKind < 1.5) {
           // leaf: a lens shape with a midrib
           vec2 l = q * vec2(1.6, 1.0);

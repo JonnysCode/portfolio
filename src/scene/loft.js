@@ -81,7 +81,7 @@ export default async function build(ctx) {
   const scr = screens.build(root);
   env.boards.build(root);
   halos.build(ctx, root, { day: 0.06, night: 0.5 });
-  if (props.lightsGroup) root.add(tameFairyLights(ctx, mergeByMaterial(props.lightsGroup, 'loft-fairy-lights')));
+  if (props.lightsGroup) root.add(tameFairyLights(ctx, props.lightsGroup));
 
   // chimney smoke from the stovepipe
   if (house.chimneyTop) {
@@ -187,19 +187,26 @@ const HOUSE_DESK_TOP = 0.5;
 /**
  * The loft strings far more fairy lights than anywhere else and is seen from
  * close up: with the shared bulb glow and halo size, at night they bloom into
- * a necklace of fat blobs. Re-tune the merged bulbs and halos to small,
- * sparkling points (the shared props stay untouched).
+ * a necklace of fat blobs. Before merging, the bulbs and the lantern glass get
+ * one softer shared glow (→ one draw call); after merging, the halos shrink to
+ * small sparkles. The shared props and their cached geometry stay untouched
+ * (only mesh.material is swapped; the halos are resized on the merged copy).
  */
 function tameFairyLights(ctx, group) {
   const bulb = ctx.materials.glow(FAIRY_BULB, { day: 0.6, night: 2.4 }); // makeStringLights' bulbs
-  for (const m of group.children) {
-    if (m.material === bulb) m.material = ctx.materials.glow(FAIRY_BULB, { day: 0.55, night: 1.35 });
-    else if (m.material?.name === 'props-glow-halo' && m.geometry.attributes.aSize) {
-      const s = m.geometry.attributes.aSize;
-      for (let i = 0; i < s.count; i++) s.setX(i, s.getX(i) * 0.55);
-      m.material = glowMaterial(FAIRY_BULB, { day: 0.05, night: 0.7 });
-    }
+  const glass = ctx.materials.glow(LANTERN_GLASS, { day: 0.35, night: 1.8 }); // makeLantern's glass
+  const shared = ctx.materials.glow('#ffd29a', { day: 0.5, night: 1.55 });
+  group.traverse((m) => {
+    if (m.isMesh && (m.material === bulb || m.material === glass)) m.material = shared;
+  });
+  const merged = mergeByMaterial(group, 'loft-fairy-lights');
+  for (const m of merged.children) {
+    if (m.material?.name !== 'props-glow-halo' || !m.geometry.attributes.aSize) continue;
+    const s = m.geometry.attributes.aSize;
+    for (let i = 0; i < s.count; i++) s.setX(i, s.getX(i) * 0.55);
+    m.material = glowMaterial(FAIRY_BULB, { day: 0.05, night: 0.7 });
   }
-  return group;
+  return merged;
 }
 const FAIRY_BULB = '#ffd9a0';
+const LANTERN_GLASS = '#ffc46b'; // the colour every loft lantern is made with

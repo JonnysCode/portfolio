@@ -278,8 +278,8 @@ export function stump(B, F, rng, x, z, r, h) {
     // root flare at the foot
     radii.push(r * (1 + 0.45 * Math.pow(1 - t, 3)));
   }
-  const bark = new THREE.Color(BARK_MEAN).multiplyScalar(0.85);
-  const moss = new THREE.Color(MOSS_TINT);
+  const bark = new THREE.Color(BARK_MEAN).multiplyScalar(1.1);
+  const moss = new THREE.Color(MOSS_TINT).multiplyScalar(1.15);
   const mc = new THREE.Color();
   const s = rng.range(0, 10);
   tube(B, pts, radii, seg, {

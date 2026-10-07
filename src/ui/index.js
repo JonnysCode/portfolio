@@ -33,6 +33,8 @@ import { renderGuidebook } from './guidebook.js';
 import { createMap } from './map.js';
 
 const HINT_KEY = 'woodland:hinted';
+/** How high above each spot's focus its floating overview label hangs (clear of caps & roofs). */
+const LABEL_LIFT = { woodworking: 3.4, code: 2.4, home: 7.2, interior: 5.4, bikes: 5.8 };
 
 export function createUI(ctx) {
   const root = document.getElementById('ui');
@@ -155,11 +157,18 @@ export function createUI(ctx) {
     const el = h(
       'button',
       { class: 'spot-label', type: 'button', 'aria-label': `Visit ${s.title} — ${s.subtitle}`, onclick: () => go(s.id) },
-      h('span', { class: 'spot-label__flag' }, h('span', { class: 'spot-label__icon', html: spotIcon(s.id) }), h('span', { class: 'spot-label__text' }, h('b', {}, s.title), h('small', {}, s.subtitle))),
+      h(
+        'span',
+        { class: 'spot-label__flag' },
+        h('span', { class: 'spot-label__arrow is-l', 'aria-hidden': 'true', html: icon('left') }),
+        h('span', { class: 'spot-label__icon', html: spotIcon(s.id) }),
+        h('span', { class: 'spot-label__text' }, h('b', {}, s.title), h('small', {}, s.subtitle)),
+        h('span', { class: 'spot-label__arrow is-r', 'aria-hidden': 'true', html: icon('right') }),
+      ),
       h('span', { class: 'spot-label__stem', 'aria-hidden': 'true' }),
     );
     labelLayer.append(el);
-    return { spot: s, el, pos: new THREE.Vector3(s.focus[0], s.focus[1] + (s.id === 'code' ? 2.2 : 3.2), s.focus[2]), shown: false };
+    return { spot: s, el, pos: new THREE.Vector3(s.focus[0], s.focus[1] + (LABEL_LIFT[s.id] ?? 3.2), s.focus[2]), shown: false };
   });
   const hsLayer = h('div', { class: 'hs-layer', role: 'group', 'aria-label': 'Things to explore here' });
   root.append(labelLayer, hsLayer);
@@ -375,10 +384,24 @@ export function createUI(ctx) {
     const showLabels = rig.spot === 'glen' && !rig.transitioning && !rig.focused && !ui.isModalOpen && !intro;
     for (const l of labels) {
       let on = showLabels;
+      let edge = 0;
       if (on) {
         v.copy(l.pos).project(cam);
-        on = v.z < 1 && Math.abs(v.x) < 0.94 && v.y < 0.8 && v.y > -0.82;
-        if (on) l.el.style.transform = `translate(${((v.x + 1) / 2) * W}px, ${((1 - v.y) / 2) * H}px)`;
+        on = v.z < 1 && Math.abs(v.x) < 2.6 && v.y < 0.8 && v.y > -0.82;
+        if (on) {
+          let x = ((v.x + 1) / 2) * W;
+          const y = ((1 - v.y) / 2) * H;
+          // places beyond the frame (phones!) get a little signpost pinned to the edge
+          const half = Math.min(110, l.el.firstElementChild.offsetWidth / 2 || 70) + 10;
+          if (x < half) (edge = -1), (x = half);
+          else if (x > W - half) (edge = 1), (x = W - half);
+          l.el.style.transform = `translate(${x}px, ${y}px)`;
+        }
+      }
+      if (edge !== l.edge) {
+        l.edge = edge;
+        l.el.classList.toggle('is-edge-l', edge < 0);
+        l.el.classList.toggle('is-edge-r', edge > 0);
       }
       if (on !== l.shown) {
         l.shown = on;
@@ -394,8 +417,16 @@ export function createUI(ctx) {
     }
     // speech bubbles
     for (const b of bubbles) b.update();
-    // keep the subject framed beside the journal page
+    // keep the subject framed beside the journal page — or just above the spot bar
     if (journal.isOpen) rig.setInset(journal.inset());
+    else rig.setInset({ right: 0, bottom: intro ? 0 : barInset() });
+  }
+
+  let barH = 0;
+  /** Half the spot bar's height: compositions sit a touch higher so the bar never hides a door. */
+  function barInset() {
+    if (!barH || ctx.engine.frame % 60 === 0) barH = spotbar.getBoundingClientRect().height + 14;
+    return barH * 0.55;
   }
 
   // ── speech bubbles ────────────────────────────────────────────────────────
@@ -590,7 +621,13 @@ export function createUI(ctx) {
       tipHint.innerHTML = '';
       tipHint.append(
         h('span', { html: icon(secret ? 'sparkle' : visited ? 'leaf' : 'book') }),
-        secret ? (visited ? 'an old friend' : 'psst… say hello') : hotspot?.entryId ? (visited ? 'read again' : `${isTouch ? 'tap' : 'click'} to open the journal page`) : `${isTouch ? 'tap' : 'click'}`,
+        secret
+          ? visited ? 'an old friend' : 'psst… say hello'
+          : hotspot?.entryId
+            ? hotspot.area && SPOT_BY_ID[hotspot.area] && ctx.cameraRig?.spot !== hotspot.area
+              ? `fly over to ${SPOT_BY_ID[hotspot.area].title}`
+              : visited ? 'read again' : `${isTouch ? 'tap' : 'click'} to open the journal page`
+            : `${isTouch ? 'tap' : 'click'}`,
       );
       tooltip.classList.toggle('is-secret', !!secret);
       tooltip.classList.add('is-visible');

@@ -31,8 +31,10 @@
 // Counts scale with ctx.quality.density.
 //
 // Result (ctx.modules.vegetation; also ctx.forest):
-//   { trees, giants, flowerPatches: [{x,y,z,r,kind}], glowSpots: [{x,y,z}],
-//     mossyRocks: [{x,y,z,r}], snailRocks, logs, stumps, treesNear(x, z, radius, out), stats }
+//   { trees: [{x,z,y0,radius,height,kind,crownY,crownR}], giants: [{x,y,z,H,R}],
+//     canopy: [{x,y,z,r}] (leaf-mass spheres), flowerPatches: [{x,y,z,r,kind}],
+//     glowSpots: [{x,y,z}], mossyRocks: [{x,y,z,r}], snailRocks, logs, stumps,
+//     treesNear(x, z, radius, out), stats }
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../core/rng.js';
@@ -409,7 +411,6 @@ export default async function build(ctx) {
   const fernTints = ['#5b8c3a', '#4f8434', '#66923e', '#5a8a44', '#71973c', '#4d7d3e'];
   const grassTints = ['#7d9c46', '#88a64c', '#6f9440', '#94a854', '#7a9a52'];
   const jitterTint = (hex, h = 0.02, l = 0.06) => new THREE.Color(hex).offsetHSL(rng.jitter(h), rng.jitter(0.06), rng.jitter(l));
-  const near = (list, x, z, r) => list.some((o) => Math.hypot(o.x - x, o.z - z) < r + (o.r ?? 0));
 
   const cell = 0.55 / Math.sqrt(density);
   const LIM = 40;
@@ -447,7 +448,7 @@ export default async function build(ctx) {
       if ((roll -= wNone) < 0) continue;
       if ((roll -= wFern) < 0) {
         // out at the forest wall: fewer but bigger ferns (they read from afar)
-        if (r > 25 && rng.chance(0.4)) continue;
+        if (r > 24 && rng.chance(0.6)) continue;
         const big = fA > 0.55 && rng.chance(0.45);
         const s = (big ? rng.range(0.85, 1.55) : rng.range(0.5, 1.05)) * (r > 25 ? 1.4 : 1);
         // tall ferns must not sit in a spot camera's view
@@ -487,7 +488,7 @@ export default async function build(ctx) {
       } else if (m < 0.58) smallKit.bolete(x, y, z, { height: rng.range(0.1, 0.22) });
       else if (m < 0.78) smallKit.bonnets(x, y, z, { height: rng.range(0.08, 0.16) });
       else {
-        smallKit.bonnets(x, y, z, { height: rng.range(0.07, 0.13), glow: true, count: rng.int(4, 8), spread: 1.8 });
+        smallKit.bonnets(x, y, z, { height: rng.range(0.07, 0.13), glow: true, count: rng.int(3, 6), spread: 1.8 });
         glowSpots.push({ x, y: y + 0.1, z });
       }
     }
@@ -779,6 +780,8 @@ export default async function build(ctx) {
   stats.ms = Math.round(performance.now() - t0);
   stats.giants = giants.length;
   stats.trees = plan.trees.length;
-  ctx.forest = { trees, giants, glowSpots, flowerPatches, mossyRocks, snailRocks, logs, stumps };
-  return { group, trees, giants, glowSpots, flowerPatches, mossyRocks, snailRocks, logs, stumps, treesNear, stats };
+  // leaf masses of the forest canopy as spheres (camera obstacles, leaf sources)
+  const canopy = clumps.map((c) => ({ x: c.x, y: c.y, z: c.z, r: c.s * 1.05 }));
+  ctx.forest = { trees, giants, canopy, glowSpots, flowerPatches, mossyRocks, snailRocks, logs, stumps };
+  return { group, trees, giants, canopy, glowSpots, flowerPatches, mossyRocks, snailRocks, logs, stumps, treesNear, stats };
 }

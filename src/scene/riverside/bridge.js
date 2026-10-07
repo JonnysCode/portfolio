@@ -21,7 +21,7 @@ import * as THREE from 'three';
 import { PATHS } from '../../world/layout.js';
 import { getHeight } from '../../world/ground.js';
 import {
-  M, TAU, STONE_TINTS, WOOD, IRON, Cards, xf, mat4, blockStone, stoneGeo, mossGeo, arcSegment, paramSurface, taperTube, board, rod,
+  M, TAU, STONE_TINTS, IRON, Cards, xf, blockStone, stoneGeo, mossGeo, arcSegment, paramSurface, taperTube, board, rod,
   plantFern, plantGrass, addFlower, addToadstool, addIvy, flushCards, noiseA,
 } from './kit.js';
 

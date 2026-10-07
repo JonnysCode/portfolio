@@ -465,8 +465,9 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
     const L0 = house.lightPts[0], L1 = house.lightPts[1];
     if (L0?.length) jar(L0[0].clone().add(new THREE.Vector3(0, -0.02, 0)), 0.32, 1.1);
     if (L1?.length) basket(L1[L1.length - 1].clone().add(new THREE.Vector3(0, -0.02, 0)), 0.36);
-    // from the lift gate's free post top and the crossbar ends
-    if (deck.slot.postR) jar(deck.slot.postR.clone().add(new THREE.Vector3(0, -0.02, 0)), 0.3);
+    // from the middle of the left eave, over the open door
+    const L2 = house.lightPts[2];
+    if (L2?.length > 2) jar(L2[2].clone().lerp(L2[3], 0.5).add(new THREE.Vector3(0, -0.04, 0)), 0.36);
     // from the deck's hanging ropes, just above the railing
     for (const r of deck.ropes.slice(0, 3)) {
       const h = r.low.clone().lerp(r.top, 0.3);

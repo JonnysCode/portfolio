@@ -104,6 +104,12 @@ export function createCameraRig(ctx) {
   const arriveListeners = new Set();
   let dragging = false;
 
+  /** 0 on landscape screens → 1 on a tall phone: compositions were made for 16:9. */
+  function portrait() {
+    const aspect = camera.aspect || innerWidth / Math.max(1, innerHeight);
+    return clamp((1.3 - aspect) / 0.8, 0, 1);
+  }
+
   function spotBase(id) {
     const s = SPOT_BY_ID[id];
     const o = toOrbit(s.camera.position, s.camera.target);
@@ -111,6 +117,14 @@ export function createCameraRig(ctx) {
     o.focus = new THREE.Vector3(...(s.focus ?? s.camera.target));
     o.range = ORBIT[id] ?? ORBIT.woodworking;
     o.spot = id;
+    // on a tall phone screen: step back, look a little more from above, widen the lens a touch
+    const p = portrait();
+    if (p > 0) {
+      const glen = id === 'glen';
+      o.distance *= 1 + p * (glen ? 0.45 : 0.28);
+      o.polar = Math.max(L.minPolar, o.polar - p * (glen ? 0.2 : 0.07));
+      o.fov += p * 5;
+    }
     return o;
   }
 
@@ -354,7 +368,7 @@ export function createCameraRig(ctx) {
         target: p,
         azimuth: az,
         polar: pol,
-        distance: opts.distance ?? 4,
+        distance: (opts.distance ?? 4) * (1 + portrait() * 0.35),
         fov: b.fov,
         focus: p.clone(),
         range: ORBIT.focus,
@@ -575,6 +589,13 @@ export function createCameraRig(ctx) {
     camera.lookAt(lookAt);
     rig.focusDistance = camPos.distanceTo(focusPoint);
   }, 80);
+
+  // a rotated phone / resized window: re-fit the current composition
+  engine.onResize?.(() => {
+    if (!spot || introHover) return;
+    base = spotBase(spot);
+    if (!transition && !focusBase) good.dAz = good.dPol = 0;
+  });
 
   // start on the overview (the intro, if any, takes over via holdIntro())
   rig.goTo('glen', { instant: true });

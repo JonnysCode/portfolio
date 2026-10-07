@@ -70,7 +70,9 @@ export async function buildWorld(ctx, onProgress = () => {}) {
       const mod = await task.load();
       const build = mod.default;
       if (typeof build !== 'function') throw new Error('module has no default build() export');
+      const before = new Set(ctx.scene.children);
       const result = await build(ctx);
+      (ctx.moduleRoots ??= {})[task.id] = ctx.scene.children.filter((c) => !before.has(c));
       if (result?.update) ctx.engine.addUpdate(result.update, 20);
       ctx.modules[task.id] = result ?? {};
       report.ok.push({ id: task.id, ms: Math.round(performance.now() - t0) });
@@ -85,4 +87,35 @@ export async function buildWorld(ctx, onProgress = () => {}) {
   }
   ctx.buildReport = report;
   return report;
+}
+
+/**
+ * Per-module render cost (debug): meshes, draw calls (visible meshes), triangles
+ * (instanced meshes count every instance) and shadow casters, for the scene
+ * roots each module added. Usage: __woodland.ctx.moduleStats()
+ */
+export function moduleStats(ctx) {
+  const out = {};
+  for (const [id, roots] of Object.entries(ctx.moduleRoots ?? {})) {
+    const s = { meshes: 0, draws: 0, triangles: 0, casters: 0, instances: 0 };
+    for (const r of roots) {
+      r.traverse((o) => {
+        if (!o.isMesh && !o.isPoints && !o.isLine) return;
+        s.meshes++;
+        let visible = true;
+        for (let p = o; p; p = p.parent) if (!p.visible) visible = false;
+        if (!visible) return;
+        s.draws++;
+        if (o.castShadow) s.casters++;
+        const g = o.geometry;
+        if (!g || !o.isMesh) return;
+        const n = (g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3;
+        const k = o.isInstancedMesh ? o.count : 1;
+        if (o.isInstancedMesh) s.instances += k;
+        s.triangles += Math.round(n * k);
+      });
+    }
+    out[id] = s;
+  }
+  return out;
 }

@@ -91,8 +91,9 @@ export function M() {
   MATS.lamp = MATS.bulb;
   MATS.fabric = MATS.vc;
   MATS.stem = MATS.vc;
-  // small-part materials never cast shadows (keeps the shadow pass and the mesh count down)
-  NEVER_CAST = new Set([MATS.moss, MATS.soil, MATS.gills, MATS.stem, MATS.plaster, MATS.planks, MATS.fabric, MATS.rope, MATS.leafy, MATS.lamp, MATS.bulb, MATS.glowBlue, MATS.fern, MATS.grass, MATS.ivy, MATS.reed, MATS.pebble, MATS.metal]);
+  // small-part materials never cast shadows (keeps the shadow pass and the mesh count down);
+  // the gills do (double-sided) — they close a cap's shell so its shadow is solid
+  NEVER_CAST = new Set([MATS.moss, MATS.soil, MATS.stem, MATS.plaster, MATS.planks, MATS.fabric, MATS.rope, MATS.leafy, MATS.lamp, MATS.bulb, MATS.glowBlue, MATS.fern, MATS.grass, MATS.ivy, MATS.reed, MATS.pebble, MATS.metal]);
   ALWAYS_CAST = new Set([MATS.cap, MATS.rock]);
   // stones get per-vertex shading variation (grimy undersides, mottling)
   VARIED = new Set([MATS.wallStone, MATS.rock, MATS.pebble]);

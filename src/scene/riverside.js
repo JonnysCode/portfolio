@@ -23,7 +23,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../core/rng.js';
-import { Batch } from './riverside/kit.js';
+import { Batch, M } from './riverside/kit.js';
 import { buildWater } from './riverside/water.js';
 import { buildBridge, BIKE_SPOT } from './riverside/bridge.js';
 import { buildWorkshop } from './riverside/workshop.js';
@@ -45,6 +45,8 @@ export default async function build(ctx) {
   ctx.scene.add(root);
   const B = new Batch('riverside');
   const halos = [];
+  M(); // the shared materials (their painterly textures bake on first use)
+  lap('materials');
   const bridge = buildBridge(ctx, B, createRng('riverside-bridge'));
   lap('bridge');
   const shop = buildWorkshop(ctx, B, createRng('velowerkstatt'), halos);
@@ -106,7 +108,7 @@ export default async function build(ctx) {
   for (const c of ctx.scene.children) {
     if (before.has(c)) continue;
     c.traverse((o) => {
-      if (!o.isMesh && !o.isPoints) return;
+      if ((!o.isMesh && !o.isPoints) || o.material?.visible === false) return; // (hotspot proxies are never drawn)
       stats.meshes++;
       (stats.list ??= []).push(`${o.name || o.type}${o.castShadow ? '*' : ''}`);
       if (o.castShadow) stats.casters++;

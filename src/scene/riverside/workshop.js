@@ -521,7 +521,8 @@ export function buildWorkshop(ctx, B, rng, halos) {
     };
     const RD = CAP_R + 0.1;
     const gills = paramSurface((u, v, p) => gillAt(u * TAU, v, p), 80, 6, { uv: (u, v, p) => [p.x / (2 * RD) + 0.5, p.z / (2 * RD) + 0.5], flip: true });
-    F.add(MM.gills, gills, { color: '#e3cfa8', cast: false });
+    // the underside casts: it closes the cap's shell, so the shadow is solid (not a ring)
+    F.add(MM.gills, gills, { color: '#e3cfa8', cast: true });
     // lamellae hanging below the underside, deepest in the middle of their run
     const nF = 110;
     const pos = [], idx = [];
@@ -892,7 +893,11 @@ export function buildWorkshop(ctx, B, rng, halos) {
     try {
       const tex = ctx.props.makeTextTexture(['Velo-Service', 'heute offen!'], { width: 384, height: 256, background: '#27322c', color: '#f1eee4', font: '"Patrick Hand", "Comic Sans MS", cursive', weight: 400, style: 'plain', padding: 0.14 });
       const cm = mat4([1.05, 0, 4.15], [0, 0.35, 0]);
-      const chalk = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.31), ctx.materials.standard('#ffffff', { map: tex, roughness: 0.95 }));
+      // (a clone of the shared matte material with the chalk texture — passing the
+      // texture through the material cache would serialise it into the cache key)
+      const chalkMat = ctx.materials.standard('#ffffff', { roughness: 0.95 }).clone();
+      chalkMat.map = tex;
+      const chalk = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.31), chalkMat);
       const cw = frame.clone().multiply(cm);
       chalk.position.set(0, 0.4, 0.052).applyMatrix4(cw);
       chalk.quaternion.setFromRotationMatrix(cw).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.28));

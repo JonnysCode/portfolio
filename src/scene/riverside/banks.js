@@ -23,8 +23,8 @@ import { STREAM, RIVERSIDE } from '../../world/layout.js';
 import { getHeight, getPathDistance, getPadAt, getStreamDistance, streamPolyline } from '../../world/ground.js';
 import { materials } from '../../core/materials.js';
 import {
-  M, TAU, WOOD, IRON, PEBBLE_TINTS, xf, mat4, deform, boulderGeo, stoneGeo, mossGeo, board, rod, tube, taperTube, Cards, flushCards,
-  plantFern, plantGrass, addFlower, addToadstool, noiseA, smooth01,
+  M, TAU, WOOD, IRON, PEBBLE_TINTS, xf, deform, stoneGeo, mossGeo, board, rod, tube, taperTube, Cards, flushCards,
+  plantFern, plantGrass, addFlower, addToadstool, smooth01,
 } from './kit.js';
 import { flowAt, depthAt, calmAt } from './water.js';
 
@@ -63,15 +63,20 @@ const LINE = (() => {
   return out;
 })();
 const LENGTH = LINE[LINE.length - 1].s;
-/** Centre-line sample at arc length s. */
-function lineAt(s) {
+/** Centre-line sample at arc length s (written into `out` when given — no allocation). */
+function lineAt(s, out = null) {
   const k = Math.max(0, Math.min(LINE.length - 2, Math.floor((s / LENGTH) * (LINE.length - 1))));
   let i = k;
   while (i < LINE.length - 2 && LINE[i + 1].s < s) i++;
   while (i > 0 && LINE[i].s > s) i--;
   const a = LINE[i], b = LINE[i + 1];
   const t = Math.max(0, Math.min(1, (s - a.s) / Math.max(1e-6, b.s - a.s)));
-  return { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, dx: a.dx + (b.dx - a.dx) * t, dz: a.dz + (b.dz - a.dz) * t };
+  const o = out ?? {};
+  o.x = a.x + (b.x - a.x) * t;
+  o.z = a.z + (b.z - a.z) * t;
+  o.dx = a.dx + (b.dx - a.dx) * t;
+  o.dz = a.dz + (b.dz - a.dz) * t;
+  return o;
 }
 
 // ─── rocks in the stream ─────────────────────────────────────────────────────
@@ -645,6 +650,7 @@ export function buildDrifters(ctx, rng) {
   group.add(boat);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), sc = new THREE.Vector3(1, 1, 1);
   const boatState = { s0: 6, u: 0.3 };
+  const cl = { x: 0, z: 0, dx: 0, dz: 1 }; // reused centre-line sample
   const start = 1.5, end = LENGTH - 0.5;
   const span = end - start;
   return {
@@ -653,7 +659,7 @@ export function buildDrifters(ctx, rng) {
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         const s = start + ((it.s0 + t * it.speed) % span);
-        const c = lineAt(s);
+        const c = lineAt(s, cl);
         const calm = calmAt(c.x, c.z);
         p.set(c.x - c.dz * it.u * (1 + calm * 2), WL + 0.015, c.z + c.dx * it.u * (1 + calm * 2));
         e.set(0, it.rot + t * it.spin, 0);
@@ -667,7 +673,7 @@ export function buildDrifters(ctx, rng) {
       leaves.instanceMatrix.needsUpdate = true;
       {
         const s = start + ((boatState.s0 + t * 0.32) % span);
-        const c = lineAt(s);
+        const c = lineAt(s, cl);
         const calm = calmAt(c.x, c.z);
         boat.position.set(c.x - c.dz * boatState.u * (1 + calm * 3), WL + 0.01 + Math.sin(t * 2.3) * 0.008, c.z + c.dx * boatState.u * (1 + calm * 3));
         boat.rotation.set(Math.sin(t * 1.7) * 0.06, Math.atan2(c.dx, c.dz) + Math.PI / 2 + Math.sin(t * 0.6) * 0.3, Math.sin(t * 2.1) * 0.05);
