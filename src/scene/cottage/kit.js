@@ -92,7 +92,7 @@ export function mats() {
  * texture & vertex shading stay readable. Its strength follows day/night
  * through setCottageNight().
  */
-const GILL_BOUNCE = { color: '#ffb064', day: 0.62, night: 0.36 };
+const GILL_BOUNCE = { color: '#ffb064', day: 0.62, night: 0.3 };
 let gillMat = null;
 function bounceGills(base) {
   const g = base.clone();
