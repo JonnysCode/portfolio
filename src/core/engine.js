@@ -16,9 +16,15 @@ function detectQuality() {
   return 'high';
 }
 
+/**
+ * Per tier. shadowMapSize: the sun's map (the beam gets a smaller one);
+ * post: 'full' (AO + DOF + bloom + grade), 'lite' (bloom + grade, 2× MSAA) or
+ * false (plain renderer). 'medium' (phones, 30 fps) also re-renders its
+ * shadow maps only every other frame (lighting.js).
+ */
 const QUALITY_PRESETS = {
-  high: { pixelRatio: 2, shadows: true, shadowMapSize: 2048, density: 1, post: true },
-  medium: { pixelRatio: 1.5, shadows: true, shadowMapSize: 1024, density: 0.6, post: false },
+  high: { pixelRatio: 2, shadows: true, shadowMapSize: 4096, density: 1, post: 'full' },
+  medium: { pixelRatio: 1.5, shadows: true, shadowMapSize: 1024, density: 0.6, post: 'lite' },
   low: { pixelRatio: 1, shadows: false, shadowMapSize: 512, density: 0.35, post: false },
 };
 
@@ -31,7 +37,10 @@ export function createEngine(canvas) {
 
   const renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias: tier !== 'low',
+    // With post-processing the scene is rendered into a multisampled HDR target
+    // and the canvas only receives a fullscreen quad — a multisampled backbuffer
+    // would be wasted. (Texture bake resolution is keyed on quality.tier, not on this.)
+    antialias: !quality.post && tier !== 'low',
     powerPreference: 'high-performance',
     preserveDrawingBuffer: params.has('shots'),
   });

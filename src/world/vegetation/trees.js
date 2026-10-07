@@ -4,10 +4,13 @@
 //
 // Each giant: a trunk 3–5 units across, leaning and twisting a little, that
 // swells into buttress roots at the foot (lobes that run out over the ground
-// as mossy roots and plunge into the soil), broken branch stubs, a few heavy
-// limbs reaching into a high canopy of leaf-card masses, ivy climbing the
-// lower trunk. Silver birches are slimmer, white with dark lenticels and a
-// black, fissured foot.
+// as mossy roots and plunge into the soil). The lower trunk stays a bare
+// cathedral column — moss, ivy, mossy broken branch stubs — and only high up
+// (y > CEILING_Y) do a few heavy limbs reach into the canopy ceiling of
+// leaf-card masses, with gaps between the crowns for the light shafts. No leaf
+// mass hangs at loft height: seen from the spots the giants leave the top of
+// the frame as columns. Silver birches are slimmer, white with dark lenticels
+// and a black, fissured foot; their crowns join the ceiling too.
 //
 // Output goes into shared builders: bark (giants), birch (vertex-coloured
 // bark), ivy (cards) and canopy clump placements (instanced by the caller).
@@ -22,6 +25,10 @@ import { tube, BARK_MEAN, MOSS_TINT } from './groundcover.js';
 import { blocksView } from './zones.js';
 
 const noise = createNoise2D(2718);
+/** No leaf mass of a giant hangs below this (world y): the canopy is a high ceiling. */
+export const CEILING_Y = 31;
+/** Birch crowns may come a little lower (they stand behind the giants). */
+const BIRCH_CEILING_Y = 27;
 const UP = new THREE.Vector3(0, 1, 0);
 const sstep = THREE.MathUtils.smoothstep;
 const BARK = new THREE.Color(BARK_MEAN);
@@ -256,16 +263,18 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
     }
   }
 
-  // ── broken branch stubs ──
-  const stubs = birch ? rng.int(1, 3) : rng.int(1, 3);
+  // ── broken branch stubs (the bare column's only branches below the ceiling) ──
+  const stubs = birch ? rng.int(1, 3) : rng.int(2, 4);
   for (let i = 0; i < stubs; i++) {
-    const y = rng.range(birch ? 4 : 7, H * 0.4);
+    const y = birch ? rng.range(4, H * 0.4) : rng.range(5, Math.min(CEILING_Y - 4, H * 0.45));
     const th = rng.range(0, TAU);
     const c = center(y);
     const r0 = radiusAt(y, th) * 0.9;
     const dir = new THREE.Vector3(Math.cos(th), rng.range(0.1, 0.5), Math.sin(th)).normalize();
     const p0 = c.clone().add(new THREE.Vector3(Math.cos(th) * r0 * 0.7, 0, Math.sin(th) * r0 * 0.7));
     const l = R * rng.range(0.6, 1.4);
+    // (stub tips: something to hang a lantern from)
+    (t.stubs ??= []).push({ tip: p0.clone().addScaledVector(dir, l * 0.85), dir: dir.clone(), r: R * 0.12 });
     tube(TB, [p0, p0.clone().addScaledVector(dir, l * 0.5), p0.clone().addScaledVector(dir, l)], [R * 0.2, R * 0.16, R * 0.12], 7, {
       capEnd: true,
       color: birch ? () => new THREE.Color('#3a3430') : null,
@@ -277,8 +286,10 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
   // ── heavy limbs into the canopy ──
   const limbs = birch ? rng.int(3, 5) : rng.int(3, 5);
   const ends = [];
+  const ceil = birch ? BIRCH_CEILING_Y : CEILING_Y;
   for (let i = 0; i < limbs; i++) {
-    const y = H * rng.range(birch ? 0.45 : 0.5, 0.85);
+    // (limbs branch off only just below the ceiling: the column stays bare)
+    const y = Math.max(ceil - 4, H * rng.range(birch ? 0.5 : 0.55, 0.85));
     const th = (i / limbs) * TAU + rng.jitter(0.6);
     const c = center(y);
     const dir = new THREE.Vector3(Math.cos(th), rng.range(0.55, 1.1), Math.sin(th)).normalize();
@@ -302,48 +313,21 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
     ends.push(p.clone());
   }
   ends.push(center(H).add(new THREE.Vector3(0, R * 1.5, 0)));
-  // lower side limbs with their own leaf masses (break up the bare columns;
-  // the view test below drops any mass that would hide a spot)
+  // (no lower side limbs with leaf masses any more: at loft height they read
+  //  as ordinary broccoli trees. Instead a trailing curtain of ivy now and
+  //  then hangs from a high limb down along the column.)
   const mids = [];
-  if (!birch) {
-    const nm = rng.int(2, 4);
-    const inward = Math.atan2(-t.z, -t.x); // (θ: x = cos θ, z = sin θ) — towards the glen
-    for (let i = 0; i < nm; i++) {
-      const y = rng.range(11, Math.min(32, H * 0.55));
-      // half of them reach into the clearing (framing it), the rest anywhere
-      const th = rng.chance(0.5) ? inward + rng.jitter(1.1) : rng.range(0, TAU);
-      const c = center(y);
-      const dir = new THREE.Vector3(Math.cos(th), rng.range(0.25, 0.6), Math.sin(th)).normalize();
-      const l = R * rng.range(3, 5);
-      const pts = [c.clone()];
-      const p = c.clone();
-      for (let s = 1; s <= 3; s++) {
-        dir.y += 0.1;
-        dir.normalize();
-        p.addScaledVector(dir, l / 3);
-        pts.push(p.clone());
-      }
-      // only keep the limb if its leaves would not hide a spot
-      if (!canopyOk(p, 3.2) || pts.some((q) => blocksView(q.x, q.y, q.z, R * 0.4))) continue;
-      tube(TB, pts, pts.map((_, k) => R * 0.3 * (1 - k * 0.22)), Math.round(8 * tubeK), {
-        vcol: (k, j, nrm) => _col.copy(BARK).lerp(HIGH, 0.35).lerp(MOSS, sstep(nrm.y, 0.2, 0.7) * 0.7).clone(),
-      });
-      mids.push(p.clone());
-      // trailing ivy curtains hanging from the limb
-      if (B.ivy) {
-        for (let k = 1; k < pts.length; k++) {
-          if (!rng.chance(0.75)) continue;
-          const a = pts[k - 1], b = pts[k];
-          const strands = Math.max(1, Math.round(rng.int(1, 3) * density));
-          for (let q = 0; q < strands; q++) {
-            const top = a.clone().lerp(b, rng.next());
-            top.y -= R * 0.2;
-            const len = rng.range(1.5, 4.5);
-            if (blocksView(top.x, top.y - len / 2, top.z, len / 2)) continue;
-            hangingStrand(B.ivy, rng, top, len);
-          }
-        }
-      }
+  if (!birch && B.ivy && ends.length > 1 && rng.chance(0.55)) {
+    const e = ends[rng.int(0, ends.length - 2)];
+    const c = center(e.y - 6);
+    const top = c.clone().lerp(e, 0.45);
+    top.y = Math.min(e.y - 3, top.y);
+    const strands = Math.max(1, Math.round(rng.int(2, 4) * density));
+    for (let q = 0; q < strands; q++) {
+      const len = rng.range(5, 11);
+      const p = top.clone().add(new THREE.Vector3(rng.jitter(1.2), rng.jitter(0.6), rng.jitter(1.2)));
+      if (blocksView(p.x, p.y - len / 2, p.z, len / 2)) continue;
+      hangingStrand(B.ivy, rng, p, len);
     }
   }
 
@@ -360,6 +344,8 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
     for (let k = 0; k < n; k++) {
       const s = (birch ? rng.range(2.2, 3.4) : mid ? rng.range(2.4, 3.8) : rng.range(3.6, 6.2)) * (R > 2 ? 1.1 : 1);
       const p = e.clone().add(new THREE.Vector3(rng.jitter(s * 0.9), rng.jitter(s * 0.35), rng.jitter(s * 0.9)));
+      // the high ceiling: a mass's underside never sinks below it
+      if (p.y - s * 0.75 < ceil) p.y = ceil + s * 0.75;
       // never in the Great Oak's crown, never in a spot camera's view
       if (!canopyOk(p, s)) continue;
       if (mid && Math.hypot(p.x - OAK.x, p.z - OAK.z) < 21 + s) continue;
@@ -368,11 +354,11 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
   }
 
   // ── ivy climbing the lower trunk (giants only, not all) ──
-  if (!birch && B.ivy && rng.chance(0.6)) {
+  if (!birch && B.ivy && rng.chance(0.75)) {
     const vines = rng.int(1, 3);
     for (let v = 0; v < vines; v++) {
       let th = rng.range(0, TAU);
-      const top = rng.range(5, 14);
+      const top = rng.range(6, 17);
       const cards = Math.round(top * 9 * density);
       for (let i = 0; i < cards; i++) {
         const y = Math.pow(rng.next(), 0.8) * top + 0.3;

@@ -7,6 +7,12 @@
 // Each fly has a dusk threshold: as night falls a few come out first, then
 // the whole glen fills up. One additive Points draw call, animated entirely
 // on the GPU (no CPU per frame); invisible (and free) by day.
+//
+// createGlowWorms(): the glow-worm canopy — hundreds of tiny cool-white and
+// cyan lights hanging on silk threads under the Great Oak's limbs and the
+// giants' crowns (y ≈ 14–35), twinkling slowly: at night the underside of the
+// leaves reads like a starry sky. The same shader and night gate, one more
+// Points draw.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { getHeight, streamPolyline } from '../ground.js';
@@ -80,6 +86,52 @@ void main() {
 }
 `;
 
+// Keep the spot cameras' near field clear (composed shot and its -wide
+// variant): a light drifting a few units in front of the lens sits far in
+// front of the focus and the depth of field turns it into a blob.
+let lenses = null;
+const _q = new THREE.Vector3();
+function inNearField(x, y, z, wander, reach = 0.6) {
+  if (!lenses) {
+    lenses = [];
+    for (const s of SPOTS) {
+      const P = new THREE.Vector3(...s.camera.position), T = new THREE.Vector3(...s.camera.target);
+      const dir = T.clone().sub(P);
+      const dist = dir.length();
+      dir.normalize();
+      lenses.push({ P, dir, dist });
+      if (s.id !== 'glen') lenses.push({ P: T.clone().addScaledVector(dir, -dist * 1.8), dir, dist: dist * 1.8 });
+    }
+  }
+  for (const l of lenses) {
+    _q.set(x, y, z).sub(l.P);
+    const along = _q.dot(l.dir);
+    const r = l.dist * reach + wander;
+    if (along < -wander || along > r) continue;
+    const perp = Math.sqrt(Math.max(0, _q.lengthSq() - along * along));
+    // a generous cone (wider than the 40° lens) around the view axis
+    if (perp < Math.max(0, along) * 0.62 + 1.2 + wander) return true;
+  }
+  return false;
+}
+
+function pointsMaterial(reduced) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: sharedUniforms.uTime,
+      uNight: { value: 0 },
+      uMotion: { value: reduced ? 0.4 : 1 },
+      uFocus: { value: 20 },
+      ...pointUniforms,
+    },
+    vertexShader: VERT,
+    fragmentShader: FRAG,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+}
+
 /**
  * @param ctx
  * @param {{ glowSpots?: {x,y,z}[], count?: number, reduced?: boolean }} opts
@@ -103,31 +155,6 @@ export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = fa
     else swirl.push(0, 0, 0);
   };
   const ground = (x, z) => Math.max(getHeight(x, z), STREAM.waterLevel);
-  // Keep the spot cameras' near field clear (composed shot and its -wide
-  // variant): a fly drifting a few units in front of the lens sits far in
-  // front of the focus and the depth of field turns it into a blob.
-  const lenses = [];
-  for (const s of SPOTS) {
-    const P = new THREE.Vector3(...s.camera.position), T = new THREE.Vector3(...s.camera.target);
-    const dir = T.clone().sub(P);
-    const dist = dir.length();
-    dir.normalize();
-    lenses.push({ P, dir, dist });
-    if (s.id !== 'glen') lenses.push({ P: T.clone().addScaledVector(dir, -dist * 1.8), dir, dist: dist * 1.8 });
-  }
-  const _q = new THREE.Vector3();
-  const inNearField = (x, y, z, wander) => {
-    for (const l of lenses) {
-      _q.set(x, y, z).sub(l.P);
-      const along = _q.dot(l.dir);
-      const reach = l.dist * 0.6 + wander;
-      if (along < -wander || along > reach) continue;
-      const perp = Math.sqrt(Math.max(0, _q.lengthSq() - along * along));
-      // a generous cone (wider than the 40° lens) around the view axis
-      if (perp < Math.max(0, along) * 0.62 + 1.2 + wander) return true;
-    }
-    return false;
-  };
   const spts = streamPolyline.pts;
   const cottages = [COTTAGE.home, COTTAGE.atelier, COTTAGE.shed];
 
@@ -202,20 +229,7 @@ export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = fa
   geo.setAttribute('aColor', new THREE.Float32BufferAttribute(colors, 3));
   geo.setAttribute('aBlink', new THREE.Float32BufferAttribute(blink, 3));
   geo.setAttribute('aSwirl', new THREE.Float32BufferAttribute(swirl, 3));
-  const mat = new THREE.ShaderMaterial({
-    uniforms: {
-      uTime: sharedUniforms.uTime,
-      uNight: { value: 0 },
-      uMotion: { value: reduced ? 0.4 : 1 },
-      uFocus: { value: 20 },
-      ...pointUniforms,
-    },
-    vertexShader: VERT,
-    fragmentShader: FRAG,
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
+  const mat = pointsMaterial(reduced);
   const points = new THREE.Points(geo, mat);
   points.name = 'ambient:fireflies';
   points.frustumCulled = false;
@@ -230,6 +244,67 @@ export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = fa
       mat.uniforms.uNight.value = night;
       mat.uniforms.uFocus.value = Math.max(4, ctx.cameraRig?.focusDistance ?? 20);
       points.visible = night > 0.12;
+    },
+  };
+}
+
+/**
+ * The glow-worm canopy. anchors: [{ x, y, z, r }] — places under which the
+ * worms hang (under limbs, under leaf masses); each anchor gets a few silk
+ * threads with 1–4 glowing droplets. count: total lights.
+ */
+export function createGlowWorms(ctx, { anchors = [], count = 450, reduced = false, yRange = [14, 35] } = {}) {
+  const rng = ctx.rng('ambient-glowworms');
+  const pos = [], params = [], colors = [], blink = [], swirl = [];
+  const tints = [new THREE.Color('#eaf8ff'), new THREE.Color('#a6f2ff'), new THREE.Color('#b8ffea'), new THREE.Color('#d6ecff')];
+  const add = (x, y, z, size) => {
+    pos.push(x, y, z);
+    // (they hang on silk: barely any wander, a slow sway)
+    params.push(rng.range(0, 1), rng.range(0.12, 0.3), rng.range(0.03, 0.1), rng.range(0.11, 0.17) * size);
+    const c = rng.pick(tints).clone().multiplyScalar(rng.range(0.75, 1.05));
+    colors.push(c.r, c.g, c.b);
+    // slow twinkle around a steady glow; they light up once it is properly dark
+    blink.push(rng.range(0.15, 0.45), rng.range(0.38, 0.62), rng.range(0.35, 0.6));
+    swirl.push(0, 0, 0);
+  };
+  if (anchors.length) {
+    for (let tries = 0; pos.length / 3 < count && tries < count * 8; tries++) {
+      const a = rng.pick(anchors);
+      const ang = rng.range(0, Math.PI * 2), d = Math.sqrt(rng.next()) * a.r;
+      const x = a.x + Math.sin(ang) * d, z = a.z + Math.cos(ang) * d;
+      const y = a.y - rng.range(0.1, 1.2);
+      if (y < yRange[0] || y > yRange[1]) continue;
+      if (inNearField(x, y, z, 0.5, 0.75)) continue;
+      // a silk thread: droplets of light one under the other, the lowest brightest
+      const n = rng.chance(0.55) ? 1 : rng.int(2, 4);
+      let yy = y;
+      for (let k = 0; k < n && pos.length / 3 < count; k++) {
+        add(x + rng.jitter(0.02), yy, z + rng.jitter(0.02), k === n - 1 ? 1 : 0.7);
+        yy -= rng.range(0.14, 0.32);
+      }
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('aParams', new THREE.Float32BufferAttribute(params, 4));
+  geo.setAttribute('aColor', new THREE.Float32BufferAttribute(colors, 3));
+  geo.setAttribute('aBlink', new THREE.Float32BufferAttribute(blink, 3));
+  geo.setAttribute('aSwirl', new THREE.Float32BufferAttribute(swirl, 3));
+  const mat = pointsMaterial(reduced);
+  const points = new THREE.Points(geo, mat);
+  points.name = 'ambient:glowworms';
+  points.frustumCulled = false;
+  points.renderOrder = 5;
+  points.raycast = () => {};
+  points.visible = false;
+  ctx.scene.add(points);
+  return {
+    object: points,
+    count: pos.length / 3,
+    update(night) {
+      mat.uniforms.uNight.value = night;
+      mat.uniforms.uFocus.value = Math.max(4, ctx.cameraRig?.focusDistance ?? 20);
+      points.visible = night > 0.3 && pos.length > 0;
     },
   };
 }

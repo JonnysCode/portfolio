@@ -25,16 +25,23 @@
 //              pixels get a smaller CoC, so tiny bright things (fireflies,
 //              bulbs) never explode into big bokeh discs.
 //   finish     ONE pass: AO + DOF composite + bloom + the renderer's tone mapping &
-//              exposure + colour grade (warm highlights, teal-green shadows,
-//              softly lifted blacks, a touch of saturation) + warm vignette +
-//              fine animated grain + sRGB output.
+//              exposure + colour grade + warm vignette + fine animated grain +
+//              sRGB output. The grade is a golden storybook afternoon: warm
+//              highlights, neutral-warm shadows and lifted blacks (the cool
+//              blue-green lives only in the fog / misty distance), wood &
+//              warm hues glow honey-amber (olive is nudged back to amber).
+//              Night: a moonlit blue shadow tint that is MULTIPLICATIVE
+//              (hue-preserving — dark reds never clip to black) and spares
+//              warm hues, so red & ochre caps stay burgundy & ochre.
+//              Saturation has a soft floor (never pushes a channel below 0).
 //
-// Tiers: high = everything; medium = bloom + grade (no depth → no AO/DOF);
-// low = plain renderer (tone mapping only). NaN/Inf pixels from any material
-// are dropped before they can be smeared by the blurs. If anything throws —
-// setup or a frame — we fall back to plain rendering for good.
+// Tiers (quality.post): 'full' (high) = everything; 'lite' (medium) = bloom +
+// grade, 2× MSAA (no depth → no AO/DOF); false (low) = plain renderer (tone
+// mapping only). NaN/Inf pixels from any material are dropped before they can
+// be smeared by the blurs. If anything throws — setup or a frame — we fall
+// back to plain rendering for good.
 //
-// ctx.post = { composer (null — custom chain), bloom, settings, enabled, setEnabled(on) }
+// ctx.post = { composer (null — custom chain), bloom, settings, target, enabled, setEnabled(on) }
 //   settings are live-tunable (see SETTINGS).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
@@ -70,8 +77,19 @@ const SETTINGS = {
   /** Highlights keep their hue (0..1) instead of bleaching to white — warm lights stay warm. */
   highlightHueDay: 0.2,
   highlightHueNight: 0.55,
-  warmth: 0.05,
-  shadowTint: [-0.02, 0.008, 0.018], // added in the shadows (teal-green)
+  warmth: 0.07,
+  /**
+   * Shadow tint — MULTIPLICATIVE (hue-preserving: a dark red stays a dark red,
+   * it is never subtracted to black) plus a tiny additive lift, weighted
+   * towards the shadows. Day: neutral-warm (golden afternoon, the teal lives
+   * only in the misty distance); night: a gentle moonlit blue.
+   */
+  shadowTintDay: { mul: [1.025, 1.0, 0.95], add: [0.004, 0.0025, 0.0] },
+  shadowTintNight: { mul: [0.92, 1.0, 1.06], add: [0.0, 0.003, 0.008] },
+  /** Warm hues (wood, red & ochre caps, lamplight) are protected from the cool night grade (0..1). */
+  warmProtect: 0.7,
+  /** Day: warm hues get a little extra glow (honey wood) and olive is nudged back to amber (0..1). */
+  woodGlow: 1,
   lift: 0.018,
   vignette: 0.3,
   grain: 0.022,
@@ -154,7 +172,18 @@ const PrefilterShader = {
 };
 
 const TAPS = 28;
-/** Half-res gather blur. Output: rgb = blurred colour, a = foreground coverage. */
+/**
+ * Half-res gather blur (scatter-as-gather). Two layers:
+ *   far/in-focus  every sample may only spread as far as its own CoC, and a
+ *                 sample behind a sharper centre never spreads onto it;
+ *   near          foreground samples are gathered separately with their real
+ *                 scatter weight (1 / their disc area), which gives a true
+ *                 coverage: ½ on the silhouette, fading to 0 one CoC outside
+ *                 it — a soft bokeh silhouette instead of a semi-transparent
+ *                 ghost with a hard cut edge.
+ * Output: rgb = near layer composited over the far layer (premultiplied by
+ * the near coverage), a = near coverage.
+ */
 const BokehShader = {
   uniforms: {
     tPre: { value: null },
@@ -173,10 +202,16 @@ const BokehShader = {
     void main() {
       vec4 c = texture2D(tPre, vUv);
       float cocC = c.a;
-      float w0 = tame(c.rgb);
-      vec3 sum = c.rgb * w0;
-      float wsum = w0;
-      float fg = 0.0;
+      float tc = tame(c.rgb);
+      // (each tap stands for 1/TAPS of the gather disc's area)
+      float area = uMaxR * uMaxR / ${(TAPS + 1).toFixed(1)};
+      float nearC = smoothstep(0.6, 1.8, -cocC);
+      vec3 farSum = c.rgb * tc * (1.0 - nearC);
+      float farW = tc * (1.0 - nearC) + 1e-4;
+      float nearScatterC = nearC * area / max(cocC * cocC, 1.0);
+      vec3 nearSum = c.rgb * tc * nearScatterC;
+      float nearW = tc * nearScatterC;
+      float cover = nearScatterC;
       const float GOLDEN = 2.39996323;
       for (int i = 0; i < ${TAPS}; i++) {
         float fi = float(i);
@@ -184,19 +219,26 @@ const BokehShader = {
         float th = fi * GOLDEN;
         vec4 s = texture2D(tPre, vUv + vec2(cos(th), sin(th)) * r * uTexel);
         float cs = s.a;
-        // a sample behind a sharper centre must not spread onto it
+        float ts = tame(s.rgb);
+        float nearS = smoothstep(0.6, 1.8, -cs);
+        // far layer: a sample behind a sharper centre must not spread onto it
         float reach = cs > cocC ? min(abs(cs), max(abs(cocC), 0.0) * 1.5 + 0.35) : abs(cs);
-        float w = smoothstep(r - 0.75, r + 0.25, reach);
-        fg = max(fg, w * smoothstep(0.6, 1.8, -cs));
-        w *= tame(s.rgb);
-        sum += s.rgb * w;
-        wsum += w;
+        float wf = smoothstep(r - 0.75, r + 0.25, reach) * (1.0 - nearS) * ts;
+        farSum += s.rgb * wf;
+        farW += wf;
+        // near layer: the sample's disc covers this pixel → its energy / disc area
+        float wn = smoothstep(r - 0.75, r + 0.25, abs(cs)) * nearS * area / max(cs * cs, 1.0);
+        cover += wn;
+        nearSum += s.rgb * wn * ts;
+        nearW += wn * ts;
       }
-      gl_FragColor = vec4(sum / wsum, fg);
+      vec3 farCol = farSum / farW;
+      vec3 nearCol = nearW > 1e-5 ? nearSum / nearW : farCol;
+      float a = clamp(cover, 0.0, 1.0);
+      gl_FragColor = vec4(mix(farCol, nearCol, a), a);
     }
   `,
 };
-
 
 const DEPTH_GLSL = /* glsl */ `
   uniform sampler2D tDepth;
@@ -313,9 +355,12 @@ class FinishMaterial extends THREE.ShaderMaterial {
         uHighlightHue: { value: 0.2 },
         uSaturation: { value: SETTINGS.saturation },
         uWarmth: { value: SETTINGS.warmth },
-        uShadowTint: { value: new THREE.Vector3(...SETTINGS.shadowTint) },
+        uShadowMul: { value: new THREE.Vector3(...SETTINGS.shadowTintDay.mul) },
+        uShadowAdd: { value: new THREE.Vector3(...SETTINGS.shadowTintDay.add) },
+        uWarmProtect: { value: SETTINGS.warmProtect },
+        uWoodGlow: { value: SETTINGS.woodGlow },
         uLift: { value: SETTINGS.lift },
-        uLiftColor: { value: new THREE.Color('#2d4a4a') },
+        uLiftColor: { value: new THREE.Color('#3a3426') },
         uVignette: { value: SETTINGS.vignette },
         uVignetteColor: { value: new THREE.Color('#2a1a10') },
         uGrain: { value: SETTINGS.grain },
@@ -328,13 +373,27 @@ class FinishMaterial extends THREE.ShaderMaterial {
         uniform sampler2D tColor, tBloom, tBokeh, tAO;
         uniform float uUseBloom, uUseDof, uAO;
         uniform float uExposure, uSaturation, uWarmth, uLift, uVignette, uGrain, uAspect, uNight, uTime, uHighlightHue;
-        uniform vec3 uShadowTint, uLiftColor, uVignetteColor;
+        uniform float uWarmProtect, uWoodGlow;
+        uniform vec3 uShadowMul, uShadowAdd, uLiftColor, uVignetteColor;
         varying vec2 vUv;
         ${COC_GLSL}
         float hash12(vec2 p) {
           vec3 p3 = fract(vec3(p.xyx) * 0.1031);
           p3 += dot(p3, p3.yzx + 33.33);
           return fract((p3.x + p3.y) * p3.z);
+        }
+        // hue (0..1) of a colour
+        float hueOf(vec3 c) {
+          float mx = max(max(c.r, c.g), c.b), mn = min(min(c.r, c.g), c.b);
+          float d = mx - mn;
+          if (d < 1e-5) return 0.0;
+          float h = mx == c.r ? mod((c.g - c.b) / d, 6.0) : mx == c.g ? (c.b - c.r) / d + 2.0 : (c.r - c.g) / d + 4.0;
+          return h / 6.0;
+        }
+        // 1 inside a hue band (centre & half widths in degrees), 0 outside
+        float hueBand(float h, float centre, float full, float fade) {
+          float dh = abs(fract(h - centre / 360.0 + 0.5) - 0.5) * 360.0;
+          return 1.0 - smoothstep(full, fade, dh);
         }
         void main() {
           vec3 col = texture2D(tColor, vUv).rgb;
@@ -347,7 +406,9 @@ class FinishMaterial extends THREE.ShaderMaterial {
           if (uUseDof > 0.5) {
             vec4 b = texture2D(tBokeh, vUv);
             float coc = abs(cocAt(vUv));
-            float k = max(smoothstep(0.35, 2.2, coc), b.a);
+            // blurred where the pixel itself is out of focus, or where a
+            // foreground bokeh silhouette covers it (b.rgb is already composited)
+            float k = max(smoothstep(0.35, 2.2, coc), smoothstep(0.02, 0.3, b.a));
             col = mix(col, b.rgb, k);
           }
           if (uUseBloom > 0.5) col += texture2D(tBloom, vUv).rgb;
@@ -367,13 +428,33 @@ class FinishMaterial extends THREE.ShaderMaterial {
 
           // grade (display-referred linear)
           float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
-          col = max(mix(vec3(l), col, uSaturation), 0.0);
+          float cmx = max(max(col.r, col.g), col.b), cmn = min(min(col.r, col.g), col.b);
+          // warm hues (wood, red & ochre caps, lamplight): reds…ambers with some chroma
+          float hue = hueOf(col);
+          float chroma = smoothstep(0.06, 0.22, (cmx - cmn) / max(cmx, 1e-4));
+          float warm = hueBand(hue, 22.0, 24.0, 40.0) * chroma;
+          // saturation with a soft floor: the boost may never push a channel
+          // below half its value (so dark reds are never clipped to black)
+          float sat = uSaturation;
+          if (sat > 1.0 && cmn < l) sat = min(sat, (l - 0.5 * cmn) / max(l - cmn, 1e-5));
+          col = mix(vec3(l), col, sat);
+          // day: wood glows honey/amber instead of olive — warm hues get a touch
+          // more warmth, olive (yellow-brown under the green canopy light) is
+          // nudged back towards amber. Greens and blues are untouched.
+          float dayK = uWoodGlow * (1.0 - uNight);
+          float olive = hueBand(hue, 52.0, 7.0, 17.0) * chroma;
+          col.g -= (col.g - col.b) * 0.12 * olive * dayK;
+          col *= mix(vec3(1.0), vec3(1.05, 1.0, 0.92), warm * dayK * 0.6);
+          // shadow tint: multiplicative + a tiny lift — hue-preserving; warm
+          // hues keep most of their colour at night
           float sh = (1.0 - l) * (1.0 - l);
-          col += uShadowTint * sh * (1.0 + uNight);
+          vec3 tintMul = mix(uShadowMul, vec3(1.0), warm * uWarmProtect * uNight);
+          col = mix(col, col * tintMul + uShadowAdd, sh);
           col *= mix(vec3(1.0), vec3(1.0 + uWarmth, 1.0 + uWarmth * 0.35, 1.0 - uWarmth * 0.6), smoothstep(0.25, 0.9, l));
-          // moonlight: cool the greens a little without crushing anything
-          col = mix(col, l * vec3(0.78, 0.9, 1.25), uNight * 0.18);
-          // softly lifted blacks, towards a deep teal (never grey)
+          // moonlight: cool the greens a little without crushing anything (reds & ochres keep their hue)
+          col = mix(col, l * vec3(0.78, 0.9, 1.25), uNight * 0.18 * (1.0 - warm * uWarmProtect));
+          col = max(col, 0.0);
+          // softly lifted blacks: neutral-warm by day, deep blue by night (never grey)
           col = col * (1.0 - uLift) + uLiftColor * uLift * 2.2;
           // warm, gentle vignette
           vec2 q = (vUv - 0.5) * vec2(uAspect, 1.0);
@@ -477,19 +558,25 @@ class WoodlandBloom extends UnrealBloomPass {
 export default async function build(ctx) {
   const { engine, scene, camera } = ctx;
   const quality = ctx.quality ?? engine.quality;
-  const tier = quality.tier;
-  // high: full chain; medium: bloom + grade; low: plain renderer.
-  if (tier === 'low') return {};
+  // post is the last world module: the world is complete, so the lighting can
+  // hand out its point-light budget now — before any shader is compiled.
+  ctx.lights?.allocate?.();
+  // quality.post: 'full' (high: AO + DOF + bloom + grade), 'lite' (medium:
+  // bloom + grade, 2× MSAA), false (low: plain renderer, tone mapping only).
+  const mode = quality.post === true ? (quality.tier === 'high' ? 'full' : 'lite') : quality.post;
+  if (mode !== 'full' && mode !== 'lite') return {};
   const renderer = engine.renderer;
-  const useDof = tier === 'high';
+  const useDof = mode === 'full';
 
   let sceneRT, bloom, preRT, bokehRT, aoRT, aoBlurRT, finishMat, quads;
   try {
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
     const pr = renderer.getPixelRatio();
+    // (the canvas itself is created without antialiasing whenever post runs —
+    // the scene's MSAA happens here)
     sceneRT = new THREE.WebGLRenderTarget(size.x, size.y, {
       type: THREE.HalfFloatType,
-      samples: pr >= 1.75 ? 2 : 4,
+      samples: mode === 'lite' || pr >= 1.75 ? 2 : 4,
       depthTexture: useDof ? new THREE.DepthTexture(size.x, size.y) : null,
     });
     sceneRT.texture.name = 'woodland.post.scene';
@@ -637,8 +724,10 @@ export default async function build(ctx) {
 
   const vignetteDay = new THREE.Color('#2a1a10');
   const vignetteNight = new THREE.Color('#0a1430');
-  const liftDay = new THREE.Color('#2d4a4a');
+  // lifted blacks: neutral-warm by day (no teal murk), deep blue by night
+  const liftDay = new THREE.Color('#3a3426');
   const liftNight = new THREE.Color('#14223e');
+  const tmpV = new THREE.Vector3();
   let lastNight = -1;
 
   ctx.post = {
@@ -678,8 +767,11 @@ export default async function build(ctx) {
       fu.uExposure.value = SETTINGS.exposure;
       fu.uHighlightHue.value = SETTINGS.highlightHueDay + (SETTINGS.highlightHueNight - SETTINGS.highlightHueDay) * n;
       fu.uWarmth.value = SETTINGS.warmth * (1 - n);
-      const st = SETTINGS.shadowTint;
-      fu.uShadowTint.value.set(st[0], st[1], st[2]);
+      const sd = SETTINGS.shadowTintDay, sn = SETTINGS.shadowTintNight;
+      fu.uShadowMul.value.set(...sd.mul).lerp(tmpV.set(...sn.mul), n);
+      fu.uShadowAdd.value.set(...sd.add).lerp(tmpV.set(...sn.add), n);
+      fu.uWarmProtect.value = SETTINGS.warmProtect;
+      fu.uWoodGlow.value = SETTINGS.woodGlow;
       fu.uLift.value = SETTINGS.lift;
       fu.uGrain.value = SETTINGS.grain;
     },

@@ -264,7 +264,7 @@ export function viewDetail(x, y, z, { r = 0.5, near = 14, far = 34, min = 0.5 } 
 // variant, plus the overview: what the visitor sees when a glide lands.
 let shots = null;
 const _shot = new THREE.Sphere();
-/** True if a sphere shows in any composed shot (spot, spot-wide, overview). */
+/** True if a sphere shows in any composed shot (spot, spot-wide — the glen's too —, overview). */
 export function inShot(x, y, z, r = 0.3) {
   if (!shots) {
     shots = [];
@@ -280,7 +280,9 @@ export function inShot(x, y, z, r = 0.3) {
     for (const s of SPOTS) {
       const p = s.camera.position, t = s.camera.target, fov = s.camera.fov ?? 40;
       add(p, t, fov);
-      if (s.id !== 'glen') add([t[0] + (p[0] - t[0]) * 1.8, t[1] + (p[1] - t[1]) * 1.8, t[2] + (p[2] - t[2]) * 1.8], t, fov);
+      // (the glen's wide shot too: a phone steps the overview back ×1.45 and
+      //  zooming out adds ×1.22 — its whole front band must be dressed)
+      add([t[0] + (p[0] - t[0]) * 1.8, t[1] + (p[1] - t[1]) * 1.8, t[2] + (p[2] - t[2]) * 1.8], t, fov);
     }
     add([0, 34, 52], [0, 4, -2], 40);
   }

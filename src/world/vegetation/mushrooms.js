@@ -21,8 +21,10 @@
 // opts.lod (0.5..1) on every mushroom thins segments, rings and warts for
 // mushrooms that no camera ever sees up close.
 //
-// kit.amanita(x, y, z, opts)    fly agaric: bulbous volva, skirt ring, dome /
-//                               cone / flat cap, gills, raised warts
+// kit.amanita(x, y, z, opts)    fly agaric (and its kin — panther caps, ochre
+//                               and orange amanitas, parasols): bulbous volva,
+//                               skirt ring, dome / cone / flat / upturned (old)
+//                               cap, gills, raised warts (colour per species)
 // kit.bolete(x, y, z, opts)     fat porcini: bun cap, pale pore underside
 // kit.bonnets(x, y, z, opts)    a tuft of slender brown (or glowing) bonnets
 // kit.bracket(p, n, opts)       shelf fungus on a log or trunk
@@ -112,6 +114,12 @@ const C = (hex) => new THREE.Color(hex);
 
 export const CAP_REDS = ['#c4301f', '#cc3a20', '#b82a1c', '#d2481f', '#c83a28'];
 export const CAP_BROWNS = ['#a8653b', '#b07848', '#8c5634', '#b08a5a', '#c08a48'];
+/** Ochre / tan amanitas (the painterly giants of the mossy-door reference). */
+export const CAP_OCHRES = ['#c99a4c', '#d2a65a', '#b8883e', '#d8b06c', '#c4904a'];
+export const CAP_ORANGES = ['#d8661e', '#e27a28', '#cc5a1c', '#e48a34'];
+export const CAP_TANS = ['#d8c09a', '#ccb088', '#e0caa4', '#c4a47c'];
+/** Porcini & co.: chestnut, hazel, ochre and tan bun caps. */
+export const CAP_BOLETES = ['#7a4a26', '#8a5a2e', '#a0703a', '#b8884c', '#6e4022', '#c09858'];
 
 // ─── night glow (enchanted gills & spots) ────────────────────────────────────
 const glowSets = new WeakMap();
@@ -188,7 +196,8 @@ export class MushroomKit {
     };
     const rs = R * (opts.stemRatio ?? rng.range(0.17, 0.22));
     const phase = rng.range(0, TAU);
-    const stemCol = C(opts.stemColor ?? rng.pick(['#efe0c0', '#ead9b6', '#f1e3c6', '#e6d3ae']));
+    const stemPick = rng.pick(['#efe0c0', '#ead9b6', '#f1e3c6', '#e6d3ae']);
+    const stemCol = C(opts.stemColor ?? stemPick);
     // stem: bulbous foot (volva), slimmer middle, flaring a little under the cap
     const stemProfile = [];
     const stemPts = [];
@@ -275,23 +284,33 @@ export class MushroomKit {
     }
 
     // cap profile: rim (v = 0) → apex (v = 1)
-    const capH = shape === 'cone' ? R * rng.range(1.0, 1.35) : shape === 'flat' ? R * rng.range(0.22, 0.32) : R * rng.range(0.5, 0.68);
+    const upturned = shape === 'upturned';
+    const capH = shape === 'cone' ? R * rng.range(1.0, 1.35) : shape === 'flat' ? R * rng.range(0.22, 0.32) : upturned ? R * rng.range(0.24, 0.34) : R * rng.range(0.5, 0.68);
     const n = Math.max(3, Math.round((H > 1.2 ? 8 : H > 0.6 ? 6 : H > 0.3 ? 4 : 3) * (0.6 + 0.4 * lod)));
     const prof = [];
-    // the rim rolls under a little
-    prof.push({ r: R * 0.93, y: -R * 0.045, v: 0 });
-    prof.push({ r: R, y: R * 0.01, v: 0.04 });
+    if (upturned) {
+      // an old cap: the rim has curled up into a shallow wavy bowl around a low umbo
+      prof.push({ r: R * 0.95, y: capH * 0.52, v: 0 });
+      prof.push({ r: R, y: capH * 0.7, v: 0.04 });
+    } else {
+      // the rim rolls under a little
+      prof.push({ r: R * 0.93, y: -R * 0.045, v: 0 });
+      prof.push({ r: R, y: R * 0.01, v: 0.04 });
+    }
     for (let k = 1; k <= n; k++) {
       const t = k / n; // 0 rim → 1 apex
       const rho = 1 - t;
       let yy;
       if (shape === 'cone') yy = capH * (1 - Math.pow(rho, 1.15)) - capH * 0.08 * Math.pow(t, 6);
       else if (shape === 'flat') yy = capH * Math.sqrt(1 - rho * rho) * (1 - 0.15 * Math.exp(-rho * rho * 30)) + R * 0.04 * (rho > 0.8 ? -(rho - 0.8) : 0);
+      else if (upturned) yy = capH * (0.32 * Math.exp(-rho * rho * 14) + 0.62 * Math.pow(rho, 2.2));
       else yy = capH * Math.pow(1 - Math.pow(rho, 2.2), 0.62);
       prof.push({ r: R * rho * (k === n ? 0.0 : 1), y: yy + R * 0.01, v: 0.04 + 0.96 * t });
     }
     const wobPhase = rng.range(0, TAU);
-    const capWob = (th, k) => 1 + (0.035 * Math.sin(th * 3 + wobPhase) + 0.02 * Math.sin(th * 7 + wobPhase * 2)) * (k < 3 ? 1 : 0.6);
+    // (old upturned caps are wavier and a little torn at the rim)
+    const wavy = upturned ? 2.2 : 1;
+    const capWob = (th, k) => 1 + (0.035 * Math.sin(th * 3 + wobPhase) + 0.02 * Math.sin(th * 7 + wobPhase * 2)) * (k < 3 ? wavy : 0.6);
     const rimCol = capCol.clone().lerp(C('#f2c890'), 0.3);
     const topCol = capCol.clone().multiplyScalar(0.82);
     lathe(this.caps, F, prof, seg, {
@@ -303,13 +322,21 @@ export class MushroomKit {
     });
     // gills: underside from the rim to the stem, rising towards the stem
     const gillTop = Math.min(capH * 0.55, R * 0.28);
-    const gProf = [
-      { r: R * 0.93, y: -R * 0.045, v: 0 },
-      { r: R * 0.62, y: gillTop * 0.35 - R * 0.03, v: 0.5 },
-      { r: rs * 1.15, y: gillTop * 0.6, v: 0.97 },
-      // …and down into the stem, closing the gap above the stem's open top
-      { r: rs * 0.85, y: -H * 0.06, v: 1 },
-    ];
+    const gProf = upturned
+      ? [
+        // (the upturned bowl's underside: from the lifted rim down to the stem)
+        { r: R * 0.95, y: capH * 0.5, v: 0 },
+        { r: R * 0.62, y: capH * 0.06 - R * 0.025, v: 0.5 },
+        { r: rs * 1.15, y: -R * 0.03, v: 0.97 },
+        { r: rs * 0.85, y: -H * 0.06, v: 1 },
+      ]
+      : [
+        { r: R * 0.93, y: -R * 0.045, v: 0 },
+        { r: R * 0.62, y: gillTop * 0.35 - R * 0.03, v: 0.5 },
+        { r: rs * 1.15, y: gillTop * 0.6, v: 0.97 },
+        // …and down into the stem, closing the gap above the stem's open top
+        { r: rs * 0.85, y: -H * 0.06, v: 1 },
+      ];
     // (buttons: one band from the rim straight into the stem is enough)
     if (H < 0.4) gProf.splice(1, 1);
     // (some giants are bioluminescent: their gills glow softly at night)
@@ -327,7 +354,7 @@ export class MushroomKit {
     const density = opts.warts ?? 1;
     // (bold enough to read from across the glen: a few big flakes, many small spots)
     const nW = Math.round(density * (H > 1 ? 96 : H > 0.4 ? 17 : 6) * Math.min(2.2, R / Math.max(0.05, H * 0.5)) * (0.5 + 0.5 * lod));
-    const wartCol = C('#f5ecd8');
+    const wartCol = C(opts.wartColor ?? '#f5ecd8');
     const wartB = opts.glowSpots ? this.glowWarts : this.warts;
     const wartSeg = H > 2.2 && lod > 0.8 ? 5 : 4;
     for (let i = 0; i < nW; i++) {
@@ -351,13 +378,16 @@ export class MushroomKit {
     return { top, capR: R, capTop: top.y + capH };
   }
 
-  /** A fat porcini/bolete. opts: { height, capR, color } */
+  /** A fat porcini/bolete. opts: { height, capR, color, lean, leanAz } */
   bolete(x, y, z, opts = {}) {
     const rng = this.rng;
     const H = opts.height ?? 0.2;
     const R = opts.capR ?? H * 0.7;
-    const seg = 12;
-    const F0 = frameFor(new THREE.Vector3(x, y - H * 0.05, z), new THREE.Vector3(rng.jitter(0.15), 1, rng.jitter(0.15)));
+    const seg = H > 0.3 ? 12 : H > 0.14 ? 10 : 8;
+    const tilt = opts.lean !== undefined
+      ? new THREE.Vector3(Math.sin(opts.leanAz ?? 0) * Math.sin(opts.lean), 1, Math.cos(opts.leanAz ?? 0) * Math.sin(opts.lean))
+      : new THREE.Vector3(rng.jitter(0.15), 1, rng.jitter(0.15));
+    const F0 = frameFor(new THREE.Vector3(x, y - H * 0.05, z), tilt);
     const stemCol = C('#e8dcc0');
     lathe(this.stems, F0, [
       { r: R * 0.42, y: 0, v: 0 },
@@ -367,6 +397,8 @@ export class MushroomKit {
     ], seg, { color: (k) => stemCol.clone().multiplyScalar(0.8 + k * 0.07) });
     const F = frameFor(F0.o.clone().addScaledVector(F0.y, H), F0.y);
     const col = C(opts.color ?? rng.pick(['#7a4a26', '#8a5a2e', '#6e4022', '#946234']));
+    // (pores: lemon-cream in young ones, olive-ochre in old ones)
+    const pore = C(opts.poreColor ?? '#d8c47a');
     const capH = R * 0.62;
     const prof = [
       { r: R * 0.9, y: -R * 0.06, v: 0 },
@@ -379,7 +411,7 @@ export class MushroomKit {
     lathe(this.stems, F, [
       { r: R * 0.9, y: -R * 0.06, v: 0 },
       { r: R * 0.4, y: R * 0.02, v: 1 },
-    ], seg, { flip: true, color: () => C('#d8c47a') });
+    ], seg, { flip: true, color: () => pore });
   }
 
   /** A tuft of slender bonnets (glowing ones light up at night). opts: { count, height, glow, halo (night halo sprite, default on), color } */

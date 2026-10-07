@@ -12,6 +12,12 @@
 //
 // A few big far shafts stand in the back-left forest (outside the shadow map:
 // always lit) to give the misty depth its golden slant.
+//
+// Beams with their own axis (addBeam) don't follow the sun: the canopy-gap
+// sunbeam that pools on the Schreinerei (lighting.js' SpotLight) gets one.
+// By night a handful of shafts (addMoonbeam: the fairy ring, the lily pond,
+// the plunge pool …) stay on as cool silver moonbeams along the moonlight
+// (~35 % of the day strength, slower drift); everything else fades at dusk.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../../core/rng.js';
@@ -19,17 +25,30 @@ import { getHeight, getPadAt } from '../ground.js';
 import { envUniforms, GLSL_NOISE } from './celestial.js';
 import { sunlightUniforms, SUNLIGHT_GLSL } from './sunlight.js';
 
+/** Moonbeams: ~35 % of the day strength, times this (they are seen against the dark). */
+const NIGHT_BOOST = 1.4;
+
 const VERT = /* glsl */ `
   attribute vec3 aBase;   // foot of the shaft (world)
   attribute vec4 aShape;  // length, width, intensity, seed
+  attribute vec4 aMode;   // xyz: own axis (0 = follow the key light), w: 1 = night moonbeam
   uniform vec3 uAxis;     // towards the sun
+  uniform float uDayK, uNightK;
   varying vec2 vUv;
   varying vec3 vW;
   varying float vI;
   varying float vSeed;
   varying float vView;
+  varying vec3 vAxis;
+  varying vec2 vKind;     // x: own axis (noise-bundled, not shadow-carved), y: moonbeam
   void main() {
-    vec3 axis = normalize(uAxis);
+    float own = step(0.5, dot(aMode.xyz, aMode.xyz));
+    vec3 axis = normalize(mix(uAxis, aMode.xyz, own));
+    vAxis = axis;
+    vKind = vec2(own, aMode.w);
+    // day shafts / moonbeams that are switched off collapse (no fragments)
+    float k = mix(uDayK, uNightK, aMode.w);
+    if (k < 0.002) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
     vec3 mid = aBase + axis * aShape.x * 0.5;
     vec3 toCam = cameraPosition - mid;
     float camDist = length(toCam);
@@ -43,19 +62,21 @@ const VERT = /* glsl */ `
     vSeed = aShape.w;
     // seen end-on the quad degenerates — fade it; also fade when the camera is inside it
     vView = (1.0 - pow(abs(dot(axis, toCam)), 6.0)) * smoothstep(aShape.y * 0.6, aShape.y * 2.2, camDist);
-    vI = aShape.z;
+    vI = aShape.z * k;
     gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
   }
 `;
 
 const FRAG = /* glsl */ `
-  uniform vec3 uAxis, uColor;
+  uniform vec3 uColor, uMoonColor;
   uniform float uTime, uStrength;
   varying vec2 vUv;
   varying vec3 vW;
   varying float vI;
   varying float vSeed;
   varying float vView;
+  varying vec3 vAxis;
+  varying vec2 vKind;
   ${GLSL_NOISE}
   ${SUNLIGHT_GLSL}
   void main() {
@@ -66,22 +87,29 @@ const FRAG = /* glsl */ `
     float ends = smoothstep(0.0, 0.32, along) * (1.0 - smoothstep(0.55, 1.0, along));
     // fine streaks across the beam, slowly drifting dust density along it
     float streak = 0.55 + 0.45 * envNoise(vec2(across * 4.5 + vSeed * 17.0, along * 0.8 + vSeed));
-    float drift = 0.65 + 0.35 * envNoise(vec2(along * 3.0 - uTime * 0.07 + vSeed * 9.0, across * 1.5 + uTime * 0.02));
+    // moonbeams drift slower
+    float tm = uTime * mix(1.0, 0.45, vKind.y);
+    float drift = 0.65 + 0.35 * envNoise(vec2(along * 3.0 - tm * 0.07 + vSeed * 9.0, across * 1.5 + tm * 0.02));
     // four taps across the beam soften the canopy-cut edges into bundles of rays
-    vec3 sideW = cross(normalize(uAxis), normalize(vW - cameraPosition));
+    vec3 sideW = cross(vAxis, normalize(vW - cameraPosition));
     sideW *= inversesqrt(max(dot(sideW, sideW), 1e-8)); // (never NaN, even end-on)
-    float lit = 0.25 * (sunVisibility(vW + sideW * 0.12) + sunVisibility(vW - sideW * 0.12)
-              + sunVisibility(vW + sideW * 0.32 + uAxis * 0.4) + sunVisibility(vW - sideW * 0.32 - uAxis * 0.4));
-    // no shadow map (low tier): fake the canopy cut with noise bundles
-    if (uSunShadowParams.x < 0.5) lit = 0.25 + 0.75 * smoothstep(0.35, 0.75, envNoise(vec2(across * 3.5 + vSeed * 31.0, 0.5)));
+    float bundles = 0.25 + 0.75 * smoothstep(0.35, 0.75, envNoise(vec2(across * 3.5 + vSeed * 31.0, 0.5)));
+    float lit = bundles;
+    if (vKind.x < 0.5 && uSunShadowParams.x > 0.5) {
+      lit = 0.25 * (sunVisibility(vW + sideW * 0.12) + sunVisibility(vW - sideW * 0.12)
+          + sunVisibility(vW + sideW * 0.32 + vAxis * 0.4) + sunVisibility(vW - sideW * 0.32 - vAxis * 0.4));
+      // moonbeams are chosen stages: carved by the canopy, but never gone entirely
+      lit = mix(lit, max(lit, bundles * 0.75), vKind.y);
+    }
+    // (no shadow map — low tier — or a beam with its own axis: noise bundles fake the canopy cut)
     // forward scattering: brighter when looking into the light
     vec3 v = normalize(vW - cameraPosition);
-    float c = dot(v, normalize(uAxis));
+    float c = dot(v, vAxis);
     float g = 0.55;
     float hg = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * c, 1.5);
     float phase = 0.25 + hg * 0.22;
     float a = prof * ends * streak * drift * lit * phase * vI * vView * uStrength;
-    gl_FragColor = vec4(uColor * a, 1.0);
+    gl_FragColor = vec4(mix(uColor, uMoonColor, vKind.y) * a, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -99,9 +127,11 @@ export function buildShafts(ctx) {
 
   const bases = [];
   const shapes = [];
+  const modes = [];
   const add = (x, z, length, width, intensity) => {
     bases.push(x, getHeight(x, z) - 0.2, z);
     shapes.push(length, width, intensity, rng.next());
+    modes.push(0, 0, 0, 0);
   };
 
   // Hand-placed hero shafts where the spot cameras look …
@@ -153,20 +183,40 @@ export function buildShafts(ctx) {
   const builtIn = bases.length / 3;
   const baseArr = new Float32Array((builtIn + SPARE) * 3);
   const shapeArr = new Float32Array((builtIn + SPARE) * 4);
+  const modeArr = new Float32Array((builtIn + SPARE) * 4);
   baseArr.set(bases);
   shapeArr.set(shapes);
+  modeArr.set(modes);
   const baseAttr = new THREE.InstancedBufferAttribute(baseArr, 3);
   const shapeAttr = new THREE.InstancedBufferAttribute(shapeArr, 4);
+  const modeAttr = new THREE.InstancedBufferAttribute(modeArr, 4);
   geo.setAttribute('aBase', baseAttr);
   geo.setAttribute('aShape', shapeAttr);
+  geo.setAttribute('aMode', modeAttr);
   geo.instanceCount = builtIn;
+  /** Append one instance; returns false when the spare capacity is used up. */
+  const push = (x, y, z, shape, mode) => {
+    const i = geo.instanceCount;
+    if (i >= builtIn + SPARE) return false;
+    baseArr.set([x, y, z], i * 3);
+    shapeArr.set(shape, i * 4);
+    modeArr.set(mode, i * 4);
+    baseAttr.needsUpdate = true;
+    shapeAttr.needsUpdate = true;
+    modeAttr.needsUpdate = true;
+    geo.instanceCount = i + 1;
+    return true;
+  };
 
   const uniforms = {
     ...sunlightUniforms,
     uAxis: { value: keyDir },
     uColor: { value: new THREE.Color('#ffc978') },
+    uMoonColor: { value: new THREE.Color('#a8c0ff') },
     uTime: { value: 0 }, // own clock: slowed down for prefers-reduced-motion
     uStrength: { value: 1 },
+    uDayK: { value: 1 },
+    uNightK: { value: 0 },
   };
   const mat = new THREE.ShaderMaterial({
     name: 'godrays',
@@ -198,20 +248,29 @@ export function buildShafts(ctx) {
      * opts: { length = 24, width = 3, intensity = 0.9 }. Returns false when full.
      */
     addShaft(x, z, { length = 24, width = 3, intensity = 0.9 } = {}) {
-      const i = geo.instanceCount;
-      if (i >= builtIn + SPARE) return false;
-      baseArr.set([x, getHeight(x, z) - 0.2, z], i * 3);
-      shapeArr.set([length, width, intensity, rng.next()], i * 4);
-      baseAttr.needsUpdate = true;
-      shapeAttr.needsUpdate = true;
-      geo.instanceCount = i + 1;
-      return true;
+      return push(x, getHeight(x, z) - 0.2, z, [length, width, intensity, rng.next()], [0, 0, 0, 0]);
+    },
+    /**
+     * A day beam along its own axis (not the sun's), e.g. the canopy-gap
+     * sunbeam onto the Schreinerei: foot (x, y, z), axis towards the light.
+     */
+    addBeam(x, y, z, axis, { length = 24, width = 3, intensity = 0.9 } = {}) {
+      const a = axis.clone().normalize();
+      return push(x, y - 0.2, z, [length, width, intensity, rng.next()], [a.x, a.y, a.z, 0]);
+    },
+    /** A night moonbeam falling on (x, z) along the moonlight (axis optional). */
+    addMoonbeam(x, z, { length = 24, width = 2.6, intensity = 1, axis = null } = {}) {
+      const a = axis ? axis.clone().normalize() : null;
+      return push(x, getHeight(x, z) - 0.2, z, [length, width, intensity, rng.next()], [a?.x ?? 0, a?.y ?? 0, a?.z ?? 0, 1]);
     },
     update(night, t = 0) {
       uniforms.uTime.value = t * (ctx.engine.reducedMotion ? 0.15 : 1);
       const k = 1 - THREE.MathUtils.smoothstep(night, 0.05, 0.45);
-      uniforms.uStrength.value = base * k;
-      mesh.visible = k > 0.002;
+      const kn = THREE.MathUtils.smoothstep(night, 0.6, 0.95);
+      uniforms.uStrength.value = base;
+      uniforms.uDayK.value = k;
+      uniforms.uNightK.value = kn * 0.35 * NIGHT_BOOST;
+      mesh.visible = k > 0.002 || kn > 0.002;
     },
   };
 }

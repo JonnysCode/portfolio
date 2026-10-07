@@ -8,11 +8,14 @@
 //   instanced(...)    an InstancedMesh from a template + a list of placements
 //                     ({ x, y, z, ry, s, sx?, sy?, tilt?, color? })
 //   mergeSafe(geos)   mergeGeometries that first aligns attribute sets
+//   moonlit(mat)      a clone of a foliage material that dims to a moonlit
+//                     silhouette at night, with a silver rim on its upper edges
 //   noise helpers     seeded 2D simplex fields shared by terrain & scatter
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createNoise2D, fbm } from '../../core/noise.js';
+import { sharedUniforms } from '../../core/materials.js';
 
 export const TAU = Math.PI * 2;
 
@@ -249,4 +252,37 @@ export function tone(hex, rng = null, { h = 0, s = 0, l = 0 } = {}) {
   const c = new THREE.Color(hex);
   if (rng) c.offsetHSL(rng.jitter(h), rng.jitter(s), rng.jitter(l));
   return c;
+}
+
+// ─── moonlit foliage ─────────────────────────────────────────────────────────
+/**
+ * A clone of a (cached) foliage material whose leaves read as silhouettes at
+ * night: the diffuse dims to `dim` × and the upward-facing edges of each leaf
+ * mass catch a soft silver moon rim. Follows the shared night uniform; the
+ * day look is untouched. (The cached material itself is never mutated.)
+ */
+export function moonlit(base, { dim = 0.6, rim = 0.14, color = [0.62, 0.72, 0.95] } = {}) {
+  const m = base.clone();
+  m.name = `${base.name}-moonlit`;
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = (shader, renderer) => {
+    prev?.call(m, shader, renderer);
+    shader.uniforms.uVegNight = sharedUniforms.uNight;
+    const c = color.map((v) => v.toFixed(3)).join(', ');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uVegNight;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+  diffuseColor.rgb *= mix(1.0, ${dim.toFixed(3)}, uVegNight);`)
+      .replace('#include <opaque_fragment>', `{
+    // silver moon rim on the upper edges of the leaf masses
+    vec3 vegUp = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+    float vegTop = smoothstep(-0.1, 0.7, dot(normal, vegUp));
+    float vegFres = pow(1.0 - abs(dot(normal, normalize(vViewPosition))), 2.0);
+    outgoingLight += vec3(${c}) * (vegTop * vegFres * ${rim.toFixed(3)} * uVegNight);
+  }
+#include <opaque_fragment>`);
+  };
+  const key = m.customProgramCacheKey();
+  m.customProgramCacheKey = () => `${key}|moonlit-${dim}-${rim}`;
+  return m;
 }

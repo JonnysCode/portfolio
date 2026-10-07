@@ -144,7 +144,10 @@ export const PATH_HALF_WIDTH = { main: 1.15, cottage: 0.85, bridge: 0.85, farBan
 
 /**
  * SPOTS — the places the camera glides to. `focus` is the point of interest
- * (used for depth of field and markers); `camera` is the composed shot.
+ * (used for depth of field and markers); `camera` is the composed shot (16:9).
+ * Optional `portrait: { position, target, fov?, focus? }` is the shot on a tall
+ * phone screen (blended in on portrait tablets), `close: { position, target }`
+ * the '<id>-close' screenshot view (debug.js).
  * `areas` lists the content areas (src/content/content.js) presented here.
  */
 export const SPOTS = [
@@ -163,8 +166,11 @@ export const SPOTS = [
     subtitle: 'Woodworking · Schreiner EFZ',
     icon: '🪚',
     areas: ['woodworking'],
-    focus: [-1, 1.8, -1.5],
-    camera: { position: [3.5, 5.2, 13.5], target: [-1.2, 2.6, -2.2], fov: 40 },
+    // lower and closer than before: the porch Hobelbank with Jonny planing sits on
+    // the left third, the oak door in the middle, the deck still on the right
+    focus: [-1.4, 1.1, -0.8],
+    camera: { position: [0.9, 3.5, 11.4], target: [0.2, 1.7, -0.7], fov: 40 },
+    portrait: { position: [1.0, 6.6, 15.5], target: [-0.6, 3.2, -1.2] },
   },
   {
     id: 'code',
@@ -174,6 +180,7 @@ export const SPOTS = [
     areas: ['code'],
     focus: [3.6, 12.6, -3.4],
     camera: { position: [9.5, 15, 7.5], target: [3.4, 12.6, -3.2], fov: 40 },
+    portrait: { position: [12.6, 16.2, 9.3], target: [4.6, 13, -4.8] },
   },
   {
     id: 'home',
@@ -183,6 +190,8 @@ export const SPOTS = [
     areas: ['home'],
     focus: [-15, 2.4, 4],
     camera: { position: [-2.6, 4.9, 9.9], target: [-14.6, 2.6, 3.9], fov: 40 },
+    portrait: { position: [-5.0, 5.5, 13.5], target: [-13.6, 2.6, 4.6] },
+    close: { position: [-8.6, 4.4, 9.4], target: [-14.4, 2.2, 4.6] },
   },
   {
     id: 'interior',
@@ -192,6 +201,7 @@ export const SPOTS = [
     areas: ['interior'],
     focus: [-21.5, 1.8, 2.5],
     camera: { position: [-24.6, 3.8, 12.6], target: [-21.4, 2.0, 2.8], fov: 40 },
+    portrait: { position: [-24.6, 4.2, 14.5], target: [-21.6, 2.0, 3.0] },
   },
   {
     id: 'bikes',
@@ -201,6 +211,8 @@ export const SPOTS = [
     areas: ['bikes'],
     focus: [16, 1.6, 6.6],
     camera: { position: [8.5, 4.6, 16.5], target: [15.2, 1.8, 6.2], fov: 40 },
+    portrait: { position: [10.2, 7.3, 18.4], target: [16.4, 2.3, 7.8] },
+    close: { position: [11.4, 4.3, 13.0], target: [16.2, 1.7, 6.8] },
   },
 ];
 export const SPOT_BY_ID = Object.fromEntries(SPOTS.map((s) => [s.id, s]));

@@ -52,12 +52,19 @@ const ORBIT = {
   focus: { az: 0.55, up: 0.35, down: 0.12, zoom: [0.55, 1.8], pan: 1.2 },
 };
 
-/** The intro flight: hover high above the canopy, then sink into the glen. */
+/**
+ * The intro flight: hover just above the glen, framed by the giant trunks and
+ * the canopy (behind the intro card), then sink into the overview.
+ * (From much higher up only the outskirts showed around the card.)
+ */
 const INTRO = {
-  hover: { position: [15, 84, 92], target: [0, 0, -4] },
-  via: { position: [9, 46, 66], target: [0, 4, -3] },
-  duration: 6.8,
+  hover: { position: [10, 50, 72], target: [0, 3, -4] },
+  via: { position: [7, 31, 55], target: [0, 5, -3] },
+  duration: 5.6,
 };
+
+/** How much of the free part of the screen a framed detail may fill (its bounding sphere). */
+const FOCUS_FILL = 0.8;
 
 /** Convert a composed shot (position + target) into orbit parameters. */
 function toOrbit(position, target) {
@@ -98,15 +105,18 @@ export function createCameraRig(ctx) {
   // idle "breathing"
   let idle = 0;
   let breathW = 0;
-  // screen inset (panel / bottom sheet), smoothed
-  const inset = { right: 0, bottom: 0, r: 0, b: 0 };
+  // screen inset (panel / bottom sheet / HUD strip), smoothed
+  const inset = { right: 0, bottom: 0, top: 0, r: 0, b: 0, t: 0 };
+  /** The canvas' CSS size (it is sized to the visible viewport; projections use the same box). */
+  const viewW = () => canvas.clientWidth || innerWidth || 1;
+  const viewH = () => canvas.clientHeight || innerHeight || 1;
   const spotListeners = new Set();
   const arriveListeners = new Set();
   let dragging = false;
 
   /** 0 on landscape screens → 1 on a tall phone: compositions were made for 16:9. */
   function portrait() {
-    const aspect = camera.aspect || innerWidth / Math.max(1, innerHeight);
+    const aspect = camera.aspect || viewW() / viewH();
     return clamp((1.3 - aspect) / 0.8, 0, 1);
   }
 
@@ -117,15 +127,55 @@ export function createCameraRig(ctx) {
     o.focus = new THREE.Vector3(...(s.focus ?? s.camera.target));
     o.range = ORBIT[id] ?? ORBIT.woodworking;
     o.spot = id;
-    // on a tall phone screen: step back, look a little more from above, widen the lens a touch
     const p = portrait();
-    if (p > 0) {
+    if (p > 0 && s.portrait) {
+      // a tall phone screen has its own composed shot (layout.js SPOTS[].portrait);
+      // tablets in portrait get a blend of the two
+      const q = toOrbit(s.portrait.position ?? s.camera.position, s.portrait.target ?? s.camera.target);
+      o.target.lerp(q.target, p);
+      o.azimuth += wrap(q.azimuth - o.azimuth) * p;
+      o.polar += (q.polar - o.polar) * p;
+      o.distance += (q.distance - o.distance) * p;
+      o.fov += ((s.portrait.fov ?? o.fov + 5) - o.fov) * p;
+      if (s.portrait.focus) o.focus.lerp(new THREE.Vector3(...s.portrait.focus), p);
+    } else if (p > 0) {
+      // no composed phone shot: step back, look a little more from above, widen
+      // the lens a touch, and slide the look point onto the subject (the 16:9
+      // shots are composed off-centre)
       const glen = id === 'glen';
       o.distance *= 1 + p * (glen ? 0.45 : 0.28);
       o.polar = Math.max(L.minPolar, o.polar - p * (glen ? 0.2 : 0.07));
       o.fov += p * 5;
+      if (!glen) o.target.lerp(o.focus, p * 0.6);
     }
     return o;
+  }
+
+  // ── framing a detail ─────────────────────────────────────────────────────
+  const fBox = new THREE.Box3();
+  const fV = new THREE.Vector3();
+  const fQ = new THREE.Quaternion();
+  /**
+   * How far along the sight line target → eye the first solid thing sits
+   * (0..1, 1 = clear). The subject itself and things hugging it are ignored.
+   */
+  function sightClear(from, to, subject, skipNear) {
+    const it = ctx.interactions;
+    if (!it?.firstSolidHit) return 1;
+    const d = from.distanceTo(to);
+    const dir = fV.subVectors(to, from).divideScalar(d || 1);
+    const hit = it.firstSolidHit(from, dir, skipNear, d * 0.96, subject);
+    return hit === Infinity ? 1 : hit / d;
+  }
+
+  /** Distance at which a sphere of `radius` fits the free part of the screen (insets). */
+  function fitDistance(radius, fovDeg) {
+    const W = viewW(), H = viewH();
+    const freeW = Math.max(140, W - inset.right - 24);
+    const freeH = Math.max(140, H - inset.bottom - inset.top - 16);
+    const tanV = Math.tan(THREE.MathUtils.degToRad(fovDeg) / 2);
+    const tanH = tanV * (W / H);
+    return Math.max(radius * H / (tanV * FOCUS_FILL * freeH), radius * W / (tanH * FOCUS_FILL * freeW));
   }
 
   function resetOffsets() {
@@ -344,12 +394,40 @@ export function createCameraRig(ctx) {
       return rig.goTo(SPOTS[(i - 1 + SPOTS.length) % SPOTS.length].id);
     },
     /**
-     * Frame a detail. `what` is an Object3D (its origin + opts.height) or a point.
-     * opts: { distance = 4, height = 0, azimuth (offset, rad), polar (absolute), spot }
+     * Frame a detail. `what` is an Object3D (framed around the centre of its
+     * bounds, far enough away that it fits the part of the screen the journal
+     * page / HUD leave free) or a point (+ opts.height).
+     * opts: { distance (minimum, default 4), lift (raise the look point), azimuth
+     *         (offset from the spot camera's side, rad), faceAzimuth (instead:
+     *         relative to the object's own +Z front), polar (absolute), radius
+     *         (override the bounds), spot }
+     * A sight line blocked by something solid (a lantern, a post, a railing)
+     * swings the camera a little around the detail, or moves it in closer.
      */
     focus(what, opts = {}) {
-      const p = what?.isObject3D ? what.getWorldPosition(new THREE.Vector3()) : new THREE.Vector3().copy(what);
-      if (opts.height) p.y += opts.height;
+      const p = new THREE.Vector3();
+      let radius = opts.radius ?? 0;
+      let facing = null;
+      const subject = what?.isObject3D ? what : null;
+      if (subject) {
+        subject.updateWorldMatrix(true, true);
+        fBox.setFromObject(subject);
+        if (fBox.isEmpty()) {
+          subject.getWorldPosition(p);
+          if (opts.height) p.y += opts.height;
+        } else {
+          fBox.getCenter(p);
+          if (!radius) radius = fBox.getSize(fV).length() * 0.5;
+        }
+        if (opts.faceAzimuth !== undefined) {
+          fV.set(0, 0, 1).applyQuaternion(subject.getWorldQuaternion(fQ));
+          facing = Math.atan2(fV.x, fV.z) + opts.faceAzimuth;
+        }
+      } else {
+        p.copy(what);
+        if (opts.height) p.y += opts.height;
+      }
+      p.y += opts.lift ?? 0;
       // clicked from another spot (e.g. the overview): that spot becomes current
       if (opts.spot && SPOT_BY_ID[opts.spot] && opts.spot !== spot) {
         const prev = spot;
@@ -361,15 +439,34 @@ export function createCameraRig(ctx) {
       // look at the detail from the side its spot camera was composed from
       const cam = SPOT_BY_ID[b.spot]?.camera.position ?? [0, 10, 30];
       const hx = cam[0] - p.x, hz = cam[2] - p.z;
-      const az = Math.atan2(hx, hz) + (opts.azimuth ?? 0);
+      const az0 = facing ?? Math.atan2(hx, hz) + (opts.azimuth ?? 0);
       const elev = Math.atan2(cam[1] - p.y, Math.hypot(hx, hz));
       const pol = opts.polar ?? clamp(Math.PI / 2 - elev - 0.06, 0.95, 1.38);
+      const fovNow = b.fov;
+      const minD = (opts.distance ?? 4) * (1 + portrait() * 0.12);
+      let dist = Math.max(minD, radius ? Math.min(fitDistance(radius, fovNow), minD * 3) : 0);
+      // a clear line of sight: try the composed side first, then swing around it
+      let az = az0;
+      if (subject) {
+        const eye = new THREE.Vector3();
+        let best = { az: az0, clear: -1 };
+        for (const dAz of [0, 0.3, -0.3, 0.55, -0.55]) {
+          eye.setFromSphericalCoords(dist, pol, az0 + dAz).add(p);
+          if (eye.y < getHeight(eye.x, eye.z) + 0.5 || obstacles.penetration(eye) > 0.05) continue;
+          const clear = sightClear(p, eye, subject, Math.min(0.5, radius * 0.6));
+          if (clear > best.clear + 0.02) best = { az: az0 + dAz, clear };
+          if (clear >= 0.999) break;
+        }
+        az = best.az;
+        // still blocked: move in front of the obstacle (never closer than the detail's own size)
+        if (best.clear >= 0 && best.clear < 0.999) dist = Math.max(radius * 1.25 + 0.4, Math.min(dist, dist * best.clear - 0.35));
+      }
       focusBase = {
         target: p,
         azimuth: az,
         polar: pol,
-        distance: (opts.distance ?? 4) * (1 + portrait() * 0.35),
-        fov: b.fov,
+        distance: dist,
+        fov: fovNow,
         focus: p.clone(),
         range: ORBIT.focus,
         spot: b.spot,
@@ -384,9 +481,10 @@ export function createCameraRig(ctx) {
       resetOffsets();
       return glideTo(base, { kind: 'release' });
     },
-    setInset({ right = 0, bottom = 0 } = {}) {
+    setInset({ right = 0, bottom = 0, top = 0 } = {}) {
       inset.right = right;
       inset.bottom = bottom;
+      inset.top = top;
     },
     setOverride(position, lookAtPoint) {
       override = { position: new THREE.Vector3().copy(position), lookAt: new THREE.Vector3().copy(lookAtPoint) };
@@ -574,9 +672,10 @@ export function createCameraRig(ctx) {
     const ki = damp(4.5, dt);
     inset.r += (inset.right - inset.r) * ki;
     inset.b += (inset.bottom - inset.b) * ki;
+    inset.t += (inset.top - inset.t) * ki;
     lookAt.copy(target);
-    if (inset.r > 0.5 || inset.b > 0.5) {
-      const W = innerWidth || 1, H = innerHeight || 1;
+    if (inset.r > 0.5 || Math.abs(inset.b - inset.t) > 0.5) {
+      const W = viewW(), H = viewH();
       fwdV.subVectors(target, camPos);
       const d = fwdV.length();
       fwdV.divideScalar(d || 1);
@@ -584,7 +683,8 @@ export function createCameraRig(ctx) {
       camUp.crossVectors(camRight, fwdV);
       const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
       lookAt.addScaledVector(camRight, (inset.r / W) * d * tanV * camera.aspect);
-      lookAt.addScaledVector(camUp, -(inset.b / H) * d * tanV);
+      // the subject sits in the middle of the band between the top and bottom insets
+      lookAt.addScaledVector(camUp, -((inset.b - inset.t) / H) * d * tanV);
     }
     camera.lookAt(lookAt);
     rig.focusDistance = camPos.distanceTo(focusPoint);

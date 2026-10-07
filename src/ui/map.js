@@ -13,6 +13,23 @@ import { spotIcon } from './icons.js';
 
 const VB = { x: -33, y: -31, w: 66, h: 62 };
 
+/**
+ * Where each spot's pin stands on the map (x, z in world units) and which side
+ * its label goes. The Wohnatelier and Jonny's cottage, and the Schreinerei and
+ * the Code Loft above it, sit close together: their pins are spread apart
+ * (>= 44 px between hit areas on a 390 px phone) and their labels kept on
+ * opposite sides. The loft is up in the oak, so its pin hangs off the crown on
+ * a dotted leader line.
+ */
+const PIN = {
+  interior: { x: -24.5, z: 1.2, label: 'above' },
+  home: { x: -14.2, z: 5.6, label: 'below' },
+  woodworking: { x: -3.6, z: 0.4, label: 'below' },
+  code: { x: 9.5, z: -10.5, label: 'right', leader: [OAK.loft.x, OAK.loft.z] },
+  bikes: { x: 17.2, z: 7.4, label: 'below' },
+  glen: { x: 0, z: 24, label: 'below' },
+};
+
 /** Catmull-Rom → cubic Bézier path through points [{x, z}]. */
 function smoothPath(pts, close = false) {
   if (pts.length < 2) return '';
@@ -144,6 +161,14 @@ function drawMap(ctx) {
     parts.push(cap(g.x, g.z, Math.max(0.7, Math.min(2.4, (g.R ?? 1) * 0.9)), '#c4402f', rng));
   }
 
+  // the Code Loft's pin hangs off the oak crown on a dotted leader
+  for (const p of Object.values(PIN)) {
+    if (!p.leader) continue;
+    const [lx, lz] = p.leader;
+    parts.push(`<path d="M${lx} ${lz} Q${((lx + p.x) / 2 + 2).toFixed(2)} ${((lz + p.z) / 2).toFixed(2)} ${p.x} ${p.z}" fill="none" stroke="#3d2f22" stroke-width=".26" stroke-dasharray=".7 .6" stroke-linecap="round"/>`);
+    parts.push(`<circle cx="${lx}" cy="${lz}" r=".75" fill="#f1e3c0" stroke="#3d2f22" stroke-width=".22"/>`);
+  }
+
   // ── lettering ──────────────────────────────────────────────────────────────
   parts.push(label(OAK.x + 0.3, OAK.z - 4.8, 'The Great Oak', { size: 1.9, cls: 'is-big' }));
   parts.push(label(STREAM.points[5].x + 3.4, STREAM.points[5].z - 1, 'the Bächli', { size: 1.4, rotate: -62, cls: 'is-water' }));
@@ -183,7 +208,7 @@ export function createMap(ctx, { onPick } = {}) {
   const el = h(
     'div',
     { class: 'map' },
-    h('div', { class: 'map__cartouche' }, h('span', { class: 'map__kicker' }, 'Drawn from memory'), h('span', { class: 'map__title' }, `${ctx.content.profile.name}'s Glen`)),
+    h('div', { class: 'map__cartouche' }, h('span', { class: 'map__kicker' }, 'Drawn from memory'), h('span', { class: 'map__title' }, `${ctx.content.profile.name}’s Glen`)),
     stage,
     h('p', { class: 'map__hint' }, 'Pick a place and the camera will take you there.'),
   );
@@ -193,12 +218,12 @@ export function createMap(ctx, { onPick } = {}) {
     stage.replaceChildren(art);
     for (const s of SPOTS) {
       if (s.id === 'glen') continue;
-      const [x, , z] = s.focus;
-      const left = ((x - VB.x) / VB.w) * 100, top = ((z - VB.y) / VB.h) * 100;
+      const place = PIN[s.id] ?? { x: s.focus[0], z: s.focus[2], label: 'below' };
+      const left = ((place.x - VB.x) / VB.w) * 100, top = ((place.z - VB.y) / VB.h) * 100;
       const pin = h(
         'button',
         {
-          class: 'map-pin',
+          class: `map-pin is-label-${place.label}`,
           type: 'button',
           style: { left: `${left}%`, top: `${top}%` },
           'aria-label': `${s.title} — ${s.subtitle}`,
@@ -213,7 +238,7 @@ export function createMap(ctx, { onPick } = {}) {
     // the overview "you are here" pin sits on the front path
     const ov = h(
       'button',
-      { class: 'map-pin is-overview', type: 'button', style: { left: `${((0 - VB.x) / VB.w) * 100}%`, top: `${((24 - VB.y) / VB.h) * 100}%` }, 'aria-label': 'Overview of the whole glen', onclick: () => onPick?.('glen') },
+      { class: `map-pin is-overview is-label-${PIN.glen.label}`, type: 'button', style: { left: `${((PIN.glen.x - VB.x) / VB.w) * 100}%`, top: `${((PIN.glen.z - VB.y) / VB.h) * 100}%` }, 'aria-label': 'Overview of the whole glen', onclick: () => onPick?.('glen') },
       h('span', { class: 'map-pin__dot', html: spotIcon('glen') }),
       h('span', { class: 'map-pin__label' }, 'Overview'),
     );

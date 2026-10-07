@@ -6,10 +6,12 @@
 //                          through the canopy, rims every silhouette and casts
 //                          long dappled shadows. Soft PCF shadows with a FIXED
 //                          frustum tightly covering the glen (±35 units) at the
-//                          largest map the tier allows — no swimming, no
-//                          re-fitting while the camera glides. By night it
-//                          becomes the moonlight (blue-lavender, back-right).
-//   hemi HemisphereLight   cool blue-green sky fill / warm mossy ground bounce.
+//                          map size of the tier — no swimming, no re-fitting
+//                          while the camera glides. By night it becomes the
+//                          moonlight (silver-lavender, back-right). On 'medium'
+//                          the shadow map is re-rendered every other frame.
+//   hemi HemisphereLight   soft sage sky fill (warm-neutral: the teal lives only
+//                          in the misty distance) / warm golden ground bounce.
 //   rim  DirectionalLight  faint cool light from the back-right that separates
 //                          the shaded sides from the misty background; by
 //                          night a stronger cool moon-rim from the west
@@ -18,15 +20,30 @@
 //                          silvered edge against the night mist. Not from
 //                          straight behind: back light makes leaf cards glow
 //                          (translucency) and the canopy would read as day.
+//   beam SpotLight         a canopy-gap sunbeam: warm gold from the front-left,
+//                          pooling on the Schreinerei door, the porch bench and
+//                          the deck (the sun itself is behind the oak there).
+//                          Shadowed with a dappled leaf cookie where the tier
+//                          has shadows, matched by a volumetric shaft
+//                          (ctx.atmosphere.addBeam). By night the same light
+//                          becomes a silver moonbeam on the fairy ring.
 //   scene.environment      a painted "under the canopy" PMREM (env/envmap.js) so
-//                          PBR surfaces get soft teal-green ambient and gentle
+//                          PBR surfaces get soft ambient and gentle
 //                          reflections; swapped for a night version at dusk.
 //
 // Warm point lights (lanterns, windows, forge …) only through
-//   ctx.lights.addPoint(position, { color, day, night, distance, decay })
-// which is budgeted per tier and may return null (use glow materials then).
+//   ctx.lights.addPoint(position, { color, day, night, distance, decay, priority, spot })
+// which is budgeted per tier. Requests made while the world is being built are
+// collected and allocated once it is complete (ctx.lights.allocate(), called by
+// post.js before shaders are compiled): first one light for every spot
+// (Schreinerei, Jonny's cottage, Wohnatelier, Velowerkstatt, Code Loft — the
+// spot is the nearest spot focus unless opts.spot names it), then the rest by
+// priority (opts.priority, default ≈ night intensity × reach × spot weight).
+// Lights that miss out are never added to the scene — keep the glow sprites.
+// (The returned light object is always valid during the build; afterwards
+// addPoint returns null once the budget is used up.)
 //
-// ctx.lights = { sun, hemi, rim, keyDir, shadowExtent, shadowCenter, addPoint(position, opts), points }
+// ctx.lights = { sun, hemi, rim, beam, keyDir, shadowExtent, shadowCenter, addPoint(position, opts), allocate(), points }
 //   keyDir is live (world space, towards the current key light).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
@@ -34,29 +51,35 @@ import { smoothstep } from '../core/rng.js';
 import { SUN_LIGHT_DIR, MOON_LIGHT_DIR, dirFromAngles, envUniforms } from './env/celestial.js';
 import { installFog } from './env/fog.js';
 import { buildEnvMaps } from './env/envmap.js';
+import { SPOTS, OAK, SCHREINEREI } from './layout.js';
 
 // Patch the fog chunks before any material compiles (idempotent).
 installFog();
 
 const DAY = {
-  key: new THREE.Color('#ffd7a0'),
-  keyI: 3.9,
-  hemiSky: new THREE.Color('#94c0c4'),
-  hemiGround: new THREE.Color('#5f5536'),
-  hemiI: 0.72,
+  key: new THREE.Color('#ffd49a'),
+  keyI: 4.05,
+  hemiSky: new THREE.Color('#aebf9f'),
+  hemiGround: new THREE.Color('#7a6440'),
+  hemiI: 0.85,
   rim: new THREE.Color('#a9d2e6'),
-  rimI: 0.45,
-  envI: 0.46,
+  rimI: 0.4,
+  envI: 0.5,
+  beam: new THREE.Color('#ffcf8a'),
+  beamI: 2.6,
 };
 const NIGHT = {
-  key: new THREE.Color('#a9b6ff'),
+  key: new THREE.Color('#aab4ff'),
   keyI: 2.05,
-  hemiSky: new THREE.Color('#4170a2'),
-  hemiGround: new THREE.Color('#1a2a32'),
+  // a less saturated lavender sky fill: reds & ochres survive the moonlight
+  hemiSky: new THREE.Color('#5a6aa8'),
+  hemiGround: new THREE.Color('#1e2532'),
   hemiI: 1.12,
-  rim: new THREE.Color('#8fb4ec'),
+  rim: new THREE.Color('#9db8ec'),
   rimI: 1.1,
   envI: 0.56,
+  beam: new THREE.Color('#a8c0ff'),
+  beamI: 1.35,
 };
 
 /** The moonlit glen is exposed a touch brighter (all tiers; lights are tamed by post's night bloom). */
@@ -72,6 +95,61 @@ const SHADOW_EXTENT = 35;
 /** How far the shadow camera sits from the centre along the light direction. */
 const LIGHT_DISTANCE = 95;
 
+/**
+ * The canopy-gap sunbeam: from the front-left, high, onto the Schreinerei
+ * (door, porch bench, deck). By night a narrower silver moonbeam from the
+ * moon's side onto the fairy ring (target found after the build).
+ */
+const BEAM_DAY = {
+  target: new THREE.Vector3(OAK.door.x + 0.2, 0.5, (OAK.door.z + SCHREINEREI.porch.z) / 2 + 0.2),
+  dir: dirFromAngles(50, 228),
+  distance: 26,
+  angle: 0.3,
+  penumbra: 0.7,
+};
+const BEAM_NIGHT = {
+  target: new THREE.Vector3(-4.5, 0, 11.2), // the fairy ring (refined after the build)
+  dir: dirFromAngles(62, 58),
+  distance: 26,
+  angle: 0.12,
+  penumbra: 0.75,
+};
+
+/** Spots that get their own warm light before anything else, most important first. */
+const LIGHT_SPOTS = ['woodworking', 'home', 'interior', 'bikes', 'code'];
+const SPOT_WEIGHT = { woodworking: 1.5, home: 1.2, interior: 1.2, bikes: 1.2, code: 1.1, glen: 1 };
+
+/** A soft dappled leaf cookie for the sunbeam (multiplies the light colour). */
+function leafCookie() {
+  if (typeof document === 'undefined') return null;
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff6e8';
+  g.fillRect(0, 0, S, S);
+  // deterministic leaf blobs: dense towards the rim, a few drifting over the middle
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  g.filter = 'blur(7px)';
+  for (let i = 0; i < 70; i++) {
+    const a = rnd() * Math.PI * 2;
+    const r = Math.pow(rnd(), 0.55) * S * 0.62;
+    if (r < S * 0.16 && rnd() < 0.75) continue; // keep the heart of the pool open
+    const x = S / 2 + Math.cos(a) * r, y = S / 2 + Math.sin(a) * r;
+    const sz = S * (0.04 + rnd() * 0.08) * (0.6 + r / S);
+    const k = 0.22 + rnd() * 0.3;
+    g.fillStyle = `rgba(${Math.round(70 * k + 30)}, ${Math.round(60 * k + 26)}, ${Math.round(40 * k + 18)}, ${0.55 + rnd() * 0.35})`;
+    g.beginPath();
+    g.ellipse(x, y, sz, sz * (0.55 + rnd() * 0.4), rnd() * Math.PI, 0, Math.PI * 2);
+    g.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+}
+
 export default async function build(ctx) {
   const { scene, engine, env } = ctx;
   const q = ctx.quality ?? engine.quality;
@@ -84,13 +162,12 @@ export default async function build(ctx) {
   const sun = new THREE.DirectionalLight(DAY.key, DAY.keyI);
   sun.name = 'sun';
   sun.castShadow = !!q.shadows;
-  // The largest map the tier (and GPU) allows: the frustum is fixed, so every
-  // texel goes into crisp dappled canopy shadows.
+  // The map size of the tier (high 4096, medium 1024): the frustum is fixed,
+  // so every texel goes into crisp dappled canopy shadows.
   const maxTex = renderer.capabilities.maxTextureSize || 4096;
-  const wanted = q.tier === 'high' ? 4096 : q.tier === 'medium' ? 2048 : q.shadowMapSize || 1024;
-  const mapSize = Math.min(wanted, maxTex);
+  const mapSize = Math.min(q.shadowMapSize || 1024, maxTex);
   sun.shadow.mapSize.set(mapSize, mapSize);
-  sun.shadow.radius = q.tier === 'high' ? 3.2 : 2.0;
+  sun.shadow.radius = q.tier === 'high' ? 3.2 : 1.6;
   sun.shadow.bias = -0.00025;
   const texel = (2 * SHADOW_EXTENT) / mapSize;
   sun.shadow.normalBias = Math.max(0.02, texel * 1.4);
@@ -111,6 +188,33 @@ export default async function build(ctx) {
   rim.target.position.copy(SHADOW_CENTER);
   scene.add(rim, rim.target);
 
+  // The canopy-gap sunbeam (no distance falloff: it is sunlight).
+  const beam = new THREE.SpotLight(DAY.beam, DAY.beamI, 0, BEAM_DAY.angle, BEAM_DAY.penumbra, 0);
+  beam.name = 'sunbeam';
+  beam.castShadow = !!q.shadows;
+  if (beam.castShadow) {
+    const bs = q.tier === 'high' ? 1024 : 512;
+    beam.shadow.mapSize.set(bs, bs);
+    beam.shadow.bias = -0.0004;
+    beam.shadow.normalBias = 0.03;
+    beam.shadow.radius = 2;
+    // the beam starts in a gap of the canopy: leaves right at the light are not occluders
+    beam.shadow.camera.near = 7;
+    beam.shadow.camera.far = 60;
+    try {
+      beam.map = leafCookie();
+    } catch {
+      beam.map = null;
+    }
+  }
+  scene.add(beam, beam.target);
+  const beamDay = { pos: new THREE.Vector3(), target: BEAM_DAY.target.clone() };
+  beamDay.pos.copy(beamDay.target).addScaledVector(BEAM_DAY.dir, BEAM_DAY.distance);
+  const beamNight = { pos: new THREE.Vector3(), target: BEAM_NIGHT.target.clone() };
+  const placeNightBeam = () => beamNight.pos.copy(beamNight.target).addScaledVector(BEAM_NIGHT.dir, BEAM_NIGHT.distance);
+  placeNightBeam();
+  let beamPhase = -1;
+
   // Painted IBL (day & night share size → swapping never recompiles).
   let envMaps = null;
   try {
@@ -125,7 +229,7 @@ export default async function build(ctx) {
   // Without shadow maps (low tier) the canopy no longer occludes the moon and
   // there is no post grade to cool & vignette the night: tone the moonlight
   // down so the glen still reads as night, not as an overcast day.
-  const lit = q.shadows ? { key: 1, rim: 1, hemi: 1, boost: 1 } : { key: 0.45, rim: 0.55, hemi: 0.8, boost: 0 };
+  const lit = q.shadows ? { key: 1, rim: 1, hemi: 1, boost: 1, beam: 1 } : { key: 0.45, rim: 0.55, hemi: 0.8, boost: 0, beam: 0.7 };
   const nightKeyI = NIGHT.keyI * lit.key;
   const nightRimI = NIGHT.rimI * lit.rim;
   const nightHemiI = NIGHT.hemiI * lit.hemi;
@@ -133,23 +237,81 @@ export default async function build(ctx) {
   const rimDir = new THREE.Vector3().copy(RIM_DAY_DIR);
   let lastNight = -1;
 
-  // Budget-managed warm point lights (lanterns, windows, the forge …).
+  // ── budget-managed warm point lights (lanterns, windows, the forge …) ──
   const POINT_BUDGET = { high: 12, medium: 6, low: 0 }[q.tier] ?? 4;
   const points = [];
+  const requests = [];
+  let allocated = false;
+  const spotFoci = SPOTS.filter((s) => LIGHT_SPOTS.includes(s.id)).map((s) => ({ id: s.id, f: new THREE.Vector3(...s.focus) }));
+  function spotOf(position) {
+    let best = 'glen', bd = 10;
+    for (const s of spotFoci) {
+      const d = s.f.distanceTo(position);
+      if (d < bd) {
+        bd = d;
+        best = s.id;
+      }
+    }
+    return best;
+  }
+  function enable(l) {
+    scene.add(l);
+    points.push(l);
+    applyPoint(l, env?.night ?? 0);
+  }
   /**
-   * Add a point light if the budget allows. opts: { color, day, night (intensities),
-   * distance, decay }. Returns the light or null (always handle null — use glow then).
+   * Ask for a warm point light. opts: { color, day, night (intensities), distance,
+   * decay, priority, spot }. During the build the request is queued and allocated
+   * when the world is complete (see the header); afterwards it is added at once if
+   * the budget allows. Returns the light or null (always keep a glow fallback).
    */
   function addPoint(position, opts = {}) {
-    if (points.length >= POINT_BUDGET) return null;
+    if (POINT_BUDGET <= 0) return null;
+    if (allocated && points.length >= POINT_BUDGET) return null;
     const l = new THREE.PointLight(opts.color ?? '#ffb866', 0, opts.distance ?? 7, opts.decay ?? 2);
     l.position.copy(position);
     l.castShadow = false;
     l.userData.intensity = { day: opts.day ?? 0.4, night: opts.night ?? 6 };
-    scene.add(l);
-    points.push(l);
-    applyPoint(l, env?.night ?? 0);
+    if (allocated) {
+      enable(l);
+      return l;
+    }
+    const spot = opts.spot ?? spotOf(l.position);
+    const reach = l.distance || 7;
+    const priority = opts.priority ?? (Math.max(l.userData.intensity.night, l.userData.intensity.day * 2) * reach * (SPOT_WEIGHT[spot] ?? 1));
+    requests.push({ light: l, spot, priority, order: requests.length });
     return l;
+  }
+  /** Hand out the point-light budget: one light per spot first, then by priority. Idempotent. */
+  function allocate() {
+    if (allocated) return;
+    allocated = true;
+    const byPriority = [...requests].sort((a, b) => b.priority - a.priority || a.order - b.order);
+    const chosen = new Set();
+    for (const id of LIGHT_SPOTS) {
+      if (chosen.size >= POINT_BUDGET) break;
+      const r = byPriority.find((x) => x.spot === id);
+      if (r) chosen.add(r);
+    }
+    for (const r of byPriority) {
+      if (chosen.size >= POINT_BUDGET) break;
+      chosen.add(r);
+    }
+    for (const r of requests) if (chosen.has(r)) enable(r.light);
+    ctx.lights.pointRequests = requests.map((r) => ({ spot: r.spot, priority: +r.priority.toFixed(1), on: chosen.has(r), p: r.light.position.toArray().map((v) => +v.toFixed(1)) }));
+    // the moonbeam finds the fairy ring (a secret hotspot of the vegetation)
+    try {
+      const ring = ctx.interactions?.hotspots?.find((h) => /fairy ring/i.test(h.label ?? ''));
+      if (ring?.worldPosition) {
+        ring.worldPosition(beamNight.target);
+        beamNight.target.y = Math.max(beamNight.target.y, 0) + 0.2;
+        placeNightBeam();
+        beamPhase = -1;
+        update(env?.night ?? 0);
+      }
+    } catch {
+      /* keep the default target */
+    }
   }
   function applyPoint(l, n) {
     // Lanterns swell a little beyond linear as dusk falls (they "come on").
@@ -161,13 +323,17 @@ export default async function build(ctx) {
     sun,
     hemi,
     rim,
+    beam,
     addPoint,
+    allocate,
     points,
     /** Live direction towards the current key light (sun by day, moon by night). */
     keyDir,
     /** Half size of the fixed shadow frustum (world units). */
     shadowExtent: SHADOW_EXTENT,
     shadowCenter: SHADOW_CENTER,
+    /** The sunbeam (day) / moonbeam (night) geometry: { day: {pos, target}, night: {pos, target} }. */
+    beams: { day: beamDay, night: beamNight },
     envMaps,
   };
 
@@ -191,6 +357,21 @@ export default async function build(ctx) {
     hemi.intensity = DAY.hemiI + (nightHemiI - DAY.hemiI) * n;
     rim.color.copy(DAY.rim).lerp(NIGHT.rim, n);
     rim.intensity = DAY.rimI + (nightRimI - DAY.rimI) * n;
+    // the beam: golden sunbeam on the Schreinerei, fading out towards dusk, then
+    // (relocated while dark) a silver moonbeam on the fairy ring
+    const phase = n < 0.5 ? 0 : 1;
+    if (phase !== beamPhase) {
+      beamPhase = phase;
+      const b = phase ? beamNight : beamDay;
+      const cfg = phase ? BEAM_NIGHT : BEAM_DAY;
+      beam.position.copy(b.pos);
+      beam.target.position.copy(b.target);
+      beam.angle = cfg.angle;
+      beam.penumbra = cfg.penumbra;
+      beam.color.copy(phase ? NIGHT.beam : DAY.beam);
+      beam.target.updateMatrixWorld();
+    }
+    beam.intensity = (phase ? NIGHT.beamI * smoothstep(0.6, 0.95, n) : DAY.beamI * (1 - smoothstep(0.05, 0.4, n))) * lit.beam;
     if (envMaps) {
       // swap the painted environment at the darkest moment of dusk
       scene.environment = n < 0.5 ? envMaps.day : envMaps.night;
@@ -201,14 +382,27 @@ export default async function build(ctx) {
     envUniforms.uKeyDir.value.copy(keyDir);
     envUniforms.uKeyColor.value.copy(sun.color).multiplyScalar(sun.intensity / DAY.keyI);
     place();
+    // the shadow maps must follow a changed light at once (also when throttled)
+    renderer.shadowMap.needsUpdate = true;
   }
 
+  // 'medium' (phones): the sun is static, so the shadow maps are re-rendered
+  // only every other frame (swaying leaves & walking villagers still move them).
+  const throttleShadows = q.shadows && q.tier !== 'high';
+  if (throttleShadows) {
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = true;
+  }
+  let frameNo = 0;
+
   engine.addUpdate(() => {
+    if (!allocated && engine.frame > 1) allocate(); // safety net if post never ran
     const n = env?.night ?? 0;
     if (n !== lastNight) {
       lastNight = n;
       update(n);
     }
+    if (throttleShadows && (frameNo++ & 1) === 0) renderer.shadowMap.needsUpdate = true;
   }, 21);
 
   update(env?.night ?? 0);

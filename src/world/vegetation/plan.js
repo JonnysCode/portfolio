@@ -97,7 +97,8 @@ export function forestPlan() {
     const r = rng.range(20, 27);
     const x = Math.sin(az) * r, z = Math.cos(az) * r;
     const radius = rng.range(0.42, 0.62);
-    const height = rng.range(28, 38);
+    // (tall and slender: their crowns join the high canopy ceiling, never at loft height)
+    const height = rng.range(28, 38) + 8;
     if (ok(x, z, radius, height, 'birch')) {
       add(x, z, radius, height, 'birch');
       birches++;

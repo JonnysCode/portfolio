@@ -7,7 +7,9 @@
 //   dusk:  the first few fireflies wake up
 //   night: hundreds of blinking fireflies swirling around the oak's roots,
 //          over the stream and the pond, around the cottages, along the
-//          forest edge and at the glowing mushrooms
+//          forest edge and at the glowing mushrooms; a glow-worm canopy of
+//          tiny cool lights hanging under the oak's limbs and the giants'
+//          crowns, twinkling slowly like a starry sky
 //   always: the Schneckenpost (a post snail with its rider) crawling from the
 //          main path over the stone bridge to the Velowerkstatt and back, and
 //          two tiny wild snails grazing on mossy stones (one is a secret)
@@ -21,7 +23,7 @@
 // Result (ctx.modules.ambient): { update, layers: { fireflies, motes, leaves, flappers, post, wild }, stats }
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { createFireflies } from './ambient/fireflies.js';
+import { createFireflies, createGlowWorms } from './ambient/fireflies.js';
 import { createMotes } from './ambient/motes.js';
 import { createLeaves } from './ambient/leaves.js';
 import { createFlappers } from './ambient/flappers.js';
@@ -50,6 +52,24 @@ export default async function build(ctx) {
       reduced,
     }),
   );
+  // the glow-worm canopy: under the Great Oak's limbs (twice as many) and the
+  // giants' leaf masses near the glen
+  const glowworms = safe('glowworms', () => {
+    const anchors = [];
+    for (const l of ctx.oak?.limbInfo ?? []) {
+      if (!l.curve) continue;
+      for (let u = 0.12; u <= 1.001; u += 0.05) {
+        const p = l.curve.getPoint(Math.min(1, u));
+        const r = typeof l.radiusAt === 'function' ? l.radiusAt(Math.min(1, u)) : 0.5;
+        const a = { x: p.x, y: p.y - r - 0.25, z: p.z, r: 1.0 + u * 3.4 };
+        anchors.push(a, a);
+      }
+    }
+    for (const c of veg.canopy ?? []) {
+      if (Math.hypot(c.x, c.z) < 34) anchors.push({ x: c.x, y: c.y - c.r * 0.72, z: c.z, r: c.r * 0.75 });
+    }
+    return createGlowWorms(ctx, { anchors, count: Math.round(Math.max(260, 480 * Math.min(1.2, density))), reduced, yRange: [12, 36] });
+  });
   const motes = safe('motes', () => createMotes(ctx, { count: Math.round(Math.max(60, 160 * density) * k), reduced }));
   const leaves = safe('leaves', () => createLeaves(ctx, { count: Math.round(Math.max(14, 34 * density) * k), reduced }));
   const flappers = safe('flappers', () =>
@@ -67,14 +87,15 @@ export default async function build(ctx) {
 
   const focus = new THREE.Vector3(0, 0, 4);
   return {
-    layers: { fireflies, motes, leaves, flappers, post, wild },
-    stats: { fireflies: fireflies?.count ?? 0 },
+    layers: { fireflies, glowworms, motes, leaves, flappers, post, wild },
+    stats: { fireflies: fireflies?.count ?? 0, glowworms: glowworms?.count ?? 0 },
     update(dt) {
       const night = ctx.env?.night ?? 0;
       const target = ctx.cameraRig?.target;
       if (target) focus.copy(target);
       updatePointScale(ctx.engine.renderer, ctx.camera, ctx.scene.fog);
       fireflies?.update(night);
+      glowworms?.update(night);
       motes?.update(night, focus);
       leaves?.update(dt, focus);
       flappers?.update(dt, focus, night);

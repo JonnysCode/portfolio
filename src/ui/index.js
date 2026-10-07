@@ -33,9 +33,18 @@ import { renderGuidebook } from './guidebook.js';
 import { createMap } from './map.js';
 
 const HINT_KEY = 'woodland:hinted';
+/**
+ * Framing tweaks per entry on top of the hotspot's own `focus` options (the
+ * rig frames the centre of the object's bounds and fits it beside the page).
+ * faceAzimuth is measured from the object's own front (+Z).
+ */
+const FOCUS_TWEAKS = {
+  // the Hobelbank: a 3/4 front view slightly above the top — vises, board, shavings and Jonny planing
+  'workbench-wip': { radius: 0.85, lift: 0.3, distance: 2.2, polar: 1.1 },
+};
 const GLEN_CAM = new THREE.Vector3(...SPOT_BY_ID.glen.camera.position);
 /** How high above each spot's focus its floating overview label hangs (clear of caps & roofs). */
-const LABEL_LIFT = { woodworking: 3.4, code: 2.4, home: 7.2, interior: 5.4, bikes: 5.8 };
+const LABEL_LIFT = { woodworking: 4.1, code: 2.4, home: 7.2, interior: 5.4, bikes: 5.8 };
 
 export function createUI(ctx) {
   const root = document.getElementById('ui');
@@ -49,7 +58,7 @@ export function createUI(ctx) {
   if (isTouch) root.classList.add('is-touch');
 
   // ── loader ────────────────────────────────────────────────────────────────
-  const loader = createLoader(root, { title: `${P.name}'s Woodland`, tagline: P.tagline });
+  const loader = createLoader(root, { title: `${P.name}’s Woodland`, tagline: P.tagline });
 
   // ── HUD: carved name plate + round buttons + secrets tag ──────────────────
   const plate = h(
@@ -57,7 +66,7 @@ export function createUI(ctx) {
     { class: 'plate' },
     h('i', { class: 'plate__nail is-l', 'aria-hidden': 'true' }),
     h('i', { class: 'plate__nail is-r', 'aria-hidden': 'true' }),
-    h('div', { class: 'plate__name' }, `${P.name}'s Woodland`),
+    h('div', { class: 'plate__name' }, `${P.name}’s Woodland`),
     h('div', { class: 'plate__tag' }, P.tagline),
   );
   const btn = (name, label, onclick, extra = {}) =>
@@ -69,7 +78,7 @@ export function createUI(ctx) {
   const soundBtn = btn('soundOff', 'Sound on', () => toggleSound(), { 'aria-pressed': 'false' });
   const secretsTag = h(
     'button',
-    { class: 'secrets-tag', type: 'button', 'aria-live': 'polite', title: 'Little secrets hide in the glen', onclick: () => ui.toast('Some things in the glen have no sparkle at all. Look closely — hover or tap around…', 5200, { icon: 'sparkle' }) },
+    { class: 'secrets-tag', type: 'button', 'aria-live': 'polite', title: 'Little secrets hide in the glen', onclick: () => ui.toast(foundAllByDay() ? 'You found every daytime secret. Some things only show themselves after dark — press N or tap the moon.' : isTouch ? 'Some things in the glen have no sparkle at all. Tap anything that looks curious…' : 'Some things in the glen have no sparkle at all. Look closely — hover around…', 5200, { icon: 'sparkle' }) },
     h('span', { html: icon('sparkle') }),
     h('span', { class: 'secrets-tag__n' }, '0/0'),
     h('span', { class: 'secrets-tag__label' }, 'secrets'),
@@ -107,6 +116,12 @@ export function createUI(ctx) {
     ctx.audio?.setEnabled?.(on, { remember: true });
     syncSound();
     if (on) ctx.audio?.play?.('click');
+  }
+
+  /** Every secret that shows by day is found (night-only ones remain): time for a hint. */
+  function foundAllByDay() {
+    const s = ctx.interactions?.secrets?.({ by: 'day' });
+    return !!s && s.total > 0 && s.found >= s.total && (ctx.interactions?.secrets?.().found ?? 0) < (ctx.interactions?.secrets?.().total ?? 0);
   }
 
   // ── spot bar ──────────────────────────────────────────────────────────────
@@ -163,6 +178,7 @@ export function createUI(ctx) {
         h('span', { class: 'spot-label__arrow is-l', 'aria-hidden': 'true', html: icon('left') }),
         h('span', { class: 'spot-label__icon', html: spotIcon(s.id) }),
         h('span', { class: 'spot-label__text' }, h('b', {}, s.title), h('small', {}, s.subtitle)),
+        h('span', { class: 'spot-label__count', 'aria-hidden': 'true', hidden: true }),
         h('span', { class: 'spot-label__arrow is-r', 'aria-hidden': 'true', html: icon('right') }),
       ),
       h('span', { class: 'spot-label__stem', 'aria-hidden': 'true' }),
@@ -170,6 +186,18 @@ export function createUI(ctx) {
     labelLayer.append(el);
     return { spot: s, el, pos: new THREE.Vector3(s.focus[0], s.focus[1] + (LABEL_LIFT[s.id] ?? 3.2), s.focus[2]), shown: false };
   });
+  /** '✦ 3' on each overview label: how many journal pages wait there unread. */
+  function syncLabelCounts() {
+    for (const l of labels) {
+      const list = ctx.interactions?.forSpot?.(l.spot.id) ?? [];
+      const n = list.filter((x) => !ctx.interactions.isVisited?.(x.entryId)).length;
+      const c = l.el.querySelector('.spot-label__count');
+      c.textContent = `✦ ${n}`;
+      c.hidden = n === 0;
+      l.el.setAttribute('aria-label', `Visit ${l.spot.title} — ${l.spot.subtitle}${n ? ` (${n} to discover)` : ''}`);
+      l.measured = -99;
+    }
+  }
   const hsLayer = h('div', { class: 'hs-layer', role: 'group', 'aria-label': 'Things to explore here' });
   root.append(labelLayer, hsLayer);
   let hsButtons = [];
@@ -212,6 +240,7 @@ export function createUI(ctx) {
   const speechAnnounce = h('div', { class: 'sr-only', 'aria-live': 'polite' });
   root.append(toasts, banner, speechLayer, speechAnnounce, fader);
   let bannerTimer = 0;
+  let namedTimer = 0;
 
   // ── journal page ──────────────────────────────────────────────────────────
   const journal = createJournal(ctx, { onClose: () => ui.closePanel(), onNavigate: (id) => ui.openEntry(id) });
@@ -281,7 +310,7 @@ export function createUI(ctx) {
       h('i', { class: 'journal__tape is-right', 'aria-hidden': 'true' }),
       h('div', { class: 'intro__emblem', 'aria-hidden': 'true', html: spotIcon('home') }),
       h('div', { class: 'intro__kicker' }, 'Welcome to'),
-      h('h1', { id: 'intro-title', class: 'intro__title' }, `${P.name}'s Woodland`),
+      h('h1', { id: 'intro-title', class: 'intro__title' }, `${P.name}’s Woodland`),
       svg(`<svg class="intro__flourish" viewBox="0 0 220 14" aria-hidden="true"><path d="M2 8 C 40 2, 70 12, 110 7 S 180 3, 218 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`),
       h('p', { class: 'intro__tag' }, P.tagline),
       h('p', { class: 'intro__text' }, P.intro),
@@ -373,41 +402,87 @@ export function createUI(ctx) {
   const v = new THREE.Vector3();
   const sp = {};
   const bubbles = new Set();
+  /** The canvas box every projection uses (it is sized to the visible viewport, not 100vh). */
+  const view = { x: 0, y: 0, w: 1, h: 1 };
+  function measureView() {
+    const r = ctx.interactions?.canvasRect;
+    if (r && r.width > 0) {
+      view.x = r.left;
+      view.y = r.top;
+      view.w = r.width;
+      view.h = r.height;
+    } else {
+      view.x = view.y = 0;
+      view.w = innerWidth || 1;
+      view.h = innerHeight || 1;
+    }
+    return view;
+  }
+  /** World point → client px in the canvas box (v is overwritten). */
+  function toScreen(p, out) {
+    v.copy(p).project(ctx.camera);
+    out.x = view.x + ((v.x + 1) / 2) * view.w;
+    out.y = view.y + ((1 - v.y) / 2) * view.h;
+    out.z = v.z;
+    return out;
+  }
+  const placed = [];
   function frame() {
     const rig = ctx.cameraRig;
     const cam = ctx.camera;
     if (!rig || !cam) return;
     cam.updateMatrixWorld(); // the rig moved it this frame; project with fresh matrices
-    const W = innerWidth, H = innerHeight;
+    measureView();
+    const W = view.w, H = view.h;
     // floating spot labels in the overview
     // (a debug/screenshot camera override shows them only when it looks at the glen from afar)
     const atGlen = rig.overridden ? cam.position.distanceTo(GLEN_CAM) < 14 : rig.spot === 'glen';
     const showLabels = atGlen && !rig.transitioning && !rig.focused && !ui.isModalOpen && !intro;
+    placed.length = 0;
     for (const l of labels) {
       let on = showLabels;
       let edge = 0;
       if (on) {
-        v.copy(l.pos).project(cam);
-        on = v.z < 1 && Math.abs(v.x) < 2.6 && v.y < 0.8 && v.y > -0.82;
+        toScreen(l.pos, sp);
+        on = sp.z < 1 && Math.abs(v.x) < 2.6 && v.y < 0.8 && v.y > -0.82;
         if (on) {
-          let x = ((v.x + 1) / 2) * W;
-          const y = ((1 - v.y) / 2) * H;
+          // the flag's size, measured now and then (not every frame: no layout thrash)
+          if (!l.fw || ctx.engine.frame - (l.measured ?? -99) > 45) {
+            const f = l.el.firstElementChild;
+            l.fw = f.offsetWidth || 140;
+            l.fh = f.offsetHeight || 40;
+            l.measured = ctx.engine.frame;
+          }
+          let x = sp.x - view.x;
+          const y = sp.y - view.y;
           // places beyond the frame (phones!) get a little signpost pinned to the edge
-          const half = Math.min(110, l.el.firstElementChild.offsetWidth / 2 || 70) + 10;
+          const half = Math.min(110, l.fw / 2) + 10;
           if (x < half) (edge = -1), (x = half);
           else if (x > W - half) (edge = 1), (x = W - half);
-          l.el.style.transform = `translate(${x}px, ${y}px)`;
+          l.x = view.x + x;
+          l.y = view.y + y;
+          placed.push(l);
         }
       }
       if (edge !== l.edge) {
         l.edge = edge;
         l.el.classList.toggle('is-edge-l', edge < 0);
         l.el.classList.toggle('is-edge-r', edge > 0);
+        l.measured = -99; // edge flags are slimmer: measure again
       }
       if (on !== l.shown) {
         l.shown = on;
         l.el.classList.toggle('is-shown', on);
         l.el.tabIndex = on ? 0 : -1;
+      }
+    }
+    solveLabels(placed);
+    for (const l of placed) {
+      l.el.style.transform = `translate(${l.x.toFixed(1)}px, ${l.y.toFixed(1)}px)`;
+      const lift = Math.round(l.lift ?? 0);
+      if (lift !== l.liftPx) {
+        l.liftPx = lift;
+        l.el.style.setProperty('--lift', `${lift}px`);
       }
     }
     // keyboard hotspot buttons follow their markers
@@ -419,15 +494,62 @@ export function createUI(ctx) {
     // speech bubbles
     for (const b of bubbles) b.update();
     // keep the subject framed beside the journal page — or just above the spot bar
-    if (journal.isOpen) rig.setInset(journal.inset());
+    if (journal.isOpen) rig.setInset(focusInset());
     else rig.setInset({ right: 0, bottom: intro ? 0 : barInset() });
   }
+
+  /**
+   * Floating labels must never pile up (phones: the cottage, the atelier and
+   * the Schreinerei sit close together, edge-pinned ones share an edge).
+   * Placed bottom-up: a label overlapping one already placed is lifted above
+   * it on a taller stem (edge signposts simply stack); the lift is eased so
+   * labels glide rather than jump while the camera breathes.
+   */
+  const GAP = 6;
+  function solveLabels(list) {
+    const minTop = narrow() ? 104 : 84; // below the HUD
+    list.sort((a, b) => b.y - a.y);
+    const done = [];
+    for (const l of list) {
+      const w = (l.fw ?? 140) + GAP, hh = (l.fh ?? 40) + GAP;
+      const left = l.x - w / 2, right = l.x + w / 2;
+      let bottom = l.y - 30; // the flag sits on a 30px stem
+      for (let pass = 0; pass < 6; pass++) {
+        let moved = false;
+        for (const o of done) {
+          if (right <= o.left || left >= o.right) continue;
+          if (bottom <= o.top || bottom - hh >= o.bottom) continue;
+          bottom = o.top; // lift above it
+          moved = true;
+        }
+        if (!moved) break;
+      }
+      // never under the HUD: then rather overlap a little lower down
+      bottom = Math.max(bottom, minTop + hh);
+      const want = Math.max(0, l.y - 30 - bottom);
+      l.lift = l.lift === undefined || !l.wasShown ? want : l.lift + (want - l.lift) * 0.2;
+      if (Math.abs(l.lift - want) < 0.5) l.lift = want;
+      l.wasShown = true;
+      const b = l.y - 30 - l.lift;
+      done.push({ left, right, top: b - hh, bottom: b });
+    }
+    for (const l of labels) if (!l.shown) l.wasShown = false;
+  }
+  const narrow = () => view.w <= 720;
 
   let barH = 0;
   /** Half the spot bar's height: compositions sit a touch higher so the bar never hides a door. */
   function barInset() {
     if (!barH || ctx.engine.frame % 60 === 0) barH = spotbar.getBoundingClientRect().height + 14;
     return barH * 0.55;
+  }
+  let hudH = 0;
+  /** What the journal leaves free for a framed detail: beside / above the page, below the HUD, above the spot bar. */
+  function focusInset() {
+    const j = journal.inset();
+    if (!hudH || ctx.engine.frame % 60 === 0) hudH = hud.getBoundingClientRect().bottom + 8;
+    barInset();
+    return { right: j.right, bottom: Math.max(j.bottom, j.right ? barH : 0), top: narrow() ? hudH : 0 };
   }
 
   // ── speech bubbles ────────────────────────────────────────────────────────
@@ -452,8 +574,8 @@ export function createUI(ctx) {
         else return;
         v.y += lift;
         v.project(ctx.camera);
-        const x = Math.min(innerWidth - 90, Math.max(90, ((v.x + 1) / 2) * innerWidth));
-        const y = Math.max(70, ((1 - v.y) / 2) * innerHeight);
+        const x = view.x + Math.min(view.w - 90, Math.max(90, ((v.x + 1) / 2) * view.w));
+        const y = view.y + Math.max(70, ((1 - v.y) / 2) * view.h);
         el.style.transform = `translate(${x}px, ${y}px)`;
         el.classList.toggle('is-hidden', v.z > 1);
         // typewriter
@@ -471,6 +593,38 @@ export function createUI(ctx) {
     b.update();
     setTimeout(() => bubbles.has(b) && b.remove(), duration);
     return b;
+  }
+
+  // ── a found secret: a sparkle flies from it to the counter, the camera has a look ──
+  function flySparkle(hs) {
+    if (reduced || !ctx.camera) return;
+    measureView();
+    const p = hs.center?.(new THREE.Vector3()) ?? hs.object.getWorldPosition(new THREE.Vector3());
+    toScreen(p, sp);
+    if (sp.z > 1) return;
+    const to = secretsTag.getBoundingClientRect();
+    const el = h('span', { class: 'secret-fly', 'aria-hidden': 'true', html: icon('sparkle') });
+    el.style.transform = `translate(${sp.x}px, ${sp.y}px) scale(0.6)`;
+    root.append(el);
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        el.classList.add('is-flying');
+        el.style.transform = `translate(${to.left + 14}px, ${to.top + to.height / 2}px) scale(1)`;
+      }),
+    );
+    setTimeout(() => el.remove(), 900);
+  }
+  let secretLook = 0;
+  /** Frame the secret for a moment (so the speech bubble has a visible subject), then glide back. */
+  function lookAtSecret(hs) {
+    const rig = ctx.cameraRig;
+    if (!rig || journal.isOpen || rig.transitioning || ui.isModalOpen) return;
+    const r = hs.bounds?.r ?? 0.6;
+    rig.focus(hs.object, { distance: hs.focus?.distance ?? Math.max(2.2, r * 3.2), lift: hs.focus?.lift ?? 0.1, radius: Math.min(r, 1.6) });
+    clearTimeout(secretLook);
+    secretLook = setTimeout(() => {
+      if (rig.focused && !journal.isOpen) rig.release();
+    }, 3400);
   }
 
   let currentEntry = null;
@@ -504,9 +658,23 @@ export function createUI(ctx) {
       });
       rig?.onArrive?.((id) => {
         if (id && id !== 'glen' && !journal.isOpen) ui.showAreaBanner(id);
+        // phones show icons only: name every place for a few seconds after arriving
+        if (narrow()) {
+          spotbar.classList.add('is-named');
+          clearTimeout(namedTimer);
+          namedTimer = setTimeout(() => {
+            spotbar.classList.remove('is-named');
+            const cur = pills.get(ctx.cameraRig?.spot);
+            if (cur && spotList.scrollWidth > spotList.clientWidth) cur.scrollIntoView({ block: 'nearest', inline: 'center', behavior: reduced ? 'auto' : 'smooth' });
+          }, 3200);
+          const cur = pills.get(id);
+          if (cur) requestAnimationFrame(() => cur.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'auto' }));
+        }
       });
       rebuildHotspotButtons(rig?.spot ?? 'glen');
       const it = ctx.interactions;
+      syncLabelCounts();
+      it?.onVisit?.(() => syncLabelCounts());
       const syncSecrets = () => {
         const s = it?.secrets?.() ?? { found: 0, total: 0 };
         secretsTag.querySelector('.secrets-tag__n').textContent = `${s.found}/${s.total}`;
@@ -517,9 +685,13 @@ export function createUI(ctx) {
       it?.onSecret?.((hs, s, isNew) => {
         syncSecrets();
         if (!isNew) return;
-        secretsTag.classList.remove('is-pop');
-        void secretsTag.offsetWidth;
-        secretsTag.classList.add('is-pop');
+        flySparkle(hs);
+        lookAtSecret(hs);
+        setTimeout(() => {
+          secretsTag.classList.remove('is-pop');
+          void secretsTag.offsetWidth;
+          secretsTag.classList.add('is-pop');
+        }, reduced ? 0 : 650);
         if (s.found === s.total) {
           ctx.audio?.play?.('horn');
           ui.toast(`You found every secret of the glen! (${s.found}/${s.total}) The Schneckenpost salutes you.`, 6500, { icon: 'sparkle', cls: 'is-gold' });
@@ -543,6 +715,10 @@ export function createUI(ctx) {
       if (!entry) return console.warn('[ui] unknown entry', id);
       currentEntry = entry;
       closeModal();
+      // opened from a keyboard hotspot button: its focus ring, tooltip and hover
+      // ring must not stay drawn over the subject (focus moves into the page)
+      if (document.activeElement?.classList?.contains('hs-btn')) document.activeElement.blur();
+      ctx.interactions?.setFocused?.(null);
       ui.hideTooltip();
       journal.open(entry, { siblings: content.entriesForArea(entry.area) });
       ui.isPanelOpen = true;
@@ -552,13 +728,13 @@ export function createUI(ctx) {
       ctx.interactions?.markVisited?.(id);
       const rig = ctx.cameraRig;
       if (!rig) return;
-      rig.setInset(journal.inset());
+      rig.setInset(focusInset());
       const hs = opts.hotspot ?? ctx.interactions?.findByEntry?.(id);
       focusing = true;
       try {
         if (hs) {
           ctx.interactions?.setOpen?.(hs);
-          rig.focus(hs.object, { ...(hs.focus ?? {}), spot: SPOT_BY_ID[hs.area] ? hs.area : undefined });
+          rig.focus(hs.object, { ...(hs.focus ?? {}), ...(FOCUS_TWEAKS[id] ?? {}), spot: SPOT_BY_ID[hs.area] ? hs.area : undefined });
         } else {
           const spotId = SPOT_FOR_AREA[entry.area];
           if (spotId && spotId !== rig.spot) rig.goTo(spotId);
@@ -610,7 +786,7 @@ export function createUI(ctx) {
             ? [row(['drag'], 'look around'), row(['pinch'], 'zoom in & out'), row(['two fingers'], 'move sideways'), row(['swipe'], 'travel to the next place'), row(['tap ✦'], 'open a journal page')]
             : [row(['drag'], 'look around'), row(['scroll'], 'zoom in & out'), row(['right-drag', 'shift-drag'], 'move sideways'), row(['click ✦'], 'open a journal page'), row(['←', '→'], 'previous / next place'), row(['1', '–', '6'], 'jump to a place'), row(['G'], 'guidebook'), row(['M'], 'map'), row(['N'], 'day & night'), row(['Esc'], 'close'), row(['Tab'], 'step through the things at a place')],
         ),
-        h('p', { class: 'help__secret' }, h('span', { html: icon('sparkle') }), 'Not everything here has a sparkle. A few little secrets hide in the glen — hover around and see who answers.'),
+        h('p', { class: 'help__secret' }, h('span', { html: icon('sparkle') }), isTouch ? 'Not everything here has a sparkle. A few little secrets hide in the glen — tap anything that looks curious, some things answer.' : 'Not everything here has a sparkle. A few little secrets hide in the glen — hover around and see who answers.', foundAllByDay() && h('span', { class: 'help__night' }, ' Some things only show themselves after dark (N).')),
       ]);
     },
     showTooltip(label, hotspot) {

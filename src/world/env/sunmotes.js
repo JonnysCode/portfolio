@@ -4,7 +4,8 @@
 // (env/sunlight.js) and only then sparkles — so they appear exactly inside
 // the god rays and the sunny patches, and vanish in the shade. Brighter when
 // looking towards the sun (forward scattering). One draw call, pure GPU
-// animation (positions wrap inside a box), no CPU work per frame.
+// animation (positions wrap inside a box), no CPU work per frame. By night a
+// faint, slower silver glitter in the moonlight.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../../core/rng.js';
@@ -97,6 +98,9 @@ export function buildSunMotes(ctx) {
     uAxis: { value: envUniforms.uKeyDir.value },
     uColor: { value: new THREE.Color('#ffe2a8').multiplyScalar(1.6) },
   };
+  const dayColor = uniforms.uColor.value.clone();
+  const moonColor = new THREE.Color('#c4d4ff').multiplyScalar(1.5);
+  let wasNight = false;
   const mat = new THREE.ShaderMaterial({
     name: 'sunmotes',
     uniforms,
@@ -121,9 +125,19 @@ export function buildSunMotes(ctx) {
       uniforms.uScale.value = 60 * (pixelHeight / 720);
     },
     update(night) {
+      // golden dust by day; by night a faint silver glitter where the moon gets
+      // through (the moonbeams), drifting slower. The swap happens at dusk,
+      // while the specks are invisible.
       const k = 1 - THREE.MathUtils.smoothstep(night, 0.05, 0.4);
-      uniforms.uStrength.value = k;
-      points.visible = k > 0.002;
+      const kn = THREE.MathUtils.smoothstep(night, 0.6, 0.95) * 0.3;
+      uniforms.uStrength.value = Math.max(k, kn);
+      const isNight = night >= 0.5;
+      if (isNight !== wasNight) {
+        wasNight = isNight;
+        uniforms.uColor.value.copy(isNight ? moonColor : dayColor);
+        uniforms.uMotion.value = (ctx.engine.reducedMotion ? 0.15 : 1) * (isNight ? 0.45 : 1);
+      }
+      points.visible = k > 0.002 || kn > 0.002;
     },
   };
 }

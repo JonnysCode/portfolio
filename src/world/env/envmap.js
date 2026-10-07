@@ -4,10 +4,10 @@
 // moonlit night.
 //
 // Standing in the glen you are under a huge canopy: little open sky overhead
-// (teal-green, sun-dappled), a bright misty band around the horizon where the
+// (sage-green, sun-dappled), a bright misty band around the horizon where the
 // glen opens to the forest, the low golden sun haze at the back-left, warm
 // mossy bounce from the ground. That gives stones, caps, glass and metal soft
-// believable reflections and keeps the shaded side teal-green instead of grey.
+// believable reflections and keeps the shaded side a warm sage-green instead of grey.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { GLSL_NOISE } from './celestial.js';
@@ -75,11 +75,14 @@ function paint(renderer, opts) {
  * (CubeUV, same size so swapping them never recompiles a material).
  */
 export function buildEnvMaps(renderer, { sunDir, moonDir }) {
+  // golden afternoon: sage-gold canopy light, a warm hazy horizon band and a
+  // warm earthy bounce (no teal cast on wood & stone — the cool blue-green
+  // belongs to the far mist only)
   const day = paint(renderer, {
-    sky: '#cfe6e4',
-    canopy: '#3f5a3c',
-    horizon: '#a7c4b6',
-    ground: '#4a4630',
+    sky: '#d6e6da',
+    canopy: '#4c5a36',
+    horizon: '#bcc0a0',
+    ground: '#5e4c30',
     sunCol: '#ffcf8a',
     sunDir,
     sunPower: 2.4,

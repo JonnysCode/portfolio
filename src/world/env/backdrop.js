@@ -315,11 +315,12 @@ export function buildBackdrop(ctx) {
   const BUSH = [0.12, 0.2, 0.11];
 
   // receding rows of colossal trees, the farthest a ghostly wall in the haze
+  // (low: fewer trees, but enough that the gaps between them do not open onto bare sky)
   const rows = [
-    { r: [41, 50], count: tier === 'low' ? 9 : 15, radius: [1.6, 2.8], height: [34, 46] },
-    { r: [54, 66], count: tier === 'low' ? 10 : 17, radius: [2.2, 3.6], height: [42, 56] },
-    { r: [72, 92], count: tier === 'low' ? 10 : 19, radius: [2.8, 4.6], height: [50, 66] },
-    { r: [100, 135], count: tier === 'low' ? 0 : 22, radius: [3.5, 6], height: [60, 80], far: true },
+    { r: [41, 50], count: tier === 'low' ? 11 : 15, radius: [1.6, 2.8], height: [34, 46] },
+    { r: [54, 66], count: tier === 'low' ? 12 : 17, radius: [2.2, 3.6], height: [42, 56] },
+    { r: [72, 92], count: tier === 'low' ? 12 : 19, radius: [2.8, 4.6], height: [50, 66] },
+    { r: [100, 135], count: tier === 'low' ? 7 : 22, radius: [3.5, 6], height: [60, 80], far: true },
     // understory: smaller trees whose crowns sit low enough to be seen between the giants
     { r: [50, 80], count: tier === 'low' ? 6 : 14, radius: [0.8, 1.4], height: [18, 28], under: true },
   ];
@@ -386,7 +387,7 @@ export function buildBackdrop(ctx) {
     }
   }
   // fill the gaps of the canopy ceiling between the crowns
-  const fill = tier === 'low' ? 10 : 34;
+  const fill = tier === 'low' ? 16 : 34;
   for (let k = 0; k < fill; k++) {
     const az = rng.range(-ARC * 0.85, ARC * 0.85);
     const r = rng.range(46, 95);

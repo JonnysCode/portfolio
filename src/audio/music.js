@@ -158,6 +158,11 @@ export function createMusic(ac, { out, reverb, ctx }) {
   function pump() {
     if (!playing) return;
     const now = ac.currentTime;
+    // a background tab throttles the timer (to once a second, later once a
+    // minute): drop the bars we slept through instead of scheduling them all in
+    // the past at once (a loud smear of overlapping tines). The tune continues
+    // from the bar it was on.
+    if (nextBar < now) nextBar = now + 0.05;
     while (nextBar < now + 0.6) {
       scheduleBar(nextBar, barIndex);
       nextBar += 3 * BEAT;

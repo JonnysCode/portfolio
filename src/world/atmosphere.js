@@ -5,13 +5,16 @@
 //                       ground-hugging height mist, warm towards the sun, cool
 //                       blue-green elsewhere. Installed before anything compiles.
 //   god rays            slanted golden shafts carved by the real canopy gaps
-//                       (env/shafts.js, shadow-map driven)
+//                       (env/shafts.js, shadow-map driven) + the canopy-gap
+//                       sunbeam onto the Schreinerei (lighting's SpotLight);
+//                       by night a few silver moonbeams (fairy ring, lily
+//                       pond, plunge pool, the path) stay on
 //   sunbeam dust        glittering motes that only sparkle in sunlight
 //                       (env/sunmotes.js)
 //   low mist            drifting veils over the stream, the pool and the glen's
 //                       rim, thicker & moonlit at night (env/groundMist.js)
 //
-// ctx.atmosphere = { fogParams, shafts, motes, mist, settings, addShaft(x, z, opts) }
+// ctx.atmosphere = { fogParams, shafts, motes, mist, settings, addShaft(x, z, opts), addMoonbeam(x, z, opts) }
 //   settings.shafts / .motes / .mist — live multipliers (debug & tuning)
 //   addShaft(x, z, { length, width, intensity }) — ask for a god ray falling on
 //     (x, z) (e.g. onto a doorstep); returns false when the budget is used up.
@@ -19,7 +22,9 @@
 //     canopy with env/sunlight.js (sunVisibility(worldPos)), and get the same
 //     aerial perspective with env/fog.js (fogUniforms() + the fog chunks).
 // ─────────────────────────────────────────────────────────────────────────────
+import * as THREE from 'three';
 import { installFog, fogParams } from './env/fog.js';
+import { STREAM } from './layout.js';
 import { updateSunlight } from './env/sunlight.js';
 import { buildShafts } from './env/shafts.js';
 import { buildSunMotes } from './env/sunmotes.js';
@@ -43,6 +48,26 @@ export default async function build(ctx) {
 
   const shafts = safe('god rays', () => buildShafts(ctx));
   if (shafts) scene.add(shafts.mesh);
+  // the canopy-gap sunbeam pooling on the Schreinerei (matches lighting's SpotLight)
+  const dayBeam = ctx.lights?.beams?.day;
+  if (shafts && dayBeam) {
+    const axis = new THREE.Vector3().subVectors(dayBeam.pos, dayBeam.target);
+    const foot = dayBeam.target;
+    shafts.addBeam(foot.x, foot.y - 0.4, foot.z, axis, { length: 22, width: 3.4, intensity: 0.8 });
+  }
+  // moonbeams: placed on the first frame, once the lighting knows where the fairy ring is
+  let moonbeams = false;
+  function placeMoonbeams() {
+    moonbeams = true;
+    const ring = ctx.lights?.beams?.night;
+    if (ring) {
+      const axis = new THREE.Vector3().subVectors(ring.pos, ring.target);
+      shafts.addMoonbeam(ring.target.x, ring.target.z, { length: 22, width: 2.2, intensity: 1.1, axis });
+    }
+    shafts.addMoonbeam(STREAM.pond.x, STREAM.pond.z, { length: 26, width: 3.4, intensity: 1 });
+    shafts.addMoonbeam(STREAM.pool.x, STREAM.pool.z, { length: 26, width: 3, intensity: 0.9 });
+    shafts.addMoonbeam(1.0, 8.6, { length: 24, width: 2.4, intensity: 0.8 });
+  }
   const motes = safe('sunbeam dust', () => buildSunMotes(ctx));
   if (motes) {
     scene.add(motes.points);
@@ -61,11 +86,13 @@ export default async function build(ctx) {
     mist,
     settings,
     addShaft: (x, z, opts) => shafts?.addShaft(x, z, opts) ?? false,
+    addMoonbeam: (x, z, opts) => shafts?.addMoonbeam(x, z, opts) ?? false,
   };
 
   return {
     update(dt, t) {
       updateSunlight(ctx);
+      if (shafts && !moonbeams) placeMoonbeams();
       const n = ctx.env?.night ?? 0;
       shafts?.update(n, t);
       if (shafts) shafts.uniforms.uStrength.value *= settings.shafts;

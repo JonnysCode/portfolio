@@ -68,6 +68,27 @@ export function createAudio(ctx = {}) {
     music = createMusic(ac, { out: musicBus, reverb, ctx });
   }
 
+  // a hidden tab goes quiet: fade out and suspend the context (timers are
+  // throttled in the background anyway); fade back in when the visitor returns
+  let hiddenTimer = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (!ac || !master) return;
+    const t = ac.currentTime;
+    clearTimeout(hiddenTimer);
+    if (document.hidden) {
+      master.gain.cancelScheduledValues(t);
+      master.gain.setTargetAtTime(0, t, 0.08);
+      hiddenTimer = setTimeout(() => document.hidden && ac.suspend?.(), 400);
+    } else if (audio.enabled) {
+      Promise.resolve(ac.resume?.()).then(() => {
+        const t1 = ac.currentTime;
+        master.gain.cancelScheduledValues(t1);
+        master.gain.setValueAtTime(master.gain.value, t1);
+        master.gain.setTargetAtTime(1, t1, 0.5);
+      }, () => {});
+    }
+  });
+
   const audio = {
     enabled: false,
     get preference() {
@@ -108,7 +129,7 @@ export function createAudio(ctx = {}) {
       audio.enabled = on;
       const t = ac.currentTime;
       if (on) {
-        ac.resume?.();
+        if (!document.hidden) ac.resume?.();
         master.gain.cancelScheduledValues(t);
         master.gain.setTargetAtTime(1, t, 0.4);
         ambience.start();

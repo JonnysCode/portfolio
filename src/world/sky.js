@@ -6,7 +6,9 @@
 //             (back-left), thin painterly cloud wisps; at night deep blue with
 //             stars peeking and a haloed moon. At and below the horizon it is
 //             exactly the aerial-perspective mist colour, so the fogged far
-//             forest melts into it without a seam.
+//             forest melts into it without a seam. On 'low' (thin far forest,
+//             no canopy shadows) the dome itself is pushed towards the mist so
+//             canopy gaps read as hazy depth, not as flat patches of sky.
 //   backdrop  colossal trunks, canopy masses and mist curtains receding into
 //             the haze (env/backdrop.js).
 //
@@ -37,7 +39,7 @@ const domeVertex = /* glsl */ `
 const domeFragment = /* glsl */ `
   uniform vec3 uSkyZenith, uSkyMid, uSkyHorizon, uSunGlow;
   uniform vec3 uSunDir, uMoonDir;
-  uniform float uNight, uTime, uStars;
+  uniform float uNight, uTime, uStars, uLow;
   varying vec3 vDir;
   ${GLSL_NOISE}
   ${FOG_GLSL}
@@ -55,7 +57,7 @@ const domeFragment = /* glsl */ `
     // ── thin painterly wisps (barely seen through the canopy) ──
     vec2 cp = d.xz / max(y + 0.35, 0.05);
     float w = envFbm(cp * vec2(0.55, 1.1) + vec2(uTime * 0.004, 0.0));
-    float wisp = smoothstep(0.55, 0.95, w) * smoothstep(0.12, 0.4, y) * (1.0 - smoothstep(0.6, 0.95, y));
+    float wisp = smoothstep(0.55, 0.95, w) * smoothstep(0.12, 0.4, y) * (1.0 - smoothstep(0.6, 0.95, y)) * (1.0 - 0.85 * uLow);
     vec3 wispCol = mix(vec3(1.0, 0.96, 0.9), uSkyHorizon * 0.7, uNight);
     col = mix(col, wispCol, wisp * mix(0.22, 0.1, uNight));
 
@@ -65,6 +67,14 @@ const domeFragment = /* glsl */ `
     col += haze * day;
     // wisps catch the light near the sun
     col += uSunGlow * wisp * pow(sd, 6.0) * 0.9 * day;
+
+    // ── low tier: no canopy shadows and a thinner far forest, so gaps between
+    //    the crowns show the dome — keep it a soft hazy distance (the mist
+    //    colour, a touch deeper) instead of flat cyan / navy patches ──
+    if (uLow > 0.5) {
+      vec3 hazeCol = woodlandFogColor(d) * mix(1.04, 0.92, uNight);
+      col = mix(col, hazeCol, 0.82 * smoothstep(-0.02, 0.3, y));
+    }
 
     // ── stars peeking through ──
     if (uNight > 0.01 && uStars > 0.5) {
@@ -138,6 +148,7 @@ export default async function build(ctx) {
       uSunGlow: U.uSunGlow, uSunDir: U.uSunDir, uMoonDir: U.uMoonDir,
       uNight: U.uNight, uTime: U.uTime,
       uStars: { value: 1 },
+      uLow: { value: (ctx.quality?.tier ?? 'high') === 'low' ? 1 : 0 },
     },
     vertexShader: domeVertex,
     fragmentShader: domeFragment,

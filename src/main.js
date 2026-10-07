@@ -21,6 +21,7 @@ import { createColliders } from './systems/colliders.js';
 import { createEnv } from './systems/env.js';
 import { createInteractions } from './systems/interactions.js';
 import { createCameraRig } from './systems/cameraRig.js';
+import { createNightSecrets } from './systems/nightSecrets.js';
 import { createUI } from './ui/index.js';
 import { createAudio } from './audio/audio.js';
 import { installDebug } from './debug.js';
@@ -97,6 +98,12 @@ async function boot() {
   if (report.failed.length) console.warn('[boot] some modules failed:', report.failed.map((f) => f.id));
 
   engine.addUpdate(props.tickProps, 25);
+  // little discoveries that only exist after dark (registered before the UI counts the secrets)
+  try {
+    ctx.nightSecrets = createNightSecrets(ctx);
+  } catch (err) {
+    console.warn('[boot] night secrets skipped', err);
+  }
   ctx.cameraRig = createCameraRig(ctx);
   // the UI follows the camera (spot bar, labels, banners, keyboard hotspots)
   ctx.ui.bindWorld?.();

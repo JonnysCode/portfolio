@@ -17,7 +17,8 @@ export function buildViews() {
     views[s.id] = { position: p, target: t };
     const lerpTo = (k) => [t[0] + (p[0] - t[0]) * k, t[1] + (p[1] - t[1]) * k, t[2] + (p[2] - t[2]) * k];
     views[`${s.id}-wide`] = { position: lerpTo(1.8), target: t };
-    views[`${s.id}-close`] = { position: lerpTo(0.55), target: s.focus ?? t };
+    views[`${s.id}-close`] = s.close ?? { position: lerpTo(0.55), target: s.focus ?? t };
+    if (s.portrait) views[`${s.id}-portrait`] = { position: s.portrait.position ?? p, target: s.portrait.target ?? t };
   }
   return views;
 }
@@ -53,13 +54,14 @@ export function installDebug(ctx) {
     /** All hotspots with their projected screen positions. */
     hotspots() {
       const v = new THREE.Vector3();
+      const r = ctx.engine.renderer.domElement.getBoundingClientRect();
       return ctx.interactions.hotspots.map((h) => {
         h.worldPosition(v);
         const world = { x: +v.x.toFixed(2), y: +v.y.toFixed(2), z: +v.z.toFixed(2) };
         v.project(ctx.camera);
         return {
           id: h.id, label: h.label, area: h.area, entryId: h.entryId ?? null, world,
-          screen: { x: Math.round(((v.x + 1) / 2) * innerWidth), y: Math.round(((1 - v.y) / 2) * innerHeight), visible: v.z < 1 && Math.abs(v.x) < 1 && Math.abs(v.y) < 1 },
+          screen: { x: Math.round(r.left + ((v.x + 1) / 2) * r.width), y: Math.round(r.top + ((1 - v.y) / 2) * r.height), visible: v.z < 1 && Math.abs(v.x) < 1 && Math.abs(v.y) < 1 },
         };
       });
     },

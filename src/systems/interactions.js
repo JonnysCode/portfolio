@@ -46,7 +46,7 @@ const VISITED_KEY = 'woodland:visited';
 const SECRETS_KEY = 'woodland:secrets';
 
 /** Marker kinds (shader). */
-const K_SPARKLE = 0, K_LEAF = 1, K_SECRET = 2;
+const K_SPARKLE = 0, K_LEAF = 1, K_SECRET = 2, K_FEATURED = 3;
 
 export function createInteractions(ctx) {
   const { engine, camera } = ctx;
@@ -77,6 +77,11 @@ export function createInteractions(ctx) {
 
   const visited = loadSet(VISITED_KEY);
   const secretsFound = loadSet(SECRETS_KEY);
+  // night-only hotspots (opts.night): only there once night has fallen
+  const isNight = () => !!ctx.env?.isNight;
+  ctx.env?.onChange?.((t) => {
+    for (const h of hotspots) if (h.night) h.enabled = t > 0.5;
+  });
 
   // scratch
   const v = new THREE.Vector3();
@@ -194,8 +199,67 @@ export function createInteractions(ctx) {
     return !!h.object.parent;
   }
 
+  // ─── solid things (occluders) ──────────────────────────────────────────────
+  let solids = null;
+  /**
+   * Opaque meshes that can hide something behind them (built lazily once the
+   * world exists). Dense scatter (grass, leaves, pebbles: big instance counts),
+   * see-through and invisible things never count.
+   */
+  function solidMeshes() {
+    if (solids) return solids;
+    solids = [];
+    ctx.scene.traverse((o) => {
+      if (!o.isMesh || o.isSprite || o.isPoints || o.isLine) return;
+      if (o.isInstancedMesh && o.count > 400) return;
+      if (o.userData.__hotspotProxy) return;
+      const m = Array.isArray(o.material) ? o.material[0] : o.material;
+      if (!m || m.visible === false || m.depthWrite === false || (m.transparent && (m.opacity ?? 1) < 0.6)) return;
+      if (!o.geometry?.boundingSphere) o.geometry?.computeBoundingSphere?.();
+      solids.push(o);
+    });
+    return solids;
+  }
+  const within = (o, root) => {
+    for (let q = o; q; q = q.parent) if (q === root) return true;
+    return false;
+  };
+  const occRay = new THREE.Raycaster();
+  const occHits = [];
+  const segC = new THREE.Vector3();
+  const bsC = new THREE.Vector3();
+  /**
+   * Distance from `origin` along `dir` (normalised) to the first solid thing
+   * between `near` and `far` — Infinity when clear. Things inside `ignore`
+   * (an Object3D) are skipped.
+   */
+  function firstSolidHit(origin, dir, near, far, ignore = null) {
+    occRay.set(origin, dir);
+    occRay.near = near;
+    occRay.far = far;
+    segC.copy(dir).multiplyScalar((near + far) / 2).add(origin);
+    const segR = (far - near) / 2;
+    let first = Infinity;
+    for (const m of solidMeshes()) {
+      const bs = m.geometry?.boundingSphere;
+      if (!bs) continue;
+      if (!m.isInstancedMesh) {
+        bsC.copy(bs.center).applyMatrix4(m.matrixWorld);
+        const r = bs.radius * m.matrixWorld.getMaxScaleOnAxis();
+        if (bsC.distanceTo(segC) > r + segR) continue;
+        if (occRay.ray.distanceSqToPoint(bsC) > r * r) continue;
+      }
+      if (ignore && within(m, ignore)) continue;
+      if (!isLive({ enabled: true, object: m })) continue;
+      occHits.length = 0;
+      m.raycast(occRay, occHits);
+      for (const hit of occHits) if (hit.distance >= near && hit.distance <= far && hit.distance < first) first = hit.distance;
+    }
+    return first;
+  }
+
   /** Raycast hotspots (cheap bounding-sphere prefilter, then exact meshes). */
-  function pickHotspot() {
+  function rawPick() {
     raycaster.setFromCamera(ndc, camera);
     let best = null;
     for (const h of hotspots) {
@@ -213,6 +277,28 @@ export function createInteractions(ctx) {
     }
     if (best && !isLive(best.hotspot)) best = null;
     return best;
+  }
+  /**
+   * A hotspot behind solid geometry (the owl in the hollow behind the loft
+   * deck, the duck through the treehouse) must not answer a click on that
+   * geometry. Exact occlusion is raycast only when the candidate (or the view)
+   * changes — not every hover frame.
+   */
+  const occMemo = { h: null, x: 0, y: 0, cam: new THREE.Vector3(), blocked: false };
+  function pickHotspot() {
+    const best = rawPick();
+    if (!best) return null;
+    const h = best.hotspot;
+    const camMoved = occMemo.cam.distanceToSquared(camera.position) > 1e-4;
+    if (h !== occMemo.h || camMoved || Math.abs(ndc.x - occMemo.x) > 0.02 || Math.abs(ndc.y - occMemo.y) > 0.02) {
+      occMemo.h = h;
+      occMemo.x = ndc.x;
+      occMemo.y = ndc.y;
+      occMemo.cam.copy(camera.position);
+      const hitAt = firstSolidHit(raycaster.ray.origin, raycaster.ray.direction, camera.near, Math.max(camera.near, best.distance - 0.3), h.object);
+      occMemo.blocked = hitAt < best.distance - 0.3;
+    }
+    return occMemo.blocked ? null : best;
   }
 
   function markerScale() {
@@ -251,6 +337,11 @@ export function createInteractions(ctx) {
       const d = Math.hypot(sx - clientX, sy - clientY);
       const reach = h.kind === 'secret' ? 20 : 34;
       if (d < reach && d < bestD) {
+        // …but never through a wall, a deck or the trunk
+        centerOf(h, wp);
+        const dist = wp.distanceTo(camera.position);
+        groundPoint.subVectors(wp, camera.position).divideScalar(dist || 1);
+        if (firstSolidHit(camera.position, groundPoint, camera.near, Math.max(camera.near, dist - boundsOf(h).r - 0.3), h.object) < Infinity) continue;
         bestD = d;
         best = h;
       }
@@ -420,16 +511,17 @@ export function createInteractions(ctx) {
         want = h === hovered || t < (h.__sparkUntil ?? 0) ? 1 : 0;
         targetSize = 0.8;
         k = K_SECRET;
-      } else if (panelOpen && h === openHotspot) want = 0;
+      } else if (panelOpen && openHotspot && (h === openHotspot || (h.entryId && h.entryId === openHotspot.entryId))) want = 0;
       else if (moving) want = 0;
       else {
         if (h.area && h.area === spot && (h.entryId || !h.onActivate)) {
           want = panelOpen ? 0.4 : 1;
           targetSize = isVisited ? 0.66 : 1;
         } else if (spot === 'glen' && isFeatured(h) && !featuredSeen.has(h.entryId)) {
+          // the overview's featured pieces: bigger than a firefly, with a slow halo
           featuredSeen.add(h.entryId);
-          want = 0.9;
-          targetSize = 0.8;
+          want = 1;
+          targetSize = isVisited ? 0.9 : 1.35;
         } else if (!h.entryId && h.onActivate && h.area !== spot && spot !== 'glen') {
           // little "action" hotspots (the snail lift) beckon from neighbouring spots nearby
           h.object.getWorldPosition(wp);
@@ -445,7 +537,7 @@ export function createInteractions(ctx) {
           if (sinceLanding < delay) want = 0;
           if (want > 0 && !isLive(h)) want = 0;
         }
-        k = isVisited ? K_LEAF : K_SPARKLE;
+        k = isVisited ? K_LEAF : spot === 'glen' && h.area !== 'glen' ? K_FEATURED : K_SPARKLE;
       }
       const hot = h === hovered || h === focused;
       if (hot && !isSecret) targetSize *= 1.25;
@@ -468,6 +560,7 @@ export function createInteractions(ctx) {
     for (const key of ['position', 'aAlpha', 'aSize', 'aPhase', 'aKind']) markerGeo.attributes[key].needsUpdate = n > 0;
     markers.visible = n > 0;
     markerMat.uniforms.uTime.value = reduced ? 0 : t;
+    markerMat.uniforms.uTimeF.value = reduced ? 0 : t;
     markerMat.uniforms.uScale.value = markerScale();
     markerMat.uniforms.uPx.value = engine.renderer.getPixelRatio() || 1;
   }
@@ -528,6 +621,10 @@ export function createInteractions(ctx) {
     get steering() {
       return false;
     },
+    /** The canvas' client rect (measured once per frame): every projection uses this box. */
+    get canvasRect() {
+      return canvasRect;
+    },
     /**
      * Register a clickable object.
      * @param {THREE.Object3D} object
@@ -542,7 +639,7 @@ export function createInteractions(ctx) {
         ...opts,
         id: nextId++,
         object,
-        enabled: opts.enabled ?? true,
+        enabled: (opts.enabled ?? true) && (!opts.night || isNight()),
         label: opts.label ?? entry?.title ?? object.name ?? '',
         summary: opts.summary ?? entry?.summary ?? '',
         bounds: null,
@@ -675,9 +772,12 @@ export function createInteractions(ctx) {
       for (const id of all) if (visited.has(id)) seen++;
       return { visited: seen, total: all.size };
     },
-    /** How many of the registered secrets have been found. */
-    secrets() {
-      const all = new Set(hotspots.filter((h) => h.kind === 'secret').map(secretKey));
+    /**
+     * How many of the registered secrets have been found.
+     * { by: 'day' } counts only the ones that show by day (not `night: true`).
+     */
+    secrets({ by } = {}) {
+      const all = new Set(hotspots.filter((h) => h.kind === 'secret' && (by !== 'day' || !h.night)).map(secretKey));
       let found = 0;
       for (const k of all) if (secretsFound.has(k)) found++;
       return { found, total: all.size };
@@ -690,6 +790,7 @@ export function createInteractions(ctx) {
     },
     pickGround,
     pickHotspot,
+    firstSolidHit,
     setPointerFromClient(x, y) {
       setNdc(x, y);
     },
@@ -723,6 +824,7 @@ function makeMarkerMaterial() {
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
+      uTimeF: { value: 0 },
       uScale: { value: 600 },
       uGold: { value: c(palette.postYellow ?? '#ffcc33') },
       uCore: { value: c(palette.spots) },
@@ -744,8 +846,10 @@ function makeMarkerMaterial() {
       varying float vKind;
       varying float vSpin;
       varying float vTw;
+      varying float vPh;
       void main() {
         vec3 p = position;
+        vPh = aPhase;
         p.y += sin(uTime * 2.1 + aPhase) * 0.09;
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
@@ -754,12 +858,14 @@ function makeMarkerMaterial() {
         gl_PointSize = clamp(aSize * pulse * uScale * 0.75 / max(0.1, -mv.z), 24.0 * aSize * uPx, 84.0 * uPx) * step(0.001, aAlpha);
         vAlpha = aAlpha;
         vKind = aKind;
-        vSpin = aKind > 0.5 && aKind < 1.5 ? 0.5 + 0.25 * sin(uTime * 1.6 + aPhase) : sin(uTime * 0.9 + aPhase) * 0.35 + uTime * (aKind > 1.5 ? 0.8 : 0.0);
+        vSpin = aKind > 0.5 && aKind < 1.5 ? 0.5 + 0.25 * sin(uTime * 1.6 + aPhase) : sin(uTime * 0.9 + aPhase) * 0.35 + uTime * (aKind > 1.5 && aKind < 2.5 ? 0.8 : 0.0);
+        if (aKind > 2.5) gl_PointSize *= 1.6; // room for the halo ring
         vTw = 0.75 + 0.25 * sin(uTime * 7.0 + aPhase * 3.0);
       }
     `,
     fragmentShader: /* glsl */ `
       uniform vec3 uGold;
+      uniform float uTimeF;
       uniform vec3 uCore;
       uniform vec3 uEdge;
       uniform vec3 uLeaf;
@@ -769,6 +875,7 @@ function makeMarkerMaterial() {
       varying float vKind;
       varying float vSpin;
       varying float vTw;
+      varying float vPh;
       void main() {
         vec2 uv = gl_PointCoord * 2.0 - 1.0;
         uv.y = -uv.y;
@@ -777,7 +884,17 @@ function makeMarkerMaterial() {
         vec3 col;
         float a;
         float r = length(uv);
-        if (vKind < 0.5) {
+        float ringA = 0.0;
+        if (vKind > 2.5) {
+          // featured (overview): the sparkle in the middle of a slowly breathing golden halo
+          float br = 0.5 + 0.5 * sin(uTimeF * 1.7 + vPh);
+          float ringR = 0.74 + 0.16 * br;
+          ringA = exp(-pow((r - ringR) / 0.07, 2.0)) * (0.55 - 0.3 * br) + exp(-r * r * 3.0) * 0.22;
+          uv *= 1.6;
+          q *= 1.6;
+          r = length(uv);
+        }
+        if (vKind < 0.5 || vKind > 2.5) {
           // sparkle: astroid-like four-point star with a cream core and a soft halo
           float s = pow(abs(q.x), 0.55) + pow(abs(q.y), 0.55);
           float star = 1.0 - smoothstep(0.74, 0.8, s);
@@ -813,6 +930,10 @@ function makeMarkerMaterial() {
           float sats = exp(-dot(s1, s1) * 140.0) + exp(-dot(s2, s2) * 160.0);
           a = clamp(thin * vTw + core + sats * vTw + exp(-r * r * 4.0) * 0.25, 0.0, 1.0);
           col = mix(uMint, uCore, core) * 1.3;
+        }
+        if (ringA > 0.0) {
+          col = mix(uGold * 1.25, col, clamp(a, 0.0, 1.0));
+          a = max(a, ringA);
         }
         a *= vAlpha;
         if (a < 0.01) discard;

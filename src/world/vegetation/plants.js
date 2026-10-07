@@ -2,10 +2,13 @@
 // Hand-made plant TEMPLATES for the undergrowth (built once, instanced many
 // times). Every template stands at the origin on y = 0, unit-ish size.
 //
-//   fernTemplate(rng, opts)   a rosette of arching fronds. Each frond is a
-//        fern leaf card bent along its length (rising, then drooping towards
-//        the tip) and folded along the midrib, so light catches it like a
-//        real frond. A few young fronds stand up, curled at the tip.
+//   fernTemplate(rng, opts)   a fountain of arching fronds. Each frond is a
+//        long, narrow fern card (the pinnae are alpha-cut, so the leaflets
+//        read in silhouette) leaving the crown at 35–55° — the old outer
+//        fronds lowest — rising, then drooping at the tip; folded along the
+//        midrib so light catches it like a real frond. Fiddleheads (young
+//        fronds still coiled) stand in the heart. Cool blue-green at the
+//        crown, fresh yellow-green at the tips (vertex colours).
 //   grassTemplate(rng, opts)  a tussock of crossed, bent grass cards.
 //   cloverTemplate(rng)       a patch of trefoils (heart-shaped leaflets that
 //                             use the leaf texture's veins).
@@ -72,13 +75,13 @@ function strip(B, pts, widths, sides, { fold = 0, color = null, colorTip = null,
  * An arching curve: starts at `origin`, heads out along azimuth `az` with
  * elevation e0, bending down by `droop` (radians) towards the tip.
  */
-function archPoints(origin, az, length, e0, droop, segs, curlTip = 0) {
+function archPoints(origin, az, length, e0, droop, segs, curlTip = 0, bendPow = 1.4) {
   const pts = [origin.clone()];
   const p = origin.clone();
   const dl = length / segs;
   for (let i = 1; i <= segs; i++) {
     const t = i / segs;
-    let e = e0 - droop * Math.pow(t, 1.4);
+    let e = e0 - droop * Math.pow(t, bendPow);
     if (curlTip) e -= curlTip * Math.pow(t, 6);
     const h = Math.cos(e);
     p.x += Math.sin(az) * h * dl;
@@ -96,41 +99,47 @@ function archPoints(origin, az, length, e0, droop, segs, curlTip = 0) {
  */
 export function fernTemplate(rng, opts = {}) {
   const B = new GeoBuilder();
-  const n = rng.int(opts.fronds?.[0] ?? 7, opts.fronds?.[1] ?? 11);
-  const segs = opts.segs ?? 6;
+  const n = rng.int(opts.fronds?.[0] ?? 12, opts.fronds?.[1] ?? 15);
+  const segs = opts.segs ?? 5;
   const phase = rng.range(0, TAU);
-  const light = col('#ffffff');
-  const dark = col('#b9c8a8');
+  // cool blue-green at the crown → fresh yellow-green at the tips
+  const crown = col(opts.crownColor ?? '#a2b8b2');
+  const tip = col(opts.tipColor ?? '#f2ffc0');
+  const e0Range = opts.e0 ?? [0.6, 1.0];
   for (let i = 0; i < n; i++) {
-    const az = phase + (i / n) * TAU + rng.jitter(0.35);
-    const len = rng.range(opts.length?.[0] ?? 0.75, opts.length?.[1] ?? 1.05);
-    const e0 = rng.range(opts.e0?.[0] ?? 0.85, opts.e0?.[1] ?? 1.2);
-    const droop = rng.range(opts.droop?.[0] ?? 1.1, opts.droop?.[1] ?? 1.7);
+    const az = phase + (i / n) * TAU * 1.0 + rng.jitter(0.3);
+    // older outer fronds lie lower; younger ones rise steeper (a layered fountain)
+    const age = rng.next();
+    const len = rng.range(opts.length?.[0] ?? 0.95, opts.length?.[1] ?? 1.3) * (0.85 + 0.25 * age);
+    const e0 = e0Range[0] + (e0Range[1] - e0Range[0]) * (1 - age * 0.85) * rng.range(0.85, 1.05);
+    // the tips droop: the steeper the frond, the more it arches over
+    const droop = (opts.droop?.[0] ?? 0.85) + e0 * (opts.droopK ?? 1.25) + rng.jitter(0.12);
     const origin = new THREE.Vector3(Math.sin(az) * 0.03, 0.01, Math.cos(az) * 0.03);
-    const pts = archPoints(origin, az, len, e0, droop, segs);
-    const wMax = len * (opts.width ?? 0.36);
+    const pts = archPoints(origin, az, len, e0, droop, segs, 0, 2.2);
+    const wMax = len * (opts.width ?? 0.2);
     const widths = pts.map((_, k) => {
       const t = k / segs;
-      // fronds are narrow at the stipe, widest at a third, tapering to the tip
-      return wMax * (t < 0.12 ? 0.35 + t * 4 : 1) * (1 - 0.15 * t);
+      // a bare stipe at the base, widest past the middle, a long tapering tip
+      return wMax * (t < 0.15 ? 0.25 + t * 4 : 1) * (1 - 0.55 * Math.pow(t, 2.2));
     });
     // across direction: horizontal, perpendicular to the frond's heading, with a little roll
     const roll = rng.jitter(0.35);
     const side = new THREE.Vector3(Math.cos(az), roll, -Math.sin(az)).normalize();
     const sides = pts.map(() => side);
-    // older (outer, lower) fronds a little darker/yellower at the base
-    strip(B, pts, widths, sides, { fold: opts.flat ? 0 : 0.22, color: dark, colorTip: light, uv: [0, 1, 0, 1], flat: !!opts.flat });
+    // (outer fronds a touch darker and cooler)
+    const c0 = crown.clone().multiplyScalar(0.9 + 0.12 * age);
+    strip(B, pts, widths, sides, { fold: opts.flat ? 0 : 0.18, color: c0, colorTip: tip, uv: [0, 1, 0, 1], flat: !!opts.flat });
   }
-  // young fronds: upright, shorter, in the heart of the rosette
-  const young = rng.int(opts.young?.[0] ?? 1, opts.young?.[1] ?? 3);
-  const ys = opts.youngSegs ?? 5;
+  // fiddleheads: young fronds still coiled, standing in the heart of the crown
+  const young = rng.int(opts.young?.[0] ?? 1, opts.young?.[1] ?? 2);
+  const ys = opts.youngSegs ?? 6;
   for (let i = 0; i < young; i++) {
     const az = rng.range(0, TAU);
-    const len = rng.range(0.35, 0.6) * (opts.length?.[1] ?? 1);
-    const pts = archPoints(new THREE.Vector3(0, 0.01, 0), az, len, rng.range(1.25, 1.45), rng.range(0.2, 0.5), ys, 1.2);
-    const w = len * 0.22;
+    const len = rng.range(0.28, 0.42) * (opts.length?.[1] ?? 1);
+    const pts = archPoints(new THREE.Vector3(rng.jitter(0.04), 0.01, rng.jitter(0.04)), az, len, rng.range(1.3, 1.45), rng.range(0.1, 0.3), ys, rng.range(4.2, 5.2), 1.4);
+    const w = len * 0.09;
     const side = new THREE.Vector3(Math.cos(az), 0, -Math.sin(az));
-    strip(B, pts, pts.map((_, k) => w * (0.4 + 0.6 * Math.sin((k / ys) * Math.PI * 0.9))), pts.map(() => side), { color: col('#e8ffd0'), uv: [0.1, 0.9, 0, 0.85], flat: true });
+    strip(B, pts, pts.map((_, k) => w * (0.7 + 0.5 * (k / ys))), pts.map(() => side), { color: col('#d8f0a0'), colorTip: col('#f4ffb8'), uv: [0.4, 0.62, 0, 0.55], flat: true });
   }
   return B.build();
 }

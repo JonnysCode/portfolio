@@ -16,6 +16,9 @@ export function renderGuidebook(ctx, { show3d = true, onShow, onVisit } = {}) {
   const P = content.profile;
   const progress = ctx.interactions?.progress?.();
   const secrets = ctx.interactions?.secrets?.();
+  const daySecrets = ctx.interactions?.secrets?.({ by: 'day' });
+  // every daytime secret found, the night ones still waiting: a gentle hint
+  const dayDone = !!daySecrets && daySecrets.total > 0 && daySecrets.found >= daySecrets.total && secrets.found < secrets.total;
 
   const contact = h(
     'div',
@@ -82,11 +85,11 @@ export function renderGuidebook(ctx, { show3d = true, onShow, onVisit } = {}) {
       'header',
       { class: 'guide__cover' },
       h('div', { class: 'guide__kicker' }, 'The Guidebook'),
-      h('h2', { id: 'modal-title', class: 'guide__title' }, `${P.name}'s Woodland`),
+      h('h2', { id: 'modal-title', class: 'guide__title' }, `${P.name}’s Woodland`),
       h('p', { class: 'guide__tagline' }, P.tagline),
       h('p', { class: 'guide__intro' }, P.intro),
       contact,
-      show3d && progress && h('p', { class: 'guide__progress' }, h('span', { html: icon('leaf') }), `${progress.visited} of ${progress.total} stories read`, secrets?.total ? [h('span', { class: 'guide__sep' }, '·'), h('span', { html: icon('sparkle') }), `${secrets.found} of ${secrets.total} secrets found`] : null),
+      show3d && progress && h('p', { class: 'guide__progress' }, h('span', { html: icon('leaf') }), `${progress.visited} of ${progress.total} stories read`, secrets?.total ? [h('span', { class: 'guide__sep' }, '·'), h('span', { html: icon('sparkle') }), `${secrets.found} of ${secrets.total} secrets found`, dayDone ? h('span', { class: 'guide__hint' }, ' — some things only show themselves after dark (N)') : null] : null),
     ),
     toc,
     sections,

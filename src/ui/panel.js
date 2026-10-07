@@ -128,9 +128,18 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
       cutList(entry),
       entry.tags?.length && h('ul', { class: 'journal__tags', 'aria-label': 'Tags' }, entry.tags.map((t) => h('li', { class: 'paper-tag' }, t))),
       links(entry),
-      nav(entry, siblings),
+      // a sticky foot: prev/next always at hand, and a "more ↓" cue while the page scrolls on
+      h('div', { class: 'journal__foot' }, moreBtn, nav(entry, siblings)),
     ];
   }
+  const moreBtn = h('button', { class: 'journal__more', type: 'button', tabindex: '-1', 'aria-hidden': 'true', onclick: () => sheet.scrollBy({ top: sheet.clientHeight * 0.7, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }) }, 'more ', h('span', { 'aria-hidden': 'true' }, '↓'));
+  /** Is there more of the page below the fold? (the cue shows until the end is reached) */
+  function syncMore() {
+    const more = isOpen && sheet.scrollHeight - sheet.scrollTop - sheet.clientHeight > 24;
+    el.classList.toggle('has-more', more);
+  }
+  sheet.addEventListener('scroll', syncMore, { passive: true });
+  window.addEventListener('resize', () => isOpen && syncMore());
 
   const api = {
     el,
@@ -152,14 +161,23 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
         el.classList.add('is-flip');
       }
       isOpen = true;
-      // a non-modal page: Tab may still reach the spot bar & HUD (Esc closes it)
-      requestAnimationFrame(() => body.querySelector('#journal-title')?.focus?.({ preventScroll: true }));
-      body.querySelector('#journal-title')?.setAttribute('tabindex', '-1');
+      // a non-modal page: Tab may still reach the spot bar & HUD (Esc closes it).
+      // The page is visible as soon as it is open (visibility switches at once),
+      // so focus moves into it right away — and again next frame in case it wasn't yet.
+      const title = body.querySelector('#journal-title');
+      title?.setAttribute('tabindex', '-1');
+      title?.focus?.({ preventScroll: true });
+      requestAnimationFrame(() => {
+        if (isOpen && document.activeElement !== title && !el.contains(document.activeElement)) title?.focus?.({ preventScroll: true });
+        syncMore();
+      });
+      setTimeout(syncMore, 650); // after the slide-in (and the photos' layout)
+      for (const img of body.querySelectorAll('img')) img.addEventListener('load', syncMore, { once: true });
     },
     close() {
       if (!isOpen) return;
       isOpen = false;
-      el.classList.remove('is-open', 'is-flip');
+      el.classList.remove('is-open', 'is-flip', 'has-more');
       el.setAttribute('aria-hidden', 'true');
       if (lastFocus && document.contains(lastFocus) && lastFocus !== document.body) lastFocus.focus?.({ preventScroll: true });
       else ctx.engine?.renderer?.domElement?.focus?.({ preventScroll: true });
