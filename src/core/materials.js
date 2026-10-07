@@ -112,8 +112,18 @@ const cache = new Map();
 /** Materials whose emissive intensity follows the day/night cycle. */
 const nightGlowMaterials = [];
 
+/** Cache-key replacer: textures, colours and other three.js objects key by identity, never by content. */
+function keyReplacer(key, value) {
+  if (value && typeof value === 'object') {
+    if (value.isTexture) return `tex:${value.uuid}`;
+    if (value.isColor) return `col:${value.getHexString()}`;
+    if (value.uuid && (value.isMaterial || value.isObject3D || value.isBufferGeometry)) return `obj:${value.uuid}`;
+  }
+  return value;
+}
+
 function keyOf(kind, color, opts) {
-  return kind + '|' + new THREE.Color(color).getHexString() + '|' + JSON.stringify(opts || {});
+  return kind + '|' + new THREE.Color(color).getHexString() + '|' + JSON.stringify(opts || {}, keyReplacer);
 }
 
 /**
