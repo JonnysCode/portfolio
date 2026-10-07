@@ -40,26 +40,29 @@ export function makeMats(ctx) {
     /** Individual instanced shakes: weathered timber, world-mapped so every shake differs. */
     shingles: () => m.surface('timber', { triplanar: true, color: '#7a5a42' }),
     plaster: () => m.surface('plaster', { color: '#e8dbc0' }),
-    stone: (extra = {}) => m.surface('stone', extra),
-    mortar: () => m.surface('stone', { color: '#8d867a' }),
-    cobble: () => m.surface('cobble'),
-    rock: () => m.surface('rock'),
+    /** Field stone (mortar cores & chimney cores share it: one draw call for all stone). */
+    stone: () => m.surface('stone'),
     moss: () => m.surface('moss'),
-    soil: () => m.surface('soil'),
     bark: () => m.surface('bark'),
     leaf: () => m.surface('leaf', { side: THREE.DoubleSide }),
-    rope: () => m.surface('rope'),
     paper: () => m.surface('paper'),
     fabric: (color = '#c9b79a') => proxy(vcSurface('fabric'), color),
     metal: (color = '#3d3833') => proxy(vcSurface('metal'), color),
     glass: () => m.surface('glass'),
-    clay: (color = '#b5633e') => proxy(vcSurface('clay'), color),
-    mushroomCap: (color) => m.surface('mushroomCap', { color }),
-    mushroomStem: () => m.surface('mushroomStem'),
     vc: () => m.standard('#ffffff', { vertexColors: true, roughness: 0.78 }),
-    /** Warm window/lamp glows: two shared intensities keep the material count low. */
-    glow: (color, day = 0.35, night = 2.2) =>
-      day >= 0.5 ? m.glow('#ffd79a', { day: 0.85, night: 2.4 }) : day >= 0.3 ? m.glow('#ffc46e', { day: 0.4, night: 1.7 }) : m.glow('#ffa850', { day: 0.26, night: 1.35 }),
+    // tiny bits ride on shared vertex-coloured materials instead of costing a draw call each
+    /** Rope & twine: the wood grain reads as twisted fibres at this size. */
+    rope: () => proxy(vcSurface('wood'), '#b39a6c'),
+    /** Terracotta pots (tiny): painted on the shared wood material. */
+    clay: (color = '#b5633e') => proxy(vcSurface('wood'), color),
+    /** Potting soil in boxes & planters. */
+    soil: () => proxy(m.standard('#ffffff', { vertexColors: true, roughness: 0.78 }), '#3b2a1e'),
+    /**
+     * Warm window/lamp glows: two shared intensities keep the material count
+     * low — the soft amber for windows (day 0.3–0.5) and a bright pale one for
+     * lamps, bulbs and the panes that "catch the sky".
+     */
+    glow: (color, day = 0.35) => (day >= 0.3 && day < 0.5 ? m.glow('#ffc46e', { day: 0.4, night: 1.7 }) : m.glow('#ffd79a', { day: 0.85, night: 2.4 })),
   };
   /**
    * For small hotspot pieces: painted bits, fabric and glass ride on the shared
@@ -72,19 +75,27 @@ export function makeMats(ctx) {
     fabric: (color = '#c9b79a') => proxy(vcSurface('wood'), color),
     glass: () => proxy(vcSurface('wood'), '#cfe3e0'),
     clay: (color = '#b5633e') => proxy(vcSurface('wood'), color),
+    /** Steel & brass bits on a piece (plane irons, bench dogs, knobs) — painted wood at this size. */
+    metal: (color = '#3d3833') => proxy(vcSurface('wood'), color),
   };
   return mats;
 }
 
-/** Average (sRGB) colour of each wood species — the vertex colour on the shared wood material. */
+/**
+ * Average (sRGB) colour of each wood species — the vertex colour on the shared
+ * wood material. Kept a touch cooler and less saturated than the raw timber
+ * because the golden post grade warms everything: oak a greyish tan, walnut a
+ * cool chocolate, ash pale and greyish, cherry clearly red-brown, maple cream,
+ * spruce straw, beech pinkish.
+ */
 export const SPECIES = {
-  oak: '#a28462',
-  walnut: '#5c4537',
-  spruce: '#c5b08e',
-  ash: '#bfae90',
-  cherry: '#905e45',
-  maple: '#d0c2a4',
-  beech: '#ad9882',
+  oak: '#9c8a70',
+  walnut: '#54433a',
+  spruce: '#cdbd9a',
+  ash: '#cbc3b0',
+  cherry: '#93594a',
+  maple: '#d9ccb2',
+  beech: '#b39a85',
 };
 
 // ─── batching ────────────────────────────────────────────────────────────────
@@ -190,9 +201,12 @@ export class Batch {
    * Merge everything into meshes added to `parent`. Returns the meshes.
    * opts.mergeShadow: put a material's casting and non-casting parts into ONE
    * casting mesh (fewer draw calls for small hotspot pieces).
+   * opts.noCast: materials whose merged mesh never casts (small details).
+   * opts.cast: false → nothing in this batch casts.
    */
-  build(parent, name = 'batch', { mergeShadow = false, keepSplit = [] } = {}) {
+  build(parent, name = 'batch', { mergeShadow = false, keepSplit = [], noCast = [], cast = true } = {}) {
     const out = [];
+    const quiet = new Set(noCast.map((m) => (m.isProxy ? m.material : m).uuid));
     if (mergeShadow) {
       const merged = new Map();
       const split = new Set(keepSplit.map((m) => (m.isProxy ? m.material : m).uuid));
@@ -219,7 +233,7 @@ export class Batch {
       this.tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
       const mesh = new THREE.Mesh(g, e.material);
       mesh.name = `${name}:${e.material.name || 'mat'}`;
-      mesh.castShadow = e.cast;
+      mesh.castShadow = cast && e.cast && !quiet.has(e.material.uuid);
       mesh.receiveShadow = e.receive;
       mesh.matrixAutoUpdate = false;
       parent.add(mesh);
@@ -476,7 +490,7 @@ export function stoneGeo(rng, { r = 0.2, sx = 1, sy = 0.6, sz = 1, lump = 0.22, 
 
 /** A soft moss cushion (flattened lumpy blob), sitting on y = 0. */
 export function mossGeo(rng, { r = 0.25, h = 0.08, sx = 1, sz = 1 } = {}) {
-  let g = new THREE.SphereGeometry(1, 9, 5, 0, Math.PI * 2, 0, Math.PI / 2);
+  let g = new THREE.SphereGeometry(1, 7, 4, 0, Math.PI * 2, 0, Math.PI / 2);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -550,7 +564,7 @@ export function ivyLeaf(size = 0.08) {
     s.bezierCurveTo(0.0, 1.0, 0.12, 0.9, 0.18, 0.72);
     s.bezierCurveTo(0.22, 0.62, 0.38, 0.62, 0.5, 0.5);
     s.bezierCurveTo(0.62, 0.32, 0.35, 0.05, 0, 0);
-    const g = new THREE.ShapeGeometry(s, 3);
+    const g = new THREE.ShapeGeometry(s, 2);
     deform(g, (v) => {
       v.z = -(v.x * v.x) * 0.35 + Math.sin(v.y * 3) * 0.04;
     });
@@ -588,7 +602,7 @@ export function addIvy(F, mats, rng, start, dir, { length = 1.2, droop = 0.6, si
     d.addScaledVector(nrm, -d.dot(nrm)).normalize();
     p.addScaledVector(d, step);
   }
-  F.add(mats.bark(), tube(pts, 0.006, 3), { cast: false });
+  F.add(mats.bark(), tube(pts, 0.006, 3, pts.length), { cast: false });
   const leafMat = mats.leaf();
   const count = Math.round(n * 0.9 * density * leafy);
   const lm = new THREE.Matrix4();
@@ -613,12 +627,13 @@ export function addIvy(F, mats, rng, start, dir, { length = 1.2, droop = 0.6, si
 /** Tiny toadstool (cap + stem + spots) into the vc layer. Returns nothing. */
 export function addToadstool(F, mats, rng, x, y, z, { size = 0.1, color = '#c9352a', lean = 0.15 } = {}) {
   const h = size * rng.range(1.0, 1.7);
-  const stem = new THREE.CylinderGeometry(size * 0.16, size * 0.22, h, 6, 1);
+  // open-ended stem (its ends hide in the soil and under the cap)
+  const stem = new THREE.CylinderGeometry(size * 0.16, size * 0.22, h, 6, 1, true);
   stem.translate(0, h / 2, 0);
-  const cap = new THREE.SphereGeometry(size * 0.55, 9, 5, 0, Math.PI * 2, 0, Math.PI / 2);
+  const cap = new THREE.SphereGeometry(size * 0.55, 8, 3, 0, Math.PI * 2, 0, Math.PI / 2);
   cap.scale(1, 0.65 + rng.next() * 0.3, 1);
   cap.translate(0, h, 0);
-  const gill = new THREE.CircleGeometry(size * 0.53, 9);
+  const gill = new THREE.CircleGeometry(size * 0.53, 8);
   gill.rotateX(Math.PI / 2);
   gill.translate(0, h + 0.002, 0);
   const rx = rng.jitter(lean), rz = rng.jitter(lean);
@@ -631,7 +646,7 @@ export function addToadstool(F, mats, rng, x, y, z, { size = 0.1, color = '#c935
   if (color !== '#b98a4e') {
     for (let i = 0; i < 4; i++) {
       const a = rng.next() * Math.PI * 2, el = rng.range(0.35, 1.1);
-      const sp = new THREE.SphereGeometry(size * 0.07, 4, 3);
+      const sp = new THREE.SphereGeometry(size * 0.075, 4, 2);
       const rr = size * 0.55;
       sp.translate(Math.cos(a) * Math.cos(el) * rr, h + Math.sin(el) * rr * 0.75, Math.sin(a) * Math.cos(el) * rr);
       xf(sp, [x, y, z], [rx, 0, rz]);
@@ -674,7 +689,7 @@ export { noiseA, noiseB };
  * plane: width along X, length along +Y (butt at y = 0), facing +Z.
  */
 export function shingleGeo(w = 0.2, l = 0.34, t = 0.022) {
-  const g = new THREE.BoxGeometry(w, l, t, 2, 2, 1);
+  const g = new THREE.BoxGeometry(w, l, t, 2, 1, 1);
   g.translate(0, l / 2, 0);
   deform(g, (v) => {
     const xn = v.x / (w / 2);
@@ -695,6 +710,15 @@ export function shingleGeo(w = 0.2, l = 0.34, t = 0.022) {
     uv[i * 2 + 1] = pos.getY(i) / l;
   }
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  // keep only what can ever be seen: the face, the butt edge and the two
+  // sides (the top edge hides under the next course, the back lies on the
+  // roof boards) → 12 triangles per shake
+  const keep = new Set([0, 1, 3, 4]); // BoxGeometry groups: px nx py ny pz nz
+  const src = g.index.array;
+  const idx = [];
+  for (const gr of g.groups) if (keep.has(gr.materialIndex)) for (let i = gr.start; i < gr.start + gr.count; i++) idx.push(src[i]);
+  g.setIndex(idx);
+  g.clearGroups();
   return g;
 }
 
@@ -721,7 +745,9 @@ export class ShingleField {
     }
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.castShadow = true;
+    // the roof boards under the shakes cast the roof's shadow; the 2.7k shakes
+    // only receive (keeps them out of the shadow pass)
+    mesh.castShadow = false;
     mesh.receiveShadow = true;
     mesh.name = 'shingles';
     mesh.computeBoundingSphere();

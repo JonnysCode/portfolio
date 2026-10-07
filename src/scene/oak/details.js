@@ -317,9 +317,9 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
     // crosses the night bloom threshold, so each bulb gets a modest glow, not a blob
     warmGlow: materials.glow('#ffa443', { day: 0.4, night: 1.7 }),
     lanternGlass: materials.glow('#ffa443', { day: 0.3, night: 1.6 }),
-    windowGlass: materials.glow('#ffad55', { day: 0.3, night: 1.25 }),
+    windowGlass: materials.glow('#ffad55', { day: 0.3, night: 1.15 }),
     bulbA: materials.glow('#ffa53f', { day: 0.45, night: 1.85 }),
-    bulbB: materials.glow('#ffbd5e', { day: 0.45, night: 1.55 }),
+    bulbB: materials.glow('#ffb04c', { day: 0.45, night: 1.5 }),
     wire: materials.standard('#3b3633', { roughness: 0.8 }),
   };
 
@@ -332,19 +332,20 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
     [241, 10.6, 4],
     [178, 7.6, 3],
     [-58, 15.2, 3],
-    // seen from the Schreinerei: above the door's festoon, and front-left
-    [-5, 5.45, 3],
-    [-36, 5.5, 4],
-    [-88, 2.2, 3],
-    [150, 2.4, 3],
-    [262, 5.2, 4],
+    // loose, overlapping clusters (cluster = true): seen from the Schreinerei
+    // above the door's festoon and front-left, and low on the old flanks
+    [-6, 5.4, 5, true],
+    [-37, 5.45, 6, true],
+    [-86, 2.1, 5, true],
+    [150, 2.3, 4, true],
+    [262, 5.0, 6, true],
   ];
-  for (const [deg, y, n] of FUNGI) {
+  for (const [deg, y, n, cluster] of FUNGI) {
     const a = deg * DEG;
     for (let i = 0; i < n; i++) {
-      const yy = y + i * 0.24 + rng.range(-0.05, 0.05);
-      const aa = a + rng.range(-0.1, 0.1) + (i % 2 ? 0.06 : -0.06);
-      const r = rng.range(0.28, 0.46) * (1 - i * 0.1);
+      const yy = cluster ? y + rng.range(0, 0.62) : y + i * 0.24 + rng.range(-0.05, 0.05);
+      const aa = cluster ? a + rng.range(-0.16, 0.16) : a + rng.range(-0.1, 0.1) + (i % 2 ? 0.06 : -0.06);
+      const r = cluster ? rng.range(0.18, 0.5) * (1.1 - (yy - y) * 0.6) : rng.range(0.28, 0.46) * (1 - i * 0.1);
       const p = polar(aa, trunkRadius(aa, yy) - 0.07, yy);
       const m = facing(p, new THREE.Vector3(Math.sin(aa), 0, Math.cos(aa)));
       m.multiply(new THREE.Matrix4().makeRotationX(rng.range(-0.08, 0.12)));
@@ -423,7 +424,8 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
 
   // ── glow-caps: tiny bioluminescent mushrooms in the crevices between roots ─
   {
-    const capGlow = materials.glow('#7fe8ff', { day: 0.12, night: 2.2 });
+    // soft cyan: just above the night bloom threshold — little lamps, not blobs
+    const capGlow = materials.glow('#7fe8ff', { day: 0.12, night: 1.45 });
     const halos = [];
     for (const [id, u, phi, big = 1] of [
       ['back', 0.3, 1.45],
@@ -458,11 +460,11 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
         B.add(capGlow, cap.translate(0, h * 0.95, 0).applyMatrix4(m));
         if (i % 2 === 0) {
           const hp = new THREE.Vector3(0, h, 0).applyMatrix4(m);
-          halos.push({ x: hp.x, y: hp.y, z: hp.z, size: 0.35 });
+          halos.push({ x: hp.x, y: hp.y, z: hp.z, size: 0.22 + 0.06 * big });
         }
       }
     }
-    if (halos.length && props.glowQuads) parent.add(props.glowQuads(halos, '#7fe8ff', { day: 0.0, night: 0.75 }));
+    if (halos.length && props.glowQuads) parent.add(props.glowQuads(halos, '#7fe8ff', { day: 0.0, night: 0.5 }));
   }
 
   // ── little round windows: someone lives up there ───────────────────────────

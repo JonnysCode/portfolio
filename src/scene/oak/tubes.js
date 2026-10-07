@@ -29,7 +29,8 @@ const UP = new THREE.Vector3(0, 1, 0);
  *  uvScale    bark texture density
  *  capEnd     close the far end with a little dome (cut branch / twig tip)
  *  arc        [φ0, φ1] build only part of the circumference (φ = 0 is the "top" N axis) — moss caps
- *  shell(φ, s, t) extra outward offset (world units) after the relief — moss caps
+ *  shell(φ, s, t, x, y, z) extra outward offset (world units) after the relief — moss caps
+ *             (x, y, z = the relief surface point before the offset)
  */
 export function organicTube(o) {
   const {
@@ -98,7 +99,7 @@ export function organicTube(o) {
       let z = P.z + (N.z * c * sz.h + B.z * sn * sz.w) * k;
       if (shell) {
         // push along the cross-section's outward direction (ellipse normal)
-        const off = shell(phi, s, t);
+        const off = shell(phi, s, t, x, y, z);
         const ox = N.x * c * sz.w + B.x * sn * sz.h;
         const oy = N.y * c * sz.w + B.y * sn * sz.h;
         const oz = N.z * c * sz.w + B.z * sn * sz.h;

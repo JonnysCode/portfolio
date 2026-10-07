@@ -19,7 +19,7 @@
 import * as THREE from 'three';
 import { OAK, oakRadiusAt } from '../../world/layout.js';
 import { createRng } from '../../core/rng.js';
-import { Batch, board, uvBox, xf, deform, mat4, mossGeo, tube, archShape, arcSegment, addIvy, addToadstool, addLantern, peg, noiseA, noiseB } from './kit.js';
+import { Batch, board, uvBox, xf, deform, mat4, mossGeo, tube, archShape, arcSegment, addIvy, addToadstool, addLantern, pushHalo, peg, noiseA, noiseB } from './kit.js';
 
 /** Door dimensions (exported so others can align to it). */
 export const DOOR = {
@@ -174,7 +174,7 @@ export function buildDoor(ctx, B, mats) {
       v.z += wob * Math.sin(((v.y - y0) / (Hs + R)) * Math.PI);
     });
     uvBox(g, 'y', undefined, [rng.next() * 9, rng.next() * 9]);
-    leaf.add(oak, g, { color: i % 2 ? '#9a7352' : '#8c6846' });
+    leaf.add(oak, g, { color: i % 2 ? '#957558' : '#87694d' });
   }
   // inside ledges + a diagonal brace (Z), hidden mostly but honest
   for (const ly of [leafBottom + 0.22, archY - 0.05]) leaf.add(oak, xf(board(LW - 0.12, 0.12, 0.035, { along: 'x', rng }), [0, ly, -0.02]));
@@ -424,20 +424,40 @@ export function buildDoor(ctx, B, mats) {
   }
 
   // ── the EFZ certificate under its little roof (hotspot) ────────────────────
+  // An important credential: big enough to read from the woodworking close
+  // view, at eye height beside the door, lit by a little brass picture lamp.
   const cert = makeCertificate(ctx, mats.piece, rng);
   {
-    const cx = R + F + 1.03, cy = 1.32;
-    const mount = barkMount(ctx, cx, cy, { spreadA: 0.09, spreadY: 0.32 });
+    const cx = R + F + 1.1, cy = 1.42;
+    const mount = barkMount(ctx, cx, cy, { spreadA: 0.12, spreadY: 0.4 });
     const yaw = mount.a;
-    cert.position.copy(mount.point).addScaledVector(mount.normal, 0.09);
+    cert.position.copy(mount.point).addScaledVector(mount.normal, 0.1);
     cert.rotation.y = yaw;
+    cert.userData.yaw = yaw;
     group.add(cert);
+    const { bw, bh, roofTop } = cert.userData;
+    const at = (x, y, z) => new THREE.Vector3(x, y, z).applyEuler(cert.rotation).add(cert.position);
     // two little brackets into the bark
     for (const s of [-1, 1]) {
-      const p = new THREE.Vector3(s * 0.2, -0.26, -0.1).applyEuler(cert.rotation).add(cert.position);
-      const q = new THREE.Vector3(s * 0.2, -0.26, -0.45).applyEuler(cert.rotation).add(cert.position);
-      B.add(oakDark, xf(board(0.04, 0.05, 0.42, { along: 'z', rng }), [(p.x + q.x) / 2, p.y, (p.z + q.z) / 2], [0, yaw, 0]), { cast: false });
+      const p = at(s * bw * 0.32, -bh / 2 + 0.03, -0.1);
+      const q = at(s * bw * 0.32, -bh / 2 + 0.03, -0.55);
+      B.add(oakDark, xf(board(0.045, 0.055, 0.5, { along: 'z', rng }), [(p.x + q.x) / 2, p.y, (p.z + q.z) / 2], [0, yaw, 0]), { cast: false });
     }
+    // brass picture lamp on a swan-neck arm under the eave (merged into the
+    // shared metal & lamp-glow meshes: no extra draw call)
+    const brass = mats.metal('#b8893a');
+    const ly = roofTop - 0.2;
+    const arm = [at(0, ly - 0.02, 0.0), at(0, ly + 0.02, 0.1), at(0, ly - 0.04, 0.2)].map((v) => [v.x, v.y, v.z]);
+    B.add(brass, tube(arm, 0.009, 4, 8), { cast: false });
+    const hood = new THREE.CylinderGeometry(0.045, 0.045, bw * 0.5, 10, 1, false, 0, Math.PI);
+    hood.rotateZ(Math.PI / 2).rotateX(-0.5);
+    const hp = at(0, ly - 0.06, 0.21);
+    B.add(brass, xf(hood, [hp.x, hp.y, hp.z], [0, yaw, 0]), { cast: false });
+    const bulb = new THREE.CylinderGeometry(0.018, 0.018, bw * 0.46, 8);
+    bulb.rotateZ(Math.PI / 2);
+    const bp = at(0, ly - 0.075, 0.205);
+    B.add(mats.glow('#ffd79a', 0.9), xf(bulb, [bp.x, bp.y, bp.z], [0, yaw, 0]), { cast: false, receive: false });
+    pushHalo(at(0, ly - 0.12, 0.2), 0.32);
   }
 
   // ── ivy creeping over the collar and down the bark ─────────────────────────
@@ -461,10 +481,13 @@ export function buildDoor(ctx, B, mats) {
   spill.position.set(OAK.door.x + 0.15, 0.003, DOOR.z + 0.15);
   group.add(spill);
 
+  const paper = cert.userData.paper;
   function update(dt, t) {
     const n = ctx.env?.night ?? 0;
     glimpse.emissiveIntensity = 0.55 + n * 1.6 + Math.sin(t * 7.3) * 0.03 * n + Math.sin(t * 13.1) * 0.02 * n;
     spill.material.uniforms.uK.value = 0.05 + n * 0.6;
+    // the parchment catches the picture lamp (a little by day, warmly at night)
+    paper.emissiveIntensity = 0.3 + n * 0.45;
   }
 
   return {
@@ -640,88 +663,105 @@ function makeSpill(ctx) {
 /**
  * The Schreiner EFZ certificate: parchment with text & a red seal in an oak
  * frame, on a backing board under a tiny shingled roof. Its own group (hotspot).
+ * Sized to be readable from the woodworking views (≈ 0.8 × 0.6 framed).
+ * userData: { paper (its material), bw, bh (backing board), roofTop (local y) }.
  */
 function makeCertificate(ctx, mats, rng) {
   const g = new THREE.Group();
   g.name = 'efz-certificate';
   const B = new Batch();
-  const W = 0.46, H = 0.34;
-  // backing board + roof
-  B.add(mats.wood('spruce'), board(W + 0.16, H + 0.22, 0.04, { along: 'y', rng }).translate(0, 0.0, -0.04));
+  const W = 0.68, H = 0.49; // the paper
+  const fw = 0.045; // frame width
+  const bw = W + fw * 2 + 0.14, bh = H + fw * 2 + 0.16; // backing board
+  // backing board
+  B.add(mats.wood('spruce'), board(bw, bh, 0.04, { along: 'y', rng }).translate(0, 0.0, -0.045));
   // a little gable roof: two boards, each covered with three rows of tiny shingles
-  const apex = new THREE.Vector3(0, H / 2 + 0.3, 0.03);
+  const ridge = bw / 2 + 0.08; // half-span of the roof along its slope
+  const apex = new THREE.Vector3(0, bh / 2 + 0.28, 0.03); // eaves just clear the board's top corners
   for (const s of [-1, 1]) {
     // roof-board frame: x down the slope, y = board normal, z along the ridge
-    const M = new THREE.Matrix4().makeRotationZ(-s * 0.55);
+    const M = new THREE.Matrix4().makeRotationZ(-s * 0.5);
     if (s < 0) M.multiply(new THREE.Matrix4().makeScale(-1, 1, 1));
     M.setPosition(apex);
-    const roof = board(0.36, 0.022, 0.2, { along: 'x', rng });
-    B.add(mats.wood('walnut'), roof.translate(0.17, 0, 0).applyMatrix4(M));
+    const roof = board(ridge, 0.026, 0.24, { along: 'x', rng });
+    B.add(mats.wood('walnut'), roof.translate(ridge / 2, 0, 0).applyMatrix4(M));
     for (let row = 0; row < 3; row++) {
-      for (let k = 0; k < 5; k++) {
-        const sh = board(0.075, 0.008, 0.045, { along: 'x', rng, r: 0.002 });
-        sh.translate(0.34 - row * 0.1 - 0.035, 0.016 + (2 - row) * 0.004, -0.09 + k * 0.045 + (row % 2) * 0.022);
-        sh.rotateZ(0.0);
-        B.add(mats.wood('oak'), sh.applyMatrix4(M), { cast: false, color: k % 2 ? '#8a6a4a' : '#9a7a55' });
+      const n = 6;
+      for (let k = 0; k < n; k++) {
+        const sh = board(ridge * 0.36, 0.009, 0.24 / n + 0.004, { along: 'x', rng, r: 0.002 });
+        sh.translate(ridge - row * ridge * 0.3 - ridge * 0.18, 0.018 + (2 - row) * 0.004, -0.12 + (k + 0.5) * (0.24 / n) + (row % 2) * 0.01);
+        B.add(mats.wood('oak'), sh.applyMatrix4(M), { cast: false, color: k % 2 ? '#7d6a55' : '#8f7a60' });
       }
     }
   }
-  // oak frame with mitred corners
-  const fw = 0.035;
+  // oak frame with mitred corners (darker, so the parchment pops)
   for (const [x, y, w, h] of [[0, H / 2 + fw / 2, W + fw * 2, fw], [0, -H / 2 - fw / 2, W + fw * 2, fw], [-W / 2 - fw / 2, 0, fw, H], [W / 2 + fw / 2, 0, fw, H]]) {
-    B.add(mats.wood('oak'), board(w, h, 0.035, { along: w > h ? 'x' : 'y', rng, r: 0.006 }).translate(x, y, 0.0));
+    B.add(mats.wood('walnut'), board(w, h, 0.04, { along: w > h ? 'x' : 'y', rng, r: 0.007 }).translate(x, y, 0.0));
+  }
+  // a thin gilt slip inside the frame
+  for (const [x, y, w, h] of [[0, H / 2 + 0.004, W + 0.012, 0.008], [0, -H / 2 - 0.004, W + 0.012, 0.008], [-W / 2 - 0.004, 0, 0.008, H], [W / 2 + 0.004, 0, 0.008, H]]) {
+    B.add(mats.metal('#c9a04a'), new THREE.BoxGeometry(w, h, 0.012).translate(x, y, 0.012), { cast: false });
   }
   B.build(g, 'certificate', { mergeShadow: true });
-  // the paper (canvas texture)
+  // the paper (canvas texture): few, large, high-contrast words
   const c = document.createElement('canvas');
-  c.width = 512;
-  c.height = 380;
+  c.width = 1024;
+  c.height = Math.round((1024 * H) / W);
   const x = c.getContext('2d');
-  x.fillStyle = '#f4ead2';
-  x.fillRect(0, 0, 512, 380);
+  const cw = c.width, ch = c.height;
+  x.fillStyle = '#f7eed8';
+  x.fillRect(0, 0, cw, ch);
   // aged edges
-  const e = x.createRadialGradient(256, 190, 120, 256, 190, 330);
+  const e = x.createRadialGradient(cw / 2, ch / 2, ch * 0.35, cw / 2, ch / 2, cw * 0.62);
   e.addColorStop(0, 'rgba(0,0,0,0)');
-  e.addColorStop(1, 'rgba(150,110,60,0.35)');
+  e.addColorStop(1, 'rgba(150,110,60,0.3)');
   x.fillStyle = e;
-  x.fillRect(0, 0, 512, 380);
-  x.strokeStyle = '#b08a4a';
-  x.lineWidth = 4;
-  x.strokeRect(18, 18, 476, 344);
-  x.lineWidth = 1.5;
-  x.strokeRect(28, 28, 456, 324);
-  x.fillStyle = '#3b2a1e';
+  x.fillRect(0, 0, cw, ch);
+  // double border
+  x.strokeStyle = '#a77d3c';
+  x.lineWidth = 9;
+  x.strokeRect(26, 26, cw - 52, ch - 52);
+  x.lineWidth = 3;
+  x.strokeRect(44, 44, cw - 88, ch - 88);
+  x.fillStyle = '#2b1d14';
   x.textAlign = 'center';
-  x.font = '600 26px "Fredoka", sans-serif';
-  x.fillText('EIDGENÖSSISCHES FÄHIGKEITSZEUGNIS', 256, 82);
-  x.font = '600 64px "Fredoka", sans-serif';
-  x.fillText('Schreiner EFZ', 256, 168);
-  x.font = '400 26px "Patrick Hand", cursive';
-  x.fillText('Möbel- & Innenausbau', 256, 212);
+  x.textBaseline = 'alphabetic';
+  x.font = '600 38px "Fredoka", sans-serif';
+  x.fillText('EIDGENÖSSISCHES FÄHIGKEITSZEUGNIS', cw / 2, 118);
+  x.font = '700 150px "Fredoka", sans-serif';
+  x.fillText('Schreiner EFZ', cw / 2, 290);
+  x.font = '400 54px "Patrick Hand", cursive';
+  x.fillStyle = '#4a3324';
+  x.fillText('Möbel- & Innenausbau', cw / 2, 370);
+  // signature line + name, and the red seal with the Swiss cross
   x.strokeStyle = '#6b4430';
-  x.lineWidth = 1.2;
-  for (const lx of [90, 330]) {
-    x.beginPath();
-    x.moveTo(lx, 300);
-    x.lineTo(lx + 100, 300);
-    x.stroke();
-  }
-  x.font = '400 30px "Patrick Hand", cursive';
-  x.fillText('Jonny', 140, 292);
-  // red seal with a Swiss cross
+  x.lineWidth = 2.5;
+  x.beginPath();
+  x.moveTo(150, 600);
+  x.lineTo(430, 600);
+  x.stroke();
+  x.fillStyle = '#2b1d14';
+  x.font = '400 80px "Patrick Hand", cursive';
+  x.fillText('Jonny', 290, 585);
   x.fillStyle = '#c4271c';
   x.beginPath();
-  x.arc(256, 292, 36, 0, Math.PI * 2);
+  x.arc(cw - 250, ch - 175, 82, 0, Math.PI * 2);
   x.fill();
+  x.strokeStyle = '#8f1a12';
+  x.lineWidth = 5;
+  x.stroke();
   x.fillStyle = '#ffffff';
-  x.fillRect(250, 274, 12, 36);
-  x.fillRect(238, 286, 36, 12);
+  x.fillRect(cw - 250 - 14, ch - 175 - 46, 28, 92);
+  x.fillRect(cw - 250 - 46, ch - 175 - 14, 92, 28);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
-  const paper = new THREE.Mesh(new THREE.PlaneGeometry(W, H), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9, name: 'efz-paper' }));
-  paper.position.z = 0.005;
+  // self-lit a little (the picture lamp) so it stays legible in the oak's shade
+  const paperMat = new THREE.MeshStandardMaterial({ map: tex, emissive: '#fff4dc', emissiveMap: tex, emissiveIntensity: 0.3, roughness: 0.9, name: 'efz-paper' });
+  const paper = new THREE.Mesh(new THREE.PlaneGeometry(W, H), paperMat);
+  paper.position.z = 0.006;
   paper.name = 'efz-paper';
   g.add(paper);
+  g.userData = { paper: paperMat, bw, bh, roofTop: apex.y + 0.04 };
   return g;
 }

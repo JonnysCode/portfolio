@@ -76,7 +76,9 @@ export const SCHREINEREI = {
 /** Jonny's cottage cluster (tall conical red mushroom houses), front-left. */
 export const COTTAGE = {
   home: { x: -15, z: 4, rotY: 0.55 }, // Jonny's own house (about & contact)
-  atelier: { x: -11.2, z: 10.2, rotY: 0.35 }, // the Wohnatelier (interior design) — open/cutaway side
+  // the Wohnatelier (interior design) — opened like a dollhouse; it stands behind-left of Jonny's
+  // house (forming a cluster from the glen) with its open front towards the 'interior' spot camera
+  atelier: { x: -21.5, z: 2.5, rotY: -0.3 },
   shed: { x: -19, z: 9.5, rotY: 0.9 }, // a tiny third mushroom (garden shed)
 };
 
@@ -188,8 +190,8 @@ export const SPOTS = [
     subtitle: 'Interior design',
     icon: '🛋️',
     areas: ['interior'],
-    focus: [-11.2, 1.8, 10.2],
-    camera: { position: [-5.5, 4, 17.5], target: [-11.2, 2, 10.2], fov: 40 },
+    focus: [-21.5, 1.8, 2.5],
+    camera: { position: [-24.6, 3.8, 12.6], target: [-21.4, 2.0, 2.8], fov: 40 },
   },
   {
     id: 'bikes',

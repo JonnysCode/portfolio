@@ -26,7 +26,8 @@ import {
 import { local, hitProxy, pot, stringLights, flagstones } from './garden.js';
 
 /** The atelier faces the 'interior' spot camera (its open front looks this way). */
-export const ATELIER_ROT = 0.6;
+/** Facing of the opened-up front (from layout.js, so the 'interior' spot camera looks straight in). */
+export const ATELIER_ROT = COTTAGE.atelier.rotY ?? 0.6;
 
 const PALETTE = {
   sage: '#7a9273',

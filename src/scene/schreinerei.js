@@ -22,7 +22,7 @@
 //   togglePlaying(), get playing, anchors: { chimneyTop, lantern, sign } }.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { SCHREINEREI } from '../world/layout.js';
+import { SCHREINEREI, SPOTS } from '../world/layout.js';
 import { Batch, makeMats, takeHalos } from './schreinerei/kit.js';
 import { buildDoor } from './schreinerei/door.js';
 import { buildAnnex, ANNEX } from './schreinerei/annex.js';
@@ -45,7 +45,15 @@ export default async function build(ctx) {
   const yard = buildYard(ctx, B, mats);
 
   // ── hotspots (every one frames its piece when its entry opens) ────────────
-  ctx.interactions.add(door.cert, { entryId: 'efz-certificate', area, focus: { distance: 2.4, height: 0.1 } });
+  // the certificate is framed straight on (the rig looks from the spot
+  // camera's side; turn that into the certificate's own facing)
+  const certFocus = { distance: 1.75, height: 0.08, polar: 1.42 };
+  {
+    const cam = SPOTS.find((s) => s.id === area)?.camera.position;
+    const p = door.cert.position;
+    if (cam) certFocus.azimuth = wrapAngle(door.cert.userData.yaw - Math.atan2(cam[0] - p.x, cam[2] - p.z));
+  }
+  ctx.interactions.add(door.cert, { entryId: 'efz-certificate', area, focus: certFocus });
   ctx.interactions.add(porch.bench, { entryId: 'workbench-wip', area, focus: { distance: 3, height: 0.5 } });
   ctx.interactions.add(deck.table, { entryId: 'dining-table', area, focus: { distance: 3.4, height: 0.5 } });
   ctx.interactions.add(deck.cabinet, { entryId: 'record-cabinet', area, focus: { distance: 2.6, height: 0.3 } });
@@ -62,9 +70,18 @@ export default async function build(ctx) {
   });
 
   // ── merge everything static: one mesh per material ───────────────────────
-  // (wood keeps its many tiny non-casting parts in a separate mesh)
-  B.build(root, 'schreinerei', { mergeShadow: true, keepSplit: [mats.wood('oak')] });
+  // (wood keeps its many tiny non-casting parts in a separate mesh). Only the
+  // big structural layers cast shadows: wood, timber, stone, bark, plaster —
+  // ironwork, painted bits, moss, leaves and glows never do.
+  B.build(root, 'schreinerei', {
+    mergeShadow: true,
+    keepSplit: [mats.wood('oak')],
+    noCast: [mats.metal(), mats.vc(), mats.moss(), mats.leaf(), mats.glow('#ffd79a', 0.9), mats.glow('#ffc46e', 0.4)],
+  });
   annex.shingles.build(annex.group, mats.shingles());
+  // small hotspot pieces only receive (the bench, the dining table, the
+  // armchair and the characters keep their contact shadows)
+  for (const o of [door.cert, deck.cabinet, deck.player, deck.coffee, deck.cat]) noShadow(o);
   // every lantern, bulb and window halo of the Schreinerei in ONE additive mesh
   const halos = takeHalos();
   if (halos.length) root.add(ctx.props.glowQuads(halos, '#ffc46e', { day: 0.04, night: 0.42 }));
@@ -96,4 +113,14 @@ export default async function build(ctx) {
       for (const u of updates) u(dt, t);
     },
   };
+}
+
+function noShadow(obj) {
+  obj?.traverse((o) => {
+    if (o.isMesh) o.castShadow = false;
+  });
+}
+
+function wrapAngle(a) {
+  return Math.atan2(Math.sin(a), Math.cos(a));
 }

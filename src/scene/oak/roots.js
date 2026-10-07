@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { getHeight } from '../../world/ground.js';
-import { ROOTS, DEG, CX, CZ, polar, trunkRadius } from './shape.js';
+import { ROOTS, DEG, CX, CZ, polar, trunkRadius, baseRadius, certZone } from './shape.js';
 import { organicTube, smoothTable } from './tubes.js';
 import { createNoise3D } from './noise3.js';
 import { smoothstep, clamp } from '../../core/rng.js';
@@ -130,7 +130,7 @@ export function buildRoots() {
         ...tubeOpts,
         radial: root.thin ? 7 : 14,
         arc: [-1.45, 1.45],
-        shell: (phi, s, t) => {
+        shell: (phi, s, t, x, y, z) => {
           size(t, sz, curve.getUtoTmapping(t));
           const top = Math.cos(phi);
           const n = nMoss(s * 0.42 + ri * 7.1, phi * 0.7, ri * 3.3);
@@ -140,7 +140,12 @@ export function buildRoots() {
           let m = ((top - 0.45) / 0.55) * (0.55 + 0.8 * n) + 0.24 * n + 0.15 * n2 - 0.1;
           m -= smoothstep(0.82, 1, t) * 0.7; // the tip plunges into bare soil
           if (root.thin) m -= 0.1;
-          if (root.id === 'front-right') m -= 0.1; // the mouse door's root stays a bit barer
+          if (root.id === 'front-right') {
+            m -= 0.1; // the mouse door's root stays a bit barer
+            // …and no moss cushion in front of the Schreinerei's EFZ certificate
+            const rr = Math.hypot(x - CX, z - CZ);
+            if (z > CZ && rr < baseRadius(Math.max(y, 0)) + 1.6) m -= certZone(Math.atan2(x - CX, z - CZ), y, 0.45) * 1.4;
+          }
           const k = clamp(sz.w / 0.55, 0.35, 1.1);
           return Math.max(m, -0.5) * 0.12 * k;
         },
