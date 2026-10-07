@@ -16,7 +16,7 @@
 //                         stepping stones, path lanterns, ground cover
 //   schreinerei/kit.js    shared geometry helpers + per-material Batch merging,
 //                         tools (frame saw, hand saw, F-clamp), lantern posts
-//   schreinerei/fx.js     chimney smoke, plane shavings, floating notes, motes
+//   schreinerei/fx.js     plane shavings, floating notes, sawdust motes
 //
 // Static geometry of every builder lands in ONE Batch (merged per material);
 // hotspot pieces are their own small groups so the interaction "boing" works.

@@ -27,6 +27,25 @@ export const TAU = Math.PI * 2;
 export const noiseA = createNoise2D(5113);
 export const noiseB = createNoise2D(80021);
 
+// ─── level of detail ─────────────────────────────────────────────────────────
+/**
+ * Geometry detail for the quality tier (high 1, medium 0.6, low 0.4), set once
+ * at the start of the riverside build: stones, cushions, moss, boulders,
+ * ivy stems and heightfields scale their subdivision by it. (Builds are
+ * synchronous, so a module-level value is safe.)
+ */
+export const LOD = { k: 1, tier: 'high', shadows: true };
+export function setDetail(tier = 'high', { shadows = true } = {}) {
+  LOD.tier = tier;
+  LOD.k = tier === 'low' ? 0.4 : tier === 'medium' ? 0.6 : 1;
+  LOD.shadows = shadows;
+  return LOD.k;
+}
+/** A segment count scaled by the tier's detail (never below `min`). */
+export const segs = (n, min = 3) => Math.max(min, Math.round(n * LOD.k));
+/** An icosahedron subdivision level stepped down on the lower tiers (never below `min`). */
+export const icoDetail = (d, min = 1) => Math.max(min, d - (LOD.k < 0.5 ? 2 : LOD.k < 0.8 ? 1 : 0));
+
 /** Stone tints (sRGB) for dressed stones and boulders: warm greys, ochres, a few cool ones. */
 export const STONE_TINTS = ['#b7aa92', '#a89f8e', '#9d968a', '#b9a07a', '#8f887c', '#c2b294', '#949691', '#a8977a', '#857f75'];
 /** Cooler, darker river stones (wet). */
@@ -537,7 +556,7 @@ export function rod(a, b, r1, r2 = r1, radial = 6, open = false) {
 /** A lumpy stone (flattened noisy icosphere). opts: { r, sx, sy, sz, lump, detail, flatTop, flatBottom } */
 export function stoneGeo(rng, { r = 0.2, sx = 1, sy = 0.6, sz = 1, lump = 0.22, detail = 1, flatTop = 0.55, flatBottom = -0.6, uvScale = 1.6, sphere = null } = {}) {
   // (sphere: [widthSegments, heightSegments] — a cheaper tessellation than icosahedron detail 2)
-  let g = sphere ? new THREE.SphereGeometry(1, sphere[0], sphere[1]) : new THREE.IcosahedronGeometry(1, detail);
+  let g = sphere ? new THREE.SphereGeometry(1, segs(sphere[0], 6), segs(sphere[1], 4)) : new THREE.IcosahedronGeometry(1, detail >= 2 ? icoDetail(detail) : detail);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -580,7 +599,7 @@ export function blockStone(rng, w, h, d, lump = 0.12) {
  * horizontal strata ledges. Size w × h × d, centred on its base (y = 0 bottom).
  */
 export function boulderGeo(rng, w, h, d, { strata = 3, lump = 0.18, detail = 3, round = 0.55 } = {}) {
-  let g = new THREE.IcosahedronGeometry(1, detail);
+  let g = new THREE.IcosahedronGeometry(1, icoDetail(detail, detail >= 3 ? 2 : 1));
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -639,8 +658,10 @@ export function stoneTint(rng, tints = MASONRY_TINTS, spread = 1) {
  * × a lit crown and a dark, grimy rim, so every joint reads as a recessed,
  * shadowed line, plus a soft mottling. ≈ 5 · segs triangles (50 by default).
  */
-export function cushionStone(rng, w, h, proud, { color = '#8a8273', segs = 10, round = 3.2, lump = 0.1, tuck = 0.03, rim = 0.5 } = {}) {
-  const RINGS = [[0.52, 1.0], [0.86, 0.74], [1.0, 0]]; // [radius fraction, height fraction]
+export function cushionStone(rng, w, h, proud, { color = '#8a8273', segs: nSeg = 10, round = 3.2, lump = 0.1, tuck = 0.03, rim = 0.5 } = {}) {
+  // (fewer outline points and one ring less on the lower tiers)
+  const segs = Math.max(6, Math.round(nSeg * (LOD.k < 1 ? LOD.k + 0.15 : 1)));
+  const RINGS = LOD.k < 0.8 ? [[0.62, 1.0], [1.0, 0]] : [[0.52, 1.0], [0.86, 0.74], [1.0, 0]]; // [radius fraction, height fraction]
   const n = round * rng.range(0.75, 1.3);
   const ox = rng.next() * 50, oy = rng.next() * 50;
   const wob = [];
@@ -695,8 +716,8 @@ export function cushionStone(rng, w, h, proud, { color = '#8a8273', segs = 10, r
  * cushionStone: dark grimy edges & underside (`under`), a lighter crown.
  * ≈ 80 triangles.
  */
-export function roundStone(rng, w, h, d, { color = '#8a8273', box = 0.42, lump = 0.07, under = 0.4, segs = 8, rows = 6, sag = 0.05 } = {}) {
-  let g = new THREE.SphereGeometry(1, segs, rows);
+export function roundStone(rng, w, h, d, { color = '#8a8273', box = 0.42, lump = 0.07, under = 0.4, segs: nSeg = 8, rows = 6, sag = 0.05 } = {}) {
+  let g = new THREE.SphereGeometry(1, segs(nSeg, 6), segs(rows, 4));
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -744,8 +765,9 @@ export function archStone(rng, r0, r1, a0, a1, d, opts = {}) {
 }
 
 /** A soft moss cushion (flattened lumpy dome) sitting on y = 0. */
-export function mossGeo(rng, { r = 0.25, h = 0.08, sx = 1, sz = 1, seg = 8 } = {}) {
-  let g = new THREE.SphereGeometry(1, seg, seg > 8 ? 5 : 4, 0, Math.PI * 2, 0, Math.PI / 2);
+export function mossGeo(rng, { r = 0.25, h = 0.08, sx = 1, sz = 1, seg: nSeg = 8 } = {}) {
+  const seg = segs(nSeg, 5);
+  let g = new THREE.SphereGeometry(1, seg, seg > 8 ? 5 : LOD.k < 0.8 ? 3 : 4, 0, Math.PI * 2, 0, Math.PI / 2);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -991,7 +1013,8 @@ export function addIvy(F, rng, start, dir, { length = 1.2, droop = 0.6, size = 0
     d.addScaledVector(nrm, -d.dot(nrm)).normalize();
     p.addScaledVector(d, step);
   }
-  if (pts.length >= 2) F.add(M().vc, tube(pts, 0.007, 3), { color: stemColor, cast: false });
+  // (a hair-thin stem: one tube segment per step is plenty; the low tier draws only the leaves)
+  if (pts.length >= 2 && LOD.k > 0.5) F.add(M().vc, tube(pts, 0.007, 3, Math.max(4, Math.round(pts.length * (LOD.k < 1 ? 0.6 : 1)))), { color: stemColor, cast: false });
   const count = Math.round(n * 0.75 * density);
   const up = new THREE.Vector3();
   const nn = new THREE.Vector3();

@@ -27,7 +27,7 @@ import * as THREE from 'three';
 import { RIVERSIDE } from '../../world/layout.js';
 import { getHeight, getPathDistance, isInWater } from '../../world/ground.js';
 import {
-  Batch, M, TAU, WOOD, IRON, xf, mat4, deform, stoneGeo, mossGeo, paramSurface, board, boardBetween, rod, tube,
+  Batch, M, TAU, WOOD, IRON, LOD, segs, xf, mat4, deform, stoneGeo, mossGeo, paramSurface, board, boardBetween, rod, tube,
   Cards, plantFern, plantGrass, addFlower, addToadstool, addIvy, flushCards, uvPlanar, noiseA, noiseB, smooth01, sagCurve,
   cushionStone, roundStone, archStone, stoneTint, wallFern, paint, paintFn, taperTube, DRESSED_TINTS, MORTAR,
 } from './kit.js';
@@ -705,7 +705,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
     out.set(Math.sin(phi) * pt.x * wob - curl * 0.42, y - curl * 0.12, Math.cos(phi) * pt.x * wob - curl * 0.12);
     return out.applyMatrix4(LEAN);
   };
-  const capTop = paramSurface((u, v, p) => capPoint(u * TAU, v, p), 64, 28, { uv: (u, v) => [u * 4, 1 - v] });
+  const capTop = paramSurface((u, v, p) => capPoint(u * TAU, v, p), segs(64, 40), segs(28, 18), { uv: (u, v) => [u * 4, 1 - v] });
   {
     // painterly gradient: a sun-bleached orange crown, burnt orange body, deep
     // rust towards the rim — with soft blotches and faint vertical streaks
@@ -732,7 +732,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
       capPoint((i / 80) * TAU, 1, q);
       pts.push(q.clone().add(new THREE.Vector3(0, -0.035, 0)));
     }
-    const rim = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 120, 0.075, 6, true);
+    const rim = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), segs(120, 64), 0.075, segs(6, 5), true);
     F.add(MM.cap, rim, { color: '#8e3f1e' });
   }
   // gills: the underside from the wall top (which doesn't tilt) out to the
@@ -754,14 +754,14 @@ export function buildWorkshop(ctx, B, rng, halos) {
       return out.copy(_i).lerp(_o, v).setY(_i.y + (_o.y - _i.y) * v + Math.sin(v * Math.PI) * 0.1);
     };
     const RD = CAP_R + 0.1;
-    const gills = paramSurface((u, v, p) => gillAt(u * TAU, v, p), 80, 6, { uv: (u, v, p) => [p.x / (2 * RD) + 0.5, p.z / (2 * RD) + 0.5], flip: true });
+    const gills = paramSurface((u, v, p) => gillAt(u * TAU, v, p), segs(80, 48), segs(6, 4), { uv: (u, v, p) => [p.x / (2 * RD) + 0.5, p.z / (2 * RD) + 0.5], flip: true });
     // the underside casts: it closes the cap's shell, so the shadow is solid (not a ring)
     F.add(MM.gills, gills, { color: '#e3cfa8', cast: true });
     // lamellae hanging below the underside, deepest in the middle of their run
-    const nF = 110;
+    const nF = segs(110, 60);
     const pos = [], idx = [];
     const p = new THREE.Vector3();
-    const NS = 6;
+    const NS = segs(6, 4);
     for (let i = 0; i < nF; i++) {
       const phi = (i / nF) * TAU + rng.jitter(0.008);
       const depth = rng.range(0.13, 0.2);
@@ -801,7 +801,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
       capPoint(phi, v + 0.01, pv).sub(p0);
       const nrm = new THREE.Vector3().crossVectors(pv, pu).normalize();
       if (nrm.y < 0) nrm.negate();
-      const g = new THREE.SphereGeometry(1, size > 0.09 ? 8 : 6, size > 0.09 ? 3 : 2, 0, TAU, 0, Math.PI / 2);
+      const g = new THREE.SphereGeometry(1, size > 0.09 && LOD.k >= 1 ? 8 : 6, size > 0.09 && LOD.k >= 1 ? 3 : 2, 0, TAU, 0, Math.PI / 2);
       deform(g, (q) => {
         const k = 1 + 0.18 * noiseA(q.x * 2.5 + size * 97, q.z * 2.5 + placed.length);
         q.set(q.x * k, q.y, q.z * k);

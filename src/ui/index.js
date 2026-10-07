@@ -1135,7 +1135,7 @@ export function createUI(ctx) {
           'ul',
           { class: 'help__list' },
           isTouch
-            ? [row(['drag'], 'look around'), row(['pinch'], 'zoom in & out'), row(['two fingers'], 'move sideways'), row(['swipe', 'at the edge'], 'travel on to the next place'), row(['tap ✦'], 'open a journal page')]
+            ? [row(['drag'], 'look around'), row(['pinch'], 'zoom in & out'), row(['two fingers'], 'move sideways'), row(['swipe', 'swipe'], 'look round to the edge — then on to the next place'), row(['tap ✦'], 'open a journal page')]
             : [row(['drag'], 'look around'), row(['scroll'], 'zoom in & out'), row(['right-drag', 'shift-drag'], 'move sideways'), row(['click ✦'], 'open a journal page'), row(['←', '→'], 'previous / next place'), row(['1', '–', '6'], 'jump to a place'), row(['G'], 'guidebook'), row(['M'], 'map'), row(['N'], 'day & night'), row(['Esc'], 'close'), row(['Tab'], 'step through the things at a place')],
         ),
         h('p', { class: 'help__secret' }, h('span', { html: icon('sparkle') }), isTouch ? 'Not everything here has a sparkle. A few little secrets hide in the glen — tap anything that looks curious, some things answer.' : 'Not everything here has a sparkle. A few little secrets hide in the glen — hover around and see who answers.', foundAllByDay() && h('span', { class: 'help__night' }, ' Some things only show themselves after dark (N).')),

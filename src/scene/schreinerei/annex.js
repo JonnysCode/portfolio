@@ -22,7 +22,8 @@ import {
   ShingleField, layShingles, shingleGeo, addIvy, addToadstool, pushHalo, noiseA,
   addBowSaw, addHandSaw, addFClamp, turned, doubleFace,
 } from './kit.js';
-import { makeSmoke, shavingGeo } from './fx.js';
+import { shavingGeo } from './fx.js';
+import { makeChimneySmoke } from '../../props/smoke.js';
 
 const A = SCHREINEREI.annex;
 /** Annex dimensions & key heights (annex-local). */
@@ -713,7 +714,8 @@ export function buildAnnex(ctx, B, mats) {
     F.add(mats.moss(), xf(mossGeo(rng, { r: 0.2, h: 0.06 }), [chim.x + leanTop - 0.12, topY + 0.08, chim.z + 0.1]), { cast: false });
     chim.top = annexToWorld(chim.x + leanTop + 0.02, topY + 0.35, chim.z);
   }
-  const smoke = makeSmoke(ctx, { position: chim.top, count: 14, rise: 3.6, wind: [0.9, -0.3] });
+  // the glen's shared soft plume (GPU-animated, tinted by the key light)
+  const smoke = makeChimneySmoke(ctx, { position: chim.top, rise: 3.6, wind: [0.9, -0.3] });
   ctx.scene.add(smoke.object);
 
   // ── ivy & greenery on the walls ────────────────────────────────────────────

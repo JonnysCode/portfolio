@@ -28,7 +28,7 @@ import { STREAM, RIVERSIDE } from '../../world/layout.js';
 import { getHeight, getPathDistance, getPadAt, getStreamDistance, streamPolyline } from '../../world/ground.js';
 import { materials } from '../../core/materials.js';
 import {
-  M, TAU, WOOD, IRON, PEBBLE_TINTS, xf, deform, stoneGeo, mossGeo, board, rod, tube, taperTube, Cards, flushCards,
+  M, TAU, WOOD, IRON, PEBBLE_TINTS, LOD, segs, xf, deform, stoneGeo, mossGeo, board, rod, tube, taperTube, Cards, flushCards,
   plantFern, plantGrass, addFlower, addToadstool, addIvy, smooth01, paint, noiseA,
 } from './kit.js';
 import { flowAt, depthAt, calmAt } from './water.js';
@@ -129,7 +129,7 @@ function wetPaint(geo, base, yWorldOffset) {
 
 export function buildBanks(ctx, B, rng, rocks) {
   const MM = M();
-  const density = Math.max(0.5, ctx.quality?.density ?? 1);
+  const density = ctx.quality?.density ?? 1;
   const tints = ['#9d998c', '#928f83', '#a59f8e', '#8c8a80', '#a09885'];
 
   // ── boulders in the stream: river-worn and rounded, wet at the waterline ──
@@ -174,7 +174,7 @@ export function buildBanks(ctx, B, rng, rocks) {
           const xx = x + rng.jitter(0.35), zz = z + rng.jitter(0.35);
           const r = rng.range(0.08, 0.26);
           const gy = Math.max(getHeight(xx, zz), WL - 0.2);
-          const g = stoneGeo(rng, { r, sy: rng.range(0.3, 0.55), sx: rng.range(1, 1.7), sz: rng.range(0.7, 1.1), detail: 1, lump: 0.3 });
+          const g = stoneGeo(rng, { r, sy: rng.range(0.3, 0.55), sx: rng.range(1, 1.7), sz: rng.range(0.7, 1.1), detail: LOD.k < 0.5 && r < 0.17 ? 0 : 1, lump: 0.3 });
           g.rotateY(rng.next() * TAU);
           wetPaint(g, rng.pick(['#7e7c70', '#74746a', '#868174', '#6f7366']), gy);
           g.translate(xx, gy + r * 0.05, zz);
@@ -219,7 +219,7 @@ export function buildBanks(ctx, B, rng, rocks) {
       const lean = [rng.jitter(0.12), 0, rng.jitter(0.12)];
       const top = new THREE.Vector3(0, h, 0).applyEuler(new THREE.Euler(lean[0], 0, lean[2]));
       B.add(MM.vc, rod([x, gy - 0.1, z], [x + top.x, gy + top.y, z + top.z], 0.012, 0.009, 4), { color: '#6f8f3e', cast: false });
-      const hd = new THREE.CapsuleGeometry(0.045, 0.18, 3, 8);
+      const hd = new THREE.CapsuleGeometry(0.045, 0.18, LOD.k < 1 ? 2 : 3, segs(8, 5));
       xf(hd, [x + top.x * 0.86, gy + top.y * 0.86, z + top.z * 0.86], lean);
       B.add(MM.fabric, hd, { color: '#6e4128', cast: false });
       B.add(MM.vc, rod([x + top.x, gy + top.y, z + top.z], [x + top.x * 1.1, gy + top.y * 1.1, z + top.z * 1.1], 0.004, 0.002, 3), { color: '#8a7a4a', cast: false });
@@ -319,7 +319,7 @@ export function buildBanks(ctx, B, rng, rocks) {
     }
   }
 
-  buildOutlet(B, rng, reedClump);
+  buildOutlet(B, rng, reedClump, density);
   flushCards(B, reedCards, MM.reed, null, 0.3);
 }
 
@@ -329,7 +329,7 @@ export function buildBanks(ctx, B, rng, rocks) {
  * stream slips under the log into a dark, ferny hollow — never into a trench
  * with sheer walls. Reeds and cattails crowd the log's upstream face.
  */
-function buildOutlet(B, rng, reedClump) {
+function buildOutlet(B, rng, reedClump, density = 1) {
   const MM = M();
   const sLog = LENGTH - 4.0;
   const c = lineAt(sLog);
@@ -344,7 +344,7 @@ function buildOutlet(B, rng, reedClump) {
     const y = Math.abs(u) > 3 ? Math.max(gy + R * 0.45, WL + R + 0.2) : WL + R + 0.2 + 0.06 * Math.abs(u) / 1.9;
     return new THREE.Vector3(x, y, z);
   });
-  B.add(MM.wood, taperTube(axis, R * 1.08, R * 0.86, 12, 28), { color: '#5d5044' });
+  B.add(MM.wood, taperTube(axis, R * 1.08, R * 0.86, segs(12, 8), segs(28, 14)), { color: '#5d5044' });
   const A = axis[0], Z = axis[axis.length - 1];
   const dir = Z.clone().sub(A).normalize();
   // the root plate at one end: a flare of gnarled roots and a clod of earth
@@ -408,7 +408,7 @@ function buildOutlet(B, rng, reedClump) {
     return WL - 0.08 + (hb - WL + 0.08) * k + k * 0.07 * noiseOf(x * 1.9 + 3, z * 1.9) - side;
   };
   {
-    const STEP = 0.15;
+    const STEP = LOD.k >= 1 ? 0.15 : LOD.k > 0.5 ? 0.2 : 0.25;
     const x0 = c.x - 5.5, x1 = c.x + 5.5, z0 = c.z - 2.5, z1 = c.z + 10;
     const nx = Math.round((x1 - x0) / STEP), nz = Math.round((z1 - z0) / STEP);
     const W = nx + 1;
@@ -456,7 +456,7 @@ function buildOutlet(B, rng, reedClump) {
     // dress it: ferns, grass, cattails & reeds at the water, a mossy boulder or two, toadstools
     const f2 = { s: 0, u: 0, dx: 0, dz: 1 };
     let placed = 0;
-    for (let tries = 0; tries < 800 && placed < 85; tries++) {
+    for (let tries = 0; tries < 800 && placed < Math.round(85 * Math.max(0.45, density)); tries++) {
       const x = x0 + rng.next() * (x1 - x0), z = z0 + rng.next() * (z1 - z0);
       flowAt(x, z, f2);
       if (f2.s < sLog + 0.5 || Math.abs(f2.u) > 3.0) continue;
@@ -561,6 +561,7 @@ export function buildPond(ctx, B, rng) {
   const group = new THREE.Group();
   group.name = 'pond';
   ctx.scene.add(group);
+  // (the lily pads are the pond's charm: never fewer than half)
   const density = Math.max(0.5, ctx.quality?.density ?? 1);
 
   // ── lily pads (+ flowers) across the calm water ──
@@ -936,7 +937,7 @@ export function buildDrifters(ctx, rng) {
   const group = new THREE.Group();
   group.name = 'drifters';
   ctx.scene.add(group);
-  const n = Math.round(14 * Math.max(0.5, ctx.quality?.density ?? 1));
+  const n = Math.round(14 * Math.max(0.35, ctx.quality?.density ?? 1));
   const leafGeo = new THREE.PlaneGeometry(0.16, 0.12, 2, 1);
   leafGeo.rotateX(-Math.PI / 2);
   deform(leafGeo, (v) => {

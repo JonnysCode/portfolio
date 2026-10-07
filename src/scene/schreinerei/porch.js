@@ -247,9 +247,40 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
       const lz = rng.next() < 0.7 ? rng.range(0.25, 0.85) : rng.range(-0.55, -0.25);
       const onDuck = Math.abs(lx - duck.x) < duck.w / 2 && Math.abs(lz - duck.z) < duck.d / 2;
       p.set(lx, (onDuck ? duck.h : 0) + 0.02 + rng.next() * 0.02, lz).applyMatrix4(bench.matrixWorld);
-      const sc = rng.range(0.8, 1.5);
+      const sc = rng.range(1.0, 1.7);
       m.compose(p, q.setFromEuler(e.set(rng.next() * 6, rng.next() * 6, rng.next() * 6)), sv.set(sc, sc, sc));
       B.add(mats.wood('maple'), sg.clone().applyMatrix4(m), { cast: false });
+    }
+  }
+
+  // ── a drift of sawdust under the Hobelbank, curly shavings heaped on it ────
+  // (low mounds under the bench, spilling out on the visitor's side (−z) and
+  // past the tail vise; long springy curls from the jack plane on top)
+  {
+    const Bm = B.at(bench.matrixWorld.clone());
+    const dust = mats.vc();
+    const mounds = [
+      [0.05, 0.02, 0.66, 0.3, 0.05], [-0.38, -0.24, 0.4, 0.26, 0.036], [0.42, -0.22, 0.42, 0.24, 0.032],
+      [0.08, -0.46, 0.34, 0.17, 0.022], [0.82, 0.12, 0.32, 0.22, 0.03], [-0.78, 0.05, 0.22, 0.18, 0.025],
+    ];
+    for (const [x, z, rx, rz, h] of mounds) {
+      Bm.add(dust, xf(mossGeo(rng, { r: 1, h, sx: rx, sz: rz }), [x, 0.014, z], [0, rng.jitter(0.3), 0]), { color: rng.pick(['#e3cc9e', '#dcc293', '#e8d4aa']), cast: false });
+    }
+    const curls = [doubleFace(shavingGeo(0.05, 0.03, 1.5)), doubleFace(shavingGeo(0.042, 0.026, 2.3)), doubleFace(shavingGeo(0.062, 0.034, 1.1))];
+    const tones = [SPECIES.maple, '#e9d6b0', '#d9bf92', SPECIES.spruce, '#cfae84'];
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const p = new THREE.Vector3();
+    const sv = new THREE.Vector3();
+    const n = Math.round(36 * (ctx.quality?.density ?? 1));
+    for (let i = 0; i < n; i++) {
+      // on the drift, thickest towards the front edge where the visitor looks
+      const a = rng.next() * Math.PI * 2, u = Math.sqrt(rng.next());
+      p.set(0.05 + Math.cos(a) * 0.8 * u, 0.045 + rng.next() * 0.02, -0.12 + Math.sin(a) * 0.38 * u);
+      const sc = rng.range(0.9, 1.45);
+      m.compose(p, q.setFromEuler(e.set(rng.jitter(1.2), rng.next() * 6, rng.jitter(1.2))), sv.set(sc, sc, sc));
+      Bm.add(mats.wood('maple'), rng.pick(curls).clone().applyMatrix4(m), { color: rng.pick(tones), cast: false });
     }
   }
 

@@ -62,12 +62,33 @@ const STYLES = {
  * bike on the weathervane. Set per build (builds are synchronous).
  */
 const LODS = {
-  full: { rim: [6, 56], tyre: [8, 72], knobs: true, spokes: 32, saddle: [20, 10], chain: [90, 4], bar: [8, 30], tube: 10, loop: 28, cables: true, cassette: 8, ring: 40, petal: [6, 4] },
+  full: { isFull: true, rim: [6, 56], tyre: [8, 72], knobs: true, spokes: 32, saddle: [20, 10], chain: [90, 4], bar: [8, 30], tube: 10, loop: 28, cables: true, cassette: 8, ring: 40, petal: [6, 4] },
   lite: { rim: [3, 28], tyre: [5, 32], knobs: false, spokes: 16, saddle: [10, 6], chain: [44, 3], bar: [5, 14], tube: 6, loop: 14, cables: false, cassette: 3, ring: 18, petal: [4, 2] },
-  mini: { rim: [3, 16], tyre: [3, 18], knobs: false, spokes: 6, saddle: [6, 4], chain: [0, 0], bar: [4, 8], tube: 4, loop: 8, cables: false, cassette: 0, ring: 10, petal: [4, 2] },
+  mini: { isMini: true, rim: [3, 16], tyre: [3, 18], knobs: false, spokes: 6, saddle: [6, 4], chain: [0, 0], bar: [4, 8], tube: 4, loop: 8, cables: false, cassette: 0, ring: 10, petal: [4, 2] },
 };
+// per quality tier: phones (medium) keep the hero's 32 spokes but drop the tread
+// knobs and thin the round sections; the background bikes lose the chainring
+// teeth and half their segments. The low tier steps every bike down one level.
+const TIER_LODS = {
+  high: LODS,
+  medium: {
+    full: { ...LODS.full, rim: [4, 36], tyre: [6, 44], knobs: false, saddle: [14, 8], chain: [56, 3], bar: [6, 18], tube: 8, loop: 18, cassette: 5, ring: 28, petal: [5, 3] },
+    lite: { ...LODS.lite, rim: [3, 20], tyre: [4, 22], spokes: 12, saddle: [8, 5], chain: [28, 3], bar: [4, 10], tube: 5, loop: 10, cassette: 2, ring: 14, petal: [4, 2] },
+    mini: LODS.mini,
+  },
+  low: {
+    full: { ...LODS.lite, spokes: 20, rim: [3, 24], tyre: [4, 28], ring: 18 },
+    lite: { ...LODS.mini, isMini: false, spokes: 10, rim: [3, 18], tyre: [3, 20], chain: [22, 3], loop: 8, bar: [4, 8], tube: 4, cassette: 1, ring: 12 },
+    mini: LODS.mini,
+  },
+};
+let TIER = TIER_LODS.high;
+/** Scale every bike's geometry to the quality tier ('high' | 'medium' | 'low'); call before building bikes. */
+export function setBikeTier(tier = 'high') {
+  TIER = TIER_LODS[tier] ?? TIER_LODS.high;
+}
 let LOD = LODS.full;
-const lodOf = (opts) => LODS[opts.detail] ?? (opts.lite ? LODS.lite : LODS.full);
+const lodOf = (opts) => TIER[opts.detail] ?? (opts.lite ? TIER.lite : TIER.full);
 
 const RW = 0.34; // wheel radius incl. tyre (700c-ish)
 const RIM = 0.305;
@@ -125,7 +146,7 @@ function buildWheel(F, s, rng, { rear = false, drive = true } = {}) {
   }
   // hub with flanges
   const hubW = rear ? 0.13 : 0.1;
-  F.add(B.metal, new THREE.CylinderGeometry(0.018, 0.018, hubW, L.tube, 1, L !== LODS.full).rotateX(Math.PI / 2), { color: '#c9cdd0', cast: false });
+  F.add(B.metal, new THREE.CylinderGeometry(0.018, 0.018, hubW, L.tube, 1, !L.isFull).rotateX(Math.PI / 2), { color: '#c9cdd0', cast: false });
   for (const zz of [-0.032, 0.032]) F.add(B.metal, new THREE.CylinderGeometry(0.03, 0.03, 0.004, L.ring > 20 ? 14 : 8).rotateX(Math.PI / 2).translate(0, 0, zz), { color: '#d5d9dc', cast: false });
   // 32 spokes, two-cross-ish lacing (alternating leading / trailing)
   const nS = L.spokes;
@@ -139,7 +160,7 @@ function buildWheel(F, s, rng, { rear = false, drive = true } = {}) {
   }
   // valve
   F.add(B.metal, new THREE.CylinderGeometry(0.003, 0.003, 0.03, 4).translate(0, -(RIM - 0.02), 0), { color: '#b9a46a', cast: false });
-  if (s.disc && !drive && L !== LODS.mini) {
+  if (s.disc && !drive && !L.isMini) {
     // brake rotor on the non-drive side
     const ro = new THREE.RingGeometry(0.05, 0.08, 24, 1).translate(0, 0, 0);
     ro.translate(0, 0, -0.05);
@@ -210,7 +231,7 @@ function buildFrame(F, s, style, rng, G) {
   const B = bm();
   const paint = s.color;
   const tR = (r) => r * 1.25; // a touch chunky — reads better at miniature size
-  const T = (a, b, r1, r2 = r1, c = paint, mat = B.paint) => F.add(mat, rod(a, b, tR(r1), tR(r2), LOD.tube, LOD !== LODS.full), { color: c });
+  const T = (a, b, r1, r2 = r1, c = paint, mat = B.paint) => F.add(mat, rod(a, b, tR(r1), tR(r2), LOD.tube, !LOD.isFull), { color: c });
   const { htBot, htTop, stTop } = G;
   // head tube
   T(add(htBot, G.sAx, -0.015), add(htTop, G.sAx, 0.01), 0.019);
@@ -324,7 +345,7 @@ function buildSeat(F, s, style, rng, G) {
   sad.translate(seat[0] + 0.01, seat[1], seat[2]);
   F.add(B.soft, sad, { color: s.saddle });
   // rails / springs
-  if (LOD === LODS.mini) {
+  if (LOD.isMini) {
     // (the toy bike on the weathervane has no saddle rails)
   } else if (style === 'vintage') {
     for (const zz of [-1, 1]) {
@@ -362,7 +383,7 @@ function buildDrive(F, s, style, rng) {
     pts.push(v3([BB[0] + Math.cos(a) * rRing, BB[1] + Math.sin(a) * rRing, z]));
   }
   if (LOD.chain[0] === 0) return;
-  F.add(B.metal, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true, 'centripetal'), LOD.chain[0], 0.0055 * (LOD === LODS.full ? 1 : 1.15), LOD.chain[1], true), { color: '#8a8d90', cast: false });
+  F.add(B.metal, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true, 'centripetal'), LOD.chain[0], 0.0055 * (LOD.isFull ? 1 : 1.15), LOD.chain[1], true), { color: '#8a8d90', cast: false });
   // rear derailleur: B-knuckle on the hanger, a parallelogram of two links,
   // the P-knuckle, and the cage — two plates with the jockey wheels between
   const DR = '#3c3d3f';
@@ -400,7 +421,7 @@ function buildCrank(F, s, style) {
   const z = 0.045;
   // chainring: a solid machined ring with real teeth, on a darker four-arm spider
   {
-    const teeth = LOD === LODS.full ? 40 : LOD.ring >= 18 ? 28 : 0;
+    const teeth = LOD.isFull ? (LOD.ring >= 40 ? 40 : 28) : LOD.ring >= 18 ? 28 : 0;
     const rTip = 0.1, rRoot = 0.093, rIn = 0.074;
     if (teeth) {
       const sh = new THREE.Shape();

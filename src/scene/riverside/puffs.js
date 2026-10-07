@@ -13,6 +13,7 @@
 // Each particle loops through its life (phase + t × speed): it fades in,
 // rises (with a little sideways puff), drifts with `drift`, grows and fades
 // out. Sizes are in world units (scaled by the drawing buffer height).
+// opts.floor: a world height (a water surface) the puffs fade into softly.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { fogUniforms } from '../../world/env/fog.js';
@@ -31,6 +32,8 @@ uniform vec4 uMotion; // x: rise, y: sideways puff, z: size min, w: size max
 uniform float uGrow;
 varying float vAlpha;
 varying float vRand;
+varying float vY;
+varying float vSize;
 void main() {
   float life = fract(uTime * aSeed.y + aSeed.x);
   vec3 p = position;
@@ -38,9 +41,12 @@ void main() {
   p += side * (0.15 + life) * uMotion.y * (0.5 + aSeed.w);
   p += uDrift * life * (0.7 + 0.6 * aSeed.w);
   p.y += uMotion.x * (life * 0.8 + sin(life * 3.14159) * 0.2) * (0.6 + 0.6 * aSeed.w);
-  vec4 mvPosition = viewMatrix * modelMatrix * vec4(p, 1.0);
+  vec4 wp = modelMatrix * vec4(p, 1.0);
+  vY = wp.y;
+  vec4 mvPosition = viewMatrix * wp;
   gl_Position = projectionMatrix * mvPosition;
   float size = mix(uMotion.z, uMotion.w, aSeed.w) * (1.0 + life * uGrow);
+  vSize = size;
   gl_PointSize = uScale * size / max(-mvPosition.z, 0.1);
   vAlpha = smoothstep(0.0, 0.1, life) * (1.0 - smoothstep(0.4, 1.0, life));
   vRand = aSeed.w;
@@ -56,14 +62,20 @@ uniform vec3 uSkyHorizon;
 uniform vec3 uKeyColor;
 uniform float uNight;
 uniform float uOpacity;
+uniform float uFloor;
 varying float vAlpha;
 varying float vRand;
+varying float vY;
+varying float vSize;
 void main() {
   vec2 c = gl_PointCoord - 0.5;
   float d = length(c);
   if (d > 0.5) discard;
   // a soft puff, lit a little from the top
   float a = pow(smoothstep(0.5, 0.0, d), 1.4) * vAlpha * uOpacity * (0.75 + 0.25 * vRand);
+  // a soft floor (the pool's surface): the puff thins out instead of being cut off
+  float fy = vY - c.y * vSize;
+  a *= smoothstep(uFloor, uFloor + 0.3, fy);
   float lit = 0.75 + 0.25 * smoothstep(0.3, -0.3, c.y);
   vec3 col = uColor * lit * (uKeyColor * 0.35 + uSkyHorizon * 0.6) * (1.0 - 0.6 * uNight);
   gl_FragColor = vec4(col, a);
@@ -109,6 +121,7 @@ export function makePuffs(ctx, opts = {}) {
     uGrow: { value: opts.grow ?? 1.5 },
     uColor: { value: new THREE.Color(opts.color ?? '#f2f7f6') },
     uOpacity: { value: opts.opacity ?? 0.3 },
+    uFloor: { value: opts.floor ?? -1e4 },
     uSkyHorizon: envUniforms.uSkyHorizon,
     uKeyColor: envUniforms.uKeyColor,
     uNight: sharedUniforms.uNight,

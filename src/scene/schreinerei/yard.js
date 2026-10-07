@@ -7,8 +7,16 @@
 //   • two sawhorses with a board mid-cut, a saw resting in the kerf, sawdust
 //   • a wheelbarrow full of offcuts by the porch
 //   • a snail delivering a strapped stack of planks, parked by the rack
-//   • stepping stones from the workshop door to the main path, moss, ferns,
-//     toadstools and wildflowers at every foot
+//   • stepping stones from the workshop door to the main path, set in a bare
+//     tamped-soil track (a spur runs to the Hobelbank), moss creeping along
+//     the stones and the roots
+//   • in the hero frame: a Leiterwägeli loaded with planks at the path's
+//     right edge, rough boards leaning on the oak beside the door, a bucket
+//     of dowels & pegs and a heap of offcuts by the dovetailed chest, a twig
+//     besom at the porch (craft.js)
+//   • ground cover in clumps, not sprinkles: grass & fern clumps hugging every
+//     edge (walls, posts, stones, the track, the path), moss carpets, clover
+//     mats and leaf drifts between — open litter in the middle of the yard
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../../core/rng.js';
@@ -16,6 +24,7 @@ import { getHeight } from '../../world/ground.js';
 import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, uvBox, uvCyl, paintBy, addToadstool, addFern, addLanternPost, addFClamp, SPECIES } from './kit.js';
 import { SPOTS } from '../../world/layout.js';
 import { ANNEX, annexFrame, annexToWorld } from './annex.js';
+import { addTrack, addHandcart, addDowelBucket, addOffcuts, addLeaningBoards, addBesom } from './craft.js';
 
 export function buildYard(ctx, B, mats) {
   const rng = createRng('yard');
@@ -245,6 +254,7 @@ export function buildYard(ctx, B, mats) {
   const chest = buildChestVignette(ctx, B, mats, rng);
 
   // ── path lanterns: little lights on posts leading to the oak door ──────────
+  const lanterns = [];
   {
     const { getPathDistance } = ctx.ground;
     const posts = [
@@ -260,6 +270,7 @@ export function buildYard(ctx, B, mats) {
       const y = getHeight(x, p.z);
       // the arm reaches over the path
       addLanternPost(B, mats, rng, [x, y, p.z], { h: 1.0, yaw: p.side > 0 ? Math.PI : 0, scale: 0.55 });
+      lanterns.push({ x, z: p.z });
       B.add(mats.moss(), xf(mossGeo(rng, { r: 0.14, h: 0.04 }), [x + rng.jitter(0.08), y, p.z + rng.jitter(0.08)]), { cast: false });
       addToadstool(B, mats, rng, x + p.side * 0.15, y, p.z + 0.12, { size: 0.08 });
       ctx.colliders?.addCircle?.(x, p.z, 0.12, 'path-lantern');
@@ -293,7 +304,9 @@ export function buildYard(ctx, B, mats) {
     snail.lookAt(annexToWorld(-hx - 0.3, 1.0, 1.6));
   }
 
-  // ── stepping stones: workshop door → main path ─────────────────────────────
+  // ── stepping stones: workshop door → main path, in a tamped-soil track ────
+  const stones = [];
+  const tracks = [];
   {
     const start = annexToWorld(-0.3, 0, hz + 0.65);
     const end = new THREE.Vector3(-1.2, 0, 3.4);
@@ -302,16 +315,78 @@ export function buildYard(ctx, B, mats) {
     const n = 11;
     for (let i = 0; i < n; i++) {
       const p = curve.getPointAt(i / (n - 1));
-      const g = stoneGeo(rng, { r: 1, sx: rng.range(0.2, 0.28), sy: 0.05, sz: rng.range(0.17, 0.24), lump: 0.12, detail: 0 });
-      B.add(mats.stone(), xf(g, [p.x + rng.jitter(0.08), getHeight(p.x, p.z) + 0.015, p.z + rng.jitter(0.08)], [0, rng.next() * 3, 0]), { cast: false });
-      if (rng.next() < 0.6) B.add(mats.moss(), xf(mossGeo(rng, { r: rng.range(0.06, 0.12), h: 0.025 }), [p.x + rng.jitter(0.25), getHeight(p.x, p.z), p.z + rng.jitter(0.25)]), { cast: false });
+      const sx = rng.range(0.2, 0.28), sz = rng.range(0.17, 0.24);
+      const g = stoneGeo(rng, { r: 1, sx, sy: 0.05, sz, lump: 0.12, detail: 0 });
+      const x = p.x + rng.jitter(0.08), z = p.z + rng.jitter(0.08);
+      B.add(mats.stone(), xf(g, [x, getHeight(x, z) + 0.015, z], [0, rng.next() * 3, 0]), { cast: false });
+      stones.push({ x, z, r: Math.max(sx, sz) });
     }
+    // the bare, trodden track the stones are set in (it runs on into the
+    // main path), and a narrower spur from the Hobelbank joining it
+    const tp = [];
+    for (let i = 0; i <= 10; i++) {
+      const p = curve.getPointAt(i / 10);
+      tp.push({ x: p.x, z: p.z });
+    }
+    tp.push({ x: end.x + 0.45, z: end.z + 0.25 });
+    // (the painterly soil surface, tinted per vertex: grain & tiny pebbles, never a flat fill)
+    const soil = ctx.materials.surface('soil', { vertexColors: true });
+    tracks.push(addTrack(B, mats, rng, getHeight, tp, { width: 0.78, material: soil }));
+    const a = annexToWorld(1.75, 0, hz + 2.0), b = annexToWorld(1.6, 0, hz + 2.55), c = curve.getPointAt(0.43);
+    tracks.push(addTrack(B, mats, rng, getHeight, [{ x: a.x, z: a.z }, { x: b.x, z: b.z }, { x: c.x, z: c.z }], { width: 0.52, lift: 0.011, material: soil }));
     // a flagged apron in front of the workshop door
     for (let i = 0; i < 14; i++) {
       const x = -1.15 + rng.next() * 1.75, z = hz + 0.15 + rng.next() * 0.6;
       const g = stoneGeo(rng, { r: 1, sx: rng.range(0.16, 0.26), sy: 0.035, sz: rng.range(0.14, 0.22), lump: 0.1, detail: 0 });
       F.add(mats.stone(), xf(g, [x, 0.012, z], [0, rng.next() * 3, 0]), { cast: false });
     }
+  }
+
+  // ── craft life in the hero frame ──────────────────────────────────────────
+  // (footprints the ground cover keeps clear of)
+  const keep = [];
+  const { getPathDistance } = ctx.ground;
+  {
+    const D = ctx.layout.SCHREINEREI.deck;
+    // a Leiterwägeli loaded with planks, parked at the path's right edge,
+    // parallel to the deck (its left wheels just off the path)
+    let x = 1.62;
+    const z = 0.72;
+    for (let i = 0; i < 20 && getPathDistance(x - 0.32, z) < 1.12; i++) x += 0.03;
+    const yaw = D.rotY - 0.1;
+    const k = 0.9; // a little one, for a little Schreiner
+    const fp = addHandcart(B.at(mat4([x, getHeight(x, z), z], [0, yaw, 0], k)), mats, rng);
+    for (const lz of [-0.42, 0.22]) keep.push({ x: x + Math.sin(yaw) * lz, z: z + Math.cos(yaw) * lz, r: 0.46 });
+    ctx.colliders?.addBox?.(x, z, fp.hx * k, fp.hz * k, yaw, 'handcart');
+  }
+  {
+    // a bucket of dowels & pegs and a heap of offcuts beside the chest
+    const bx = -2.5, bz = 0.75;
+    const b = addDowelBucket(B.at(mat4([bx, getHeight(bx, bz), bz], [0, rng.next() * 6, 0])), mats, rng);
+    keep.push({ x: bx, z: bz, r: b.r });
+    ctx.colliders?.addCircle?.(bx, bz, 0.16, 'dowel-bucket');
+    const ox = -2.58, oz = 1.42;
+    const o = addOffcuts(B.at(mat4([ox, getHeight(ox, oz), oz], [0, 0.6, 0])), mats, rng);
+    keep.push({ x: ox, z: oz, r: o.r });
+  }
+  {
+    // rough boards seasoning against the oak, left of the door (past its root)
+    const feet = addLeaningBoards(ctx, B, mats, rng, [
+      { x: -2.13, w: 0.23, len: 1.5, lean: 0.25, color: '#b0916a', twist: 0.05 },
+      { x: -2.38, w: 0.27, len: 1.32, lean: 0.31, color: '#977654', bark: true, twist: -0.06, t: 0.04 },
+      { x: -2.64, w: 0.21, len: 1.68, lean: 0.21, color: '#a6865f', twist: 0.03 },
+    ]);
+    for (const f of feet) {
+      keep.push({ x: f.x, z: f.z, r: 0.22 });
+      B.add(mats.moss(), xf(mossGeo(rng, { r: rng.range(0.12, 0.2), h: 0.035, sx: 1.6 }), [f.x + rng.jitter(0.1), getHeight(f.x, f.z), f.z + 0.12], [0, rng.next() * 3, 0]), { cast: false });
+    }
+  }
+  {
+    // a twig besom leaning on the outside of the porch's left post
+    const foot = annexToWorld(0.72, 0.02, hz + 1.86);
+    const top = annexToWorld(0.97, 1.18, hz + 1.6);
+    addBesom(B, mats, rng, foot, top);
+    keep.push({ x: foot.x, z: foot.z, r: 0.2 });
   }
 
   // ── greenery at every foot: ferns, moss, toadstools, wildflowers ──────────
@@ -335,7 +410,14 @@ export function buildYard(ctx, B, mats) {
     }
   }
 
-  scatterGround(ctx, B, mats, rng, chest);
+  scatterGround(ctx, B, mats, rng, {
+    chest,
+    keep,
+    stones,
+    lanterns,
+    onTrack: (x, z) => tracks.some((d) => d(x, z) < 0.02),
+    nearTrack: (x, z) => tracks.some((d) => d(x, z) < 0.3),
+  });
 
   return {
     group,
@@ -347,10 +429,15 @@ export function buildYard(ctx, B, mats) {
 
 /**
  * Ground cover on the Schreinerei's pads (the forest scatter leaves pads
- * alone): grass tufts, clover with tiny flowers, moss cushions, pebbles and
- * fallen leaves — everywhere nothing stands, never on the path.
+ * alone). Clumps, not sprinkles: a ground that reads as tended yard, not as
+ * seedlings in a planter. Grass & fern clumps hug every edge (walls, posts,
+ * the stepping stones, the track, the path, the props), moss carpets creep
+ * along the stones and the roots, clover mats and leaf drifts lie between —
+ * and the middle of the yard stays open litter. Never on the path or a track.
+ * opts: { chest, keep: [{x, z, r}], stones: [{x, z, r}], lanterns: [{x, z}],
+ *   onTrack(x, z), nearTrack(x, z) }
  */
-function scatterGround(ctx, B, mats, rng, chest = null) {
+function scatterGround(ctx, B, mats, rng, { chest = null, keep = [], stones = [], lanterns = [], onTrack = () => false, nearTrack = () => false } = {}) {
   const { SCHREINEREI, OAK } = ctx.layout;
   const { getPathDistance, getHeight: gh } = ctx.ground;
   const A = SCHREINEREI.annex;
@@ -365,7 +452,8 @@ function scatterGround(ctx, B, mats, rng, chest = null) {
     const dx = x - D.x, dz = z - D.z;
     return [dx * cd - dz * sd, dx * sd + dz * cd];
   };
-  const blocked = (x, z) => {
+  // solid things (the path counts: nothing grows on it)
+  const solid = (x, z) => {
     if (getPathDistance(x, z) < 1.15) return true;
     const [ax, az] = toAnnex(x, z);
     if (Math.abs(ax) < ANNEX.hx + 0.25 && Math.abs(az) < ANNEX.hz + 0.25) return true; // the house
@@ -380,7 +468,19 @@ function scatterGround(ctx, B, mats, rng, chest = null) {
     if (dx < -1.0 && dx > -2.3 && dz > 1.3 && dz < 2.2) return true; // deck steps & planter
     if (Math.abs(x - OAK.door.x) < 1.25 && z < OAK.door.z + 1.6 && z > OAK.door.z - 0.5) return true; // door steps
     if (Math.hypot(x - OAK.x, z - OAK.z) < OAK.baseRadius + 0.5) return true; // the trunk
+    for (const k of keep) if (Math.hypot(x - k.x, z - k.z) < k.r) return true;
+    for (const st of stones) if (Math.hypot(x - st.x, z - st.z) < st.r + 0.04) return true;
+    for (const l of lanterns) if (Math.hypot(x - l.x, z - l.z) < 0.14) return true;
     return false;
+  };
+  const blocked = (x, z) => solid(x, z) || onTrack(x, z);
+  // how much of an edge a spot is: something solid (or the track) close by
+  const RING = [];
+  for (let k = 0; k < 8; k++) RING.push([Math.cos((k / 8) * Math.PI * 2), Math.sin((k / 8) * Math.PI * 2)]);
+  const edginess = (x, z, d = 0.42) => {
+    let n = 0;
+    for (const [cx, cz] of RING) if (blocked(x + cx * d, z + cz * d)) n++;
+    return n + (nearTrack(x, z) ? 2 : 0);
   };
   const pads = [
     { x: A.x, z: A.z, r: 4.5 },
@@ -393,44 +493,144 @@ function scatterGround(ctx, B, mats, rng, chest = null) {
   const vc = mats.vc();
   // fallen oak leaves: a little lobed shape, painted (shares the vc draw call)
   const leafShape = (() => {
-    const s = new THREE.Shape();
-    s.moveTo(0, 0);
-    s.quadraticCurveTo(-0.05, 0.02, -0.035, 0.05);
-    s.quadraticCurveTo(-0.05, 0.075, -0.02, 0.085);
-    s.quadraticCurveTo(-0.02, 0.11, 0, 0.115);
-    s.quadraticCurveTo(0.02, 0.11, 0.02, 0.085);
-    s.quadraticCurveTo(0.05, 0.075, 0.035, 0.05);
-    s.quadraticCurveTo(0.05, 0.02, 0, 0);
-    return new THREE.ShapeGeometry(s, 2);
+    const sh = new THREE.Shape();
+    sh.moveTo(0, 0);
+    sh.quadraticCurveTo(-0.05, 0.02, -0.035, 0.05);
+    sh.quadraticCurveTo(-0.05, 0.075, -0.02, 0.085);
+    sh.quadraticCurveTo(-0.02, 0.11, 0, 0.115);
+    sh.quadraticCurveTo(0.02, 0.11, 0.02, 0.085);
+    sh.quadraticCurveTo(0.05, 0.075, 0.035, 0.05);
+    sh.quadraticCurveTo(0.05, 0.02, 0, 0);
+    return new THREE.ShapeGeometry(sh, 2);
   })();
-  const tuft = (x, y, z, h) => {
+  /** One tuft: three crossed blades cards, leaning `lean` towards azimuth `dir`. */
+  const tuft = (x, y, z, h, lean = 0, dir = 0) => {
     for (let k = 0; k < 3; k++) {
-      const g = new THREE.PlaneGeometry(h * 0.9, h, 1, 1);
+      const g = new THREE.PlaneGeometry(h * 0.8, h, 1, 1);
       g.translate(0, h / 2, 0);
-      B.add(grass, xf(g, [x, y, z], [rng.jitter(0.15), (k / 3) * Math.PI + rng.jitter(0.3), rng.jitter(0.12)]), { cast: false });
+      g.rotateY((k / 3) * Math.PI + rng.jitter(0.3));
+      g.rotateX(lean + rng.jitter(0.1));
+      g.rotateY(dir);
+      B.add(grass, g.translate(x, y, z), { cast: false });
     }
   };
+  const flower = (x, y, z, h, color) => {
+    B.add(vc, xf(new THREE.CylinderGeometry(0.003, 0.004, h, 3), [x, y + h / 2, z]), { color: '#4f7f36', cast: false });
+    B.add(vc, xf(new THREE.SphereGeometry(rng.range(0.014, 0.022), 5, 3), [x, y + h, z], null, [1, 0.6, 1]), { color, cast: false });
+  };
+  const FLOWERS = ['#f2ead8', '#e8c22a', '#b39ddb', '#ef7a5a', '#ffffff', '#7fb3e0'];
+  // members of a clump: spread round a centre, densest in the middle, never on anything
+  const spread = (cx, cz, rc, n, fn) => {
+    for (let i = 0; i < n; i++) {
+      const a = rng.next() * Math.PI * 2, u = Math.pow(rng.next(), 0.75);
+      const x = cx + Math.cos(a) * rc * u, z = cz + Math.sin(a) * rc * u;
+      if (blocked(x, z)) continue;
+      fn(x, gh(x, z), z, u, a);
+    }
+  };
+
+  const clumps = {
+    // a grass clump: tall in the middle, shorter and leaning out at the rim
+    grass(cx, cz, k = 1) {
+      const rc = rng.range(0.14, 0.26) * k, hmax = rng.range(0.24, 0.38) * Math.sqrt(k);
+      spread(cx, cz, rc, Math.round(rng.range(7, 13) * k), (x, y, z, u, a) => tuft(x, y, z, hmax * (1 - 0.45 * u) * rng.range(0.85, 1.1), 0.08 + u * 0.32, Math.PI / 2 - a));
+      if (rng.next() < 0.45) spread(cx, cz, rc * 1.1, rng.int(1, 3), (x, y, z) => flower(x, y, z, rng.range(0.14, 0.26), rng.pick(FLOWERS)));
+    },
+    // ferns with grass at their feet (and a toadstool now and then)
+    fern(cx, cz) {
+      const nf = rng.int(1, 3);
+      for (let i = 0; i < nf; i++) {
+        const x = cx + rng.jitter(0.18), z = cz + rng.jitter(0.18);
+        if (blocked(x, z)) continue;
+        // (one fern colour: every tint would be a material & draw call of its own)
+        addFern(B, ctx, rng, x, gh(x, z), z, { size: rng.range(0.3, 0.52), fronds: rng.int(6, 8) });
+      }
+      spread(cx, cz, 0.3, rng.int(3, 6), (x, y, z, u, a) => tuft(x, y, z, rng.range(0.14, 0.24), 0.2 + u * 0.2, Math.PI / 2 - a));
+      if (rng.next() < 0.35) spread(cx, cz, 0.3, 1, (x, y, z) => addToadstool(B, mats, rng, x, y, z, { size: rng.range(0.06, 0.1), color: rng.pick(['#c9352a', '#b98a4e', '#d4772e']) }));
+    },
+    // a moss carpet: overlapping low cushions, a pebble or two
+    moss(cx, cz, k = 1) {
+      const yaw = rng.next() * Math.PI;
+      const n = rng.int(2, 4);
+      for (let i = 0; i < n; i++) {
+        const o = rng.jitter(0.22 * k), q = rng.jitter(0.1 * k);
+        const x = cx + Math.cos(yaw) * o - Math.sin(yaw) * q, z = cz + Math.sin(yaw) * o + Math.cos(yaw) * q;
+        if (solid(x, z)) continue;
+        B.add(mats.moss(), xf(mossGeo(rng, { r: rng.range(0.12, 0.22) * k, h: rng.range(0.025, 0.045), sx: rng.range(1.2, 1.8) }), [x, gh(x, z), z], [0, -yaw + rng.jitter(0.4), 0]), { cast: false });
+      }
+      spread(cx, cz, 0.3 * k, rng.int(0, 2), (x, y, z) => B.add(mats.stone(), xf(stoneGeo(rng, { r: rng.range(0.03, 0.06), sy: 0.55, detail: 0 }), [x, y + 0.01, z], [0, rng.next() * 6, 0]), { cast: false }));
+    },
+    // a mat of clover with tiny white & yellow flowers
+    clover(cx, cz) {
+      spread(cx, cz, rng.range(0.18, 0.3), rng.int(6, 11), (x, y, z) => {
+        for (let k = 0; k < 3; k++) B.add(vc, xf(new THREE.CircleGeometry(0.022, 5), [x + rng.jitter(0.035), y + 0.02, z + rng.jitter(0.035)], [-Math.PI / 2 + rng.jitter(0.3), 0, 0]), { color: rng.pick(['#5e8a3a', '#6a9440', '#557f35']), cast: false });
+        if (rng.next() < 0.35) B.add(vc, xf(new THREE.SphereGeometry(0.014, 5, 3), [x, y + 0.06, z]), { color: rng.pick(['#f2ead8', '#e8c22a', '#f2ead8']), cast: false });
+      });
+    },
+    // a drift of fallen leaves
+    leaves(cx, cz) {
+      spread(cx, cz, rng.range(0.15, 0.3), rng.int(5, 10), (x, y, z) => {
+        B.add(vc, xf(leafShape.clone(), [x, y + 0.008, z], [-Math.PI / 2 + rng.jitter(0.25), rng.next() * 6, 0, 'YXZ'], rng.range(0.8, 1.25)), { color: rng.pick(['#b07a3e', '#9a6232', '#c99a4a', '#8a5a34']), cast: false });
+      });
+    },
+  };
+
+  // ── 1. moss creeping along the stepping stones, the oak's foot and roots ──
+  for (const st of stones) {
+    if (rng.next() < 0.35) continue;
+    const a = rng.next() * Math.PI * 2;
+    clumps.moss(st.x + Math.cos(a) * (st.r + 0.06), st.z + Math.sin(a) * (st.r + 0.06), 0.75);
+  }
+  {
+    // both of the door's flanking roots: moss along their outer flanks where they dive into the soil
+    const R = 0.77;
+    for (const s of [-1, 1]) {
+      for (const t of [0.5, 0.68, 0.86, 1.02]) {
+        const x = s * (R + 0.5 + t * 0.75 + 0.34 * (1 - t * 0.7) + 0.12), z = OAK.door.z + 0.47 - 0.55 + t * 1.55;
+        clumps.moss(OAK.door.x + x + rng.jitter(0.05), z + rng.jitter(0.05), rng.range(0.9, 1.3));
+      }
+      // and a fern clump where each root ends
+      clumps.fern(OAK.door.x + s * 2.3, OAK.door.z + 0.47 + 1.25);
+    }
+    // the trunk's foot either side of the door: moss carpets & ferns at the bark
+    const rAt = (a) => (ctx.oak?.barkRadius?.(a, 0.05) ?? OAK.baseRadius) + 0.55;
+    // (left: past the seasoning boards; right: under the certificate, short of the big root)
+    for (const a of [-0.95, -0.8, 0.52]) {
+      const r = rAt(a);
+      const x = OAK.x + Math.sin(a) * r, z = OAK.z + Math.cos(a) * r;
+      if (rng.next() < 0.5) clumps.fern(x, z);
+      else clumps.moss(x, z, 1.2);
+    }
+  }
+  // the path lanterns' feet and the annex plinth corners get a clump each
+  for (const l of lanterns) clumps.grass(l.x + rng.jitter(0.12), l.z + rng.jitter(0.12), 0.8);
+
+  // ── 2. clumps everywhere an edge is: walls, posts, props, track, path ─────
+  const centres = [];
+  const far = (x, z, d) => centres.every((c) => Math.hypot(x - c.x, z - c.z) > d);
   for (const pad of pads) {
-    const n = Math.round(pad.r * pad.r * 9 * density);
+    const n = Math.round(pad.r * pad.r * 3.2 * density);
     for (let i = 0; i < n; i++) {
       const a = rng.next() * Math.PI * 2, r = Math.sqrt(rng.next()) * pad.r;
       const x = pad.x + Math.cos(a) * r, z = pad.z + Math.sin(a) * r;
       if (blocked(x, z)) continue;
-      const y = gh(x, z);
+      const e = edginess(x, z);
+      const pathEdge = getPathDistance(x, z) < 1.55;
+      const edge = e > 0 || pathEdge;
+      if (!far(x, z, edge ? 0.55 : 0.9)) continue;
+      if (!edge && rng.next() > 0.35) continue;
+      centres.push({ x, z });
       const roll = rng.next();
-      if (roll < 0.42) tuft(x, y, z, rng.range(0.12, 0.3));
-      else if (roll < 0.58) B.add(mats.moss(), xf(mossGeo(rng, { r: rng.range(0.08, 0.2), h: rng.range(0.025, 0.05) }), [x, y, z]), { cast: false });
-      else if (roll < 0.7) B.add(mats.stone(), xf(stoneGeo(rng, { r: rng.range(0.03, 0.07), sy: 0.55, detail: 0 }), [x, y + 0.01, z], [0, rng.next() * 6, 0]), { cast: false });
-      else if (roll < 0.88) {
-        // a fallen leaf (or two) lying flat
-        for (let k = rng.next() < 0.4 ? 2 : 1; k > 0; k--) {
-          const g = leafShape.clone();
-          B.add(vc, xf(g, [x + rng.jitter(0.06), y + 0.008, z + rng.jitter(0.06)], [-Math.PI / 2 + rng.jitter(0.25), rng.next() * 6, 0, 'YXZ'], rng.range(0.8, 1.2)), { color: rng.pick(['#b07a3e', '#9a6232', '#c99a4a', '#8a5a34']), cast: false });
-        }
+      if (edge) {
+        if (roll < 0.42) clumps.grass(x, z, rng.range(0.8, 1.25));
+        else if (roll < 0.62) clumps.fern(x, z);
+        else if (roll < 0.8) clumps.moss(x, z, rng.range(0.8, 1.2));
+        else clumps.clover(x, z);
       } else {
-        // clover with a tiny white or yellow flower
-        for (let k = 0; k < 3; k++) B.add(vc, xf(new THREE.CircleGeometry(0.022, 5), [x + rng.jitter(0.05), y + 0.02, z + rng.jitter(0.05)], [-Math.PI / 2 + rng.jitter(0.3), 0, 0]), { color: '#5e8a3a', cast: false });
-        if (rng.next() < 0.6) B.add(vc, xf(new THREE.SphereGeometry(0.014, 5, 3), [x, y + 0.06, z]), { color: rng.pick(['#f2ead8', '#e8c22a', '#f2ead8']), cast: false });
+        // the open middle of the yard: litter with drifts, a moss carpet, clover
+        if (roll < 0.45) clumps.leaves(x, z);
+        else if (roll < 0.75) clumps.moss(x, z, rng.range(1.0, 1.5));
+        else clumps.clover(x, z);
       }
     }
   }

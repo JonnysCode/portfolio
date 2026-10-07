@@ -163,8 +163,6 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
   // chunky treads up from the moss (rustic woodland joinery — no ladder, no
   // X-bracing)
   const ropeMat = mats.rope();
-  /** a crooked weathered peeled pole (grain UVs) — the track rails */
-  const pole = (pts, r0, r1, opts = {}, bopts = {}) => B.add(mats.wood(rng.pick(OLD_POLE)), branch(pts, r0, r1, { ...opts, uv: true }), bopts);
   /** a crooked bark-on branch (posts, stringers, rails, stakes) */
   const bough = (pts, r0, r1, opts = {}, bopts = {}) => B.add(mats.bark(rng.pick(BOUGH_BARK)), branch(pts, r0, r1, { lump: 0.18, ...opts }), bopts);
   /** a pale lichen rosette on a surface */
@@ -189,14 +187,14 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
       const p1 = polar(a, r0 + Dp, yP - 0.03).addScaledVector(lat, off).addScaledVector(n, rng.jitter(0.06));
       // leave a gap for the basket near the bark
       const g0 = p0.clone().lerp(p1, 0.52);
-      B.add(mats.wood(rng.pick(OLD_OAK)), timber(g0, p1, 0.22, 0.06, { rng, wobble: 0.004, scale: 1 / 1.4 }));
+      B.add(mats.timber(rng.pick(OLD_OAK)), timber(g0, p1, 0.22, 0.06, { rng, wobble: 0.004, scale: 1 / 1.4 }));
       if (rng.next() < 0.75) lichen(g0.clone().lerp(p1, rng.range(0.6, 0.95)).add(new THREE.Vector3(0, 0.031, 0)).addScaledVector(lat, rng.jitter(0.06)), up, 0.032);
     }
     const railTops = {};
     for (const s of [-1, 1]) {
       const p0 = polar(a, r0, yP - 0.1).addScaledVector(lat, s * W / 2);
       const p1 = polar(a, r0 + Dp, yP - 0.1).addScaledVector(lat, s * W / 2);
-      B.add(mats.wood(DARK_OAK), timber(p0.clone().lerp(p1, 0.42), p1, 0.09, 0.1, { rng }));
+      B.add(mats.timber(DARK_OAK), timber(p0.clone().lerp(p1, 0.42), p1, 0.09, 0.1, { rng }));
       // crooked, forked bark-on posts down to the roots / ground: the bearer
       // sits in the crotch, rope-lashed (no milled posts, no bracing)
       for (const u of [0.55, 0.97]) {
@@ -268,14 +266,14 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
         const nT = Math.max(2, Math.round(rise / 0.3));
         const treads = [];
         for (let k = 1; k <= nT; k++) {
-          const u = 1 - k / (nT + 0.6);
+          const u = 1 - (k + (k < nT ? rng.jitter(0.12) : 0)) / (nT + 0.6); // hand-set: spacing wanders a little
           const { p: c, across } = frame(u);
           const tone = rng.pick(OLD_OAK);
-          const g = weatherPaint(board(2 * H + 0.16, TT, 0.34, { along: 'x', rng, c: 0.02, segs: 4 }), tone, { mossEnd: k % 2 ? 1 : -1, seed: 50 + k });
+          const g = weatherPaint(board(2 * H + 0.16 + rng.jitter(0.07), TT * rng.range(0.9, 1.15), 0.34 + rng.jitter(0.03), { along: 'x', rng, c: 0.02, segs: 4 }), tone, { mossEnd: k % 2 ? 1 : -1, seed: 50 + k });
           const m = new THREE.Matrix4().makeBasis(across, UP, across.clone().cross(UP));
-          m.multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rng.jitter(0.03), rng.jitter(0.06), rng.jitter(0.02))));
-          m.setPosition(c.clone().add(new THREE.Vector3(0, 0.1, 0)));
-          B.add(mats.wood(tone), g.applyMatrix4(m));
+          m.multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rng.jitter(0.03), rng.jitter(0.1), rng.jitter(0.02))));
+          m.setPosition(c.clone().add(new THREE.Vector3(0, 0.1, 0)).addScaledVector(across, rng.jitter(0.03)));
+          B.add(mats.timber(tone), g.applyMatrix4(m));
           if (rng.next() < 0.5) {
             const mp = c.clone().addScaledVector(across, rng.jitter(0.25)).add(new THREE.Vector3(0, 0.1 + TT / 2, 0));
             B.add(mats.moss(), xf(mossGeo(rng, { r: 0.09, h: 0.03, sx: 1.5 }), [mp.x, mp.y, mp.z], [0, rng.next() * TAU, 0]), { cast: false });
@@ -291,7 +289,15 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
             return p.addScaledVector(across, s * H).setY(y);
           };
           const pts = [at(0, yP - 0.12)];
-          for (const t of treads) pts.push(at(t.u, t.y - SS * 0.8));
+          let prevU = 0, prevY = yP - 0.12;
+          for (const t of treads) {
+            // a grown bough, not a sawn stringer: it wanders between the treads
+            const um = (prevU + t.u) / 2, ym = (prevY + t.y - SS * 0.8) / 2;
+            pts.push(at(um, ym - rng.range(0.0, 0.035)).addScaledVector(frame(um).across, rng.jitter(0.035)));
+            pts.push(at(t.u, t.y - SS * 0.8));
+            prevU = t.u;
+            prevY = t.y - SS * 0.8;
+          }
           const fp = at(1, 0);
           fp.y = Math.min(floorAt(fp) - 0.06, pts[pts.length - 1].y - 0.1);
           pts.push(fp);
@@ -311,8 +317,9 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
             B.add(mats.moss(), xf(mossGeo(rng, { r: 0.12, h: 0.05 }), [foot.x, g0 + 0.02, foot.z]), { cast: false });
           }
           // ivy creeping up the stringer
-          for (let k = 2; k < pts.length - 1; k += 2) {
-            B.add(mats.ivy(), ivyCard(pts[k].clone().add(new THREE.Vector3(0, -0.04, 0)), new THREE.Vector3(rng.jitter(0.4), -1, rng.jitter(0.4)), frame(treads[k - 1]?.u ?? 1).across.multiplyScalar(s), rng.range(0.3, 0.55), rng.next() < 0.5), { cast: false });
+          for (let k = 2; k < treads.length; k += 2) {
+            const q = at(treads[k].u, treads[k].y - SS * 1.6);
+            B.add(mats.ivy(), ivyCard(q, new THREE.Vector3(rng.jitter(0.4), -1, rng.jitter(0.4)), frame(treads[k].u).across.multiplyScalar(s), rng.range(0.3, 0.55), rng.next() < 0.5), { cast: false });
           }
         }
         const { p: fp, across: fa } = frame(1);
@@ -382,13 +389,14 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
   //    must never read as a ladder) ─────────────────────────────────────────
   {
     const y0 = Math.max(platY - 0.2, rootClear - 0.15), y1 = OAK.loft.y - 0.1;
-    const railMat = mats.wood(OLD_POLE[1]);
+    const railMat = mats.timber(OLD_POLE[1]);
     for (const s of [-1, 1]) {
       const pts = [];
       for (let y = y0; y <= y1 + 0.001; y += 0.5) pts.push(polar(a, bark(a, y) + 0.07, y).addScaledVector(lat, s * 0.2));
       // one long pole per side, a gentle wander, tapering towards the top
-      const wander = pts.map((p, k) => p.clone().addScaledVector(lat, Math.sin(k * 0.7 + s) * 0.012));
-      pole(wander, 0.036, 0.03, { radial: 6, seed: 80 + s, lump: 0.08 }, { cast: false });
+      // bark-on, so the long verticals recede into the trunk instead of drawing a ladder
+      const wander = pts.map((p, k) => p.clone().addScaledVector(lat, Math.sin(k * 0.7 + s) * 0.02).addScaledVector(n, Math.sin(k * 0.45 + s * 2) * 0.012));
+      bough(wander, 0.038, 0.03, { radial: 6, seed: 80 + s, lump: 0.12 }, { cast: false });
       // lashed to short wooden pegs in the bark every ~1.5
       for (let j = 1; j < pts.length - 1; j += 3) {
         const p = pts[j];

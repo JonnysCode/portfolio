@@ -64,7 +64,7 @@ export const BARK = {
  * forest for years (stair treads, landing & lift planks). Honey/orange tones
  * read as a painted steel fire escape in the golden sun — these never do.
  */
-export const OLD_OAK = ['#7d6a57', '#8a7662', '#6f5e4c', '#958169', '#83705d', '#76644f', '#8e7b66'];
+export const OLD_OAK = ['#958674', '#a0907e', '#887a69', '#a99985', '#998977', '#8f806e', '#a39380'];
 /** Weathered peeled poles (the snail-lift track, small sticks). */
 export const OLD_POLE = ['#8c7a64', '#958470', '#7f6e5a', '#9a8a74'];
 /** Bark-on branches (stringer boughs, posts, balusters, braces): grey-brown, lighter than the oak's own bark. */
@@ -821,6 +821,7 @@ export function weatherPaint(geo, base, { mossEnd = 0, seed = 0, lichen = 0.45 }
     c.copy(c0);
     const t = (x - bb.min.x) / len;
     if (ny > 0.5) {
+      c.multiplyScalar(1.07); // sun-bleached tops
       const n = noiseA(x * 4.3 + seed * 1.7, z * 4.3 - seed);
       if (n > 0.2) c.lerp(LICHEN_STAIN, Math.min(1, (n - 0.2) * 1.8) * lichen);
       if (mossEnd) c.lerp(MOSS_STAIN, Math.max(0, (mossEnd > 0 ? t : 1 - t) - 0.72) * 2.2);

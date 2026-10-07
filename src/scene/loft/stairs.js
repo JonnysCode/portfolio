@@ -134,15 +134,17 @@ export function buildStairs(ctx, B, mats, env) {
     const r1 = r0 + len;
     const basis = new THREE.Matrix4().makeBasis(n, UP, t.clone().negate());
     const tone = fresh ? rng.pick(NEW_WOOD) : rng.pick(OLD_OAK);
+    const log = i % 7 === 3;
+    const th = log ? TH : TH * rng.range(0.85, 1.35); // planks of whatever thickness the sawmill gave
     // hand-laid: no two treads quite parallel, their outer ends never in a ruler line
     const m = basis.clone();
     m.multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rng.jitter(0.035), rng.jitter(0.14), rng.jitter(0.025))));
-    m.setPosition(polar(a, (r0 + r1) / 2, s.y - TH / 2));
+    m.setPosition(polar(a, (r0 + r1) / 2, s.y - th / 2));
     if (!missing) {
       // the tread: a thick plank, radial, a touch tilted and twisted — every
       // seventh one a split half-log (a repair with whatever lay around)
       let g;
-      if (i % 7 === 3) {
+      if (log) {
         g = new THREE.CylinderGeometry(STAIR.depth * 0.55, STAIR.depth * 0.55, len + 0.02, 9, 3, false, 0, Math.PI);
         // axis along X, the round side down, flattened: a split log
         g.rotateZ(Math.PI / 2).rotateX(Math.PI).scale(1, 0.42, 1);
@@ -152,46 +154,54 @@ export function buildStairs(ctx, B, mats, env) {
         g = weatherPaint(board(len + 0.02, 0.02, STAIR.depth * 1.08, { along: 'x', rng, c: 0.006, segs: 4 }), tone, { mossEnd: -1, seed: i });
         g.translate(0, TH / 2 - 0.01, 0);
       } else {
-        g = board(len + 0.04, TH * rng.range(0.92, 1.15), STAIR.depth + rng.range(-0.03, 0.05), { along: 'x', rng, c: 0.014, segs: 6 });
-        // worn: the middle of the walking line is dished a little
+        const D = STAIR.depth + rng.range(-0.03, 0.05);
+        g = board(len + 0.04, th, D, { along: 'x', rng, c: 0.014, segs: 6 });
+        // worn: the middle of the walking line is dished a little; some keep
+        // the waney (live) edge of the log at their outer end
+        const waney = !fresh && rng.next() < 0.45;
+        const wk = rng.range(0.04, 0.09), wo = rng.next() * 9;
+        const xEnd = (len + 0.04) / 2;
         deform(g, (v) => {
           if (v.y > 0) v.y -= 0.012 * Math.exp(-((v.x / L + 0.08) ** 2) * 9);
+          if (waney && v.x > xEnd - 0.001) v.x -= wk * (1 - Math.cos(((v.z / D) * 2) * Math.PI * 0.5)) + 0.015 * Math.sin(v.z * 30 + wo);
         });
         // silvered and lichened, a green moss stain creeping out from the bark
         weatherPaint(g, tone, { mossEnd: fresh ? 0 : -1, seed: i, lichen: fresh ? 0 : 0.55 });
       }
       g.applyMatrix4(m);
-      B.add(mats.wood(tone), g);
+      B.add(mats.timber(tone), g);
       // two oak pegs through the tread into the bough
       for (const k of [-1, 1]) {
         const pp = polar(a, r0 + BR, s.y + 0.002).addScaledVector(t, k * 0.06);
-        B.add(mats.wood(fresh ? '#8a6d4c' : '#4f4032'), xf(new THREE.CylinderGeometry(0.017, 0.017, 0.012, 6), [pp.x, pp.y, pp.z]), { cast: false });
+        B.add(mats.timber(fresh ? '#8a6d4c' : '#4f4032'), xf(new THREE.CylinderGeometry(0.017, 0.017, 0.012, 6), [pp.x, pp.y, pp.z]), { cast: false });
       }
       // lichen on the outer end (never on the walking line)
       if (!fresh && rng.next() < 0.6) {
         for (let j = rng.int(1, 3); j > 0; j--) {
-          const lp = new THREE.Vector3(len * rng.range(0.22, 0.48), TH / 2 + 0.001, rng.jitter(STAIR.depth * 0.38)).applyMatrix4(m);
+          const lp = new THREE.Vector3(len * rng.range(0.22, 0.48), th / 2 + 0.001, rng.jitter(STAIR.depth * 0.38)).applyMatrix4(m);
           lichen(lp, UP.clone().transformDirection(m), 0.032);
         }
       }
       // ivy hanging over the outer end of some treads (softens the stack seen edge-on)
-      if (i % 4 === 1 && Math.abs(a / DEG - ELEVATOR_AZ) > 15 && rng.next() < 0.75 * density) {
-        const base = new THREE.Vector3(len * 0.42, TH / 2, rng.jitter(0.1)).applyMatrix4(m);
-        B.add(mats.ivy(), ivyCard(base, new THREE.Vector3(rng.jitter(0.3), -1, rng.jitter(0.3)), n, rng.range(0.35, 0.7), rng.next() < 0.5), { cast: false });
+      if (i % 3 === 1 && Math.abs(a / DEG - ELEVATOR_AZ) > 15 && rng.next() < 0.8 * density) {
+        for (let j = rng.int(1, 2); j > 0; j--) {
+          const base = new THREE.Vector3(len * rng.range(0.3, 0.46), th / 2, rng.jitter(0.1)).applyMatrix4(m);
+          B.add(mats.ivy(), ivyCard(base, new THREE.Vector3(rng.jitter(0.3), -1, rng.jitter(0.3)), n, rng.range(0.4, 0.85), rng.next() < 0.5), { cast: false });
+        }
       }
     }
     // a short oak bearer under the inner end, let into the bark
-    B.add(mats.wood(DARK_OAK), timber(polar(a, r0 - 0.06, s.y - TH - 0.04), polar(a, r0 + 0.32, s.y - TH - 0.04), 0.1, 0.08, { rng, wobble: 0.004 }), { cast: false });
+    B.add(mats.timber(DARK_OAK), timber(polar(a, r0 - 0.06, s.y - th - 0.04), polar(a, r0 + 0.32, s.y - th - 0.04), 0.1, 0.08, { rng, wobble: 0.004 }), { cast: false });
     if (missing) {
       // the gap: the bare bearer, grown over with moss, two empty peg holes
-      B.add(mats.moss(), xf(mossGeo(rng, { r: 0.09, h: 0.04, sx: 1.6 }), [0, 0, 0]).applyMatrix4(basis.clone().setPosition(polar(a, r0 + 0.14, s.y - TH))), { cast: false });
+      B.add(mats.moss(), xf(mossGeo(rng, { r: 0.09, h: 0.04, sx: 1.6 }), [0, 0, 0]).applyMatrix4(basis.clone().setPosition(polar(a, r0 + 0.14, s.y - th))), { cast: false });
     }
-    flights[flight].push({ a, y: s.y, r: r0 + BR, i, t });
+    flights[flight].push({ a, y: s.y, th, r: r0 + BR, i, t });
     // shelf fungi creep along some brackets
     if (i % 5 === 2) fungusSpots.push({ a, y: s.y - 0.3, t });
     // crooked bark-on balusters on every third tread, mortised through the tread
     if (i % 3 === 0 && !missing) {
-      const b0 = polar(a, r1 - 0.1, s.y - TH - 0.12);
+      const b0 = polar(a, r1 - 0.1, s.y - th - 0.12);
       const top = polar(a, r1 - 0.1, s.y).add(new THREE.Vector3(rng.jitter(0.06), 0.72 + rng.jitter(0.07), rng.jitter(0.06)));
       bough(crookedPath(b0, top, rng, { bend: 0.05, n: 3 }), 0.042, 0.03, { radial: 6, seed: i }, { cast: false });
       if (rng.next() < 0.4) twig(b0.clone().lerp(top, rng.range(0.45, 0.75)), n.clone().addScaledVector(t, rng.jitter(1)).add(new THREE.Vector3(0, 0.6, 0)), rng.range(0.08, 0.15), 0.016);
@@ -224,11 +234,11 @@ export function buildStairs(ctx, B, mats, env) {
     fl.forEach((f, k) => {
       const dir = (k + 1 < N ? fl[k + 1].p : f.p).clone().sub(k > 0 ? fl[k - 1].p : f.p).normalize();
       // the wedge between the bough and the tread (each one fitted by hand)
-      const top = f.y - TH, bot = f.p.y + SR * 0.7;
+      const top = f.y - f.th, bot = f.p.y + SR * 0.7;
       const h = top - bot;
       if (h > 0.01 && !STAIR.missing.includes(f.i)) {
         const c = polar(f.a, f.p.distanceTo(new THREE.Vector3(OAK.x, f.p.y, OAK.z)), bot + h / 2);
-        B.add(mats.wood(DARK_OAK), xf(new THREE.BoxGeometry(0.12, h + 0.03, 0.11), [c.x, c.y, c.z], [rng.jitter(0.05), f.a, rng.jitter(0.05)]), { cast: false });
+        B.add(mats.timber(DARK_OAK), xf(new THREE.BoxGeometry(0.12, h + 0.03, 0.11), [c.x, c.y, c.z], [rng.jitter(0.05), f.a, rng.jitter(0.05)]), { cast: false });
       }
       // moss along the top of the bough, lichen on its flanks
       if (rng.next() < 0.75) {
@@ -298,7 +308,7 @@ export function buildStairs(ctx, B, mats, env) {
       }
       for (let j = 0; j < pts.length - 1; j++) {
         const g = timber(pts[j], pts[j + 1], 0.22, 0.065, { rng, wobble: 0.004, scale: 1 / 1.4 });
-        B.add(mats.wood(rng.pick(OLD_OAK)), g);
+        B.add(mats.timber(rng.pick(OLD_OAK)), g);
         if (rng.next() < 0.5) lichen(pts[j].clone().lerp(pts[j + 1], rng.range(0.2, 0.8)).add(new THREE.Vector3(0, 0.034, 0)), UP, 0.03);
       }
     }
@@ -308,7 +318,7 @@ export function buildStairs(ctx, B, mats, env) {
       const n = radial(a);
       const g = weatherPaint(board(W + 0.02, 0.065, 0.24, { along: 'x', rng, segs: 6 }), rng.pick(OLD_OAK), { mossEnd: -1, seed: d });
       g.applyMatrix4(new THREE.Matrix4().makeBasis(n, UP, new THREE.Vector3(-Math.cos(a), 0, Math.sin(a))).setPosition(polar(a, rIn(a) + W / 2, ly - 0.033)));
-      B.add(mats.wood(OLD_OAK[0]), g);
+      B.add(mats.timber(OLD_OAK[0]), g);
     }
     // two crooked knee braces at the ends (rope-lashed to the bearers) and a
     // bough under the outer edge
@@ -318,7 +328,7 @@ export function buildStairs(ctx, B, mats, env) {
       const head = polar(a, rIn(a) + W - 0.25, ly - 0.14);
       const mid = foot.clone().lerp(head, 0.5).addScaledVector(radial(a), -0.08).add(new THREE.Vector3(0, -0.06, 0));
       bough([foot, mid, head], 0.085, 0.06, { radial: 7, seed: d });
-      B.add(mats.wood(DARK_OAK), timber(polar(a, rIn(a) - 0.03, ly - 0.14), polar(a, rIn(a) + W - 0.1, ly - 0.14), 0.1, 0.13, { rng }));
+      B.add(mats.timber(DARK_OAK), timber(polar(a, rIn(a) - 0.03, ly - 0.14), polar(a, rIn(a) + W - 0.1, ly - 0.14), 0.1, 0.13, { rng }));
       for (const g of lashing(head, radial(a), 0.07, { turns: 3 })) B.add(ropeMat, g, { cast: false });
     }
     {
@@ -381,15 +391,15 @@ export function buildStairs(ctx, B, mats, env) {
     for (const s of [-1, 1]) {
       const g = board(0.22, 0.012, 0.13, { along: 'x', rng });
       g.rotateX(s * 0.62).translate(0, -0.035, s * 0.052);
-      put(mats.wood('#6f5e4c'), g);
+      put(mats.timber('#6f5e4c'), g);
     }
     put(mats.moss(), xf(mossGeo(rng, { r: 0.05, h: 0.02, sx: 1.6 }), [0.03, 0.004, 0.0]));
     // four corner sticks and the tray with a rim
-    for (const [x, z] of [[-0.085, -0.055], [0.085, -0.055], [-0.085, 0.055], [0.085, 0.055]]) put(mats.wood('#5f5040'), xf(new THREE.CylinderGeometry(0.006, 0.006, 0.15, 4), [x, -0.11, z]));
-    put(mats.wood('#7d6a57'), board(0.2, 0.016, 0.14, { along: 'x', rng }).translate(0, -0.19, 0));
+    for (const [x, z] of [[-0.085, -0.055], [0.085, -0.055], [-0.085, 0.055], [0.085, 0.055]]) put(mats.timber('#5f5040'), xf(new THREE.CylinderGeometry(0.006, 0.006, 0.15, 4), [x, -0.11, z]));
+    put(mats.timber('#7d6a57'), board(0.2, 0.016, 0.14, { along: 'x', rng }).translate(0, -0.19, 0));
     for (const s of [-1, 1]) {
-      put(mats.wood('#6a5947'), board(0.2, 0.018, 0.01, { along: 'x', rng }).translate(0, -0.176, s * 0.068));
-      put(mats.wood('#6a5947'), board(0.01, 0.018, 0.14, { along: 'z', rng }).translate(s * 0.098, -0.176, 0));
+      put(mats.timber('#6a5947'), board(0.2, 0.018, 0.01, { along: 'x', rng }).translate(0, -0.176, s * 0.068));
+      put(mats.timber('#6a5947'), board(0.01, 0.018, 0.14, { along: 'z', rng }).translate(s * 0.098, -0.176, 0));
     }
     // seeds
     for (let k = 0; k < 9; k++) put(mats.paint(), xf(new THREE.SphereGeometry(0.009, 4, 3), [rng.jitter(0.07), -0.178, rng.jitter(0.045)], null, [1, 0.6, 1.4]), { color: rng.pick(['#c9a66b', '#5a4630', '#e2d3a8']) });
@@ -530,7 +540,7 @@ export function buildStairs(ctx, B, mats, env) {
         const dir = head.clone().sub(foot).normalize();
         const yAx = pn.clone().negate().addScaledVector(dir, pn.dot(dir)).normalize(); // thickness: into the bark
         const mm = new THREE.Matrix4().makeBasis(dir, yAx, new THREE.Vector3().crossVectors(dir, yAx)).setPosition(foot.clone().lerp(head, 0.5).addScaledVector(pn, 0.04));
-        B.add(mats.wood(NEW_WOOD[0]), g.applyMatrix4(mm));
+        B.add(mats.timber(NEW_WOOD[0]), g.applyMatrix4(mm));
       }
     }
     // toadstools & ferns at the foot

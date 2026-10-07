@@ -1,10 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Little living effects of the Schreinerei:
-//   makeSmoke(ctx, opts)      soft painterly smoke puffs curling from a chimney
 //   makeShavings(ctx, opts)   curly wood shavings springing off the hand plane
 //   makeNotes(ctx, opts)      ♪ ♫ notes floating up from the record player
-// Smoke & notes are camera-facing quads billboarded in the vertex shader (one
-// draw call each, fogged like the rest of the scene). No per-frame allocations.
+//   makeMotes(ctx, volumes)   golden sawdust motes drifting in the warm light
+// Notes are camera-facing quads billboarded in the vertex shader (one draw
+// call, fogged like the rest of the scene). No per-frame allocations.
+// (The chimney uses the glen's shared soft plume, props/smoke.js.)
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { sharedUniforms } from '../../core/materials.js';
@@ -28,109 +29,6 @@ const BILLBOARD_VERT = /* glsl */ `
     #include <fog_vertex>
   }
 `;
-
-// ─── smoke ───────────────────────────────────────────────────────────────────
-const SMOKE_FRAG = /* glsl */ `
-  #include <common>
-  #include <fog_pars_fragment>
-  uniform vec3 uDay;
-  uniform vec3 uNightC;
-  uniform float uNight;
-  uniform float uOpacity;
-  varying vec2 vUv;
-  varying vec4 vData;
-  void main() {
-    vec2 d = vUv - 0.5;
-    float ang = atan(d.y, d.x);
-    float r = length(d) * 2.0;
-    r *= 1.0 + 0.1 * sin(ang * 5.0 + vData.x * 40.0) + 0.06 * sin(ang * 9.0 - vData.x * 13.0);
-    float life = vData.y;
-    if (life < 0.0) discard;
-    float fade = smoothstep(0.0, 0.15, life) * (1.0 - smoothstep(0.45, 1.0, life));
-    float a = smoothstep(1.0, 0.25, r) * fade * uOpacity;
-    // soft inner shading: lighter towards the top-left (the sun)
-    float lit = 0.82 + 0.25 * dot(normalize(d + 1e-4), normalize(vec2(-0.6, 0.8))) * smoothstep(0.0, 1.0, r);
-    vec3 col = mix(uDay, uNightC, uNight) * lit;
-    gl_FragColor = vec4(col, a);
-    #include <tonemapping_fragment>
-    #include <colorspace_fragment>
-    #include <fog_fragment>
-  }
-`;
-
-/**
- * Chimney smoke. opts: { position (Vector3, world), count = 14, rise = 3.2, size = [0.25, 1.1],
- *   wind = [0.6, -0.2] (drift x/z at the top), rate = 0.09 (cycles per second) }
- */
-export function makeSmoke(ctx, opts = {}) {
-  const count = Math.max(4, Math.round((opts.count ?? 14) * (ctx.quality?.density ?? 1)));
-  const rise = opts.rise ?? 3.2;
-  const [s0, s1] = opts.size ?? [0.25, 1.1];
-  const wind = opts.wind ?? [0.6, -0.2];
-  const rate = opts.rate ?? 0.09;
-  const geo = new THREE.PlaneGeometry(1, 1);
-  const mesh = new THREE.InstancedMesh(geo, makeSmokeMaterial(), count);
-  const data = new Float32Array(count * 4);
-  for (let i = 0; i < count; i++) data[i * 4] = i / count + Math.random() * 0.01;
-  const attr = new THREE.InstancedBufferAttribute(data, 4);
-  attr.setUsage(THREE.DynamicDrawUsage);
-  geo.setAttribute('aData', attr);
-  mesh.position.copy(opts.position ?? new THREE.Vector3());
-  mesh.frustumCulled = false;
-  mesh.castShadow = mesh.receiveShadow = false;
-  mesh.renderOrder = 4;
-  mesh.name = 'smoke';
-  mesh.raycast = () => {};
-  const m = new THREE.Matrix4();
-  const reduced = ctx.engine?.reducedMotion;
-  function update(dt, t) {
-    const tt = reduced ? t * 0.35 : t;
-    for (let i = 0; i < count; i++) {
-      const seed = data[i * 4];
-      const life = (tt * rate + seed) % 1;
-      const ph = seed * 31.7;
-      const x = Math.sin(ph + tt * 0.8) * 0.12 * life + wind[0] * life * life;
-      const z = Math.cos(ph * 1.3 + tt * 0.7) * 0.12 * life + wind[1] * life * life;
-      const y = Math.pow(life, 0.8) * rise;
-      m.makeTranslation(x, y, z);
-      mesh.setMatrixAt(i, m);
-      data[i * 4 + 1] = life;
-      data[i * 4 + 2] = s0 + (s1 - s0) * Math.pow(life, 0.7);
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-    attr.needsUpdate = true;
-    mesh.material.uniforms.uTime.value = t;
-  }
-  update(0, 0);
-  return { object: mesh, update };
-}
-
-function makeSmokeMaterial() {
-  const mat = new THREE.ShaderMaterial({
-    uniforms: THREE.UniformsUtils.merge([
-      THREE.UniformsLib.fog,
-      {
-        uTime: { value: 0 },
-        uDay: { value: new THREE.Color('#d9d4cc') },
-        uNightC: { value: new THREE.Color('#5d6178') },
-        uOpacity: { value: 0.72 },
-      },
-    ]),
-    vertexShader: BILLBOARD_VERT,
-    fragmentShader: SMOKE_FRAG,
-    transparent: true,
-    depthWrite: false,
-    fog: true,
-    name: 'schreinerei-smoke',
-  });
-  return withNight(mat);
-}
-
-/** Share the global night uniform (UniformsUtils.merge clones values, so re-link it). */
-function withNight(mat) {
-  mat.uniforms.uNight = sharedUniforms.uNight;
-  return mat;
-}
 
 // ─── shavings ────────────────────────────────────────────────────────────────
 /** A curly shaving: a thin ribbon wound into a little spiral. */

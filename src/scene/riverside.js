@@ -26,11 +26,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../core/rng.js';
-import { Batch, M } from './riverside/kit.js';
+import { Batch, M, setDetail } from './riverside/kit.js';
 import { buildWater } from './riverside/water.js';
 import { buildBridge, BIKE_SPOT } from './riverside/bridge.js';
 import { buildWorkshop } from './riverside/workshop.js';
-import { makeBike } from './riverside/bike.js';
+import { makeBike, setBikeTier } from './riverside/bike.js';
 import { buildFalls } from './riverside/falls.js';
 import { planStreamRocks, buildBanks, buildPond, buildDrifters } from './riverside/banks.js';
 
@@ -54,6 +54,10 @@ export default async function build(ctx) {
   const root = new THREE.Group();
   root.name = 'riverside';
   ctx.scene.add(root);
+  // geometry detail per quality tier (stones, moss, boulders, heightfields, bikes …)
+  const tier = ctx.quality?.tier ?? 'high';
+  setDetail(tier, { shadows: ctx.quality?.shadows !== false });
+  setBikeTier(tier);
   const B = new Batch('riverside');
   const halos = [];
   M(); // the shared materials (their painterly textures bake on first use)
