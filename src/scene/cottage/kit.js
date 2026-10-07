@@ -22,6 +22,8 @@ import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { materials } from '../../core/materials.js';
 import { createNoise2D } from '../../core/noise.js';
+import { requestBake } from '../../core/textures/bakery.js';
+import { mushroomGlowMaterials } from '../../world/vegetation/mushrooms.js';
 
 export const TAU = Math.PI * 2;
 export const noiseA = createNoise2D(41117);
@@ -52,10 +54,15 @@ export function mats() {
   if (M) return M;
   const m = materials;
   M = {
-    cap: m.surface('mushroomCap', { color: '#ffffff', vertexColors: true }),
+    cap: velvetCap(m.surface('mushroomCap', { color: '#ffffff', vertexColors: true, roughness: 1.55 })),
+    // the white flakes on the caps: the glen's enchanted-agaric spot material (faint
+    // cream-mint glow at night, see world/vegetation/mushrooms.js updateMushroomGlow)
+    warts: mushroomGlowMaterials({ materials: m }).warts,
     gills: bounceGills(m.surface('gills', { gills: 'cone', side: THREE.DoubleSide, vertexColors: true })),
     stem: m.surface('mushroomStem', { vertexColors: true }),
     plaster: m.surface('plaster', { vertexColors: true }),
+    limewash: limewash(m.surface('plaster', { vertexColors: true })),
+    paperLamp: paperLantern(),
     wallStone: m.surface('stone', { vertexColors: true, mossy: 0.3 }),
     stone: m.surface('rock', { vertexColors: true, scale: 0.5, mossy: 0.1 }),
     wood: m.surface('wood', { species: 'oak', vertexColors: true }),
@@ -113,9 +120,100 @@ function bounceGills(base) {
   return g;
 }
 
+/**
+ * The caps' skin: velvety rather than plastic — the texture's roughness is
+ * raised (opts.roughness above) and this clone (never the cached original)
+ * gets a stronger soft rim sheen, like the bloom on a fresh fly agaric.
+ */
+function velvetCap(base) {
+  const c = base.clone();
+  c.name = 'cottage-cap';
+  const u = materials.surfaceUniforms(c);
+  if (u?.sfQ) u.sfQ.value.z = 0.62; // velvet (the kind's default is 0.35)
+  return c;
+}
+
+/**
+ * Interior limewash (Wohnatelier): the plaster surface material re-pointed at
+ * its own GPU bake — soft cloudy mottling of several brushed coats in warm
+ * off-white, faint overlapping trowel sweeps with a gentle burnished sheen and
+ * NO cracks or fallen-off patches (the exterior plaster keeps its weathering).
+ * Same shader program as the plaster (a clone with its own maps), so it costs
+ * no extra compile.
+ */
+const LIMEWASH_GLSL = /* glsl */ `
+Surf kind_cottageLimewash(vec2 uv) {
+  float m1 = fbmu(uv, 2.0, 5);
+  float m2 = fbmu(uv + vec2(0.37, 0.11), 5.0, 4);
+  float m3 = fbmu(uv + vec2(0.71, 0.53), 11.0, 3);
+  vec3 col = C(0xece1ca);
+  col = mix(col, C(0xe0d1b2), sat(m1 * 0.9 + 0.05) * 0.75);   // cloudy darker coats
+  col = mix(col, C(0xf7f1e3), sat(-m2 * 1.3) * 0.7);          // thin, bright wash
+  col = mix(col, C(0xe7dac0), sat(m3 * 1.2) * 0.3);           // fine brush mottle
+  // broad trowel sweeps: softly overlapping laps, burnished (smoother) in the middle
+  vec2 w = vec2(fbmu(uv, 3.0, 2), fbmu(uv + vec2(0.5), 3.0, 2)) * 0.09;
+  vec4 tv = voronoi((uv + w) * 3.0, vec2(3.0), 1.0);
+  float lap = 1.0 - smoothstep(0.0, 0.1, tv.y);
+  float burnish = smoothstep(0.08, 0.38, tv.y) * (0.6 + 0.4 * tv.z);
+  float sweep = gnoise(rot2(uv * 3.0, tv.z * 6.28) * vec2(2.0, 22.0), vec2(1000.0));
+  col *= 1.0 - 0.025 * lap + 0.012 * sweep;
+  float h = 0.6 + 0.025 * m1 + 0.02 * lap + 0.006 * sweep + 0.003 * gnoise(uv * 140.0, vec2(140.0));
+  float rough = 0.74 - 0.2 * burnish + 0.04 * m3;
+  return surf(col, h, rough, 1.0);
+}`;
+function limewash(base) {
+  const c = base.clone();
+  c.name = 'cottage-limewash';
+  const u = materials.surfaceUniforms(c);
+  const maps = requestBake('surface:cottage-limewash', {
+    glslKey: 'cottage-limewash',
+    glsl: LIMEWASH_GLSL,
+    fn: 'kind_cottageLimewash',
+    mode: 'rgb',
+    size: [512, 512],
+    bump: 0.004,
+    cavity: 1,
+    mean: '#ebdfc5',
+    seed: 0,
+  });
+  if (u?.sfMap && u?.sfDetail) {
+    u.sfMap.value = maps.map;
+    u.sfDetail.value = maps.detail;
+    u.sfP.value.w *= 0.5; // calmer painterly breakup: the bake already carries the mottling
+  }
+  return c;
+}
+
+/**
+ * Rice-paper lantern (the Wohnatelier's globe pendant): warm amber, glowing
+ * through the paper — a little brighter towards the silhouette than in the
+ * middle (the light crosses more paper there) and dimmer along the wire ribs
+ * (painted into the vertex colours). Its emissive follows day/night through
+ * setCottageNight().
+ */
+const PAPER_LAMP = { color: '#ffc98a', day: 0.54, night: 0.96 };
+let paperMat = null;
+function paperLantern() {
+  const c = new THREE.Color(PAPER_LAMP.color);
+  const m = new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: PAPER_LAMP.day, roughness: 0.92, vertexColors: true });
+  m.name = 'cottage-paper-lamp';
+  m.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      `#include <emissivemap_fragment>
+  float paperRim = 1.0 - abs(dot(normal, normalize(vViewPosition)));
+  totalEmissiveRadiance *= vColor.rgb * (0.72 + 0.62 * paperRim * paperRim);`
+    );
+  };
+  m.customProgramCacheKey = () => 'cottage-paper-lamp';
+  paperMat = m;
+  return m;
+}
+
 /** Ease the cottage's own day/night-dependent material terms (call every frame; cheap). */
 export function setCottageNight(night) {
   if (gillMat) gillMat.emissiveIntensity = GILL_BOUNCE.day + (GILL_BOUNCE.night - GILL_BOUNCE.day) * night;
+  if (paperMat) paperMat.emissiveIntensity = PAPER_LAMP.day + (PAPER_LAMP.night - PAPER_LAMP.day) * night;
 }
 
 // ─── batching ────────────────────────────────────────────────────────────────

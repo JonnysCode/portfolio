@@ -15,7 +15,7 @@ import { local, pot, wateringCan } from './garden.js';
 /** World azimuth the shed's door faces (towards the cottage gardens). */
 const SHED_DOOR_AZ = 1.35;
 
-export function buildShed(ctx, B, root, halos = null) {
+export function buildShed(ctx, B, root, halos = null, rimHalos = null) {
   const rng = createRng('garden-shed');
   const S = COTTAGE.shed;
   const out = { hotspots: [], updates: [], lights: [], colliders: [], keepOut: [] };
@@ -43,6 +43,7 @@ export function buildShed(ctx, B, root, halos = null) {
     detail: ctx.quality?.density ?? 1,
     batch: B,
     halos: halos ?? undefined,
+    rimHalos: rimHalos ?? undefined,
     frame,
   });
   root.add(shed);

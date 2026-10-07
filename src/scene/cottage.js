@@ -28,6 +28,7 @@ import { glowQuads } from '../props/glow.js';
 import { makeSmoke } from './cottage/smoke.js';
 import { scatterPad } from './cottage/scatter.js';
 import { createRng } from '../core/rng.js';
+import { updateMushroomGlow } from '../world/vegetation/mushrooms.js';
 
 export default async function build(ctx) {
   const root = new THREE.Group();
@@ -38,7 +39,8 @@ export default async function build(ctx) {
   const reduced = !!ctx.engine?.reducedMotion;
 
   const smoke = [];
-  const parts = [buildHome(ctx, B, root, halos, smoke), buildAtelier(ctx, B, root, halos, smoke), buildShed(ctx, B, root, halos)];
+  const rimHalos = []; // warm window / porch light bouncing off the gills under the cap rims (night)
+  const parts = [buildHome(ctx, B, root, halos, smoke, rimHalos), buildAtelier(ctx, B, root, halos, smoke, rimHalos), buildShed(ctx, B, root, halos, rimHalos)];
 
   // dress the pads' ground (vegetation keeps off building plots)
   const keepOut = parts.flatMap((p) => p.keepOut ?? []);
@@ -53,10 +55,15 @@ export default async function build(ctx) {
   // smoke from every chimney in one mesh, night halos (windows, lanterns, fairy lights) in another
   if (smoke.length) root.add(makeSmoke(smoke, { reducedMotion: reduced }));
   if (halos.length) root.add(glowQuads(halos, '#ffc477', { day: 0.03, night: 0.38 }));
+  if (rimHalos.length) root.add(glowQuads(rimHalos, '#ffb064', { day: 0.0, night: 0.3, pull: 0.25 }));
 
   const updates = [];
   setCottageNight(ctx.env?.night ?? 0);
-  updates.push(() => setCottageNight(ctx.env?.night ?? 0)); // warm gill bounce follows day/night
+  updates.push(() => {
+    const night = ctx.env?.night ?? 0;
+    setCottageNight(night); // warm gill bounce & the paper lantern follow day/night
+    updateMushroomGlow(ctx, night); // the caps' cream-mint flakes (shared with the glen's agarics; idempotent)
+  });
   for (const p of parts) {
     for (const [obj, opts] of p.hotspots) ctx.interactions?.add?.(obj, opts);
     for (const [pos, opts] of p.lights) ctx.lights?.addPoint?.(pos, opts);

@@ -13,9 +13,12 @@
 // Anatomy (every part hand-made from seeded jitter, nothing ruler-straight):
 //   • a bulging stem — fibrous mushroom flesh, lime plaster or fieldstone —
 //     on a ring of footing stones, darkened under the cap and mossy at the foot
-//   • a tall cone / bell / dome / parasol cap with a soft tip, a rolled rim,
-//     real radial GILLS underneath (lamella fins over a gill texture), and
-//     irregular raised white warts that follow the cap surface
+//   • a tall cone / bell / dome / parasol cap with a soft tip, a rolled rim
+//     (optionally flared a little so the gill fringe shows from above), real
+//     radial GILLS underneath (lamella fins + short lamellulae at the margin over
+//     a gill texture), flat torn cream flakes lying in the velvety skin (they
+//     glow a faint cream-mint at night, like the glen's enchanted agarics) and a
+//     few moss cushions
 //   • a ledged-and-braced plank door with strap hinges and a ring handle in an
 //     arch of individual voussoirs on quoined jambs, a threshold and worn steps
 //   • small framed windows (arched, square or round) with mullions, sills,
@@ -111,12 +114,16 @@ let houseCount = 0;
  * @param {number} [opts.lean=0.25]             how far the tip leans (units)
  * @param {object} [opts.open]                  { phi = 0, width = 2.6, height = 2.5, depth = 0.55 } big arched opening (interior)
  * @param {object} [opts.capTilt]               { phi, slope } tilt the cap so its rim rises towards φ (shows the gills on that side)
+ * @param {number} [opts.capFlare=0]            0..1 flare the outer cap so the rim turns slightly up (the gill fringe shows from above)
+ * @param {number} [opts.capMoss=0]             number of small moss patches on the cap
  * @param {boolean} [opts.doorLeaf]             build the door leaf as its own little group (userData.doorLeaf, origin at
  *                                              the foot of the leaf) so it can be a hotspot that bounces on hover
  * @param {number} [opts.detail=1]              0.4..1 scales the small-detail counts
  * @param {Batch} [opts.batch]                  merge static parts into this batch …
  * @param {THREE.Matrix4} [opts.frame]          … placed by this matrix (batch space)
  * @param {Array} [opts.halos]                  collect night halos here ({x,y,z,size} in batch space) instead of a mesh
+ * @param {Array} [opts.rimHalos]               collect soft warm "bounce" glows under the cap rim (above the lit windows and the
+ *                                              door lantern) here ({x,y,z,size}, batch space); without it they are not made
  * @param {Array} [opts.smokeSources]           collect chimney smoke sources here instead of a smoke mesh
  * @param {boolean|string} [opts.plaque]        legacy: a painted board above the door (string = its text)
  * @returns {THREE.Group}
@@ -154,6 +161,8 @@ export function makeMushroomHouse(opts = {}) {
     flowers: opts.flowers ?? true,
     base: opts.base ?? true,
     capTilt: opts.capTilt ?? null,
+    capFlare: THREE.MathUtils.clamp(opts.capFlare ?? 0, 0, 1),
+    capMoss: opts.capMoss ?? 0,
     doorLeaf: !!opts.doorLeaf,
     detail,
   };
@@ -176,6 +185,13 @@ export function makeMushroomHouse(opts = {}) {
       opts.halos.push({ x: v.x, y: v.y, z: v.z, size: h.size });
     }
   } else if (info.halos.length) g.add(glowQuads(info.halos, '#ffc477', { day: 0.03, night: 0.38 }));
+  if (Array.isArray(opts.rimHalos)) {
+    const v = new THREE.Vector3();
+    for (const h of info.rimHalos) {
+      v.set(h.x, h.y, h.z).applyMatrix4(frame);
+      opts.rimHalos.push({ x: v.x, y: v.y, z: v.z, size: h.size });
+    }
+  }
   // chimney smoke (or a source for the caller's shared smoke mesh)
   if (info.chimneyTop && o.smoke) {
     const src = { x: info.chimneyTop.x, y: info.chimneyTop.y, z: info.chimneyTop.z, scale: Math.max(0.7, H / 9), rise: 2.2 + H * 0.12 };
@@ -237,6 +253,9 @@ export function makeMushroomHouse(opts = {}) {
     rimPoint: info.rimPoint,
     interior: info.interior,
     doorLeaf,
+    /** { phi, s } of the dormer / chimney on the cap (null when there is none). */
+    dormer: info.dormer,
+    chimney: info.chimney,
     options: o,
   };
   return g;
@@ -372,6 +391,9 @@ function buildHouse(F, o, rng) {
     tilt[1] += Math.cos(o.capTilt.phi ?? 0) * (o.capTilt.slope ?? 0.08);
   }
   const droopA = rng.range(0.04, 0.1) * capH * 0.12, droopP = rng.range(0, TAU);
+  // flare: the outer fifth of the cap (top, rolled rim AND gills alike) lifts a little,
+  // so the rim turns slightly up and the outer gill fringe faces the (higher) cameras
+  const flareH = o.capFlare * Rc * 0.1;
   const capWob = (phi) => 1 + cw[2] * Math.sin(2 * phi + cw[0]) + cw[3] * Math.sin(3 * phi + cw[1]) + 0.018 * noiseA(Math.cos(phi) * 1.5 + ox, Math.sin(phi) * 1.5);
   const tmp = { r: 0, y: 0 };
   /** Deform a profile point (ρ, y) at azimuth φ into the hand-made cap. */
@@ -381,6 +403,7 @@ function buildHouse(F, o, rng) {
     const x = Math.sin(phi) * r, z = Math.cos(phi) * r;
     let yy = y + (x * tilt[0] + z * tilt[1]) * k;
     yy -= droopA * k ** 3 * (0.5 + 0.5 * Math.sin(phi * 2 + droopP));
+    if (flareH > 0 && k > 0.8) yy += flareH * ((k - 0.8) / 0.2) ** 2;
     yy += 0.035 * Rc * noiseB(x * 0.7 + oy, z * 0.7) * k * (1 - k * 0.6);
     return out.set(x, yy, z);
   };
@@ -404,18 +427,18 @@ function buildHouse(F, o, rng) {
   const capHSL = { h: 0, s: 0, l: 0 };
   capBase.getHSL(capHSL);
   const capLight = new THREE.Color().setHSL(capHSL.h + 0.012, Math.min(1, capHSL.s * 1.05), Math.min(0.9, capHSL.l * 1.18));
-  const capDark = new THREE.Color().setHSL(capHSL.h - 0.008, capHSL.s, capHSL.l * 0.62);
+  const capDark = new THREE.Color().setHSL(capHSL.h - 0.008, capHSL.s, capHSL.l * 0.68);
   paintFn(capGeo, o.capColor, (x, y, z, i, c) => {
     const k = (y - rimY) / capH; // 0 rim … 1 apex
     c.copy(capBase);
     c.lerp(capLight, smooth01((k - 0.45) / 0.5) * 0.55);
-    c.lerp(capDark, (1 - smooth01(k / 0.25)) * 0.45);
+    c.lerp(capDark, (1 - smooth01(k / 0.25)) * 0.3);
     const b = noiseA(x * 0.9 + ox, z * 0.9 + y * 0.7) * 0.6 + noiseB(x * 2.6, z * 2.6 - y) * 0.4;
     c.multiplyScalar(0.9 + 0.16 * b);
     // darker streaks running down the cap
     const phi = Math.atan2(x, z);
     const st = noiseB(Math.cos(phi) * 6 + oy, Math.sin(phi) * 6 + y * 0.15);
-    c.lerp(capDark, Math.max(0, st) * 0.25 * (1 - k * 0.5));
+    c.lerp(capDark, Math.max(0, st) * 0.18 * (1 - k * 0.5));
   });
   put(M.cap, capGeo, { cast: true });
 
@@ -457,15 +480,19 @@ function buildHouse(F, o, rng) {
     for (let f = 0; f < nF; f++) {
       const u = (f + rng.jitter(0.25)) / nF;
       const phi = u * TAU;
-      const half = f % 2 === 1; // every other fin is a short one near the rim
-      const v0 = half ? 0.45 : 0.02;
+      // every other fin is a short lamellula running in from the rim, so the margin — the part
+      // the cameras see as a fringe under the rolled edge — is densely gilled
+      const half = f % 2 === 1;
+      const v0 = 0.02, v1 = half ? 0.5 : 0.97;
       const uT = Math.round(u * gRep * 120) / 120;
       const base = pos.length / 3;
       for (let k = 0; k <= segs; k++) {
-        const v = lerp(v0, 0.97, k / segs);
+        const v = lerp(v0, v1, k / segs);
         underRaw(phi, v, a);
-        const t = (v - v0) / (0.97 - v0);
-        const d = depth * Math.max(0, Math.sin(Math.PI * Math.min(1, t * 1.05))) ** 0.6 * (half ? 0.7 : 1);
+        const t = (v - v0) / (v1 - v0);
+        // an even lower edge from the margin inwards (a clean fringe line, no saw teeth),
+        // tapering away towards the inner end
+        const d = depth * (0.88 + 0.12 * smooth01(t / 0.25)) * (1 - smooth01((t - 0.62) / 0.38)) ** 0.7 * (half ? 0.9 : 1);
         pos.push(a.x, a.y + 0.01, a.z, a.x, a.y - d, a.z);
         uv.push(uT, v, uT + 0.001, v);
       }
@@ -584,6 +611,24 @@ function buildHouse(F, o, rng) {
   if (dorm) capReserved.push({ phi: dorm.phi, s: dorm.s, r: 0.95 });
   if (chim) capReserved.push({ phi: chim.phi, s: chim.s, r: 0.55 });
   if (o.warts) buildWarts(put, o, rng, { capRaw, capFrame, capReserved, count: typeof o.warts === 'number' ? o.warts : Math.round(Rc * Rc * (7 + 4.5 * det)) });
+  // a few small cushions of moss that have taken hold on the cap
+  if (o.capMoss > 0) {
+    const tmpR = new THREE.Vector3();
+    const n = Math.round(o.capMoss * (0.5 + 0.5 * det));
+    for (let i = 0, tries = 0; i < n && tries < n * 20; tries++) {
+      const phi = rng.next() * TAU;
+      const s = rng.range(0.3, 0.92);
+      const p0 = capRaw(phi, s);
+      if (capReserved.some((r) => capRaw(r.phi, r.s, tmpR).distanceTo(p0) < r.r + 0.35)) continue;
+      const f = capFrame(phi, s);
+      const r = Rc * rng.range(0.035, 0.07);
+      const g = mossGeo(rng, { r, h: r * rng.range(0.35, 0.5), sx: rng.range(1, 1.5), sz: rng.range(0.7, 1) });
+      g.rotateY(rng.next() * TAU);
+      g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), f.n));
+      put(M.moss, g.translate(f.p.x - f.n.x * 0.012, f.p.y - f.n.y * 0.012, f.p.z - f.n.z * 0.012), { cast: false });
+      i++;
+    }
+  }
 
   // ── dormer ──
   if (dorm) buildDormer(put, o, rng, { capFrame, capRaw, dorm, halos });
@@ -612,9 +657,30 @@ function buildHouse(F, o, rng) {
     }
   }
 
+  // soft warm "bounce" glows under the rim, above the lit windows and the door lantern
+  // (the gills catch the window & porch light at night)
+  const rimHalos = [];
+  {
+    const add = (phi, near) => {
+      const p = underRaw(phi, 0.38);
+      p.y -= 0.12;
+      const b = bendV(p);
+      rimHalos.push({ x: b.x, y: b.y, z: b.z, size: (0.9 + 0.35 * Rc) * near });
+    };
+    for (const w of windows) {
+      // windows high on the wall light the gills strongly, low ones only a little
+      const near = 0.55 + 0.45 * smooth01((w.y - stemTop * 0.35) / (stemTop * 0.5));
+      add(w.phi, near);
+    }
+    if (o.door) add(o.door.phi, 0.9);
+  }
+
   const collider = prof(0.1) * 0.98;
   return {
     halos,
+    rimHalos,
+    dormer: dorm ? { phi: dorm.phi, s: dorm.s } : null,
+    chimney: chim ? { phi: chim.phi, s: chim.s, top: chimneyTop ? chimneyTop.clone() : null } : null,
     collider,
     stemTop,
     rimY,
@@ -915,6 +981,10 @@ function buildWindow(put, o, rng, spec, { wallR, halos }) {
 }
 
 // ─── warts ───────────────────────────────────────────────────────────────────
+// Flat, torn cream flakes of the veil lying IN the cap skin (their rim sinks a
+// hair below the surface), bigger towards the crown — not raised pebbles. They
+// use the glen's enchanted-spot material: plain cream by day, a faint
+// cream-mint glow at night (world/vegetation/mushrooms.js updateMushroomGlow).
 function buildWarts(put, o, rng, { capRaw, capFrame, capReserved, count }) {
   const M = mats();
   const { Rc } = o;
@@ -923,15 +993,18 @@ function buildWarts(put, o, rng, { capRaw, capFrame, capReserved, count }) {
   const col = [];
   const uv = [];
   const idx = [];
-  const cBase = new THREE.Color(o.wartColor);
-  const cEdge = new THREE.Color(o.wartColor).lerp(new THREE.Color('#c9b186'), 0.55);
+  // (a touch brighter than the wart colour: the flakes use a plain standard material
+  //  without the cap's soft wrap lighting, so they would otherwise read greyish)
+  const cBase = new THREE.Color(o.wartColor).multiplyScalar(1.1);
+  const cEdge = new THREE.Color(o.wartColor).lerp(new THREE.Color('#dcc8a0'), 0.3);
+  const cTone = new THREE.Color();
   const tmp = new THREE.Vector3();
   let tries = 0;
   while (placed.length < count && tries < count * 40) {
     tries++;
     const s = Math.sqrt(rng.range(0.0006, 0.84)); // area-weighted towards the rim
     const phi = rng.next() * TAU;
-    const size = Rc * 0.042 * rng.range(0.4, 1.5) * (1.3 - 0.65 * s) * (s < 0.1 ? 0.8 : 1);
+    const size = Rc * 0.046 * rng.range(0.45, 1.5) * (1.5 - 0.85 * s) * (s < 0.1 ? 0.8 : 1);
     const c = capRaw(phi, s);
     let ok = true;
     for (const p of placed) if (p.c.distanceTo(c) < (p.size + size) * 1.08) ok = false;
@@ -941,32 +1014,34 @@ function buildWarts(put, o, rng, { capRaw, capFrame, capReserved, count }) {
   }
   for (const w of placed) {
     const f = capFrame(w.phi, w.s);
-    const k = rng.int(7, 9);
+    const k = rng.int(6, 9);
     const ang = [];
     const rad = [];
     const rot = rng.next() * TAU;
-    const ax = rng.range(0.8, 1.25);
-    const flaky = rng.chance(0.35); // some are torn veil flakes, most are soft round warts
+    const ax = rng.range(0.75, 1.3);
+    const flaky = rng.chance(0.5); // half are torn, angular veil flakes, half soft rounded ones
     for (let i = 0; i < k; i++) {
-      ang.push(rot + ((i + rng.jitter(0.25)) / k) * TAU);
-      rad.push(flaky ? rng.range(0.6, 1.0) : rng.range(0.82, 1.0));
+      ang.push(rot + ((i + rng.jitter(0.3)) / k) * TAU);
+      rad.push(flaky ? rng.range(0.62, 1.0) : rng.range(0.84, 1.0));
     }
-    const h = w.size * rng.range(0.28, 0.45);
+    // a thin flake: barely proud of the skin in the middle, its torn rim sunk just below it
+    const h = Math.min(0.035, Math.max(0.013, w.size * rng.range(0.1, 0.16)));
     const rings = [
       [0.0, h, 0],
-      [0.5, h * 0.95, 0],
-      [0.82, h * 0.72, 0],
-      [1.0, h * 0.26, 1],
-      [1.12, -0.015, 1],
+      [0.55, h * 0.95, 0],
+      [0.86, h * 0.78, 0],
+      [1.0, h * 0.42, 1],
+      [1.07, -0.012, 1],
     ];
+    const tone = rng.range(0.94, 1.03);
     const base = pos.length / 3;
     const pushV = (a, b, hh, edge) => {
       const ph = w.phi + a / f.lPhi;
       const ss = Math.min(1, Math.max(0.0005, w.s + b / f.lS));
       const p = capRaw(ph, ss, tmp).addScaledVector(f.n, hh);
       pos.push(p.x, p.y, p.z);
-      const cc = edge ? cEdge : cBase;
-      col.push(cc.r, cc.g, cc.b);
+      cTone.copy(edge ? cEdge : cBase).multiplyScalar(tone);
+      col.push(cTone.r, cTone.g, cTone.b);
       uv.push(a * 3 + w.phi, 0.6 + b * 0.8);
     };
     pushV(0, 0, h, 0);
@@ -1002,7 +1077,7 @@ function buildWarts(put, o, rng, { capRaw, capFrame, capReserved, count }) {
     for (let i = 0; i < a.length; i += 3) [a[i + 1], a[i + 2]] = [a[i + 2], a[i + 1]];
     g.computeVertexNormals();
   }
-  put(M.cap, g, { cast: false, color: null });
+  put(M.warts, g, { cast: false, color: null });
 }
 
 // ─── dormer ──────────────────────────────────────────────────────────────────
@@ -1095,7 +1170,7 @@ function buildChimney(put, o, rng, { capFrame, chim, bendV }) {
       const sp = new THREE.SphereGeometry(0.03 * scale, 5, 3).scale(1, 0.5, 1);
       sp.translate(Math.cos(a) * Math.cos(el) * rr, top.y + 0.12 + Math.sin(el) * rr * 0.62, Math.sin(a) * Math.cos(el) * rr);
       sp.translate(top.x, 0, top.z);
-      put(M.stem, sp, { color: o.wartColor, cast: false });
+      put(M.warts, sp, { color: o.wartColor, cast: false });
     }
     return bendV(top.clone().add(new THREE.Vector3(0.18 * scale, 0.05, 0)));
   }
@@ -1315,11 +1390,12 @@ function buildOpenFront(put, o, rng, { prof, zf, stemTop, cutA, wallR, stemMat, 
     10,
     { uv: (u, v, p) => [(u * TAU * prof(1)) / 2.2, p.y / 2.2] }
   );
-  paintFn(inner, '#efe5d2', (x, y, z, i, c) => {
-    c.multiplyScalar(0.94 + 0.06 * noiseA(x * 2, z * 2 + y));
-    c.lerp(new THREE.Color('#c9b08a'), 0.25 * (1 - smooth01((y - floorY) / 0.35))); // skirting shadow
+  // a designed home, not a ruin: crack-free warm off-white limewash (the outside keeps its weathered plaster)
+  paintFn(inner, '#f0e7d8', (x, y, z, i, c) => {
+    c.multiplyScalar(0.96 + 0.04 * noiseA(x * 2, z * 2 + y));
+    c.lerp(new THREE.Color('#cdb592'), 0.22 * (1 - smooth01((y - floorY) / 0.35))); // skirting shadow
   });
-  put(M.plaster, inner, { cast: false });
+  put(M.limewash, inner, { cast: false });
   // floor disc (oak boards)
   const fr = prof(floorY) - thick + 0.03;
   const zCut = zf - thick * 0.5;

@@ -3,9 +3,11 @@
 //
 // One mesh (a quad per puff) for ALL chimneys; the animation runs entirely in
 // the vertex shader from the shared time uniform, so it costs nothing on the
-// CPU. Puffs are camera-facing, grow and fade as they rise, drift with the
-// breeze and wobble a little. They take the glen's fog (aerial perspective)
-// and turn from a warm sunlit grey by day to a cool moonlit blue at night.
+// CPU. A few big, soft-edged puffs per chimney overlap into one wispy plume
+// (never a string of beads): each grows ~2.5× and thins out as it rises,
+// drifts off with the breeze and wobbles. They take the glen's fog (aerial
+// perspective) and turn from a warm sunlit grey by day to a cool moonlit blue
+// at night.
 //
 //   const smoke = makeSmoke([{ x, y, z, scale }], { reducedMotion })
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,14 +26,15 @@ const VERT = /* glsl */ `
   varying float vSeed;
   #include <fog_pars_vertex>
   void main() {
-    float life = fract(uTime * 0.075 / max(aPuff.z, 0.4) + aPuff.x);
+    float life = fract(uTime * 0.065 / max(aPuff.z, 0.4) + aPuff.x);
     vec3 p = position;
     float s = aPuff.z;
-    p.y += life * aPuff.w;
-    p.xz += uWind.xz * life * life * s * 1.6;
-    p.x += sin(life * 7.0 + aPuff.y * 13.0) * 0.07 * s * life;
-    p.z += cos(life * 5.5 + aPuff.y * 7.0) * 0.07 * s * life;
-    float size = mix(0.1, 0.62, pow(life, 0.65)) * s;
+    // rise fast at first, then slow down and lean away with the breeze
+    p.y += aPuff.w * mix(life, 1.0 - (1.0 - life) * (1.0 - life), 0.55);
+    p.xz += uWind.xz * life * life * s * 2.4;
+    p.x += sin(life * 6.0 + aPuff.y * 13.0 + uTime * 0.35) * 0.16 * s * life;
+    p.z += cos(life * 4.7 + aPuff.y * 7.0 + uTime * 0.3) * 0.16 * s * life;
+    float size = mix(0.26, 0.72, pow(life, 0.8)) * s;
     vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
     float a = aPuff.y * 6.2831 + life * (aPuff.y > 0.5 ? 1.4 : -1.4);
     vec2 c = vec2(cos(a) * aCorner.x - sin(a) * aCorner.y, sin(a) * aCorner.x + cos(a) * aCorner.y);
@@ -40,7 +43,7 @@ const VERT = /* glsl */ `
     vUv = aCorner;
     vLife = life;
     vSeed = aPuff.y;
-    vAlpha = smoothstep(0.0, 0.1, life) * (1.0 - smoothstep(0.35, 1.0, life));
+    vAlpha = smoothstep(0.0, 0.14, life) * (1.0 - smoothstep(0.2, 1.0, life)) * (1.0 - 0.35 * life);
     #include <fog_vertex>
   }
 `;
@@ -58,14 +61,18 @@ const FRAG = /* glsl */ `
     return exp(-d * d * 2.2);
   }
   void main() {
-    // a puff made of a few overlapping soft lobes → cauliflower edge
+    // a puff made of a few overlapping soft lobes — a soft, feathered edge that
+    // gets wispier (lobes drifting apart) as the puff ages
     vec2 p = vUv;
     float k = vSeed * 31.0;
-    float a = blob(p, vec2(0.0), 0.62);
-    a += blob(p, vec2(0.34 * cos(k), 0.3 * sin(k)), 0.42) * 0.8;
-    a += blob(p, vec2(-0.3 * sin(k * 1.7), 0.32 * cos(k * 1.3)), 0.38) * 0.7;
-    a += blob(p, vec2(0.18 * cos(k * 2.3), -0.36 * sin(k * 0.7)), 0.34) * 0.6;
-    a = smoothstep(0.25, 1.15, a);
+    float spread = 1.0 + vLife * 0.35;
+    float a = blob(p, vec2(0.0), 0.58);
+    a += blob(p, spread * vec2(0.34 * cos(k), 0.3 * sin(k)), 0.4) * 0.7;
+    a += blob(p, spread * vec2(-0.3 * sin(k * 1.7), 0.32 * cos(k * 1.3)), 0.36) * 0.6;
+    a += blob(p, spread * vec2(0.18 * cos(k * 2.3), -0.36 * sin(k * 0.7)), 0.32) * 0.5;
+    a = smoothstep(0.05, 1.25, a);
+    a *= a * (3.0 - 2.0 * a); // feathered falloff, no hard rim
+    a *= 1.0 - smoothstep(0.55, 1.0, length(p)); // never show the quad's edge
     if (a * vAlpha < 0.01) discard;
     // light from above-left, darker bottom; warm by day, moonlit at night
     float lit = 0.72 + 0.28 * smoothstep(-0.8, 0.8, p.y - p.x * 0.4);
@@ -94,7 +101,7 @@ function smokeMaterial(reduced) {
       uTime: reduced ? { value: 3.7 } : sharedUniforms.uTime,
       uNight: sharedUniforms.uNight,
       uWind: { value: new THREE.Vector3(0.55, 0, 0.2) },
-      uOpacity: { value: 0.62 },
+      uOpacity: { value: 0.38 },
     },
     vertexShader: VERT,
     fragmentShader: FRAG,
@@ -108,13 +115,13 @@ function smokeMaterial(reduced) {
 }
 
 /**
- * Smoke for many chimneys in one mesh. sources: [{ x, y, z, scale = 1, puffs = 9, rise = 2.6 }]
+ * Smoke for many chimneys in one mesh. sources: [{ x, y, z, scale = 1, puffs = 6, rise = 2.6 }]
  * (local coordinates of the parent). opts: { reducedMotion }
  */
 export function makeSmoke(sources, { reducedMotion = false } = {}) {
   const quads = [];
   sources.forEach((s, si) => {
-    const n = s.puffs ?? 9;
+    const n = s.puffs ?? 6;
     for (let i = 0; i < n; i++) quads.push({ x: s.x, y: s.y, z: s.z, phase: i / n + si * 0.37, seed: ((i * 0.618 + si * 0.31) % 1), scale: s.scale ?? 1, rise: s.rise ?? 2.6 });
   });
   const n = quads.length;
@@ -133,7 +140,7 @@ export function makeSmoke(sources, { reducedMotion = false } = {}) {
     }
     idx.set([i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3], i * 6);
     box.expandByPoint(new THREE.Vector3(q.x, q.y, q.z));
-    box.expandByPoint(new THREE.Vector3(q.x + 2.2 * q.scale, q.y + q.rise + 1, q.z + 1.2 * q.scale));
+    box.expandByPoint(new THREE.Vector3(q.x + 3.0 * q.scale, q.y + q.rise + 1.2, q.z + 1.6 * q.scale));
   });
   box.expandByScalar(1);
   const g = new THREE.BufferGeometry();

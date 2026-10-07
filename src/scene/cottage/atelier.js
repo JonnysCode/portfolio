@@ -42,7 +42,7 @@ const PALETTE = {
 };
 
 /** Build the Wohnatelier into batch B. Returns { hotspots, updates, lights, colliders }. */
-export function buildAtelier(ctx, B, root, halos, smoke = []) {
+export function buildAtelier(ctx, B, root, halos, smoke = [], rimHalos = null) {
   const rng = createRng('wohnatelier');
   const A = COTTAGE.atelier;
   const out = { hotspots: [], updates: [], lights: [], colliders: [], keepOut: [] };
@@ -63,6 +63,8 @@ export function buildAtelier(ctx, B, root, halos, smoke = []) {
     stemHeight: 4.0,
     // the rim lifts over the loggia: a band of warm gills frames the open front
     capTilt: { phi: 0, slope: 0.1 },
+    capFlare: 0.3,
+    capMoss: 5,
     stem: 'plaster',
     stemColor: '#f0e0c2',
     door: false,
@@ -83,6 +85,7 @@ export function buildAtelier(ctx, B, root, halos, smoke = []) {
     batch: B,
     halos,
     smokeSources: smoke,
+    rimHalos: rimHalos ?? undefined,
     frame,
   });
   root.add(house);
@@ -211,12 +214,12 @@ function buildInterior(F, rng, I, halos, frame, sofaB) {
     halos.push({ x: v.x, y: v.y, z: v.z, size });
   };
 
-  // rug
-  rug(F, rng, at(0, -0.55), 1.4, 1.02);
+  // rug: big enough (and far enough back) that the front legs of the sofa and the lounge chair stand on it
+  rug(F, rng, at(0, -0.8), 1.55, 1.08);
   // sofa against the back wall (into its own batch, local to the sofa group's origin)
   sofa(sofaB, rng, new THREE.Matrix4(), { len: 1.95, color: PALETTE.sage });
-  // coffee table
-  coffeeTable(F, rng, at(0.05, -0.45, 0.3));
+  // coffee table, a comfortable reach in front of the seat
+  coffeeTable(F, rng, at(0.02, -0.36, 0.3));
   // reading nook: lounge chair, ottoman, tripod lamp, side stack of books
   loungeChair(F, rng, at(-1.32, -0.35, 1.05));
   ottoman(F, rng, at(-0.82, 0.12, 1.1));
@@ -239,12 +242,14 @@ function buildInterior(F, rng, I, halos, frame, sofaB) {
   // the monstera by the opening (right) and a fiddle-leaf fig (left back)
   monstera(F, rng, at(1.62, 0.35, -0.6));
   fiddleFig(F, rng, at(-1.05, -1.75, 0.3));
-  // pendant paper globe & a hanging pothos
+  // a rice-paper globe pendant over the coffee table (high enough to stay clear of the
+  // gallery wall from the spot camera) & a hanging pothos
   {
     const cy = I.ceilY;
-    F.add(M.vc, tube([[0.05, cy, -0.5], [0.05, cy - 0.75, -0.5]], 0.006, 3, 2), { color: '#2a2622', cast: false });
-    globeLamp(F, at(0.05, -0.5, 0, cy - 1.0), 0.27);
-    halo(0.05, cy - 1.0, -0.5, 0.7);
+    const gr = 0.18, gy = y0 + 2.0, gx = 0.02, gz = -0.38;
+    F.add(M.vc, tube([[gx, cy, gz], [gx, gy + gr + 0.02, gz]], 0.006, 3, 2), { color: '#2a2622', cast: false });
+    globeLamp(F, at(gx, gz, 0, gy), gr);
+    halo(gx, gy, gz, 0.45);
     hangingPlant(F, rng, at(1.05, -1.25, 0, cy), cy - y0);
   }
   // a little window seat feel: cushions & a basket of throws by the sofa
@@ -306,14 +311,67 @@ function sofa(F, rng, m, { len = 1.9, depth = 0.82, color }) {
     p.rotateY(rot * 0.4);
     L.add(M.fabric, p.translate(x, 0.66, -depth / 2 + 0.33), { color: c });
   }
-  // knitted throw draped over the right arm
-  const th = new THREE.BoxGeometry(0.42, 0.025, 0.7, 6, 1, 4);
-  deform(th, (v) => {
-    const t = (v.x + 0.21) / 0.42;
-    v.y += Math.sin(t * Math.PI) * 0.16 - (t > 0.6 ? (t - 0.6) * 0.5 : 0);
-    v.y += Math.sin(v.z * 22) * 0.01;
-  });
-  L.add(M.fabric, uvBox(th, 'x', 4).translate(len / 2 - 0.1, 0.5, 0.05), { color: '#e8dcc6', cast: false });
+  // knitted throw draped over the right arm: lying on the seat cushion, over the arm,
+  // both ends dropping down with soft folds and a wavy hem
+  L.add(M.fabric, knitThrow(rng, len, 0.55), { color: null, cast: false });
+}
+
+/**
+ * A chunky knitted throw folded over the sofa's right arm (sofa-local). The
+ * cross-section path runs from the seat cushion up over the arm and down its
+ * outside; folds grow where the cloth hangs free and the hem waves.
+ */
+function knitThrow(rng, len, width) {
+  const ax = len / 2 - 0.08; // arm centre
+  const top = 0.625;
+  // cross-section (x, y) in the sofa's x-y plane, from the seat end to the outer hanging end
+  const path = [
+    [ax - 0.36, 0.5], [ax - 0.22, 0.505], [ax - 0.11, 0.55], [ax - 0.085, top - 0.01],
+    [ax - 0.03, top + 0.02], [ax + 0.04, top + 0.02], [ax + 0.095, top - 0.02],
+    [ax + 0.11, top - 0.14], [ax + 0.115, top - 0.27],
+  ];
+  const curve = new THREE.CatmullRomCurve3(path.map(([x, y]) => new THREE.Vector3(x, y, 0)), false, 'centripetal');
+  const nu = 26, nz = 12, th = 0.022;
+  const g = new THREE.BoxGeometry(1, th, width, nu, 1, nz);
+  const ph = [rng.range(0, 6), rng.range(0, 6), rng.range(0, 6)];
+  const pos = g.attributes.position;
+  const P = new THREE.Vector3(), T = new THREE.Vector3(), N = new THREE.Vector3();
+  const col = new Float32Array(pos.count * 3);
+  const base = new THREE.Color('#ebe0cb');
+  const cc = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const zn = z / (width / 2); // −1 … 1 across the throw
+    // the hanging ends don't reach equally far everywhere: a wavy hem
+    let u = THREE.MathUtils.clamp(x + 0.5, 0, 1);
+    const hemOuter = 1 - 0.07 * (0.5 + 0.5 * Math.sin(zn * 4.2 + ph[0]));
+    const hemInner = 0.05 * (0.5 + 0.5 * Math.sin(zn * 3.3 + ph[1]));
+    u = hemInner + u * (hemOuter - hemInner);
+    curve.getPointAt(u, P);
+    curve.getTangentAt(u, T);
+    N.set(-T.y, T.x, 0).normalize(); // outward (up on the arm)
+    // folds: strongest where the cloth hangs free (both ends), nearly flat on top of the arm
+    const free = Math.max(smoothstep(0.62, 1, u), 1 - smoothstep(0, 0.3, u));
+    const fold = (0.022 * Math.sin(zn * 7.5 + ph[2] + u * 3) + 0.012 * Math.sin(zn * 15 + ph[1])) * (0.25 + free);
+    // the free ends gather a little (the throw narrows as it falls)
+    const zz = z * (1 - 0.08 * free) + 0.015 * Math.sin(u * 9 + ph[0]) * free;
+    pos.setXYZ(i, P.x + N.x * (y + fold), P.y + N.y * (y + fold), zz);
+    // chunky cable-knit ribs running down the throw, a cream with a hint of oat
+    const rib = Math.abs(Math.sin(zn * 13));
+    cc.copy(base).multiplyScalar(0.9 + 0.1 * rib - 0.05 * free * (fold < 0 ? 1 : 0));
+    col[i * 3] = cc.r;
+    col[i * 3 + 1] = cc.g;
+    col[i * 3 + 2] = cc.b;
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.computeVertexNormals();
+  uvBox(g, 'z', 4);
+  return g.translate(0, 0, 0.09);
+}
+
+function smoothstep(a, b, x) {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
 }
 
 function loungeChair(F, rng, m) {
@@ -423,18 +481,33 @@ function tripodLamp(F, rng, m) {
   L.add(M.metal, new THREE.TorusGeometry(0.25, 0.008, 4, 20).rotateX(Math.PI / 2).translate(0, 1.63, 0), { color: '#b38b45', cast: false });
 }
 
+/**
+ * Rice-paper globe pendant (centre at the frame's origin): amber paper glowing
+ * between wire ribs — the paper bulges a little between the ribs, the ribs show
+ * as darker lines (vertex colours of the paper-lantern material), and the
+ * silhouette is a touch brighter than the middle (see kit.js paperLantern).
+ */
 function globeLamp(F, m, r) {
   const M = mats();
   const L = local(F, m);
-  const g = new THREE.SphereGeometry(r, 18, 12);
-  // paper ribs
+  const RIBS = 9;
+  const g = new THREE.SphereGeometry(r, 22, RIBS * 4);
+  const col = [];
   deform(g, (v) => {
-    const k = 1 + 0.025 * Math.cos(Math.asin(Math.max(-1, Math.min(1, v.y / r))) * 16);
+    const th = Math.acos(Math.max(-1, Math.min(1, v.y / r))); // 0 top … π bottom
+    const f = (th / Math.PI) * RIBS;
+    const d = Math.abs(f - Math.round(f)) * 2; // 0 on a rib … 1 mid-panel
+    const k = 1 + 0.035 * Math.sin(Math.min(1, d) * Math.PI * 0.5);
     v.x *= k;
     v.z *= k;
+    const shade = 0.66 + 0.34 * Math.min(1, d * 1.6);
+    const pole = Math.min(1, Math.sin(th) * 3.2); // darker paper gathered at the fitter & the opening
+    const c = shade * (0.62 + 0.38 * pole);
+    col.push(c, c, c);
   });
-  L.add(M.lamp, g, { cast: false });
-  L.add(M.metal, new THREE.CylinderGeometry(0.03, 0.03, 0.05, 8).translate(0, r + 0.01, 0), { color: '#2a2622', cast: false });
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  L.add(M.paperLamp, g, { cast: false, color: null });
+  L.add(M.metal, new THREE.CylinderGeometry(0.028, 0.028, 0.045, 8).translate(0, r + 0.01, 0), { color: '#2a2622', cast: false });
 }
 
 function bookcase(F, rng, m) {
@@ -556,6 +629,22 @@ function frameArt(L, p, w, h, kind, rng) {
       lf.quadraticCurveTo(lx * 0.4 + 0.03, ly * 0.5, 0, -h * 0.35);
       shape(lf, i % 2 ? '#4e6b3c' : '#6e8a5a');
     }
+  } else if (kind === 'hills') {
+    // a tiny landscape print: layered hills under a mustard sun
+    const sun = new THREE.Shape();
+    sun.absarc(w * 0.22, h * 0.12, h * 0.16, 0, TAU, false);
+    shape(sun, PALETTE.mustard);
+    [[PALETTE.sage, 0.05, 0.0], [PALETTE.terracotta, -0.12, 1.3], [PALETTE.navy, -0.28, 2.1]].forEach(([c, base, p], k) => {
+      const s = new THREE.Shape();
+      s.moveTo(-w / 2, -h / 2);
+      for (let i = 0; i <= 12; i++) {
+        const t = i / 12;
+        s.lineTo(-w / 2 + t * w, h * base + h * 0.12 * Math.sin(t * 5 + p));
+      }
+      s.lineTo(w / 2, -h / 2);
+      s.lineTo(-w / 2, -h / 2);
+      shape(s, c, 0.008 + k * 0.001);
+    });
   } else if (kind === 'circle') {
     for (let k = 0; k < 3; k++) {
       const c = new THREE.Shape();
@@ -566,16 +655,35 @@ function frameArt(L, p, w, h, kind, rng) {
   void rng;
 }
 
+/**
+ * The gallery wall: one tight, deliberate cluster centred over the sofa — its
+ * bottom edge ~0.2 above the back cushions, about two thirds of the sofa wide,
+ * 6 cm between frames, outer edges aligned (a tall abstract in the middle, a
+ * column of two on each side).
+ */
 function gallery(F, rng, I, wallPos) {
+  const FW = 0.03; // frame moulding (frameArt draws it outside w × h)
+  const GAP = 0.06;
+  const y0 = 1.06; // bottom edge above the floor
+  const H = 0.76; // cluster height (outer)
+  const cw = 0.56; // centre piece (outer width)
+  const sw = 0.34; // side columns (outer width)
+  const sx = cw / 2 + GAP + sw / 2;
   const art = [
-    { phi: Math.PI, y: 1.72, w: 0.86, h: 0.62, kind: 'abstract' },
-    { phi: Math.PI - 0.42, y: 1.62, w: 0.34, h: 0.46, kind: 'botanical' },
-    { phi: Math.PI + 0.42, y: 1.78, w: 0.32, h: 0.32, kind: 'circle' },
+    { x: 0, y: y0 + H / 2, w: cw, h: H, kind: 'abstract' },
+    { x: -sx, y: y0 + 0.2, w: sw, h: 0.4, kind: 'botanical' },
+    { x: -sx, y: y0 + 0.4 + GAP + 0.15, w: sw, h: 0.3, kind: 'circle' },
+    { x: sx, y: y0 + H - 0.23, w: sw, h: 0.46, kind: 'botanical' },
+    { x: sx, y: y0 + 0.12, w: sw, h: 0.24, kind: 'hills' },
   ];
   for (const a of art) {
-    const [x, , z] = wallPos(a.phi, a.y, 0.02);
-    const m = mat4([x, I.floorY + a.y, z], [0, a.phi + Math.PI, 0]);
-    frameArt(local(F, m), [0, 0, 0], a.w, a.h, a.kind, rng);
+    const r0 = I.radiusAt(Math.PI, I.floorY + a.y);
+    const phi = Math.PI - Math.asin(THREE.MathUtils.clamp(a.x / r0, -0.9, 0.9));
+    // flat frames on a concave wall: inset by the sagitta so the corners stay clear of the plaster
+    const sag = (a.w / 2) ** 2 / (2 * r0);
+    const [x, , z] = wallPos(phi, I.floorY + a.y, 0.012 + sag);
+    const m = mat4([x, I.floorY + a.y, z], [0, phi + Math.PI, 0]);
+    frameArt(local(F, m), [0, 0, 0], a.w - FW * 2, a.h - FW * 2, a.kind, rng);
   }
   // round mirror with a brass frame
   {

@@ -131,9 +131,11 @@ Surf kind_moss(vec2 uv) {
   float pn2 = fbmu(uv + vec2(0.13, 0.83), 6.0, 3);
   vec3 deep = C(0x2a4219), dark = C(0x3e5c21), mid = C(0x5a7a2a), lite = C(0x7d9a35), tip = C(0xa9b455);
   vec3 col = mix(dark, mid, smoothstep(-0.35, 0.3, pn + 0.35 * fz2));
-  col = mix(col, lite, smoothstep(0.1, 0.55, pn + 0.3 * pn2 + 0.25 * fz) * 0.85);
-  col = mix(col, deep, smoothstep(0.1, 0.5, -pn - 0.4 * pn2) * 0.6);
+  col = mix(col, lite, smoothstep(0.05, 0.55, pn + 0.3 * pn2 + 0.25 * fz) * 0.95);
+  col = mix(col, deep, smoothstep(0.05, 0.5, -pn - 0.4 * pn2) * 0.7);
   col *= 0.86 + 0.32 * smoothstep(0.3, 0.7, h);                     // relief: gentle, not outlines
+  // irregular clumps (noise, not cells): a soft, lumpy mottle that survives the mips
+  col *= 0.88 + 0.24 * smoothstep(-0.45, 0.45, fbmu(uv + vec2(0.47, 0.05), 9.0, 3));
   col = mix(col, tip, smoothstep(0.45, 0.95, fz * 0.6 + fz3 * 0.7 + dome2 * 0.25) * 0.5);
   col = mix(col, deep, smoothstep(0.35, 0.8, -fz2 - fz * 0.5) * 0.35); // dark gaps between shoots
   // cushion personalities: a few yellower or blue-green, very few rusty-brown

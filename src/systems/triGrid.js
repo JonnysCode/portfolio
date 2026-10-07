@@ -16,6 +16,8 @@ const _p = new THREE.Vector3();
 const _q = new THREE.Vector3();
 const _s = new THREE.Vector3();
 const _hit = new THREE.Vector3();
+/** Triangles whose bounds cover more cells than this go into the always-tested list. */
+const BIG_SPAN = 256;
 
 /** Möller–Trumbore, double-sided. Returns t or -1. */
 function rayTri(o, d, ax, ay, az, bx, by, bz, cx, cy, cz) {
@@ -56,6 +58,7 @@ function build(geometry) {
   // two passes: count, then fill one flat list
   const counts = new Uint32Array(nx * ny * nz + 1);
   const ranges = new Int32Array(triCount * 6);
+  const big = [];
   for (let t = 0; t < triCount; t++) {
     let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
     for (let k = 0; k < 3; k++) {
@@ -75,6 +78,15 @@ function build(geometry) {
     ranges[r + 3] = cellOf(y1, box.min.y, ch, ny);
     ranges[r + 4] = cellOf(z0, box.min.z, cd, nz);
     ranges[r + 5] = cellOf(z1, box.min.z, cd, nz);
+    // a long thin triangle across the grid would land in thousands of cells:
+    // keep it in a short list that every ray tests instead
+    const span = (ranges[r + 1] - ranges[r] + 1) * (ranges[r + 3] - ranges[r + 2] + 1) * (ranges[r + 5] - ranges[r + 4] + 1);
+    if (span > BIG_SPAN) {
+      big.push(t);
+      ranges[r] = 1;
+      ranges[r + 1] = 0; // (empty range: skipped below)
+      continue;
+    }
     for (let cz = ranges[r + 4]; cz <= ranges[r + 5]; cz++)
       for (let cy = ranges[r + 2]; cy <= ranges[r + 3]; cy++)
         for (let cx = ranges[r]; cx <= ranges[r + 1]; cx++) counts[(cz * ny + cy) * nx + cx + 1]++;
@@ -117,6 +129,12 @@ function build(geometry) {
       let tmy = d.y !== 0 ? (nextB(iy, sy, box.min.y, ch) - o.y) / d.y : Infinity;
       let tmz = d.z !== 0 ? (nextB(iz, sz, box.min.z, cd) - o.z) / d.z : Infinity;
       let best = Infinity;
+      for (const t of big) {
+        stamp[t] = query;
+        const a = vi(t, 0) * stride + off, b = vi(t, 1) * stride + off, cc = vi(t, 2) * stride + off;
+        const h = rayTri(o, d, P[a], P[a + 1], P[a + 2], P[b], P[b + 1], P[b + 2], P[cc], P[cc + 1], P[cc + 2]);
+        if (h >= near && h <= far && h < best) best = h;
+      }
       for (let guard = 0; guard < nx + ny + nz + 3; guard++) {
         const c = (iz * ny + iy) * nx + ix;
         for (let k = counts[c]; k < counts[c + 1]; k++) {

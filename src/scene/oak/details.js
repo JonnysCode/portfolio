@@ -373,16 +373,17 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
     [262, 5.0, 6, true],
     // glowing at night where the Schreinerei close-up sees bare bark: left of
     // the sign, above the EFZ certificate, and under the loft beside its window
-    [-23, 3.15, 5, true],
-    [37, 2.95, 5, true],
+    // (small ones near the door: the close-up camera is right there)
+    [-23, 3.15, 4, true, 0.62],
+    [37, 2.95, 4, true, 0.62],
     [34, 5.35, 5, true],
   ];
-  for (const [deg, y, n, cluster] of FUNGI) {
+  for (const [deg, y, n, cluster, k = 1] of FUNGI) {
     const a = deg * DEG;
     for (let i = 0; i < n; i++) {
-      const yy = cluster ? y + rng.range(0, 0.62) : y + i * 0.24 + rng.range(-0.05, 0.05);
-      const aa = cluster ? a + rng.range(-0.16, 0.16) : a + rng.range(-0.1, 0.1) + (i % 2 ? 0.06 : -0.06);
-      const r = cluster ? rng.range(0.18, 0.5) * (1.1 - (yy - y) * 0.6) : rng.range(0.28, 0.46) * (1 - i * 0.1);
+      const yy = cluster ? y + rng.range(0, 0.62) * k : y + i * 0.24 + rng.range(-0.05, 0.05);
+      const aa = cluster ? a + rng.range(-0.16, 0.16) * k : a + rng.range(-0.1, 0.1) + (i % 2 ? 0.06 : -0.06);
+      const r = (cluster ? rng.range(0.18, 0.5) * (1.1 - (yy - y) * 0.6) : rng.range(0.28, 0.46) * (1 - i * 0.1)) * k;
       const p = polar(aa, trunkRadius(aa, yy) - 0.07, yy);
       const m = facing(p, new THREE.Vector3(Math.sin(aa), 0, Math.cos(aa)));
       m.multiply(new THREE.Matrix4().makeRotationX(rng.range(-0.08, 0.12)));

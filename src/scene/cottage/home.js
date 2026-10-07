@@ -29,7 +29,7 @@ const WING_DIST = 2.75;
  * Build the home cluster into batch B (world space). Returns
  * { houses, hotspots: [{ object, opts }], updates: [fn(dt, t)], lights: [[pos, opts]], smoke, halos }.
  */
-export function buildHome(ctx, B, root, halos, smoke = []) {
+export function buildHome(ctx, B, root, halos, smoke = [], rimHalos = null) {
   const rng = createRng('jonny-home-garden');
   const M = mats();
   const H0 = COTTAGE.home;
@@ -46,8 +46,10 @@ export function buildHome(ctx, B, root, halos, smoke = []) {
     seed: 'jonny-home',
     height: 9.2,
     capShape: 'cone',
-    capColor: '#c4301f',
+    capColor: '#c8322a',
     capRadius: 3.25,
+    capFlare: 0.8,
+    capMoss: 7,
     stemColor: '#f3dfbd',
     stemRadius: 1.95,
     chimney: 'mushroom',
@@ -70,6 +72,7 @@ export function buildHome(ctx, B, root, halos, smoke = []) {
     batch: B,
     halos,
     smokeSources: smoke,
+    rimHalos: rimHalos ?? undefined,
     frame: mat4([H0.x, 0, H0.z], [0, HOME_DOOR_AZ, 0]),
   });
   root.add(main);
@@ -78,8 +81,10 @@ export function buildHome(ctx, B, root, halos, smoke = []) {
     seed: 'jonny-wing',
     height: 6.0,
     capShape: 'cone',
-    capColor: '#b9361f',
+    capColor: '#c23a2b',
     capRadius: 2.4,
+    capFlare: 0.8,
+    capMoss: 4,
     stemRadius: 1.3,
     stemHeight: 2.75,
     chimney: 'stone',
@@ -98,6 +103,7 @@ export function buildHome(ctx, B, root, halos, smoke = []) {
     batch: B,
     halos,
     smokeSources: smoke,
+    rimHalos: rimHalos ?? undefined,
     frame: mat4([wx, 0, wz], [0, 1.55, 0]),
   });
   root.add(wing);
@@ -120,6 +126,12 @@ export function buildHome(ctx, B, root, halos, smoke = []) {
     const wingRim = wing.userData.rimPoint(-1.4).applyMatrix4(wing.matrix);
     wingRim.y -= 0.1;
     stringLights(F, [[rimLine[rimLine.length - 1], wingRim]], halos, { spacing: 0.3, sag: 0.14 });
+  }
+  // … and a strand spiralling up the tall cap to the little mushroom chimney: at night
+  // the red cap reads as a lit landmark instead of a dark ceiling over the garden
+  {
+    const spiral = capSpiral(main, { lift: 0.075 });
+    if (spiral) stringLights(F, [spiral.map((p) => p.applyMatrix4(main.matrix))], halos, { spacing: 0.3, sag: 0 });
   }
 
   // ── garden ──
@@ -277,6 +289,55 @@ export function buildHome(ctx, B, root, halos, smoke = []) {
   return out;
 }
 
+
+// ─── fairy-light spiral ──────────────────────────────────────────────────────
+/**
+ * House-local points of a fairy-light strand winding up a mushroom house's cap
+ * from the rim to the foot of its chimney (lifted `lift` off the cap skin),
+ * picking the winding (direction, turns) that keeps clearest of the dormer and
+ * passes the front at mid-height. Null when the house has no chimney.
+ */
+function capSpiral(house, { lift = 0.07, sRim = 0.96 } = {}) {
+  const ud = house.userData;
+  const chim = ud.chimney;
+  if (!chim) return null;
+  const cp = ud.capPoint;
+  const dorm = ud.dormer ? cp(ud.dormer.phi, ud.dormer.s) : null;
+  const sEnd = chim.s + 0.08;
+  const N = 140;
+  const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+  let best = null;
+  for (const dir of [1, -1]) {
+    for (const turns of [0.9, 1.05, 1.2, 1.35]) {
+      let clear = Infinity, front = 0;
+      for (let i = 0; i <= N; i++) {
+        const t = i / N;
+        const phi = chim.phi - dir * (1 - t) * turns * Math.PI * 2;
+        const s = sRim + (sEnd - sRim) * t;
+        if (dorm) clear = Math.min(clear, cp(phi, s).distanceTo(dorm));
+        if (Math.abs(wrap(phi - 0.15)) < 0.25 && s > 0.55 && s < 0.9) front = 1;
+      }
+      const score = Math.min(clear, 1.6) + front * 0.8 - turns * 0.15;
+      if (clear > 1.0 && (!best || score > best.score)) best = { dir, turns, score };
+    }
+  }
+  if (!best) return null;
+  const pts = [];
+  const e = 0.004;
+  const n = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const phi = chim.phi - best.dir * (1 - t) * best.turns * Math.PI * 2;
+    const s = sRim + (sEnd - sRim) * t;
+    const p = cp(phi, s);
+    a.copy(cp(phi + e, s)).sub(cp(phi - e, s));
+    b.copy(cp(phi, s + e)).sub(cp(phi, s - e));
+    n.crossVectors(a, b).normalize();
+    if (n.y < 0) n.negate();
+    pts.push(p.addScaledVector(n, lift));
+  }
+  return pts;
+}
 
 // ─── Jonny's portrait ────────────────────────────────────────────────────────
 /**
