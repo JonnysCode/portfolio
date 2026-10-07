@@ -182,37 +182,58 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     const yP = platY;
     const r0 = bark(a, yP) + 0.15;
     const W = 0.95, Dp = 2.1;
+    // silvered oak planks, lichen on their outer ends
     for (let k = 0; k < 4; k++) {
       const off = (k - 1.5) * 0.24;
       const p0 = polar(a, r0, yP - 0.03).addScaledVector(lat, off);
-      const p1 = polar(a, r0 + Dp, yP - 0.03).addScaledVector(lat, off);
+      const p1 = polar(a, r0 + Dp, yP - 0.03).addScaledVector(lat, off).addScaledVector(n, rng.jitter(0.06));
       // leave a gap for the basket near the bark
       const g0 = p0.clone().lerp(p1, 0.52);
-      B.add(mats.wood(rng.pick(WARM_WOOD)), timber(g0, p1.clone().addScaledVector(n, rng.jitter(0.06)), 0.22, 0.06, { rng, wobble: 0.004, scale: 1 / 1.4 }));
+      B.add(mats.wood(rng.pick(OLD_OAK)), timber(g0, p1, 0.22, 0.06, { rng, wobble: 0.004, scale: 1 / 1.4 }));
+      if (rng.next() < 0.75) lichen(g0.clone().lerp(p1, rng.range(0.6, 0.95)).add(new THREE.Vector3(0, 0.031, 0)).addScaledVector(lat, rng.jitter(0.06)), up, 0.032);
     }
+    const railTops = {};
     for (const s of [-1, 1]) {
       const p0 = polar(a, r0, yP - 0.1).addScaledVector(lat, s * W / 2);
       const p1 = polar(a, r0 + Dp, yP - 0.1).addScaledVector(lat, s * W / 2);
-      B.add(mats.wood('#8f6a44'), timber(p0.clone().lerp(p1, 0.42), p1, 0.09, 0.1, { rng }));
-      // crooked branch posts down to the roots / ground, lashed to the bearer
+      B.add(mats.wood(DARK_OAK), timber(p0.clone().lerp(p1, 0.42), p1, 0.09, 0.1, { rng }));
+      // crooked, forked bark-on posts down to the roots / ground: the bearer
+      // sits in the crotch, rope-lashed (no milled posts, no bracing)
       for (const u of [0.55, 0.97]) {
         const top = p0.clone().lerp(p1, u);
         const g = floorAt(top);
         if (top.y - g > 0.08) {
-          const foot = top.clone().setY(g - 0.1).addScaledVector(lat, s * 0.07);
-          const mid = top.clone().lerp(foot, 0.5).add(new THREE.Vector3(rng.jitter(0.05), 0, rng.jitter(0.05)));
-          pole([foot, mid, top.clone().add(new THREE.Vector3(0, 0.06, 0))], 0.085, 0.07, { radial: 7, seed: u * 3 + s });
+          const crotch = top.clone().add(new THREE.Vector3(0, -0.1, 0));
+          const foot = top.clone().setY(g - 0.1).addScaledVector(lat, s * rng.range(0.05, 0.14)).addScaledVector(n, rng.jitter(0.08));
+          bough(crookedPath(foot, crotch, rng, { bend: 0.06, n: 4 }), 0.09, 0.07, { radial: 7, seed: u * 3 + s });
+          for (const q of [-1, 1]) {
+            const tip = top.clone().addScaledVector(lat, q * 0.078).add(new THREE.Vector3(0, 0.01, 0));
+            bough([crotch.clone().add(new THREE.Vector3(0, -0.03, 0)), crotch.clone().lerp(tip, 0.5).addScaledVector(lat, q * 0.025), tip], 0.042, 0.026, { radial: 5, seed: u * 7 + s + q }, { cast: false });
+          }
           for (const lg of lashing(top.clone().add(new THREE.Vector3(0, -0.02, 0)), new THREE.Vector3(0, 1, 0), 0.07, { turns: 2 })) B.add(ropeMat, lg, { cast: false });
-          B.add(mats.moss(), xf(mossGeo(rng, { r: 0.16, h: 0.06 }), [foot.x, g + 0.02, foot.z]), { cast: false });
+          B.add(mats.moss(), xf(mossGeo(rng, { r: 0.18, h: 0.07 }), [foot.x, g + 0.02, foot.z]), { cast: false });
+          // ivy climbing the post, lichen on its bark
+          for (let j = 0; j < 2; j++) {
+            const base = foot.clone().lerp(crotch, rng.range(0.05, 0.45)).addScaledVector(lat, s * 0.07);
+            B.add(mats.ivy(), ivyCard(base, new THREE.Vector3(rng.jitter(0.3), 1, rng.jitter(0.3)), lat.clone().multiplyScalar(s), rng.range(0.35, 0.6), rng.next() < 0.5), { cast: false });
+          }
+          lichen(foot.clone().lerp(crotch, rng.range(0.5, 0.8)).addScaledVector(n, 0.085), n, 0.03);
         }
       }
-      // a little railing on the sides
-      const r0p = p0.clone().lerp(p1, 0.5).add(new THREE.Vector3(0, 0.1, 0));
-      const r1p = p1.clone().add(new THREE.Vector3(0, 0.1, 0));
-      const t0 = r0p.clone().add(new THREE.Vector3(0, 0.55, 0)), t1 = r1p.clone().add(new THREE.Vector3(0, 0.55, 0));
-      pole([r0p, t0], 0.036, 0.03, { radial: 6, seed: s }, { cast: false });
-      pole([r1p, t1], 0.036, 0.03, { radial: 6, seed: s + 2 }, { cast: false });
-      pole([t0, t0.clone().lerp(t1, 0.5).add(new THREE.Vector3(0, 0.02, 0)), t1], 0.03, 0.027, { radial: 6, seed: s + 4 }, { cast: false });
+      // a rope rail on two crooked bark-on posts along each side (one rope:
+      // no extra rail lines)
+      const rp = [];
+      for (const u of [0.5, 1.0]) {
+        const b = p0.clone().lerp(p1, u).add(new THREE.Vector3(0, -0.05, 0));
+        const t = b.clone().add(new THREE.Vector3(rng.jitter(0.04), 0.74 + rng.jitter(0.05), rng.jitter(0.04))).addScaledVector(lat, s * 0.03);
+        bough(crookedPath(b, t, rng, { bend: 0.06, n: 3 }), 0.044, 0.033, { radial: 6, seed: s * 3 + u * 5 }, { cast: false });
+        B.add(mats.moss(), xf(mossGeo(rng, { r: 0.045, h: 0.025 }), [t.x, t.y, t.z]), { cast: false });
+        rp.push(t);
+      }
+      railTops[s] = rp;
+      const ra = rp[0].clone().add(new THREE.Vector3(0, -0.06, 0)), rb = rp[1].clone().add(new THREE.Vector3(0, -0.06, 0));
+      B.add(ropeMat, tubeAlong(sagCurve(ra, rb, 0.07, 10), 0.018, 5), { cast: false });
+      for (const q of [ra, rb]) B.add(ropeMat, xf(new THREE.SphereGeometry(0.03, 5, 4), [q.x, q.y, q.z]), { cast: false });
       // ivy trailing from the side bearer
       for (let j = 0; j < 3; j++) {
         const base = p0.clone().lerp(p1, rng.range(0.5, 0.95)).addScaledVector(lat, s * 0.05);
@@ -220,11 +241,12 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
       }
     }
     // a short rustic stair winding down from the platform's outer edge:
-    // chunky warm treads on two crooked bough stringers (it curves gently
-    // back around the root, never a straight ladder), ivy on the stringers,
-    // a lantern on a stake and toadstools at its foot
+    // chunky silvered treads resting on two crooked bark-on bough stringers
+    // (it curves gently back around the root, never a straight ladder), the
+    // stringers propped on short forked posts, ivy on them, a lantern on a
+    // stake beyond the foot and toadstools beside it
     {
-      const UP = new THREE.Vector3(0, 1, 0);
+      const UP = up;
       const topC = polar(a, r0 + Dp - 0.06, yP - 0.06);
       const run = THREE.MathUtils.clamp(yP * 0.85, 0.8, 2.7);
       const footC = polar(a + 0.05, r0 + Dp + run, 0).addScaledVector(lat, 0.45);
@@ -233,51 +255,78 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
       if (rise > 0.25) {
         const midC = topC.clone().lerp(footC, 0.5).addScaledVector(lat, 0.32).add(new THREE.Vector3(0, -0.06, 0));
         const curve = new THREE.CatmullRomCurve3([topC, midC, footC]);
-        const H = 0.38; // half width
+        const H = 0.38; // half width (stringer centres)
+        const TT = 0.09; // tread thickness
+        const SS = 0.08; // stringer radius
         /** point & horizontal across-direction on the centre line at u (0 = top, 1 = foot) */
         const frame = (u) => {
           const p = curve.getPointAt(u);
           const tg = curve.getTangentAt(u).setY(0).normalize();
           return { p, across: new THREE.Vector3().crossVectors(tg, UP).normalize() };
         };
-        for (const s of [-1, 1]) {
-          const pts = [];
-          for (let k = 0; k <= 6; k++) {
-            const { p, across } = frame(k / 6);
-            pts.push(p.clone().addScaledVector(across, s * (H + (k / 6) * 0.04)).add(new THREE.Vector3(0, -(k / 6) * 0.12, 0)));
-          }
-          pole(pts, 0.085, 0.07, { radial: 7, seed: 70 + s });
-          const f = pts[pts.length - 1];
-          B.add(mats.moss(), xf(mossGeo(rng, { r: 0.15, h: 0.05 }), [f.x, footC.y + 0.02, f.z]), { cast: false });
-          // ivy creeping up the stringer
-          for (let k = 2; k < pts.length; k += 2) {
-            B.add(mats.ivy(), ivyCard(pts[k].clone().add(new THREE.Vector3(0, -0.04, 0)), new THREE.Vector3(rng.jitter(0.4), -1, rng.jitter(0.4)), frame(k / 6).across.multiplyScalar(s), rng.range(0.3, 0.5), rng.next() < 0.5), { cast: false });
-          }
-        }
+        // the treads (top of each at c + 0.1 + TT / 2)
         const nT = Math.max(2, Math.round(rise / 0.3));
+        const treads = [];
         for (let k = 1; k <= nT; k++) {
           const u = 1 - k / (nT + 0.6);
           const { p: c, across } = frame(u);
-          const g = board(2 * H + 0.16, 0.09, 0.34, { along: 'x', rng, c: 0.02 });
+          const tone = rng.pick(OLD_OAK);
+          const g = weatherPaint(board(2 * H + 0.16, TT, 0.34, { along: 'x', rng, c: 0.02, segs: 4 }), tone, { mossEnd: k % 2 ? 1 : -1, seed: 50 + k });
           const m = new THREE.Matrix4().makeBasis(across, UP, across.clone().cross(UP));
-          m.multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rng.jitter(0.03), rng.jitter(0.06), rng.jitter(0.03))));
+          m.multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rng.jitter(0.03), rng.jitter(0.06), rng.jitter(0.02))));
           m.setPosition(c.clone().add(new THREE.Vector3(0, 0.1, 0)));
-          B.add(mats.wood(rng.pick(WARM_WOOD)), g.applyMatrix4(m));
+          B.add(mats.wood(tone), g.applyMatrix4(m));
           if (rng.next() < 0.5) {
-            const mp = c.clone().addScaledVector(across, rng.jitter(0.25)).add(new THREE.Vector3(0, 0.14, 0));
+            const mp = c.clone().addScaledVector(across, rng.jitter(0.25)).add(new THREE.Vector3(0, 0.1 + TT / 2, 0));
             B.add(mats.moss(), xf(mossGeo(rng, { r: 0.09, h: 0.03, sx: 1.5 }), [mp.x, mp.y, mp.z], [0, rng.next() * TAU, 0]), { cast: false });
           }
+          treads.push({ u, k, y: c.y + 0.1 - TT / 2 });
         }
-        const { across: fa } = frame(1);
+        treads.sort((p, q) => p.u - q.u); // top → foot
+        for (const s of [-1, 1]) {
+          // the stringer runs right under the treads' ends (they rest on it),
+          // from the platform's bearer down into the moss
+          const at = (u, y) => {
+            const { p, across } = frame(u);
+            return p.addScaledVector(across, s * H).setY(y);
+          };
+          const pts = [at(0, yP - 0.12)];
+          for (const t of treads) pts.push(at(t.u, t.y - SS * 0.8));
+          const fp = at(1, 0);
+          fp.y = Math.min(floorAt(fp) - 0.06, pts[pts.length - 1].y - 0.1);
+          pts.push(fp);
+          bough(pts, SS * 1.05, SS * 0.85, { radial: 7, seed: 70 + s });
+          B.add(mats.moss(), xf(mossGeo(rng, { r: 0.15, h: 0.05 }), [fp.x, floorAt(fp) + 0.02, fp.z]), { cast: false });
+          // short forked posts under the stringer every third tread, where it
+          // stands clear of the root (so no tread end is left floating)
+          for (const t of treads) {
+            if (t.k % 3 !== 2) continue;
+            const q = at(t.u, t.y - SS * 0.8);
+            const g0 = floorAt(q);
+            if (!isFinite(g0) || q.y - SS - g0 < 0.16) continue;
+            const crotch = q.clone().add(new THREE.Vector3(0, -SS - 0.05, 0));
+            const foot = q.clone().setY(g0 - 0.08).addScaledVector(frame(t.u).across, s * 0.05);
+            bough(crookedPath(foot, crotch, rng, { bend: 0.05, n: 3 }), 0.055, 0.047, { radial: 6, seed: 77 + t.k + s });
+            for (const w of [-1, 1]) bough([crotch, crotch.clone().addScaledVector(frame(t.u).across, w * 0.06).add(new THREE.Vector3(0, 0.08, 0)), q.clone().addScaledVector(frame(t.u).across, w * (SS + 0.02))], 0.032, 0.02, { radial: 5, seed: 79 + t.k + w }, { cast: false });
+            B.add(mats.moss(), xf(mossGeo(rng, { r: 0.12, h: 0.05 }), [foot.x, g0 + 0.02, foot.z]), { cast: false });
+          }
+          // ivy creeping up the stringer
+          for (let k = 2; k < pts.length - 1; k += 2) {
+            B.add(mats.ivy(), ivyCard(pts[k].clone().add(new THREE.Vector3(0, -0.04, 0)), new THREE.Vector3(rng.jitter(0.4), -1, rng.jitter(0.4)), frame(treads[k - 1]?.u ?? 1).across.multiplyScalar(s), rng.range(0.3, 0.55), rng.next() < 0.5), { cast: false });
+          }
+        }
+        const { p: fp, across: fa } = frame(1);
         addToadstool(B.at(new THREE.Matrix4()), mats, rng, ...footC.clone().addScaledVector(fa, -H - 0.2).add(new THREE.Vector3(0, -0.02, 0)).toArray(), { size: 0.12 });
         addToadstool(B.at(new THREE.Matrix4()), mats, rng, ...footC.clone().addScaledVector(fa, -H - 0.32).addScaledVector(n, 0.15).toArray(), { size: 0.08 });
-        // a lantern on a crooked stake at the foot
-        const sp = footC.clone().addScaledVector(fa, H + 0.3).addScaledVector(n, -0.1);
+        // a lantern on a crooked stake beyond the foot of the steps, its arm
+        // reaching away from them (never inside the treads' volume)
+        const out = curve.getTangentAt(1).setY(0).normalize();
+        const sp = fp.clone().addScaledVector(out, 0.5).addScaledVector(fa, H + 0.2);
         sp.y = floorAt(sp);
         if (isFinite(sp.y)) {
           const top = sp.clone().add(new THREE.Vector3(0.03, 1.0, -0.02));
-          const hook = top.clone().addScaledVector(fa, -0.2).add(new THREE.Vector3(0, 0.04, 0));
-          pole([sp.clone().add(new THREE.Vector3(0, -0.1, 0)), sp.clone().add(new THREE.Vector3(-0.03, 0.5, 0.02)), top, hook], 0.04, 0.024, { radial: 6, seed: 74 });
+          const hook = top.clone().addScaledVector(out, 0.22).add(new THREE.Vector3(0, 0.04, 0));
+          bough([sp.clone().add(new THREE.Vector3(0, -0.1, 0)), sp.clone().add(new THREE.Vector3(-0.03, 0.5, 0.02)), top, hook], 0.04, 0.024, { radial: 6, seed: 74 });
           const l = ctx.props.makeLantern({ hanging: true, color: '#ffc46b', halo: false });
           l.scale.setScalar(0.75);
           l.position.copy(hook).add(new THREE.Vector3(0, -0.01, 0));
@@ -291,9 +340,10 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     {
       const bp = polar(a, r0 + Dp - 0.1, yP).addScaledVector(lat, 0.56);
       const top = bp.clone().add(new THREE.Vector3(0, 1.05, 0));
-      pole([bp, bp.clone().add(new THREE.Vector3(0.02, 0.5, 0)), top], 0.04, 0.032, { radial: 6, seed: 61 });
+      bough([bp.clone().add(new THREE.Vector3(0, -0.1, 0)), bp.clone().add(new THREE.Vector3(0.03, 0.5, -0.02)), top], 0.042, 0.032, { radial: 6, seed: 61 });
       const armEnd = top.clone().addScaledVector(lat, -0.25);
-      pole([top, top.clone().addScaledVector(lat, -0.12).add(new THREE.Vector3(0, 0.03, 0)), armEnd], 0.028, 0.022, { radial: 5, seed: 62 }, { cast: false });
+      bough([top, top.clone().addScaledVector(lat, -0.12).add(new THREE.Vector3(0, 0.03, 0)), armEnd], 0.028, 0.022, { radial: 5, seed: 62 }, { cast: false });
+      B.add(mats.moss(), xf(mossGeo(rng, { r: 0.045, h: 0.025 }), [top.x, top.y + 0.01, top.z]), { cast: false });
       B.add(mats.metal(BRASS), xf(new THREE.CylinderGeometry(0.03, 0.065, 0.1, 10, 1, true), [armEnd.x, armEnd.y - 0.1, armEnd.z]));
       B.add(mats.metal(BRASS), xf(new THREE.SphereGeometry(0.02, 6, 4), [armEnd.x, armEnd.y - 0.16, armEnd.z]), { cast: false });
       B.add(ropeMat, tubeAlong([armEnd.clone().add(new THREE.Vector3(0, -0.15, 0)), armEnd.clone().add(new THREE.Vector3(0.03, -0.45, 0)), armEnd.clone().add(new THREE.Vector3(0.02, -0.7, 0.02))], 0.008, 4), { cast: false });
@@ -305,7 +355,7 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     }
     // a lantern on the outer railing post, moss and a pot of flowers on the boards
     {
-      const lp = polar(a, r0 + Dp, yP + 0.65).addScaledVector(lat, -W / 2);
+      const lp = railTops[-1][1].clone().add(new THREE.Vector3(0, 0.02, 0));
       const l = ctx.props.makeLantern({ color: '#ffc46b', halo: false });
       l.scale.setScalar(0.6);
       l.position.copy(lp);
@@ -332,7 +382,7 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
   //    must never read as a ladder) ─────────────────────────────────────────
   {
     const y0 = Math.max(platY - 0.2, rootClear - 0.15), y1 = OAK.loft.y - 0.1;
-    const railMat = mats.wood('#c4a074');
+    const railMat = mats.wood(OLD_POLE[1]);
     for (const s of [-1, 1]) {
       const pts = [];
       for (let y = y0; y <= y1 + 0.001; y += 0.5) pts.push(polar(a, bark(a, y) + 0.07, y).addScaledVector(lat, s * 0.2));
@@ -363,7 +413,7 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
       const nL = radial(aL);
       const p0 = polar(aL, bark(aL, yL) - 0.04, yL);
       const tip = polar(aL, bark(aL, yL) + 0.32, yL + 0.12);
-      pole([p0, p0.clone().lerp(tip, 0.5).add(new THREE.Vector3(0, 0.07, 0)), tip], 0.035, 0.022, { radial: 5, seed: 83 }, { cast: false });
+      bough([p0, p0.clone().lerp(tip, 0.5).add(new THREE.Vector3(0, 0.07, 0)), tip], 0.035, 0.022, { radial: 5, seed: 83 }, { cast: false });
       const l = ctx.props.makeLantern({ hanging: true, color: '#ffc46b', halo: false });
       l.scale.setScalar(0.62);
       l.position.copy(tip).add(new THREE.Vector3(0, -0.01, 0));
