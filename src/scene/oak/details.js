@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { DEG, TAU, polar, trunkRadius } from './shape.js';
+import { DEG, TAU, polar, trunkRadius, inCertZone } from './shape.js';
 import { rootSurfacePoint, mouseDoorFrame, MOUSE_DOOR } from './roots.js';
 import { getHeight } from '../../world/ground.js';
 
@@ -54,12 +54,12 @@ class Batch {
     if (!this.parts.has(key)) this.parts.set(key, { material, cast, list: [] });
     this.parts.get(key).list.push(g);
   }
-  /** Bake every mesh of a (static) prop object into the batch, keeping its vertex colours. */
-  absorb(object) {
+  /** Bake every mesh of a (static) prop object into the batch, keeping its vertex colours. `remap(material)` may swap materials. */
+  absorb(object, remap = null) {
     object.updateMatrixWorld(true);
     object.traverse((o) => {
       if (!o.isMesh || o.material?.isShaderMaterial) return;
-      this.add(o.material, o.geometry.clone().applyMatrix4(o.matrixWorld), { color: 'keep' });
+      this.add(remap?.(o.material) ?? o.material, o.geometry.clone().applyMatrix4(o.matrixWorld), { color: 'keep' });
     });
   }
   build(parent, name) {
@@ -179,11 +179,101 @@ function toadstool(B, mats, h, capR, rng, m) {
   }
 }
 
+/**
+ * Fairy lights: a thin dark wire sagging between points with tiny amber bulbs
+ * hanging under it (two warm tones alternating). Everything goes into the
+ * shared batch; every other bulb adds a small soft halo to `halos`.
+ */
+function fairyLights(B, mats, halos, points, { sag = 0.1, spacing = 0.36 } = {}) {
+  let n = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = new THREE.Vector3().copy(points[i]);
+    const b = new THREE.Vector3().copy(points[i + 1]);
+    const span = a.distanceTo(b);
+    const ctrl = a.clone().lerp(b, 0.5);
+    ctrl.y -= span * sag * 2; // quadratic bezier: the middle sags by span × sag
+    const curve = new THREE.QuadraticBezierCurve3(a, ctrl, b);
+    B.add(mats.wire, new THREE.TubeGeometry(curve, Math.max(6, Math.ceil(span / 0.12)), 0.009, 3, false));
+    const k = Math.max(1, Math.floor(span / spacing));
+    for (let j = 0; j < k; j++) {
+      const p = curve.getPointAt((j + 0.5) / k);
+      p.y -= 0.035;
+      B.add(mats.wire, xf(new THREE.CylinderGeometry(0.011, 0.011, 0.025, 5), [p.x, p.y + 0.012, p.z]));
+      const bulb = new THREE.SphereGeometry(0.024, 6, 5);
+      bulb.scale(1, 1.3, 1);
+      B.add(n % 2 ? mats.bulbB : mats.bulbA, bulb.translate(p.x, p.y - 0.02, p.z));
+      if (n % 2 === 0) halos.push({ x: p.x, y: p.y - 0.02, z: p.z, size: 0.17 });
+      n++;
+    }
+  }
+}
+
 /** Little creatures are vertex-coloured blobs — they keep the cute stylised look. */
 function blob(r, sx = 1, sy = 1, sz = 1, w = 12, h = 9) {
   const g = new THREE.SphereGeometry(r, w, h);
   g.scale(sx, sy, sz);
   return g;
+}
+
+/** Where along the 'right' limb the rope swing hangs (see buildDetails). */
+const SWING_U = 0.76;
+
+/**
+ * A rope swing hanging from limb L at arc fraction u: two ropes looped twice
+ * around the limb, knots under a plank seat; it sways gently (not with reduced motion).
+ */
+function buildSwing(ctx, mats, parent, L, u, updates, reduced) {
+  const { materials } = ctx;
+  const P = L.curve.getPointAt(u);
+  const T = L.curve.getTangentAt(u);
+  const along = new THREE.Vector3(T.x, 0, T.z).normalize();
+  const r = L.radiusAt(u);
+  const top = P.clone();
+  top.y -= r * 0.9;
+  const seatY = getHeight(P.x, P.z) + 0.9;
+  const len = top.y - seatY;
+  const pivot = new THREE.Group();
+  pivot.name = 'oak-swing';
+  pivot.position.copy(top);
+  // local frame: x along the limb, y up
+  const basis = new THREE.Matrix4().makeBasis(along, UP, new THREE.Vector3().crossVectors(along, UP).normalize());
+  const local = new THREE.Group();
+  local.quaternion.setFromRotationMatrix(basis);
+  pivot.add(local);
+  const SB = new Batch();
+  const rng = ctx.rng('oak-swing');
+  const HW = 0.58; // half the distance between the ropes
+  for (const sx of [-HW, HW]) {
+    const rope = new THREE.TubeGeometry(new THREE.LineCurve3(new THREE.Vector3(sx, 0, 0), new THREE.Vector3(sx * 0.98, -len + 0.05, 0)), Math.max(8, Math.ceil(len / 0.6)), 0.042, 6, false);
+    SB.add(mats.rope, rope);
+    // wraps around the limb
+    SB.add(mats.rope, xf(new THREE.TorusGeometry(r * 0.95, 0.04, 5, 14), [sx, r * 0.9, 0], [0, Math.PI / 2, 0]));
+    SB.add(mats.rope, xf(new THREE.TorusGeometry(r * 0.95, 0.04, 5, 14), [sx + 0.08, r * 0.9, 0], [0, Math.PI / 2, 0]));
+    // knot under the seat
+    SB.add(mats.rope, xf(new THREE.SphereGeometry(0.065, 6, 5), [sx * 0.98, -len - 0.03, 0]));
+    // a garland of little flowers & leaves wound up the lower ropes (reads from the glen)
+    for (let i = 0; i < 16; i++) {
+      const yy = -len + 0.12 + i * 0.1;
+      const ang = i * 1.9 + (sx > 0 ? 1 : 0);
+      const p = [sx * 0.98 + Math.cos(ang) * 0.05, yy, Math.sin(ang) * 0.05];
+      if (i % 3 === 1) SB.add(mats.critter, xf(blob(0.05, 1, 0.55, 1), p, [0, ang, 0.5]), { color: rng.pick(['#4f7f36', '#5f9440']) });
+      else SB.add(mats.critter, xf(blob(0.045, 1, 0.7, 1), p), { color: rng.pick(['#f08aa6', '#ffd166', '#f4f1ff', '#c77dff', '#ff9e5e']) });
+    }
+  }
+  const seat = new THREE.BoxGeometry(HW * 2 + 0.24, 0.08, 0.4, 4, 1, 2);
+  materials.boxUV?.(seat, 'wood', { grain: 'x' });
+  SB.add(mats.wood, xf(seat, [0, -len, 0]), { cast: true });
+  SB.build(local, 'oak-swing');
+  parent.add(pivot);
+  if (!reduced) {
+    const axis = along.clone();
+    const ph = u * 17;
+    updates.push((dt, t) => {
+      const ang = Math.sin(t * 0.62 + ph) * 0.03 + Math.sin(t * 0.27 + 1.2 + ph) * 0.015;
+      pivot.quaternion.setFromAxisAngle(axis, ang);
+    });
+  }
+  return pivot;
 }
 
 // ─── build ───────────────────────────────────────────────────────────────────
@@ -222,8 +312,15 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
     stone: materials.surface('stone'),
     dark: materials.standard('#1a120c', { roughness: 1 }),
     critter: materials.standard('#ffffff', { vertexColors: true, roughness: 0.78 }),
-    eyeGlow: materials.glow('#ffb43c', { day: 0.25, night: 2.6 }),
-    warmGlow: materials.glow('#ffc46b', { day: 0.5, night: 2.4 }),
+    eyeGlow: materials.glow('#ffb43c', { day: 0.25, night: 2.2 }),
+    // night lights are small warm AMBER points (never white): the emissive only just
+    // crosses the night bloom threshold, so each bulb gets a modest glow, not a blob
+    warmGlow: materials.glow('#ffa443', { day: 0.4, night: 1.7 }),
+    lanternGlass: materials.glow('#ffa443', { day: 0.3, night: 1.6 }),
+    windowGlass: materials.glow('#ffad55', { day: 0.3, night: 1.25 }),
+    bulbA: materials.glow('#ffa53f', { day: 0.45, night: 1.85 }),
+    bulbB: materials.glow('#ffbd5e', { day: 0.45, night: 1.55 }),
+    wire: materials.standard('#3b3633', { roughness: 0.8 }),
   };
 
   // ── bracket fungi on the bark ─────────────────────────────────────────────
@@ -235,6 +332,12 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
     [241, 10.6, 4],
     [178, 7.6, 3],
     [-58, 15.2, 3],
+    // seen from the Schreinerei: above the door's festoon, and front-left
+    [-5, 5.45, 3],
+    [-36, 5.5, 4],
+    [-88, 2.2, 3],
+    [150, 2.4, 3],
+    [262, 5.2, 4],
   ];
   for (const [deg, y, n] of FUNGI) {
     const a = deg * DEG;
@@ -272,6 +375,30 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
     }
   }
 
+  // …and stacked shelves on the flanks of the big roots
+  for (const [id, u, phi, n] of [
+    ['right-long', 0.3, 1.25, 4],
+    ['right-long', 0.6, 1.3, 3],
+    ['front-right', 0.9, 1.15, 2],
+    ['back', 0.42, -1.25, 4],
+    ['back-left', 0.5, 1.25, 3],
+    ['left-back', 0.38, 1.25, 4],
+    ['left', 0.55, -1.2, 3],
+  ]) {
+    const R = root(id);
+    if (!R) continue;
+    for (let i = 0; i < n; i++) {
+      const s = rootSurfacePoint(R, Math.min(0.95, u + i * 0.018), phi - i * 0.12, -0.05);
+      if (inCertZone(s.position, 0.3)) continue;
+      const m = facing(s.position, s.normal);
+      m.multiply(new THREE.Matrix4().makeRotationX(rng.range(-0.1, 0.1)));
+      const { top, under, rim } = shelfGeos(rng.range(0.2, 0.34) * (1 - i * 0.08), rng);
+      B.add(mats.fungusTop, top.applyMatrix4(m));
+      B.add(mats.fungusUnder, under.applyMatrix4(m));
+      B.add(mats.fungusUnder, rim.applyMatrix4(m));
+    }
+  }
+
   // ── fly agarics growing on the roots ──────────────────────────────────────
   const SHROOMS = [
     ['front-right', 0.66, 0.5, 3],
@@ -298,7 +425,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
   {
     const capGlow = materials.glow('#7fe8ff', { day: 0.12, night: 2.2 });
     const halos = [];
-    for (const [id, u, phi] of [
+    for (const [id, u, phi, big = 1] of [
       ['back', 0.3, 1.45],
       ['left-back', 0.42, -1.45],
       ['back-left', 0.35, 1.5],
@@ -306,6 +433,13 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
       ['front-right', 0.72, -1.4],
       ['left', 0.5, -1.45],
       ['back-right', 0.45, 1.45],
+      // at the root bases seen from the Schreinerei and the glen (a few bigger ones)
+      ['front-right', 0.88, 1.4, 1.5],
+      ['right-long', 0.45, 1.45, 1.4],
+      ['right-long', 0.78, 1.45, 1.6],
+      ['left', 0.78, 1.45, 1.4],
+      ['back-left', 0.78, 1.45, 1.3],
+      ['small-right', 0.55, 1.4, 1.2],
     ]) {
       const R = root(id);
       if (!R) continue;
@@ -314,7 +448,8 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
         const s = rootSurfacePoint(R, Math.min(0.95, u + rng.range(-0.06, 0.06)), phi + rng.range(-0.15, 0.15), 0);
         const p = s.position.clone().addScaledVector(s.normal, rng.range(0.02, 0.12));
         p.y = Math.max(p.y, getHeight(p.x, p.z));
-        const h = rng.range(0.06, 0.15);
+        if (inCertZone(p, 0.2)) continue;
+        const h = rng.range(0.06, 0.15) * (i < 2 ? big : 1);
         const cr = h * rng.range(0.4, 0.6);
         const m = new THREE.Matrix4().compose(p, new THREE.Quaternion().setFromEuler(new THREE.Euler(rng.range(-0.25, 0.25), 0, rng.range(-0.25, 0.25))), new THREE.Vector3(1, 1, 1));
         B.add(capGlow, new THREE.CylinderGeometry(cr * 0.22, cr * 0.3, h, 6).translate(0, h / 2, 0).applyMatrix4(m));
@@ -332,7 +467,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
 
   // ── little round windows: someone lives up there ───────────────────────────
   {
-    const glass = materials.glow('#ffc979', { day: 0.35, night: 2.0 });
+    const glass = mats.windowGlass;
     for (const [deg, y, rad] of [
       [21, 6.7, 0.32],
       [-60, 12.9, 0.27],
@@ -363,7 +498,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
         if (i % 2 === 0) B.add(mats.critter, xf(blob(0.035), [fx + rng.range(-0.03, 0.03), -rad + 0.04 + rng.range(0, 0.04), 0.12]).applyMatrix4(m), { color: rng.pick(flowerCols) });
       }
       const hp = new THREE.Vector3(0, 0, 0.15).applyMatrix4(m);
-      warmHalos.push({ x: hp.x, y: hp.y, z: hp.z, size: rad * 1.5 });
+      warmHalos.push({ x: hp.x, y: hp.y, z: hp.z, size: rad * 1.05 });
     }
   }
 
@@ -382,19 +517,21 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
     // a small iron hook clamped around the limb
     B.add(mats.iron, xf(new THREE.TorusGeometry(0.07, 0.014, 5, 10), [P.x, P.y + 0.02, P.z], [0, rng.range(0, 3), 0]));
     const lantern = props.makeLantern({ hanging: true, color: '#ffc46b', halo: false });
+    const LS = 1.45; // big enough to read from the glen, small enough to stay a warm point at night
     lantern.position.set(P.x, P.y - len, P.z);
     lantern.rotation.y = rng.range(0, TAU);
-    lantern.scale.setScalar(1.9);
-    B.absorb(lantern);
-    const glassY = P.y - len - 0.6;
-    warmHalos.push({ x: P.x, y: glassY, z: P.z, size: 1.6 });
+    lantern.scale.setScalar(LS);
+    // the glass gets the oak's amber glow (warm & modest instead of a white bloom)
+    B.absorb(lantern, (m) => (m.userData?.glow ? mats.lanternGlass : m));
+    const glassY = P.y - len - (0.5 - 0.17) * LS;
+    warmHalos.push({ x: P.x, y: glassY, z: P.z, size: 0.62 });
     lanternSpots.push(new THREE.Vector3(P.x, glassY, P.z));
-    if (light) ctx.lights?.addPoint?.(new THREE.Vector3(P.x, glassY, P.z), { color: '#ffb35c', day: 0.0, night: 4.5, distance: 9 });
+    if (light) ctx.lights?.addPoint?.(new THREE.Vector3(P.x, glassY, P.z), { color: '#ffa94d', day: 0.0, night: 3.6, distance: 8.5 });
   }
 
-  // ── fairy lights ──────────────────────────────────────────────────────────
-  const strands = [];
-  const FAIRY = ['#ffd27a', '#fff1c4'];
+  // ── fairy lights (small warm amber bulbs; one wire, two bulb and one halo draw call) ─
+  const fairyHalos = [];
+  const strand = (pts, opts) => fairyLights(B, mats, fairyHalos, pts, opts);
   const bark = (deg, y, lift = 0.14) => {
     const a = deg * DEG;
     return polar(a, trunkRadius(a, y) + lift, y);
@@ -403,21 +540,21 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
   {
     const pts = [];
     for (let d = -78, i = 0; d <= 42; d += 20, i++) pts.push(bark(d, 4.65 + (i % 2) * 0.25 + Math.sin(d * 0.1) * 0.1));
-    strands.push(props.makeStringLights(pts, { sag: 0.1, spacing: 0.3, colors: FAIRY }));
+    strand(pts, { sag: 0.1, spacing: 0.36 });
   }
   // a higher garland on the front-left, under the owl's hollow (the glen view's sparkle)
   {
     const pts = [];
     for (let d = -100, i = 0; d <= -6; d += 16, i++) pts.push(bark(d, 8.15 + (i % 2) * 0.3 - (d > -40 ? 0.25 : 0)));
-    strands.push(props.makeStringLights(pts, { sag: 0.12, spacing: 0.3, colors: FAIRY }));
+    strand(pts, { sag: 0.12, spacing: 0.4 });
   }
   // a second, lower loop at the back-left, between the roots
   {
     const pts = [];
     for (let d = 196, i = 0; d <= 268; d += 18, i++) pts.push(bark(d, 3.3 + (i % 2) * 0.35));
-    strands.push(props.makeStringLights(pts, { sag: 0.12, spacing: 0.3, colors: FAIRY }));
+    strand(pts, { sag: 0.12, spacing: 0.38 });
   }
-  // along the underside of the low limb, out towards the swing
+  // along the underside of the low limb
   {
     const L = limb('front-left-low');
     if (L) {
@@ -427,16 +564,17 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
         P.y -= L.radiusAt(u) + 0.04;
         pts.push(P);
       }
-      strands.push(props.makeStringLights(pts, { sag: 0.16, spacing: 0.32, colors: FAIRY }));
+      strand(pts, { sag: 0.16, spacing: 0.42 });
     }
   }
-  // down the front-right root (seen from the Schreinerei)
+  // down the front-right root (seen from the Schreinerei) — starting above and
+  // beside the EFZ certificate so the wire never crosses it
   {
     const R = root('front-right');
     if (R) {
-      const pts = [bark(34, 2.9, 0.12)];
-      for (const u of [0.26, 0.46, 0.66, 0.84]) pts.push(rootSurfacePoint(R, u, -0.2, 0.06).position);
-      strands.push(props.makeStringLights(pts, { sag: 0.08, spacing: 0.28, colors: FAIRY }));
+      const pts = [bark(44, 3.25, 0.12)];
+      for (const u of [0.3, 0.48, 0.66, 0.84]) pts.push(rootSurfacePoint(R, u, -0.2, 0.06).position);
+      strand(pts, { sag: 0.08, spacing: 0.34 });
     }
   }
   // over the left roots
@@ -444,68 +582,25 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
     const R7 = root('left-back');
     const R8 = root('left');
     if (R7 && R8) {
-      const pts = [bark(-104, 3.0, 0.12), rootSurfacePoint(R8, 0.42, 0, 0.06).position, rootSurfacePoint(R8, 0.66, 0, 0.06).position];
-      strands.push(props.makeStringLights(pts, { sag: 0.1, spacing: 0.3, colors: FAIRY }));
-      const pts2 = [bark(-122, 2.6, 0.12), rootSurfacePoint(R7, 0.36, 0, 0.06).position, rootSurfacePoint(R7, 0.58, 0, 0.06).position];
-      strands.push(props.makeStringLights(pts2, { sag: 0.1, spacing: 0.3, colors: FAIRY }));
+      strand([bark(-104, 3.0, 0.12), rootSurfacePoint(R8, 0.42, 0, 0.06).position, rootSurfacePoint(R8, 0.66, 0, 0.06).position], { sag: 0.1, spacing: 0.36 });
+      strand([bark(-122, 2.6, 0.12), rootSurfacePoint(R7, 0.36, 0, 0.06).position, rootSurfacePoint(R7, 0.58, 0, 0.06).position], { sag: 0.1, spacing: 0.36 });
     }
   }
-  const lightsGroup = new THREE.Group();
-  lightsGroup.name = 'oak-fairy-lights';
-  for (const s of strands) lightsGroup.add(s);
-  parent.add(mergeByMaterial(lightsGroup));
+  if (fairyHalos.length && props.glowQuads) parent.add(props.glowQuads(fairyHalos, '#ffa94d', { day: 0.0, night: 0.5 }));
 
-  // ── rope swing on the low limb ────────────────────────────────────────────
+  // ── rope swing ────────────────────────────────────────────────────────────
+  // It hangs from the far end of the long right limb, beside the waterfall's
+  // pool: in plain sight from the glen overview, but outside every spot
+  // camera's frame (it used to hang through the cottage & Wohnatelier views).
+  // Debug: ?oakswing=<limb>:<u>[,<limb>:<u>…] hangs swings there instead.
   {
-    const L = limb('front-left-low');
-    if (L) {
-      // the spot on the limb above the clearing between the Schreinerei yard and the cottage path
-      let best = 0.5, bd = Infinity;
-      for (let u = 0.3; u < 0.85; u += 0.005) {
-        const P = L.curve.getPointAt(u);
-        const d = Math.hypot(P.x + 9.2, P.z - 4.4);
-        if (d < bd) {
-          bd = d;
-          best = u;
-        }
-      }
-      const P = L.curve.getPointAt(best);
-      const T = L.curve.getTangentAt(best);
-      const along = new THREE.Vector3(T.x, 0, T.z).normalize();
-      const r = L.radiusAt(best);
-      const top = P.clone();
-      top.y -= r * 0.9;
-      const seatY = getHeight(P.x, P.z) + 0.72;
-      const len = top.y - seatY;
-      const pivot = new THREE.Group();
-      pivot.position.copy(top);
-      // local frame: x along the limb, y up
-      const basis = new THREE.Matrix4().makeBasis(along, UP, new THREE.Vector3().crossVectors(along, UP).normalize());
-      const local = new THREE.Group();
-      local.quaternion.setFromRotationMatrix(basis);
-      pivot.add(local);
-      const SB = new Batch();
-      for (const sx of [-0.46, 0.46]) {
-        const rope = new THREE.TubeGeometry(new THREE.LineCurve3(new THREE.Vector3(sx, 0, 0), new THREE.Vector3(sx * 0.98, -len + 0.05, 0)), 24, 0.03, 6, false);
-        SB.add(mats.rope, rope);
-        // wraps around the limb
-        SB.add(mats.rope, xf(new THREE.TorusGeometry(r * 0.95, 0.03, 5, 14), [sx, r * 0.9, 0], [0, Math.PI / 2, 0]));
-        SB.add(mats.rope, xf(new THREE.TorusGeometry(r * 0.95, 0.03, 5, 14), [sx + 0.07, r * 0.9, 0], [0, Math.PI / 2, 0]));
-        // knot under the seat
-        SB.add(mats.rope, xf(new THREE.SphereGeometry(0.045, 6, 5), [sx * 0.98, -len - 0.02, 0]));
-      }
-      const seat = new THREE.BoxGeometry(1.12, 0.07, 0.34, 4, 1, 2);
-      materials.boxUV?.(seat, 'wood', { grain: 'x' });
-      SB.add(mats.wood, xf(seat, [0, -len, 0]), { cast: true });
-      SB.build(local, 'oak-swing');
-      parent.add(pivot);
-      if (!reduced) {
-        const axis = along.clone();
-        updates.push((dt, t) => {
-          const ang = Math.sin(t * 0.85) * 0.045 + Math.sin(t * 0.37 + 1.2) * 0.02;
-          pivot.quaternion.setFromAxisAngle(axis, ang);
-        });
-      }
+    const dbg = ctx.engine?.params?.get?.('oakswing');
+    const spots = dbg
+      ? dbg.split(',').map((t) => t.split(':')).map(([id, u]) => [id, +u])
+      : [['right', SWING_U]];
+    for (const [id, u] of spots) {
+      const L = limb(id);
+      if (L) buildSwing(ctx, mats, parent, L, u, updates, reduced);
     }
   }
 
@@ -709,7 +804,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
   }
 
   for (const g of hollowLinings ?? []) B.add(mats.dark, g);
-  if (warmHalos.length) parent.add(props.glowQuads(warmHalos, '#ffc46b', { day: 0.06, night: 0.9 }));
+  if (warmHalos.length) parent.add(props.glowQuads(warmHalos, '#ffa94d', { day: 0.04, night: 0.6 }));
   B.build(parent, 'oak-details');
   return {
     /** world positions of the lantern glasses (for others' light/sound cues) */
@@ -718,37 +813,4 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
       for (const u of updates) u(dt, t);
     },
   };
-}
-
-/**
- * Flatten a group of static meshes (world-space, identity parents) into one
- * mesh per material — used for the many fairy-light strands.
- */
-function mergeByMaterial(group) {
-  group.updateMatrixWorld(true);
-  const buckets = new Map();
-  group.traverse((o) => {
-    if (!o.isMesh) return;
-    const g = o.geometry.clone().applyMatrix4(o.matrixWorld);
-    const key = o.material.uuid + '|' + Object.keys(g.attributes).sort().join(',') + '|' + (g.index ? 'i' : 'n');
-    if (!buckets.has(key)) buckets.set(key, { material: o.material, list: [], src: o });
-    buckets.get(key).list.push(g);
-  });
-  const out = new THREE.Group();
-  out.name = group.name;
-  for (const { material, list, src } of buckets.values()) {
-    const g = list.length === 1 ? list[0] : mergeGeometries(list, false);
-    if (!g) continue;
-    g.computeBoundingSphere();
-    if (src.geometry.boundingBox && !g.attributes.normal) g.computeBoundingBox();
-    const m = new THREE.Mesh(g, material);
-    m.name = src.name;
-    m.renderOrder = src.renderOrder;
-    m.castShadow = false;
-    m.receiveShadow = src.receiveShadow;
-    m.raycast = src.raycast;
-    m.frustumCulled = src.frustumCulled;
-    out.add(m);
-  }
-  return out;
 }

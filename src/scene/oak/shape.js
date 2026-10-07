@@ -60,10 +60,10 @@ export const ROOTS = [
     pts: [
       [2.2, 0, 1.1, 0.95, 2.3],
       [3.6, -1, 0.55, 0.85, 1.5],
-      [4.6, 0.5, 0.36, 0.8, 1.08],
-      [5.4, 2, 0.22, 0.66, 0.78],
-      [6, 2.6, 0.04, 0.5, 0.54],
-      [6.4, 2.2, -0.34, 0.36, 0.36],
+      [4.6, 0.5, 0.44, 0.9, 1.2],
+      [5.4, 2, 0.36, 0.76, 0.92],
+      [6.05, 2.6, 0.12, 0.58, 0.62],
+      [6.5, 2.2, -0.34, 0.4, 0.4],
     ],
   },
   {
@@ -73,12 +73,12 @@ export const ROOTS = [
     pts: [
       [2.2, 0, 1.1, 1.05, 2.4],
       [3.7, 1.5, 0.55, 1, 1.55],
-      [5, 3, 0.4, 0.88, 1.1],
-      [6.4, 2, 0.95, 0.66, 0.7],
-      [7.5, 4, 0.2, 0.62, 0.7],
-      [8.6, 6.5, 0.42, 0.52, 0.58],
-      [9.7, 7.4, 0.04, 0.42, 0.44],
-      [10.4, 7, -0.38, 0.3, 0.3],
+      [5, 3, 0.46, 0.98, 1.24],
+      [6.4, 2, 1.22, 0.8, 0.88],
+      [7.5, 4, 0.32, 0.74, 0.82],
+      [8.6, 6.5, 0.62, 0.62, 0.68],
+      [9.8, 7.4, 0.1, 0.5, 0.52],
+      [10.6, 7, -0.38, 0.34, 0.34],
     ],
   },
   {
@@ -113,11 +113,11 @@ export const ROOTS = [
     flare: 1.3,
     pts: [
       [2.2, 0, 1.15, 1.1, 2.5],
-      [3.9, -1.6, 0.6, 1.02, 1.6],
-      [5.5, -4.6, 0.42, 0.88, 1.08],
-      [7, -4.5, 1.0, 0.66, 0.72],
-      [8.3, -1.5, 0.18, 0.62, 0.7],
-      [9.5, 1.3, 0.42, 0.52, 0.58],
+      [3.9, -1.6, 0.6, 1.06, 1.66],
+      [5.5, -4.6, 0.46, 0.96, 1.18],
+      [7, -4.5, 1.15, 0.74, 0.8],
+      [8.3, -1.5, 0.24, 0.68, 0.76],
+      [9.5, 1.3, 0.5, 0.56, 0.62],
       [10.5, 2.1, 0.02, 0.4, 0.42],
       [11.1, 1.7, -0.4, 0.3, 0.3],
     ],
@@ -141,10 +141,10 @@ export const ROOTS = [
     flare: 1.25,
     pts: [
       [2.2, 0, 1.1, 1.05, 2.4],
-      [3.8, 0, 0.58, 0.98, 1.55],
-      [5.3, -3.6, 0.42, 0.84, 1.05],
-      [6.8, -4.2, 0.98, 0.64, 0.7],
-      [8, -2.4, 0.14, 0.58, 0.64],
+      [3.8, 0, 0.58, 1.02, 1.6],
+      [5.3, -3.6, 0.46, 0.92, 1.15],
+      [6.8, -4.2, 1.1, 0.72, 0.78],
+      [8, -2.4, 0.2, 0.64, 0.7],
       [9.1, 0, 0.36, 0.48, 0.52],
       [9.9, 1, -0.36, 0.34, 0.34],
     ],
@@ -533,6 +533,44 @@ export function trunkRadius(a, y) {
   return trunkSample(a, y).r;
 }
 
+// ─── The EFZ certificate keep-out ────────────────────────────────────────────
+// The Schreinerei hangs the framed Schreiner EFZ certificate (with its little
+// roof) on the bark right of the door: world x = door.x + 1.8, centred at
+// y ≈ 1.32, roof up to ≈ 1.9 (schreinerei/door.js, mounted with barkMount on
+// trunkRadius). Ivy, moss and fairy lights keep this patch of bark clear.
+const CERT_X = OAK.door.x + 1.8;
+const CERT_Y = 1.32;
+let certA = null;
+/** Azimuth of the certificate on the bark (same iteration as barkMount). */
+export function certAzimuth() {
+  if (certA === null) {
+    let a = Math.asin(clamp((CERT_X - CX) / oakRadiusAt(CERT_Y), -1, 1));
+    for (let i = 0; i < 4; i++) a = Math.asin(clamp((CERT_X - CX) / trunkRadius(a, CERT_Y), -1, 1));
+    certA = a;
+  }
+  return certA;
+}
+/** Keep-out patch on the bark around the certificate: half width along the bark (world units) and heights. */
+export const CERT_ZONE = { halfW: 0.78, y0: 0.62, y1: 2.85 };
+/**
+ * 0…1: how deep (a, y) lies inside the certificate's keep-out patch (0 = outside),
+ * `pad` widens it (world units).
+ */
+export function certZone(a, y, pad = 0) {
+  if (y < CERT_ZONE.y0 - pad || y > CERT_ZONE.y1 + pad) return 0;
+  const w = Math.abs(angDiff(a, certAzimuth())) * baseRadius(Math.max(y, 0));
+  if (w > CERT_ZONE.halfW + pad) return 0;
+  const ey = Math.min(y - (CERT_ZONE.y0 - pad), CERT_ZONE.y1 + pad - y);
+  return clamp(Math.min(CERT_ZONE.halfW + pad - w, ey) / 0.25, 0, 1);
+}
+/** True if a world point near the front bark lies in (or within `pad` of) the certificate patch. */
+export function inCertZone(p, pad = 0) {
+  if (p.z < CZ) return false;
+  const a = Math.atan2(p.x - CX, p.z - CZ);
+  if (Math.hypot(p.x - CX, p.z - CZ) > baseRadius(Math.max(p.y, 0)) + 1.4 + pad) return false;
+  return certZone(a, p.y, pad) > 0;
+}
+
 /**
  * Moss amount on the trunk at (a, y), ≤ 0 means bare bark. Moss gathers at the
  * base, on the tops of the buttress flares, on the shady back (north) and in
@@ -552,6 +590,8 @@ export function trunkMoss(a, y) {
   let m = Math.max(foot, shady, fork) * (0.7 + 0.55 * n) + 0.22 * n2 - 0.4;
   // keep the right side (stairs) & the door front tidy
   m -= attachMask(a, y) * 0.3;
+  // …and the bark behind the EFZ certificate bare
+  m -= certZone(a, y, 0.3) * 1.2;
   return clamp(m, -1, 1);
 }
 

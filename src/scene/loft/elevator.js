@@ -209,40 +209,72 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
         B.add(mats.ivy(), ivyCard(base, new THREE.Vector3(rng.jitter(0.2), -1, rng.jitter(0.2)), lat.clone().multiplyScalar(s), rng.range(0.3, 0.55), rng.next() < 0.5), { cast: false });
       }
     }
-    // a short rustic stair down from the platform's outer edge: chunky warm
-    // treads on two crooked bough stringers, moss and a toadstool at the foot
+    // a short rustic stair winding down from the platform's outer edge:
+    // chunky warm treads on two crooked bough stringers (it curves gently
+    // back around the root, never a straight ladder), ivy on the stringers,
+    // a lantern on a stake and toadstools at its foot
     {
+      const UP = new THREE.Vector3(0, 1, 0);
       const topC = polar(a, r0 + Dp - 0.06, yP - 0.06);
-      const run = THREE.MathUtils.clamp(yP * 0.9, 0.8, 2.9);
-      const footC = polar(a, r0 + Dp + run, 0);
+      const run = THREE.MathUtils.clamp(yP * 0.85, 0.8, 2.7);
+      const footC = polar(a + 0.05, r0 + Dp + run, 0).addScaledVector(lat, 0.45);
       footC.y = floorAt(footC);
       const rise = topC.y - footC.y;
       if (rise > 0.25) {
-        const slope = new THREE.Vector3().subVectors(topC, footC);
+        const midC = topC.clone().lerp(footC, 0.5).addScaledVector(lat, 0.32).add(new THREE.Vector3(0, -0.06, 0));
+        const curve = new THREE.CatmullRomCurve3([topC, midC, footC]);
         const H = 0.38; // half width
+        /** point & horizontal across-direction on the centre line at u (0 = top, 1 = foot) */
+        const frame = (u) => {
+          const p = curve.getPointAt(u);
+          const tg = curve.getTangentAt(u).setY(0).normalize();
+          return { p, across: new THREE.Vector3().crossVectors(tg, UP).normalize() };
+        };
         for (const s of [-1, 1]) {
-          const t = topC.clone().addScaledVector(lat, s * H);
-          const f = footC.clone().addScaledVector(lat, s * (H + 0.04)).add(new THREE.Vector3(0, -0.12, 0));
-          const m = f.clone().lerp(t, 0.5).add(new THREE.Vector3(rng.jitter(0.03), -0.03, rng.jitter(0.03)));
-          pole([f, m, t], 0.085, 0.07, { radial: 7, seed: 70 + s });
+          const pts = [];
+          for (let k = 0; k <= 6; k++) {
+            const { p, across } = frame(k / 6);
+            pts.push(p.clone().addScaledVector(across, s * (H + (k / 6) * 0.04)).add(new THREE.Vector3(0, -(k / 6) * 0.12, 0)));
+          }
+          pole(pts, 0.085, 0.07, { radial: 7, seed: 70 + s });
+          const f = pts[pts.length - 1];
           B.add(mats.moss(), xf(mossGeo(rng, { r: 0.15, h: 0.05 }), [f.x, footC.y + 0.02, f.z]), { cast: false });
+          // ivy creeping up the stringer
+          for (let k = 2; k < pts.length; k += 2) {
+            B.add(mats.ivy(), ivyCard(pts[k].clone().add(new THREE.Vector3(0, -0.04, 0)), new THREE.Vector3(rng.jitter(0.4), -1, rng.jitter(0.4)), frame(k / 6).across.multiplyScalar(s), rng.range(0.3, 0.5), rng.next() < 0.5), { cast: false });
+          }
         }
         const nT = Math.max(2, Math.round(rise / 0.3));
-        const basis = new THREE.Matrix4().makeBasis(lat, new THREE.Vector3(0, 1, 0), lat.clone().cross(new THREE.Vector3(0, 1, 0)));
         for (let k = 1; k <= nT; k++) {
-          const u = k / (nT + 0.6);
-          const c = footC.clone().addScaledVector(slope, u);
+          const u = 1 - k / (nT + 0.6);
+          const { p: c, across } = frame(u);
           const g = board(2 * H + 0.16, 0.09, 0.34, { along: 'x', rng, c: 0.02 });
-          const m = basis.clone().multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rng.jitter(0.03), rng.jitter(0.05), rng.jitter(0.03))));
+          const m = new THREE.Matrix4().makeBasis(across, UP, across.clone().cross(UP));
+          m.multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rng.jitter(0.03), rng.jitter(0.06), rng.jitter(0.03))));
           m.setPosition(c.clone().add(new THREE.Vector3(0, 0.1, 0)));
           B.add(mats.wood(rng.pick(WARM_WOOD)), g.applyMatrix4(m));
           if (rng.next() < 0.5) {
-            const mp = c.clone().addScaledVector(lat, rng.jitter(0.25)).add(new THREE.Vector3(0, 0.14, 0));
+            const mp = c.clone().addScaledVector(across, rng.jitter(0.25)).add(new THREE.Vector3(0, 0.14, 0));
             B.add(mats.moss(), xf(mossGeo(rng, { r: 0.09, h: 0.03, sx: 1.5 }), [mp.x, mp.y, mp.z], [0, rng.next() * TAU, 0]), { cast: false });
           }
         }
-        addToadstool(B.at(new THREE.Matrix4()), mats, rng, ...footC.clone().addScaledVector(lat, -H - 0.2).add(new THREE.Vector3(0, -0.02, 0)).toArray(), { size: 0.12 });
-        addToadstool(B.at(new THREE.Matrix4()), mats, rng, ...footC.clone().addScaledVector(lat, -H - 0.32).addScaledVector(n, 0.15).toArray(), { size: 0.08 });
+        const { across: fa } = frame(1);
+        addToadstool(B.at(new THREE.Matrix4()), mats, rng, ...footC.clone().addScaledVector(fa, -H - 0.2).add(new THREE.Vector3(0, -0.02, 0)).toArray(), { size: 0.12 });
+        addToadstool(B.at(new THREE.Matrix4()), mats, rng, ...footC.clone().addScaledVector(fa, -H - 0.32).addScaledVector(n, 0.15).toArray(), { size: 0.08 });
+        // a lantern on a crooked stake at the foot
+        const sp = footC.clone().addScaledVector(fa, H + 0.3).addScaledVector(n, -0.1);
+        sp.y = floorAt(sp);
+        if (isFinite(sp.y)) {
+          const top = sp.clone().add(new THREE.Vector3(0.03, 1.0, -0.02));
+          const hook = top.clone().addScaledVector(fa, -0.2).add(new THREE.Vector3(0, 0.04, 0));
+          pole([sp.clone().add(new THREE.Vector3(0, -0.1, 0)), sp.clone().add(new THREE.Vector3(-0.03, 0.5, 0.02)), top, hook], 0.04, 0.024, { radial: 6, seed: 74 });
+          const l = ctx.props.makeLantern({ hanging: true, color: '#ffc46b', halo: false });
+          l.scale.setScalar(0.75);
+          l.position.copy(hook).add(new THREE.Vector3(0, -0.01, 0));
+          env.extraLights?.add(l);
+          env.halos.push(hook.clone().add(new THREE.Vector3(0, -0.26, 0)), 0.7, '#ffc46e');
+          B.add(mats.moss(), xf(mossGeo(rng, { r: 0.13, h: 0.05 }), [sp.x, sp.y + 0.01, sp.z]), { cast: false });
+        }
       }
     }
     // a bell on a little gallows to call the snail

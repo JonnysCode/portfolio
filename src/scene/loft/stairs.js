@@ -95,7 +95,7 @@ export function buildStairs(ctx, B, mats, env) {
     if (s.landing) return; // built below
     const flight = s.y < landingY ? 0 : 1;
     const r0 = bark(a, s.y) + STAIR.inner;
-    const r1 = r0 + L + rng.jitter(0.05);
+    const r1 = r0 + L + rng.jitter(0.1);
     const basis = new THREE.Matrix4().makeBasis(n, new THREE.Vector3(0, 1, 0), t.clone().negate());
     // the tread: a thick plank, radial, a touch tilted and twisted — every
     // seventh one a split half-log (a repair with whatever lay around)
@@ -110,14 +110,15 @@ export function buildStairs(ctx, B, mats, env) {
       g = board(L + 0.02, 0.02, STAIR.depth * 1.08, { along: 'x', rng, c: 0.006 });
       g.translate(0, TH / 2 - 0.01, 0);
     } else {
-      g = board(L + 0.04, TH, STAIR.depth - rng.range(0.0, 0.03), { along: 'x', rng, c: 0.014 });
+      g = board(r1 - r0 + 0.04, TH, STAIR.depth - rng.range(0.0, 0.04), { along: 'x', rng, c: 0.014 });
       // worn: the middle of the walking line is dished a little
       deform(g, (v) => {
         if (v.y > 0) v.y -= 0.012 * Math.exp(-((v.x / L + 0.08) ** 2) * 9);
       });
     }
     const m = basis.clone();
-    m.multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rng.jitter(0.02), rng.jitter(0.04), rng.jitter(0.012))));
+    // hand-laid: no two treads quite parallel, their outer ends never in a ruler line
+    m.multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rng.jitter(0.03), rng.jitter(0.09), rng.jitter(0.015))));
     m.setPosition(polar(a, (r0 + r1) / 2, s.y - TH / 2));
     g.applyMatrix4(m);
     B.add(mats.wood(rng.pick(WARM_WOOD)), g);
@@ -159,19 +160,21 @@ export function buildStairs(ctx, B, mats, env) {
     pole(course, SR, SR * 0.82, { radial: 7, seed: fl[0].i * 3 + 1, lump: 0.1 });
     // ivy spilling over the bough between the braces (softens the stack of
     // treads seen edge-on from the workshop)
-    fl.forEach((f, k) => {
-      if (k % 2 || rng.next() < 0.35) return;
+    fl.forEach((f) => {
+      if (rng.next() > 0.6 * Math.min(1, env.density ?? 1)) return; // fewer on the lower tiers
+      if (Math.abs(f.a / DEG - ELEVATOR_AZ) < 15) return; // keep the snail lift's path clear
       const strands = rng.int(1, 3);
       for (let j = 0; j < strands; j++) {
         const base = f.p.clone().addScaledVector(radial(f.a), rng.range(-0.05, 0.12)).add(new THREE.Vector3(0, SR * 0.4, 0));
-        B.add(mats.ivy(), ivyCard(base, new THREE.Vector3(rng.jitter(0.3), -1, rng.jitter(0.3)), radial(f.a), rng.range(0.35, 0.8), rng.next() < 0.5), { cast: false });
+        B.add(mats.ivy(), ivyCard(base, new THREE.Vector3(rng.jitter(0.3), -1, rng.jitter(0.3)), radial(f.a), rng.range(0.4, 1.0), rng.next() < 0.5), { cast: false });
       }
       if (rng.next() < 0.5) B.add(mats.moss(), xf(mossGeo(rng, { r: 0.1, h: 0.04, sx: 1.6 }), [f.p.x, f.p.y + SR * 0.75, f.p.z], [0, -f.a, 0]), { cast: false });
     });
-    // knee braces (every 4th tread) or posts to the ground (low treads)
+    // a few knee braces (every 6th tread; dark warm bark so they recede
+    // against the trunk instead of zig-zagging) or posts to the ground (low treads)
     fl.forEach((f, k) => {
       const low = f.y < 1.7;
-      if (low ? k % 3 !== 1 : k % 4 !== 2) return;
+      if (low ? k % 3 !== 1 : k % 6 !== 3) return;
       const head = f.p.clone();
       const dir = (k + 1 < fl.length ? fl[k + 1].p : f.p).clone().sub(k > 0 ? fl[k - 1].p : f.p).normalize();
       if (low) {
@@ -181,10 +184,10 @@ export function buildStairs(ctx, B, mats, env) {
         pole([foot, head.clone().lerp(foot, 0.5).add(new THREE.Vector3(rng.jitter(0.04), 0, rng.jitter(0.04))), head], 0.06, 0.05, { radial: 7, seed: f.i });
         B.add(mats.moss(), xf(mossGeo(rng, { r: 0.14, h: 0.05 }), [foot.x, g0 + 0.02, foot.z]), { cast: false });
       } else {
-        const yF = f.y - 1.25;
+        const yF = f.y - 1.75;
         const foot = polar(f.a, bark(f.a, yF) - 0.02, yF);
-        const mid = foot.clone().lerp(head, 0.5).addScaledVector(radial(f.a), -0.06).add(new THREE.Vector3(0, -0.05, 0));
-        pole([foot, mid, head], 0.07, 0.05, { radial: 7, seed: f.i * 1.7 });
+        const mid = foot.clone().lerp(head, 0.5).addScaledVector(radial(f.a), -0.1).add(new THREE.Vector3(0, -0.05, 0));
+        B.add(barkMat, branch([foot, mid, head], 0.075, 0.05, { radial: 7, seed: f.i * 1.7 }));
       }
       // the lashing where they meet the bough
       for (const g of lashing(head, dir, SR, { turns: 3 })) B.add(ropeMat, g, { cast: false });
@@ -232,7 +235,7 @@ export function buildStairs(ctx, B, mats, env) {
       const foot = polar(a, bark(a, ly - 1.5) - 0.02, ly - 1.5);
       const head = polar(a, rIn(a) + W - 0.25, ly - 0.14);
       const mid = foot.clone().lerp(head, 0.5).addScaledVector(radial(a), -0.08).add(new THREE.Vector3(0, -0.06, 0));
-      pole([foot, mid, head], 0.085, 0.06, { radial: 7, seed: d });
+      B.add(barkMat, branch([foot, mid, head], 0.085, 0.06, { radial: 7, seed: d }));
       B.add(mats.wood('#8f6a44'), timber(polar(a, rIn(a) - 0.03, ly - 0.14), polar(a, rIn(a) + W - 0.1, ly - 0.14), 0.1, 0.13, { rng }));
       for (const g of lashing(head, radial(a), 0.07, { turns: 3 })) B.add(ropeMat, g, { cast: false });
     }
@@ -246,7 +249,7 @@ export function buildStairs(ctx, B, mats, env) {
     for (let d = a0 + 0.5; d <= a1 - 0.5; d += (a1 - a0 - 1) / 3) {
       const a = d * DEG;
       const b0 = polar(a, rIn(a) + W - 0.08, ly - 0.05);
-      const top = b0.clone().add(new THREE.Vector3(0, 0.74, 0));
+      const top = b0.clone().add(new THREE.Vector3(rng.jitter(0.06), 0.72 + rng.jitter(0.05), rng.jitter(0.06)));
       pole([b0, b0.clone().lerp(top, 0.5).add(new THREE.Vector3(rng.jitter(0.02), 0, rng.jitter(0.02))), top], 0.045, 0.036, { radial: 6, seed: d }, { cast: false });
       tops.push(top);
     }

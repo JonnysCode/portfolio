@@ -10,13 +10,14 @@
 // woody stems are returned as tubes to merge with the limb bark.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { DEG, TAU, CX, CZ, polar, trunkRadius, trunkSample, angDiff, FORK_Y, HOLLOWS, crownBlocked } from './shape.js';
+import { DEG, TAU, CX, CZ, polar, trunkRadius, trunkSample, angDiff, FORK_Y, HOLLOWS, crownBlocked, certZone, inCertZone } from './shape.js';
 import { organicTube } from './tubes.js';
 import { clamp } from '../../core/rng.js';
 
-/** Where vines may NOT climb: the door niche & collar, the loft-stairs side, around the hollows. */
+/** Where vines may NOT climb: the door niche & collar, the loft-stairs side, around the hollows, the EFZ certificate. */
 function forbidden(a, y) {
   const d = a / DEG;
+  if (certZone(a, y, 0.2) > 0) return true;
   for (const h of HOLLOWS) {
     const q = Math.hypot((angDiff(a, h.a * DEG) * 3) / h.rx, (y - h.y) / h.ry);
     if (q < 1.9) return true;
@@ -37,7 +38,7 @@ const VINES = [
   [226, 15.5, 1.1],
   [252, 7.5, 0.8],
   [172, 5.5, 0.6],
-  [29, 4.8, 0.6],
+  [45, 4.4, 0.5], // right of the door, between the EFZ certificate and the stairs
 ];
 
 class CardSet {
@@ -50,6 +51,10 @@ class CardSet {
   /** A card with its stem at `base`, growing along `up`, facing `normal`, size s (height = width). */
   add(base, up, normal, s, flip = false) {
     const across = new THREE.Vector3().crossVectors(up, normal).normalize();
+    // never in front of the Schreinerei's EFZ certificate (base, tip and both top corners)
+    if (inCertZone(base, 0.12)) return;
+    const tip = base.clone().addScaledVector(up, s);
+    if (inCertZone(tip, 0.12) || inCertZone(tip.clone().addScaledVector(across, s * 0.5), 0.12) || inCertZone(tip.addScaledVector(across, -s), 0.12)) return;
     const n0 = this.pos.length / 3;
     const corners = [
       [-0.5, 0, 0, 0],
