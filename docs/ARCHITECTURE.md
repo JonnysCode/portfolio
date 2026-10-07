@@ -111,6 +111,22 @@ Hotspots (`ctx.interactions.add(object, { entryId, area: spotId, label })`)
 open content panels; `kind: 'secret'` hotspots are hidden delights counted as
 discoveries. Content lives only in `src/content/content.js`.
 
+### Experience APIs
+
+* **Camera** (`ctx.cameraRig`): `goTo(spotId)`, `next()/prev()`, `spot`, `onSpotChange(fn)`,
+  `onArrive(fn)`, `focus(object, { distance, height, azimuth, polar })`, `release()`,
+  `setInset(...)` (keeps the subject centred beside an open panel/bottom sheet),
+  `holdIntro()` / `playIntro()`, `focusDistance` (drives depth of field). Glides are
+  planned around obstacles by `systems/cameraObstacles.js` (oak, giants, caps, houses).
+* **Hotspots** (`ctx.interactions`): `add(object, { entryId, area, label, focus, kind })`,
+  `forSpot(id)`, `findByEntry(id)`, `markVisited(id)`, `progress()`. `kind: 'secret'`
+  hotspots get no marker, sparkle on hover and count as discoveries. Entries with
+  `featured: true` get a small sparkle in the overview.
+* **UI** (`ctx.ui`): see the header of `src/ui/index.js` — `openEntry`, `showGuidebook`,
+  `showMap`, `speech(text, object3d)`, `toast`, `bindWorld()` (called once the world exists).
+* **Audio** (`ctx.audio`): `play(name)`, `playMusic('record')`, `stopMusic()`,
+  `startAmbience()`; off until the visitor enters, preference remembered.
+
 ## Running & checking
 
 ```bash
