@@ -40,7 +40,7 @@ export function lanternGeos(color = palette.windowGlow, frame = palette.metalDar
 /**
  * A little lantern; glows at night.
  * @param {object} [opts] { color (glass colour), frame (metal colour), hanging=false (origin at the ring on top),
- *                          halo=true, haloSize=0.9 }
+ *                          halo=true, haloSize=0.65 }
  */
 export function makeLantern(opts = {}) {
   const color = opt(opts, 'color', palette.windowGlow);
@@ -50,7 +50,8 @@ export function makeLantern(opts = {}) {
   if (opts.hanging) body.position.y = -0.5;
   g.add(body);
   if (opt(opts, 'halo', true)) {
-    const halo = makeGlowSprite(color, opt(opts, 'haloSize', 0.9));
+    // small & soft: the glass blooms, the halo only warms the air around it
+    const halo = makeGlowSprite(color, opt(opts, 'haloSize', 0.65), { day: 0.08, night: 0.95 });
     halo.position.y = body.position.y + 0.17;
     g.add(halo);
   }
@@ -111,7 +112,7 @@ export function makeLampPost(opts = {}) {
   const g = new THREE.Group();
   g.name = 'lampPost';
   g.add(groupFor(postGeos(height, style, String(opts.seed ?? 'lamp'))));
-  const lantern = makeLantern({ color: opts.color, haloSize: 1.1 });
+  const lantern = makeLantern({ color: opts.color, haloSize: 0.8 });
   if (style === 'hook') {
     const pivot = new THREE.Group();
     pivot.position.set(0, height - 0.22, 0.55);

@@ -6,9 +6,12 @@
 //   p.setAction('work');            // idle | walk | run | wave | work | sit | ride | talk | cheer
 //
 // Big round head (~42 % of the height), rosy cheeks, blinking dot eyes, a tiny
-// smile, a round body, stubby arms with mitten hands and little shoes. Built
-// from hierarchical groups (no skinning); every part is ONE vertex-coloured
-// mesh, so a villager is ~8 draw calls and ~2k triangles.
+// smile, a round body, stubby arms with mitten hands and little shoes. The
+// parts hang in a hierarchy of plain Object3Ds (legs, torso, head, eyes, arms,
+// hands) that is animated as always, but they are drawn as ONE rigidly
+// skinned, vertex-coloured mesh (each part follows its Object3D as a bone):
+// a villager is 1 draw call (+1 for a wooden / glowing held item) and 1 shadow
+// draw, ~2.5k triangles.
 //
 // UPDATING — pick ONE mechanism (both are safe, they never double-update):
 //   • do nothing: the person registers itself in the props ticker and
@@ -22,7 +25,8 @@
 import * as THREE from 'three';
 import { palette } from '../core/palette.js';
 import { createRng, damp } from '../core/rng.js';
-import { Parts, cached, xf, paintFn, deform, meshesFor, shade, opt, blob, revolve } from './util.js';
+import { Parts, cached, xf, paintFn, deform, meshesFor, shade, opt, blob, revolve, restMatrix, mergeSkinned, skinnedMesh } from './util.js';
+import { materials } from '../core/materials.js';
 import { makeManualSwitch, propsSettings } from './ticker.js';
 import { toolGeos, TOOL_INFO } from './tools.js';
 
@@ -459,6 +463,52 @@ function addHat(P, o) {
   }
 }
 
+// ── the skinned body ─────────────────────────────────────────────────────────
+// Bone order of a person's skeleton (see makePerson).
+const BONE = { legL: 0, legR: 1, torso: 2, head: 3, eyes: 4, armL: 5, armR: 6, handR: 7, front: 8 };
+
+/** Generous culling volume (unscaled, group space) covering every action. */
+const PERSON_BOUNDS = { center: [0, 0.55, 0.05], radius: 1.05, pad: 0.12 };
+
+/**
+ * Characters get their own (cached) vertex-colour toon material: identical to
+ * the props' shared one, but only ever drawn skinned, so the renderer never
+ * has to swap programs between skinned and static draws.
+ */
+const personMaterial = () => materials.toon('#ffffff', { vertexColors: true, name: 'props-vc-skinned' });
+
+/**
+ * Every body part (+ the vertex-coloured layers of the held item) merged into
+ * one rigidly skinned geometry in the rest pose. Cached per look + item.
+ */
+function bodyGeometry(o, holding, rest) {
+  const key = `p-body|${o.skin}|${o.shirt}|${o.pants}|${o.shoes}|${o.hairStyle}|${o.hairColor}|${o.hat}|${o.hatColor}|${o.apron}|${o.apronColor}|${o.glasses}|${o.beard}|${o.scarf}|${o.scarfColor}|${o.sleeve}|${o.belt}|${o.buttons}|${o.brows}|${holding}`;
+  return cached(key, () => {
+    const parts = [
+      { geo: legGeos(o).paint, bone: BONE.legL, matrix: rest[BONE.legL] },
+      { geo: legGeos(o).paint, bone: BONE.legR, matrix: rest[BONE.legR] },
+      { geo: torsoGeos(o).paint, bone: BONE.torso, matrix: rest[BONE.torso] },
+      { geo: headGeos(o).paint, bone: BONE.head, matrix: rest[BONE.head] },
+      { geo: eyeGeos().paint, bone: BONE.eyes, matrix: rest[BONE.eyes] },
+      { geo: armGeos(o, 1).paint, bone: BONE.armL, matrix: rest[BONE.armL] },
+      { geo: armGeos(o, -1).paint, bone: BONE.armR, matrix: rest[BONE.armR] },
+    ];
+    const tg = holding ? toolGeos(holding) : null;
+    if (tg) {
+      const info = TOOL_INFO[holding];
+      const bone = info.mount === 'front' ? BONE.front : BONE.handR;
+      const m = new THREE.Matrix4().compose(
+        new THREE.Vector3().fromArray(info.pos),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(info.rot[0], info.rot[1], info.rot[2])),
+        new THREE.Vector3(1, 1, 1)
+      );
+      m.premultiply(rest[bone]);
+      for (const layer of ['paint', 'detail']) if (tg[layer]) parts.push({ geo: tg[layer], bone, matrix: m });
+    }
+    return mergeSkinned(parts);
+  });
+}
+
 // ── poses ────────────────────────────────────────────────────────────────────
 function workPose(item, t, out, rm) {
   const s = rm ? 0.35 : 1;
@@ -616,29 +666,22 @@ export function makePerson(opts = {}) {
   const scale = opt(opts, 'scale', 1);
   const rm = () => propsSettings.reducedMotion;
 
-  // ── hierarchy ──
+  // ── hierarchy (the "bones": plain Object3Ds animated exactly as always) ──
   const group = new THREE.Group();
   group.name = opts.name ? `person:${opts.name}` : 'person';
   group.scale.setScalar(scale);
   const root = new THREE.Group();
   group.add(root);
-  const mk = (geos, cast) => {
-    const g = new THREE.Group();
-    for (const m of meshesFor(geos, { cast })) g.add(m);
-    return g;
-  };
   const legL = new THREE.Group(), legR = new THREE.Group();
   legL.position.set(LEG_X, HIP_Y, 0);
   legR.position.set(-LEG_X, HIP_Y, 0);
-  legL.add(mk(legGeos(o), true));
-  legR.add(mk(legGeos(o), true));
   const torso = new THREE.Group();
   torso.position.y = HIP_Y;
-  torso.add(mk(torsoGeos(o), true));
+  const torsoBody = new THREE.Group(); // carries the per-person girth (torso mesh only)
+  torso.add(torsoBody);
   const headPivot = new THREE.Group();
   headPivot.position.y = NECK_Y;
-  headPivot.add(mk(headGeos(o), true));
-  const eyes = mk(eyeGeos(), false);
+  const eyes = new THREE.Group();
   eyes.position.y = HC;
   headPivot.add(eyes);
   torso.add(headPivot);
@@ -646,8 +689,6 @@ export function makePerson(opts = {}) {
   const armL = new THREE.Group(), armR = new THREE.Group();
   armL.position.set(SHOULDER[0], SHOULDER[1], 0);
   armR.position.set(-SHOULDER[0], SHOULDER[1], 0);
-  armL.add(mk(armGeos(o, 1), false));
-  armR.add(mk(armGeos(o, -1), false));
   const handR = new THREE.Object3D();
   handR.position.set(0, HAND_Y, 0.01);
   armR.add(handR);
@@ -659,13 +700,23 @@ export function makePerson(opts = {}) {
   torso.add(armL, armR, front);
   root.add(legL, legR, torso);
 
-  // slight per-person proportions
+  // ONE skinned mesh for the whole body (+ the vertex-coloured parts of the
+  // held item): bone order = BONE.* (see bodyGeometry)
+  const bones = [legL, legR, torsoBody, headPivot, eyes, armL, armR, handR, front];
+  const rest = bones.map((b) => restMatrix(b, group));
+  const firstHolding = opts.holding && toolGeos(opts.holding) ? opts.holding : null;
+  const body = skinnedMesh(bodyGeometry(o, firstHolding, rest), personMaterial(), bones, rest, PERSON_BOUNDS, 'person-body');
+  group.add(body);
+
+  // slight per-person proportions (applied after the rest pose was taken)
   const headScale = rng.range(0.97, 1.05);
   headPivot.scale.setScalar(headScale);
   const girth = rng.range(0.94, 1.08);
-  torso.children[0].scale.set(girth, 1, girth);
+  torsoBody.scale.set(girth, 1, girth);
 
   // ── held item ──
+  // vertex-coloured parts ride in the body mesh; wood (grain texture) and glow
+  // layers stay small static meshes on the hand / front anchor.
   let holding = null;
   let toolObj = null;
   function setHolding(item) {
@@ -674,10 +725,17 @@ export function makePerson(opts = {}) {
       toolObj = null;
     }
     holding = item && toolGeos(item) ? item : null;
+    body.geometry = bodyGeometry(o, holding, rest);
+    body.boundingBox.copy(body.geometry.boundingBox).expandByScalar(PERSON_BOUNDS.pad);
     if (!holding) return;
     const info = TOOL_INFO[holding];
+    const geos = toolGeos(holding);
+    const rest2 = {};
+    for (const k of Object.keys(geos)) if (k !== 'detail' && k !== 'paint') rest2[k] = geos[k];
+    if (!Object.keys(rest2).length) return;
     toolObj = new THREE.Group();
-    for (const m of meshesFor(toolGeos(holding), { cast: false })) toolObj.add(m);
+    toolObj.name = `held:${holding}`;
+    for (const m of meshesFor(rest2, { cast: false })) toolObj.add(m);
     toolObj.position.fromArray(info.pos);
     toolObj.rotation.set(info.rot[0], info.rot[1], info.rot[2]);
     (info.mount === 'front' ? front : handR).add(toolObj);

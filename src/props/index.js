@@ -27,7 +27,7 @@ export { makeMushroomHouse } from './mushroomHouse.js';
 export { makePerson, PERSON_HEIGHT } from './person.js';
 export { makeSnail } from './snail.js';
 export { makeSign, makeSignpost, makePlaque, makeTextTexture } from './sign.js';
-export { paintWood, drawFittedText, canvasTexture, FONT_DISPLAY, FONT_HAND } from './text.js';
+export { paintWood, drawFittedText, canvasTexture, whenFontsReady, FONT_DISPLAY, FONT_HAND } from './text.js';
 export { makeTool, TOOL_NAMES } from './tools.js';
 export { makeGlowSprite, glowQuads } from './glow.js';
 export {

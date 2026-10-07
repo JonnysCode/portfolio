@@ -21,8 +21,9 @@ import * as THREE from 'three';
 import { PATHS } from '../../world/layout.js';
 import { getHeight } from '../../world/ground.js';
 import {
-  M, TAU, STONE_TINTS, IRON, Cards, xf, blockStone, stoneGeo, mossGeo, arcSegment, paramSurface, taperTube, board, rod,
-  plantFern, plantGrass, addFlower, addToadstool, addIvy, flushCards, noiseA,
+  M, TAU, IRON, Cards, xf, mossGeo, arcSegment, paramSurface, taperTube, board, rod,
+  plantFern, plantGrass, addFlower, addToadstool, addIvy, flushCards, noiseA, smooth01,
+  cushionStone, roundStone, archStone, stoneTint, wallFern, paintFn, DRESSED_TINTS, MASONRY_TINTS, MORTAR,
 } from './kit.js';
 
 // arch & deck dimensions
@@ -42,10 +43,8 @@ const END = 3.62; // where the deck meets the paths
 const DECK_CROWN = 1.3;
 /** Where the vintage bike leans on the downstream parapet (local x, side) — kept clear of plants. */
 export const BIKE_SPOT = { x: 3.05, side: 1, offset: 0.27 };
-/** Dressed sandstone for the arch ring (lighter and warmer than the rubble). */
-const VOUSSOIR_TINTS = ['#cdbb94', '#c4b08a', '#d2c29e', '#bfae8c', '#c9b796'];
-/** Rubble: darker, cooler, more varied. */
-const RUBBLE_TINTS = ['#9a9282', '#8c8576', '#a3967c', '#857f73', '#968a74', '#7d786e', '#a39a86'];
+/** Rubble in the spandrels: a little darker and damper than the dressed work. */
+const RUBBLE_TINTS = MASONRY_TINTS.concat(['#6e705f', '#7a7462']);
 
 /** Deck walking surface height at local x. */
 export function deckY(x) {
@@ -73,7 +72,8 @@ export function buildBridge(ctx, B, rng) {
     toWorld(x, 0, z, _w);
     return getHeight(_w.x, _w.z);
   };
-  const tint = () => rng.pick(STONE_TINTS);
+  const tint = () => stoneTint(rng);
+  const dressed = () => stoneTint(rng, DRESSED_TINTS, 0.75);
   const ivyCards = new Cards();
 
   // ── arch ring + barrel vault ─────────────────────────────────────────────
@@ -97,19 +97,27 @@ export function buildBridge(ctx, B, rng) {
       const za = cuts[k], zb = cuts[k + 1];
       const depth = zb - za - 0.025;
       const outer = R + RING * (face ? rng.range(0.95, 1.12) : 0.9) + (key && face ? 0.1 : 0);
-      const seg = arcSegment(R - (face ? 0.01 : 0), outer, Math.min(s0, s1) + 0.006, Math.max(s0, s1) - 0.006, depth + (face ? 0.04 : 0), 2, 0.018);
       const zc = (za + zb) / 2 + (k === 0 ? -0.05 : k === cuts.length - 2 ? 0.05 : 0) + (key && face ? Math.sign((za + zb) / 2) * 0.03 : 0);
-      seg.translate(rng.jitter(0.008), Y0 + rng.jitter(0.006), zc);
-      F.add(MM.stone, seg, { color: key ? '#d8c9a4' : rng.pick(VOUSSOIR_TINTS), cast: face });
+      if (face) {
+        // the face voussoirs: rounded, individually tinted wedges with dark joints
+        const seg = archStone(rng, R - 0.02, outer, Math.min(s0, s1) + 0.012, Math.max(s0, s1) - 0.012, depth + 0.04, { color: key ? '#bca680' : dressed(), box: 0.36 });
+        seg.translate(rng.jitter(0.008), Y0 + rng.jitter(0.006), zc);
+        F.add(MM.stone, seg);
+      } else {
+        // the barrel vault inside (seen from below only): plain wedges
+        const seg = arcSegment(R, outer, Math.min(s0, s1) + 0.008, Math.max(s0, s1) - 0.008, depth, 2, 0);
+        seg.translate(rng.jitter(0.008), Y0 + rng.jitter(0.006), zc);
+        F.add(MM.stone, seg, { color: stoneTint(rng, DRESSED_TINTS, 0.5), cast: false });
+      }
     }
   }
   // footing stones where the arch springs (partly in the water)
   for (const sx of [-1, 1]) {
     for (let k = 0; k < 4; k++) {
       const zc = -HALF_W + 0.3 + k * 0.55 + rng.jitter(0.08);
-      const g = blockStone(rng, rng.range(0.6, 0.8), rng.range(0.45, 0.6), rng.range(0.5, 0.65), 0.16);
+      const g = roundStone(rng, rng.range(0.6, 0.8), rng.range(0.45, 0.6), rng.range(0.5, 0.65), { color: stoneTint(rng, ['#6f6e60', '#77735f', '#6a6c5c']), box: 0.5, lump: 0.1 });
       xf(g, [sx * (SPAN_HALF + 0.2 + rng.jitter(0.05)), SPRING_Y - 0.28, zc], [0, rng.jitter(0.2), rng.jitter(0.06)]);
-      F.add(MM.wallStone, g, { color: tint() });
+      F.add(MM.wallStone, g);
     }
   }
 
@@ -131,10 +139,14 @@ export function buildBridge(ctx, B, rng) {
     }
     const core = new THREE.ExtrudeGeometry(shape, { depth: W - 0.14, bevelEnabled: false, curveSegments: 1 });
     core.translate(0, 0, -(W - 0.14) / 2);
-    F.add(MM.stone, core, { color: '#7f776b' });
+    // dark, damp mortar with moss in it: every joint between the face stones reads as a shadowed groove
+    const dark = new THREE.Color(MORTAR), green = new THREE.Color('#3c5021');
+    paintFn(core, MORTAR, (x, y, z, i, c) => c.copy(dark).lerp(green, smooth01(0.3 + noiseA(x * 1.5, y * 2 + z) * 0.8 - y * 0.3)));
+    F.add(MM.moss, core);
   }
 
   // ── rubble facing on both faces (spandrels + wing walls) ─────────────────
+  const ferns = [];
   const faceStones = (side) => {
     const zf = side * (HALF_W - 0.07);
     let y = -0.75;
@@ -156,9 +168,10 @@ export function buildBridge(ctx, B, rng) {
         if (topY < ground(xc, zf) - 0.12) continue;
         const h = topY - bot;
         if (h < 0.08) continue;
-        const g = blockStone(rng, wst - 0.02, h - 0.015, rng.range(0.16, 0.22), 0.14);
-        xf(g, [xc + rng.jitter(0.01), bot + h / 2, zf + side * rng.range(0, 0.03)], [rng.jitter(0.03), rng.jitter(0.05), rng.jitter(0.04)]);
-        F.add(MM.wallStone, g, { color: rng.pick(RUBBLE_TINTS), cast: false });
+        const g = cushionStone(rng, wst - 0.045, h - 0.04, rng.range(0.05, 0.09), { color: stoneTint(rng, bot < 0.1 ? ['#6e705f', '#77735f', '#7b7a68'] : RUBBLE_TINTS), segs: wst > 0.42 ? 12 : 10 });
+        xf(g, [xc + rng.jitter(0.01), bot + h / 2, zf + side * rng.range(-0.005, 0.02)], [rng.jitter(0.03), (side < 0 ? Math.PI : 0) + rng.jitter(0.05), rng.jitter(0.05)]);
+        F.add(MM.wallStone, g);
+        if (bot > 0.1 && h > 0.15 && rng.chance(0.03)) ferns.push([xc, topY, side]);
       }
       y += hc + 0.01;
       row++;
@@ -166,6 +179,8 @@ export function buildBridge(ctx, B, rng) {
   };
   faceStones(1);
   faceStones(-1);
+  // little ferns sprouting from the joints of the spandrels
+  for (const [x, y, side] of ferns) wallFern(F, rng, [x, y, side * (HALF_W + 0.02)], [0, 0, side], { size: rng.range(0.2, 0.3) });
 
   // ── deck: gravel bed + flagstones + pebbles + moss ───────────────────────
   const innerHalf = HALF_W - PARAPET_T;
@@ -194,10 +209,10 @@ export function buildBridge(ctx, B, rng) {
         const zc = Math.min(z + wid / 2, innerHalf - 0.1);
         z += wid + rng.range(0.03, 0.07);
         if (rng.chance(0.14)) continue; // a gap of gravel & moss
-        const s = stoneGeo(rng, { r: 0.5, sx: len * 0.92, sz: wid * 0.9, sy: 0.05, lump: 0.1, flatTop: 0.15, detail: 2, uvScale: 1 });
+        const s = roundStone(rng, len * 0.9, 0.06, wid * 0.88, { color: stoneTint(rng, ['#857e70', '#7c776c', '#8a826f', '#77736a', '#918774']), box: 0.32, lump: 0.1, under: 0.2, sag: -0.02 });
         const sl = Math.atan(deckSlope(xc));
         xf(s, [xc + rng.jitter(0.02), deckY(xc) + 0.012, zc], [rng.jitter(0.03), rng.jitter(0.25), sl + rng.jitter(0.03)]);
-        F.add(MM.pebble, s, { color: rng.pick(['#8f8778', '#857e70', '#9a8f7a', '#7c776c', '#938b7c', '#a09479']), cast: false });
+        F.add(MM.pebble, s, { cast: false });
       }
       x += len + rng.range(0.03, 0.06);
     }
@@ -224,9 +239,9 @@ export function buildBridge(ctx, B, rng) {
         const len = Math.min(rng.range(0.28, 0.48), END - 0.32 - x);
         if (len < 0.12) break;
         const xc = x + len / 2;
-        const g = blockStone(rng, len - 0.02, hc - 0.015, PARAPET_T - rng.range(0, 0.03), 0.12);
-        xf(g, [xc, deckY(xc) + h0 + hc / 2, zc + rng.jitter(0.012)], [0, rng.jitter(0.03), Math.atan(deckSlope(xc)) + rng.jitter(0.03)]);
-        F.add(MM.wallStone, g, { color: tint(), cast: course === 1 });
+        const g = roundStone(rng, len - 0.035, hc - 0.03, PARAPET_T - rng.range(0, 0.03), { color: tint(), box: 0.4 });
+        xf(g, [xc, deckY(xc) + h0 + hc / 2, zc + rng.jitter(0.012)], [rng.jitter(0.03), rng.jitter(0.04), Math.atan(deckSlope(xc)) + rng.jitter(0.04)]);
+        F.add(MM.wallStone, g);
         x += len;
       }
     }
@@ -236,13 +251,19 @@ export function buildBridge(ctx, B, rng) {
       const len = Math.min(rng.range(0.4, 0.62), END - 0.3 - x);
       if (len < 0.15) break;
       const xc = x + len / 2;
-      const g = blockStone(rng, len - 0.015, 0.1, PARAPET_T + 0.08, 0.1);
-      xf(g, [xc, deckY(xc) + 0.39 + 0.05, zc + rng.jitter(0.015)], [rng.jitter(0.02), rng.jitter(0.03), Math.atan(deckSlope(xc)) + rng.jitter(0.02)]);
-      F.add(MM.wallStone, g, { color: rng.pick(['#b3a891', '#a89e8a', '#bcae92']) });
-      if (rng.chance(0.55)) {
-        const m = mossGeo(rng, { r: rng.range(0.07, 0.15), h: 0.04, sx: 1.8, sz: 0.9 });
-        xf(m, [xc + rng.jitter(0.1), deckY(xc) + 0.49, zc + rng.jitter(0.05)], [0, rng.jitter(0.3), Math.atan(deckSlope(xc))]);
-        F.add(MM.moss, m, { color: rng.pick(['#7a9640', '#62832f']), cast: false });
+      const g = roundStone(rng, len - 0.03, 0.12, PARAPET_T + 0.1, { color: dressed(), box: 0.32, sag: 0.03 });
+      xf(g, [xc, deckY(xc) + 0.39 + 0.05, zc + rng.jitter(0.015)], [rng.jitter(0.03), rng.jitter(0.04), Math.atan(deckSlope(xc)) + rng.jitter(0.03)]);
+      F.add(MM.wallStone, g);
+      // fat moss cushions on the capstones, some spilling over the edge
+      if (rng.chance(0.7)) {
+        const m = mossGeo(rng, { r: rng.range(0.08, 0.16), h: rng.range(0.035, 0.06), sx: 1.7, sz: 0.85 });
+        xf(m, [xc + rng.jitter(0.1), deckY(xc) + 0.495, zc + rng.jitter(0.06)], [0, rng.jitter(0.3), Math.atan(deckSlope(xc))]);
+        F.add(MM.moss, m, { color: rng.pick(['#7a9640', '#62832f', '#6f8f3a']), cast: false });
+      }
+      if (rng.chance(0.3)) {
+        const m = mossGeo(rng, { r: rng.range(0.06, 0.1), h: 0.05, sx: 1.4, sz: 0.6, seg: 7 });
+        xf(m, [xc + rng.jitter(0.12), deckY(xc) + 0.42, zc + side * (PARAPET_T / 2 + 0.05)], [side * 1.2, rng.jitter(0.3), 0]);
+        F.add(MM.moss, m, { color: rng.pick(['#5d7d30', '#6f8f3a']), cast: false });
       }
       x += len;
     }
@@ -254,17 +275,20 @@ export function buildBridge(ctx, B, rng) {
       let y = gy - 0.15;
       while (y < top - 0.12) {
         const h = Math.min(rng.range(0.2, 0.26), top - 0.12 - y);
-        const g = blockStone(rng, 0.36, h - 0.012, 0.36, 0.1);
+        const g = roundStone(rng, 0.37, h - 0.025, 0.37, { color: tint(), box: 0.38 });
         xf(g, [px + rng.jitter(0.01), y + h / 2, zc], [0, rng.jitter(0.08), 0]);
-        F.add(MM.wallStone, g, { color: tint() });
+        F.add(MM.wallStone, g);
         y += h;
       }
       // an overhanging capstone with a dressed ball finial on a little plinth
-      const base = blockStone(rng, 0.44, 0.09, 0.44, 0.05);
+      const base = roundStone(rng, 0.46, 0.1, 0.46, { color: dressed(), box: 0.3 });
       xf(base, [px, y + 0.035, zc], [0, rng.jitter(0.06), 0]);
-      F.add(MM.wallStone, base, { color: '#b3a88f' });
-      F.add(MM.stone, new THREE.CylinderGeometry(0.07, 0.09, 0.06, 10).translate(px, y + 0.11, zc), { color: '#bcae92' });
-      F.add(MM.stone, new THREE.SphereGeometry(0.1, 12, 8).translate(px, y + 0.22, zc), { color: '#c7b896' });
+      F.add(MM.wallStone, base);
+      const mc = mossGeo(rng, { r: 0.13, h: 0.05, sx: 1.2 });
+      xf(mc, [px + rng.jitter(0.06), y + 0.085, zc + rng.jitter(0.06)], [0, rng.next() * TAU, 0]);
+      F.add(MM.moss, mc, { color: '#6f8f3a', cast: false });
+      F.add(MM.stone, new THREE.CylinderGeometry(0.07, 0.09, 0.06, 10).translate(px, y + 0.11, zc), { color: '#a8977a' });
+      F.add(MM.stone, new THREE.SphereGeometry(0.1, 12, 8).translate(px, y + 0.22, zc), { color: '#b09f80' });
       piers.push({ x: px, z: zc, top: y + 0.32, side, sx });
     }
   }

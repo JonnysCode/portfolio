@@ -184,7 +184,10 @@ export function toolGeos(name) {
   if (!BUILDERS[name]) return null;
   return cached(`tool|${name}`, () => {
     const P = new Parts();
-    BUILDERS[name](P);
+    // tools never cast shadows, so 'paint' and 'detail' are the same thing:
+    // fold them into one layer (one draw call less per tool)
+    const T = { add: (layer, geo, color) => P.add(layer === 'paint' ? 'detail' : layer, geo, color) };
+    BUILDERS[name](T);
     return P.finish();
   });
 }

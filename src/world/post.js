@@ -6,6 +6,9 @@
 //              depth texture on 'high'
 //   bloom      UnrealBloom mip chain with a soft knee: fairy lights, windows,
 //              lanterns, fireflies and sun glints glow; stronger at night.
+//              At night only the light ABOVE the threshold blooms (soft-knee
+//              subtraction) and the halo is kept tight, so lights read as
+//              small warm points with a gentle halo — never white blobs.
 //              (Only the blur chain is used — the result is added in the
 //              finish pass, so the HDR scene is never re-resolved.)
 //   AO         ('high') half-res depth-only ambient occlusion (normals rebuilt
@@ -16,6 +19,11 @@
 //              confusion) → 28-tap golden-angle gather with scatter-as-gather
 //              weights (foreground bleeds over sharp things, background never
 //              bleeds onto them) → mixed back at full resolution by CoC.
+//              The near field is gentler than the far field (soft-saturating
+//              CoC, wider in-focus band) so big foreground framing stays soft
+//              but readable; the gather is luminance-weighted (Karis) and hot
+//              pixels get a smaller CoC, so tiny bright things (fireflies,
+//              bulbs) never explode into big bokeh discs.
 //   finish     ONE pass: AO + DOF composite + bloom + the renderer's tone mapping &
 //              exposure + colour grade (warm highlights, teal-green shadows,
 //              softly lifted blacks, a touch of saturation) + warm vignette +
@@ -35,8 +43,10 @@ import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 
 /** Live-tunable settings (also exposed as ctx.post.settings). */
 const SETTINGS = {
-  bloomDay: { strength: 0.32, radius: 0.55, threshold: 1.0, knee: 0.6 },
-  bloomNight: { strength: 0.62, radius: 0.62, threshold: 0.55, knee: 0.55 },
+  // excess: 0 = classic UnrealBloom high pass (the whole pixel blooms once it
+  // passes the threshold), 1 = only the energy above the threshold blooms.
+  bloomDay: { strength: 0.32, radius: 0.55, threshold: 1.0, knee: 0.6, excess: 0 },
+  bloomNight: { strength: 0.42, radius: 0.18, threshold: 1.25, knee: 0.7, excess: 1 },
   dof: true,
   /** Contact shadows in nooks ('high'): strength 0..1 and world radius. */
   ao: 0.7,
@@ -45,7 +55,14 @@ const SETTINGS = {
   aperture: 10,
   /** In-focus dead zone (px) so the subject stays pin sharp. */
   focusBand: 0.9,
-  maxBlur: 11, // px at 720p
+  maxBlur: 11, // px at 720p (behind the focus)
+  /** Near field (in front of the focus): wider dead zone, CoC scale, and a
+   *  soft saturation towards nearMaxBlur so big foreground framing stays readable. */
+  nearBand: 1.2,
+  nearScale: 0.75,
+  nearMaxBlur: 5, // px at 720p
+  /** Luminance weighting of the bokeh gather (0 = off): tiny hot points stay small & dim. */
+  dofBrightTame: 0.7,
   /** Extra exposure of the HDR path: additive light (shafts, halos, mist) is
    *  compressed by the tone curve here but not in the plain path — keep parity. */
   exposure: 1.06,
@@ -68,6 +85,7 @@ const VERT = /* glsl */ `
 const COC_GLSL = /* glsl */ `
   uniform sampler2D tDepth;
   uniform float uNear, uFar, uFocus, uAperture, uBand, uMaxBlur;
+  uniform float uNearBand, uNearScale, uNearMax;
   float viewDepth(vec2 uv) {
     float d = texture2D(tDepth, uv).x;
     // perspective depth → positive view distance
@@ -77,23 +95,33 @@ const COC_GLSL = /* glsl */ `
   float cocAt(vec2 uv) {
     float z = -viewDepth(uv);
     float c = uAperture * (z - uFocus) / max(z, 1e-3);
-    c = sign(c) * max(abs(c) - uBand, 0.0);
-    return clamp(c, -uMaxBlur * 1.25, uMaxBlur);
+    if (c >= 0.0) return min(max(c - uBand, 0.0), uMaxBlur);
+    // near field: wider dead zone, then a soft saturation towards uNearMax
+    float n = max(-c - uNearBand, 0.0) * uNearScale;
+    return -uNearMax * (1.0 - exp(-n / max(uNearMax, 1e-3)));
   }
 `;
+
+/** Uniforms used by COC_GLSL. */
+const cocUniformDefs = () => ({
+  tDepth: { value: null },
+  uNear: { value: 0.1 },
+  uFar: { value: 100 },
+  uFocus: { value: 20 },
+  uAperture: { value: 10 },
+  uBand: { value: 1 },
+  uMaxBlur: { value: 10 },
+  uNearBand: { value: 1 },
+  uNearScale: { value: 1 },
+  uNearMax: { value: 5 },
+});
 
 /** Half-res: colour (4-tap box) + signed CoC (in half-res px). */
 const PrefilterShader = {
   uniforms: {
     tColor: { value: null },
-    tDepth: { value: null },
     uTexel: { value: new THREE.Vector2() },
-    uNear: { value: 0.1 },
-    uFar: { value: 100 },
-    uFocus: { value: 20 },
-    uAperture: { value: 10 },
-    uBand: { value: 1 },
-    uMaxBlur: { value: 10 },
+    ...cocUniformDefs(),
     tAO: { value: null },
     uAO: { value: 0 },
   },
@@ -112,8 +140,11 @@ const PrefilterShader = {
       if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
       if (uAO > 0.0) c *= mix(1.0, texture2D(tAO, vUv).r, uAO * (1.0 - smoothstep(1.0, 3.0, max(max(c.r, c.g), c.b))));
       // tame fireflies so single hot pixels do not become big discs
-      c = c / (1.0 + max(max(c.r, c.g), c.b) * 0.12);
+      float hot = max(max(c.r, c.g), c.b);
+      c = c / (1.0 + hot * 0.12);
       float coc = cocAt(vUv) * 0.5; // half-res px
+      // hot points (bulbs, fireflies, glints) spread over a smaller circle
+      coc *= mix(1.0, 0.5, smoothstep(1.2, 4.0, hot));
       gl_FragColor = vec4(c, coc);
     }
   `,
@@ -126,18 +157,22 @@ const BokehShader = {
     tPre: { value: null },
     uTexel: { value: new THREE.Vector2() }, // half-res texel
     uMaxR: { value: 6 },
+    uTame: { value: 0.7 },
   },
   vertexShader: VERT,
   fragmentShader: /* glsl */ `
     uniform sampler2D tPre;
     uniform vec2 uTexel;
-    uniform float uMaxR;
+    uniform float uMaxR, uTame;
     varying vec2 vUv;
+    // luminance weight (Karis): a few hot taps cannot dominate a disc
+    float tame(vec3 c) { return 1.0 / (1.0 + dot(c, vec3(0.2126, 0.7152, 0.0722)) * uTame); }
     void main() {
       vec4 c = texture2D(tPre, vUv);
       float cocC = c.a;
-      vec3 sum = c.rgb;
-      float wsum = 1.0;
+      float w0 = tame(c.rgb);
+      vec3 sum = c.rgb * w0;
+      float wsum = w0;
       float fg = 0.0;
       const float GOLDEN = 2.39996323;
       for (int i = 0; i < ${TAPS}; i++) {
@@ -149,9 +184,10 @@ const BokehShader = {
         // a sample behind a sharper centre must not spread onto it
         float reach = cs > cocC ? min(abs(cs), max(abs(cocC), 0.0) * 1.5 + 0.35) : abs(cs);
         float w = smoothstep(r - 0.75, r + 0.25, reach);
+        fg = max(fg, w * smoothstep(0.6, 1.8, -cs));
+        w *= tame(s.rgb);
         sum += s.rgb * w;
         wsum += w;
-        fg = max(fg, w * smoothstep(0.6, 1.8, -cs));
       }
       gl_FragColor = vec4(sum / wsum, fg);
     }
@@ -265,17 +301,11 @@ class FinishMaterial extends THREE.ShaderMaterial {
         tColor: { value: null },
         tBloom: { value: null },
         tBokeh: { value: null },
-        tDepth: { value: null },
+        ...cocUniformDefs(),
         tAO: { value: null },
         uAO: { value: 0 },
         uUseBloom: { value: 0 },
         uUseDof: { value: 0 },
-        uNear: { value: 0.1 },
-        uFar: { value: 100 },
-        uFocus: { value: 20 },
-        uAperture: { value: 10 },
-        uBand: { value: 1 },
-        uMaxBlur: { value: 10 },
         uExposure: { value: SETTINGS.exposure },
         uSaturation: { value: SETTINGS.saturation },
         uWarmth: { value: SETTINGS.warmth },
@@ -361,12 +391,28 @@ class WoodlandBloom extends UnrealBloomPass {
     // A single NaN/Inf pixel from any material would be smeared over the whole
     // screen by the blur chain — drop those, and cap hot spots.
     const m = this.materialHighPassFilter;
-    m.fragmentShader = m.fragmentShader.replace(
-      'vec4 texel = texture2D( tDiffuse, vUv );',
-      `vec4 texel = texture2D( tDiffuse, vUv );
+    // uExcess blends the classic high pass (whole pixel) with a soft-knee
+    // subtraction (only the energy above the threshold blooms).
+    this.highPassUniforms.uExcess = { value: 0 };
+    m.uniforms.uExcess = this.highPassUniforms.uExcess;
+    m.fragmentShader = m.fragmentShader
+      .replace('uniform float smoothWidth;', 'uniform float smoothWidth;\nuniform float uExcess;')
+      .replace(
+        'vec4 texel = texture2D( tDiffuse, vUv );',
+        `vec4 texel = texture2D( tDiffuse, vUv );
       if ( any( isnan( texel ) ) || any( isinf( texel ) ) ) texel = vec4( 0.0 );
       texel.rgb = min( texel.rgb, vec3( 24.0 ) );`
-    );
+      )
+      .replace(
+        'gl_FragColor = mix( outputColor, texel, alpha );',
+        `vec4 classic = mix( outputColor, texel, alpha );
+      float br = max( max( texel.r, texel.g ), texel.b );
+      float kn = max( smoothWidth, 1e-3 );
+      float rq = clamp( br - luminosityThreshold + kn, 0.0, 2.0 * kn );
+      rq = rq * rq / ( 4.0 * kn );
+      float ex = max( rq, br - luminosityThreshold ) / max( br, 1e-4 );
+      gl_FragColor = mix( classic, vec4( texel.rgb * ex, 1.0 ), uExcess );`
+      );
     m.needsUpdate = true;
   }
 
@@ -498,6 +544,9 @@ export default async function build(ctx) {
     u.uAperture.value = SETTINGS.aperture * k;
     u.uBand.value = SETTINGS.focusBand * k;
     u.uMaxBlur.value = SETTINGS.maxBlur * k;
+    u.uNearBand.value = SETTINGS.nearBand * k;
+    u.uNearScale.value = SETTINGS.nearScale;
+    u.uNearMax.value = SETTINGS.nearMaxBlur * k;
   }
 
   function frame(dt) {
@@ -544,7 +593,8 @@ export default async function build(ctx) {
       quads.pre.render(renderer);
       const bu = quads.bokeh.material.uniforms;
       bu.tPre.value = preRT.texture;
-      bu.uMaxR.value = (SETTINGS.maxBlur * (H / 720)) / 2;
+      bu.uMaxR.value = (Math.max(SETTINGS.maxBlur, SETTINGS.nearMaxBlur) * (H / 720)) / 2;
+      bu.uTame.value = SETTINGS.dofBrightTame;
       renderer.setRenderTarget(bokehRT);
       quads.bokeh.render(renderer);
       fu.tDepth.value = sceneRT.depthTexture;
@@ -601,6 +651,7 @@ export default async function build(ctx) {
         bloom.radius = D.radius + (N.radius - D.radius) * n;
         bloom.threshold = D.threshold + (N.threshold - D.threshold) * n;
         bloom.highPassUniforms.smoothWidth.value = D.knee + (N.knee - D.knee) * n;
+        bloom.highPassUniforms.uExcess.value = D.excess + (N.excess - D.excess) * n;
         fu.uVignetteColor.value.copy(vignetteDay).lerp(vignetteNight, n);
         fu.uLiftColor.value.copy(liftDay).lerp(liftNight, n);
         fu.uNight.value = n;

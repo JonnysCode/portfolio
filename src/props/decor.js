@@ -1113,7 +1113,7 @@ export function makeStringLights(points = [], opts = {}) {
   g.name = 'stringLights';
   if (points.length < 2) return g;
   const P = new Parts();
-  const halos = new Map();
+  const halos = [];
   for (let i = 0; i < points.length - 1; i++) {
     const a = new THREE.Vector3(points[i].x, points[i].y, points[i].z);
     const b = new THREE.Vector3(points[i + 1].x, points[i + 1].y, points[i + 1].z);
@@ -1126,11 +1126,11 @@ export function makeStringLights(points = [], opts = {}) {
       const c = colors[(i * 7 + k) % colors.length];
       P.add('detail', new THREE.CylinderGeometry(0.016, 0.016, 0.03, 5).translate(p.x, p.y - 0.02, p.z), '#3b3633');
       P.add(`glow:${c}:0.6:2.4`, blob(0.035, [1, 1.3, 1], 6, 5).translate(p.x, p.y - 0.06, p.z), c);
-      if (!halos.has(c)) halos.set(c, []);
-      halos.get(c).push({ x: p.x, y: p.y - 0.06, z: p.z, size: 0.32 });
+      // small, soft amber halo (tinted per bulb; one halo mesh for the whole string)
+      halos.push({ x: p.x, y: p.y - 0.06, z: p.z, size: 0.2, color: c });
     }
   }
   g.add(groupFor(P.finish(), { name: 'lights', cast: false }));
-  for (const [c, pts] of halos) g.add(glowQuads(pts, c, { day: 0.08, night: 0.9 }));
+  if (halos.length) g.add(glowQuads(halos, '#ffffff', { day: 0.06, night: 0.85 }));
   return g;
 }

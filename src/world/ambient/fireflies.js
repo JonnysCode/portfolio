@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { getHeight, streamPolyline } from '../ground.js';
-import { OAK, STREAM, COTTAGE, GLEN_RADIUS } from '../layout.js';
+import { OAK, STREAM, COTTAGE, GLEN_RADIUS, SPOTS } from '../layout.js';
 import { palette } from '../../core/palette.js';
 import { sharedUniforms } from '../../core/materials.js';
 import { pointUniforms, SOFT_DISC, DIST_FADE } from './points.js';
@@ -22,6 +22,7 @@ uniform float uMotion;
 uniform float uScale;
 uniform float uFogNear;
 uniform float uFogFar;
+uniform float uFocus;    // camera → point of interest (the depth of field's focus)
 attribute vec4 aParams;  // phase, speed, wander radius, size
 attribute vec3 aColor;
 attribute vec3 aBlink;   // blink rate, resting brightness, dusk threshold
@@ -53,9 +54,12 @@ void main() {
   float awake = smoothstep(aBlink.z, aBlink.z + 0.18, uNight);
   vAlpha = awake * glow * distFade(d);
   vColor = aColor;
-  gl_PointSize = clamp(aParams.w * uScale / max(d, 0.1), 0.0, 36.0) * (0.75 + 0.25 * glow);
+  // the near field (well in front of the focus) is out of focus: a firefly
+  // there would bloom into a huge soft blob — it shrinks and fades out instead
+  float nearK = smoothstep(uFocus * 0.32, uFocus * 0.7, d);
+  gl_PointSize = clamp(aParams.w * uScale / max(d, 0.1), 0.0, 22.0) * (0.75 + 0.25 * glow) * (0.45 + 0.55 * nearK);
   // never a blurry blob in front of the lens
-  vAlpha *= smoothstep(1.5, 5.0, d);
+  vAlpha *= smoothstep(2.0, 6.0, d) * nearK;
   if (vAlpha < 0.004) gl_PointSize = 0.0;
   gl_Position = projectionMatrix * mv;
 }
@@ -99,10 +103,35 @@ export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = fa
     else swirl.push(0, 0, 0);
   };
   const ground = (x, z) => Math.max(getHeight(x, z), STREAM.waterLevel);
+  // Keep the spot cameras' near field clear (composed shot and its -wide
+  // variant): a fly drifting a few units in front of the lens sits far in
+  // front of the focus and the depth of field turns it into a blob.
+  const lenses = [];
+  for (const s of SPOTS) {
+    const P = new THREE.Vector3(...s.camera.position), T = new THREE.Vector3(...s.camera.target);
+    const dir = T.clone().sub(P);
+    const dist = dir.length();
+    dir.normalize();
+    lenses.push({ P, dir, dist });
+    if (s.id !== 'glen') lenses.push({ P: T.clone().addScaledVector(dir, -dist * 1.8), dir, dist: dist * 1.8 });
+  }
+  const _q = new THREE.Vector3();
+  const inNearField = (x, y, z, wander) => {
+    for (const l of lenses) {
+      _q.set(x, y, z).sub(l.P);
+      const along = _q.dot(l.dir);
+      const reach = l.dist * 0.6 + wander;
+      if (along < -wander || along > reach) continue;
+      const perp = Math.sqrt(Math.max(0, _q.lengthSq() - along * along));
+      // a generous cone (wider than the 40° lens) around the view axis
+      if (perp < Math.max(0, along) * 0.62 + 1.2 + wander) return true;
+    }
+    return false;
+  };
   const spts = streamPolyline.pts;
   const cottages = [COTTAGE.home, COTTAGE.atelier, COTTAGE.shed];
 
-  for (let i = 0; i < count; i++) {
+  for (let i = 0, tries = 0; i < count && tries < count * 6; tries++) {
     const mode = rng.next();
     let x, z, y = null, sw = null;
     if (mode < 0.24) {
@@ -144,7 +173,19 @@ export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = fa
       z = OAK.z + Math.cos(a) * d;
       y = rng.range(6, 15);
     }
-    addFly(x, y ?? ground(x, z) + rng.range(0.35, 2.6), z, { sw });
+    const fy = y ?? ground(x, z) + rng.range(0.35, 2.6);
+    // (swirling flies orbit the oak: test a few points of their circle)
+    if (sw) {
+      const dx = x - sw[0], dz = z - sw[1];
+      let hit = false;
+      for (let k = 0; k < 12 && !hit; k++) {
+        const a = (k / 12) * Math.PI * 2, c = Math.cos(a), s = Math.sin(a);
+        hit = inNearField(sw[0] + dx * c - dz * s, fy, sw[1] + dx * s + dz * c, 1.4);
+      }
+      if (hit) continue;
+    } else if (inNearField(x, fy, z, 1.4)) continue;
+    addFly(x, fy, z, { sw });
+    i++;
   }
   // breathing halos around glowing mushrooms
   for (const g of glowSpots) {
@@ -166,6 +207,7 @@ export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = fa
       uTime: sharedUniforms.uTime,
       uNight: { value: 0 },
       uMotion: { value: reduced ? 0.4 : 1 },
+      uFocus: { value: 20 },
       ...pointUniforms,
     },
     vertexShader: VERT,
@@ -186,6 +228,7 @@ export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = fa
     count: pos.length / 3,
     update(night) {
       mat.uniforms.uNight.value = night;
+      mat.uniforms.uFocus.value = Math.max(4, ctx.cameraRig?.focusDistance ?? 20);
       points.visible = night > 0.12;
     },
   };

@@ -11,25 +11,21 @@ import { getHeight, getNormal, getPathDistance } from '../ground.js';
 import { GeoBuilder, TAU, instanced, fieldMid, fieldBroad, normalizeAttributes } from './common.js';
 import { canGrow, oakDist, OAK_KEEP } from './zones.js';
 
-/** A small curled leaf lying flat: tip along +Z, folded along the midrib, edges lifted. */
+/** A small curled leaf lying flat: tip along +Z, folded along the midrib, edges lifted (4 triangles). */
 function fallenLeafGeometry() {
   const B = new GeoBuilder();
-  // (x, y, z, u, v) — outline + midrib; UVs map the 'leaf' surface (base V=0, tip V=1)
-  const L = 0.13, W = 0.055;
+  // (x, y, z, u, v) — a lozenge folded along the midrib; UVs map the 'leaf'
+  // surface (base V=0, tip V=1) so its outline & veins come from the texture
+  const L = 0.13, W = 0.06;
   const pts = [
     [0, 0.006, -L * 0.5, 0.5, 0], // stem end
-    [-W * 0.75, 0.012, -L * 0.2, 0.1, 0.25],
-    [-W, 0.016, L * 0.12, 0.0, 0.55],
-    [-W * 0.55, 0.012, L * 0.38, 0.2, 0.82],
-    [0, 0.01, L * 0.5, 0.5, 1], // tip (curls up a touch)
-    [W * 0.55, 0.012, L * 0.38, 0.8, 0.82],
-    [W, 0.016, L * 0.12, 1.0, 0.55],
-    [W * 0.75, 0.012, -L * 0.2, 0.9, 0.25],
+    [-W, 0.016, L * 0.04, 0.0, 0.5], // left edge (lifted)
+    [0, 0.012, L * 0.5, 0.5, 1], // tip (curls up a touch)
+    [W, 0.016, L * 0.04, 1.0, 0.5], // right edge (lifted)
     [0, 0.0, 0.0, 0.5, 0.5], // midrib (the fold's low point)
   ];
   for (const [x, y, z, u, v] of pts) B.vert(x, y, z, 0, 1, 0, u, v);
-  const c = 8;
-  for (let i = 0; i < 8; i++) B.tri(c, (i + 1) % 8, i);
+  for (let i = 0; i < 4; i++) B.tri(4, (i + 1) % 4, i);
   const g = B.build();
   g.computeVertexNormals();
   return g;

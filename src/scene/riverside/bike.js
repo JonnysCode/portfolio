@@ -56,6 +56,19 @@ const STYLES = {
   vintage: { color: '#8fb3a2', accent: '#7a4a2a', rim: '#cfd3d4', tyre: 0.019, wall: '#e8dcc0', tape: '#7a4a2a', saddle: '#7a4a2a', fenders: true },
 };
 
+/**
+ * Level of detail: 'full' for the hero bike, 'lite' for bikes in the
+ * background (leaning on fences, hanging in the shop), 'mini' for the toy
+ * bike on the weathervane. Set per build (builds are synchronous).
+ */
+const LODS = {
+  full: { rim: [6, 56], tyre: [8, 72], knobs: true, spokes: 32, saddle: [20, 10], chain: [90, 4], bar: [8, 30], tube: 10, loop: 28, cables: true, cassette: 8, ring: 40, petal: [6, 4] },
+  lite: { rim: [3, 28], tyre: [5, 32], knobs: false, spokes: 16, saddle: [10, 6], chain: [44, 3], bar: [5, 14], tube: 6, loop: 14, cables: false, cassette: 3, ring: 18, petal: [4, 2] },
+  mini: { rim: [3, 16], tyre: [3, 18], knobs: false, spokes: 6, saddle: [6, 4], chain: [0, 0], bar: [4, 8], tube: 4, loop: 8, cables: false, cassette: 0, ring: 10, petal: [4, 2] },
+};
+let LOD = LODS.full;
+const lodOf = (opts) => LODS[opts.detail] ?? (opts.lite ? LODS.lite : LODS.full);
+
 const RW = 0.34; // wheel radius incl. tyre (700c-ish)
 const RIM = 0.305;
 const BB = [0, 0.275, 0];
@@ -67,11 +80,12 @@ const FRONT = [0.6, RW, 0];
  * Build one wheel into batch frame F (centre at origin, in the XY plane).
  * Parts: rim (metal), spokes + hub (metal), tyre (rubber), optional rotor / cassette.
  */
-function buildWheel(F, s, rng, { rear = false, drive = true, lite = false } = {}) {
+function buildWheel(F, s, rng, { rear = false, drive = true } = {}) {
   const B = bm();
+  const L = LOD;
   const rimDepth = s.deep ? 0.045 : 0.02;
   // rim: box section (a flattened torus) + a braking track
-  const rim = new THREE.TorusGeometry(RIM - rimDepth * 0.4, 0.011, lite ? 4 : 6, lite ? 32 : 56);
+  const rim = new THREE.TorusGeometry(RIM - rimDepth * 0.4, 0.011, L.rim[0], L.rim[1]);
   rim.scale(1, 1, 1.2);
   if (s.deep) {
     // deep carbon section: scale the inner half of the torus inward
@@ -85,7 +99,7 @@ function buildWheel(F, s, rng, { rear = false, drive = true, lite = false } = {}
   F.add(B.metal, rim, { color: s.rim, cast: false });
   // tyre: tread + sidewalls (gumwall colour)
   const tr = s.tyre;
-  const tyre = new THREE.TorusGeometry(RW - tr, tr, lite ? 6 : 8, lite ? 40 : 72);
+  const tyre = new THREE.TorusGeometry(RW - tr, tr, L.tyre[0], L.tyre[1]);
   const tread = new THREE.Color('#2a2622'), wall = new THREE.Color(s.wall);
   const col = new Float32Array(tyre.attributes.position.count * 3);
   const p = tyre.attributes.position;
@@ -96,7 +110,7 @@ function buildWheel(F, s, rng, { rear = false, drive = true, lite = false } = {}
   }
   tyre.setAttribute('color', new THREE.BufferAttribute(col, 3));
   F.add(B.rubber, tyre, { cast: false });
-  if (s.knobs && !lite) {
+  if (s.knobs && L.knobs) {
     // knobbly tread: little blocks around the crown
     const n = 64;
     for (let i = 0; i < n; i++) {
@@ -111,21 +125,21 @@ function buildWheel(F, s, rng, { rear = false, drive = true, lite = false } = {}
   }
   // hub with flanges
   const hubW = rear ? 0.13 : 0.1;
-  F.add(B.metal, new THREE.CylinderGeometry(0.018, 0.018, hubW, 10).rotateX(Math.PI / 2), { color: '#c9cdd0', cast: false });
-  for (const zz of [-0.032, 0.032]) F.add(B.metal, new THREE.CylinderGeometry(0.03, 0.03, 0.004, 14).rotateX(Math.PI / 2).translate(0, 0, zz), { color: '#d5d9dc', cast: false });
+  F.add(B.metal, new THREE.CylinderGeometry(0.018, 0.018, hubW, L.tube, 1, L !== LODS.full).rotateX(Math.PI / 2), { color: '#c9cdd0', cast: false });
+  for (const zz of [-0.032, 0.032]) F.add(B.metal, new THREE.CylinderGeometry(0.03, 0.03, 0.004, L.ring > 20 ? 14 : 8).rotateX(Math.PI / 2).translate(0, 0, zz), { color: '#d5d9dc', cast: false });
   // 32 spokes, two-cross-ish lacing (alternating leading / trailing)
-  const nS = lite ? 20 : 32;
+  const nS = L.spokes;
   for (let i = 0; i < nS; i++) {
     const side = i % 2 ? 1 : -1;
     const a = (i / nS) * TAU;
     const trail = (Math.floor(i / 2) % 2 ? 1 : -1) * 0.42;
     const h = [Math.cos(a + trail) * 0.027, Math.sin(a + trail) * 0.027, side * 0.032];
     const r = [Math.cos(a) * (RIM - rimDepth * 0.8), Math.sin(a) * (RIM - rimDepth * 0.8), side * 0.004];
-    F.add(B.metal, rod(h, r, 0.0028, 0.0028, 3), { color: '#d9dcdf', cast: false });
+    F.add(B.metal, rod(h, r, 0.0028 * (nS < 20 ? 1.3 : 1), 0.0028 * (nS < 20 ? 1.3 : 1), 3, true), { color: '#d9dcdf', cast: false });
   }
   // valve
   F.add(B.metal, new THREE.CylinderGeometry(0.003, 0.003, 0.03, 4).translate(0, -(RIM - 0.02), 0), { color: '#b9a46a', cast: false });
-  if (s.disc && !drive) {
+  if (s.disc && !drive && L !== LODS.mini) {
     // brake rotor on the non-drive side
     const ro = new THREE.RingGeometry(0.05, 0.08, 24, 1).translate(0, 0, 0);
     ro.translate(0, 0, -0.05);
@@ -138,9 +152,9 @@ function buildWheel(F, s, rng, { rear = false, drive = true, lite = false } = {}
   }
   if (rear) {
     // cassette (drive side)
-    for (let k = 0; k < 8; k++) {
-      const r = 0.05 - k * 0.0035;
-      F.add(B.metal, new THREE.CylinderGeometry(r, r, 0.002, 18).rotateX(Math.PI / 2).translate(0, 0, 0.022 + k * 0.0042), { color: k % 2 ? '#b8bcbf' : '#9ea2a5', cast: false });
+    for (let k = 0; k < L.cassette; k++) {
+      const r = 0.05 - k * (0.028 / L.cassette);
+      F.add(B.metal, new THREE.CylinderGeometry(r, r, 0.002 * (8 / L.cassette), L.ring > 20 ? 18 : 10).rotateX(Math.PI / 2).translate(0, 0, 0.022 + k * (0.034 / L.cassette)), { color: k % 2 ? '#b8bcbf' : '#9ea2a5', cast: false });
     }
   }
 }
@@ -153,15 +167,18 @@ export function makeWheel(opts = {}) {
   const s = { ...STYLES[opts.style] ?? STYLES.gravel, ...(opts.rim ? { rim: opts.rim } : {}) };
   const scale = opts.scale ?? 0.66;
   const rng = createRng(String(opts.seed ?? 'wheel'));
+  LOD = lodOf(opts);
   const g = new THREE.Group();
   g.name = 'wheel';
   const S = new THREE.Matrix4().makeScale(scale, scale, scale);
   if (opts.batch) {
-    buildWheel(castPolicy(opts.batch.at((opts.matrix ?? IDENTITY).clone().multiply(S))), s, rng, { rear: !!opts.rear, drive: true, lite: !!opts.lite });
+    buildWheel(castPolicy(opts.batch.at((opts.matrix ?? IDENTITY).clone().multiply(S))), s, rng, { rear: !!opts.rear, drive: true });
+    LOD = LODS.full;
     return g;
   }
   const P = new Batch('wheel');
-  buildWheel(castPolicy(P.at(S)), s, rng, { rear: !!opts.rear, drive: false, lite: !!opts.lite });
+  buildWheel(castPolicy(P.at(S)), s, rng, { rear: !!opts.rear, drive: false });
+  LOD = LODS.full;
   P.build(g, 'wheel');
   g.userData.radius = RW * scale;
   return g;
@@ -193,16 +210,16 @@ function buildFrame(F, s, style, rng, G) {
   const B = bm();
   const paint = s.color;
   const tR = (r) => r * 1.25; // a touch chunky — reads better at miniature size
-  const T = (a, b, r1, r2 = r1, c = paint, mat = B.paint) => F.add(mat, rod(a, b, tR(r1), tR(r2), 10), { color: c });
+  const T = (a, b, r1, r2 = r1, c = paint, mat = B.paint) => F.add(mat, rod(a, b, tR(r1), tR(r2), LOD.tube, LOD !== LODS.full), { color: c });
   const { htBot, htTop, stTop } = G;
   // head tube
   T(add(htBot, G.sAx, -0.015), add(htTop, G.sAx, 0.01), 0.019);
   if (style === 'vintage') {
     // step-through loop frame: a curved main tube + a parallel lower tube, lugs in chrome
     const mainCurve = [add(htTop, G.sAx, -0.03), [0.25, 0.6, 0], [0.04, 0.36, 0], add(BB, [0.01, 0.01, 0])];
-    F.add(B.paint, tube(mainCurve.map(v3), tR(0.018), 10, 28), { color: paint });
+    F.add(B.paint, tube(mainCurve.map(v3), tR(0.018), LOD.tube, LOD.loop), { color: paint });
     const lowCurve = [add(htBot, G.sAx, 0.02), [0.26, 0.47, 0], [0.08, 0.3, 0], add(BB, [0.03, -0.005, 0])];
-    F.add(B.paint, tube(lowCurve.map(v3), tR(0.015), 10, 28), { color: paint });
+    F.add(B.paint, tube(lowCurve.map(v3), tR(0.015), LOD.tube, LOD.loop), { color: paint });
     // chrome lugs at the head tube
     for (const p of [add(htTop, G.sAx, -0.02), add(htBot, G.sAx, 0.03)]) F.add(B.metal, new THREE.SphereGeometry(tR(0.024), 10, 8).translate(...p), { color: '#d8dcdf' });
   } else {
@@ -232,7 +249,7 @@ function buildFrame(F, s, style, rng, G) {
     const top = add(crown, [0, -0.005, zz * 0.045]);
     const mid = lerp3(top, tip, 0.6);
     const bow = style === 'vintage' ? add(mid, G.nFwd, 0.025) : add(mid, G.nFwd, 0.008);
-    F.add(B.paint, tube([v3(top), v3(bow), v3(tip)], tR(0.012), 8, 12), { color: paint });
+    F.add(B.paint, tube([v3(top), v3(bow), v3(tip)], tR(0.012), Math.min(8, LOD.tube), Math.min(12, LOD.loop)), { color: paint });
   }
   // steerer / headset spacers above the head tube
   F.add(B.metal, rod(htTop, add(htTop, G.sAx, 0.035), 0.017, 0.017, 10), { color: '#2b2b2b' });
@@ -251,7 +268,7 @@ function buildCockpit(F, s, style, rng, G) {
     // swept-back bars
     for (const zz of [-1, 1]) {
       const pts = [clamp, add(clamp, [0.0, 0.0, zz * 0.12]), add(clamp, [-0.07, 0.03, zz * 0.24]), add(clamp, [-0.17, 0.035, zz * 0.27])];
-      F.add(B.metal, tube(pts.map(v3), 0.0105, 8, 18), { color: '#d8dcdf' });
+      F.add(B.metal, tube(pts.map(v3), 0.0105, LOD.bar[0], Math.round(LOD.bar[1] * 0.6)), { color: '#d8dcdf' });
       // cork grips
       F.add(B.soft, rod(add(clamp, [-0.09, 0.034, zz * 0.262]), add(clamp, [-0.19, 0.035, zz * 0.272]), 0.016, 0.016, 8), { color: '#c79a62' });
     }
@@ -274,14 +291,14 @@ function buildCockpit(F, s, style, rng, G) {
         add(clamp, [0.06, -0.115, zz * (half + flare)]),
         add(clamp, [-0.025, -0.13, zz * (half + flare)]),
       ];
-      F.add(B.soft, tube(pts.map(v3), 0.0125, 8, 30), { color: s.tape });
+      F.add(B.soft, tube(pts.map(v3), 0.0125, LOD.bar[0], LOD.bar[1]), { color: s.tape });
       // hood + lever
       const hood = add(clamp, [0.07, 0.012, zz * half]);
       F.add(B.soft, new THREE.CapsuleGeometry(0.014, 0.035, 4, 8).rotateZ(Math.PI / 2 - 0.4).translate(...hood), { color: '#1f1e1d' });
       F.add(B.metal, tube([v3(add(hood, [0.02, 0.0, 0])), v3(add(hood, [0.035, -0.06, 0])), v3(add(hood, [0.02, -0.11, 0]))], 0.0055, 5, 8), { color: '#3a3a3a' });
     }
     // cables looping to the frame
-    for (const zz of [-1, 1]) {
+    for (const zz of LOD.cables ? [-1, 1] : []) {
       const a = add(clamp, [0.07, 0.0, zz * (s.drops ?? 0.22) * 0.9]);
       F.add(B.soft, tube([v3(a), v3(add(clamp, [0.08, -0.08, zz * 0.08])), v3(add(G.htBot, [0.03, 0.02, zz * 0.03])), v3(add(G.htBot, [-0.04, -0.03, zz * 0.02]))], 0.0035, 4, 16), { color: '#1c1c1c' });
     }
@@ -297,7 +314,7 @@ function buildSeat(F, s, style, rng, G) {
   F.add(B.metal, new THREE.TorusGeometry(0.02, 0.005, 5, 12).rotateX(Math.PI / 2).translate(...add(G.stTop, G.stDir, 0.005)), { color: '#3a3a3a' });
   // saddle: tapered, slightly domed
   const L = style === 'vintage' ? 0.25 : 0.27;
-  const sad = new THREE.SphereGeometry(1, 20, 10);
+  const sad = new THREE.SphereGeometry(1, LOD.saddle[0], LOD.saddle[1]);
   deform(sad, (v) => {
     const t = (v.x + 1) / 2; // 0 back → 1 nose
     const w = style === 'vintage' ? 0.1 - 0.06 * t * t : 0.072 - 0.05 * Math.pow(t, 1.6);
@@ -307,7 +324,9 @@ function buildSeat(F, s, style, rng, G) {
   sad.translate(seat[0] + 0.01, seat[1], seat[2]);
   F.add(B.soft, sad, { color: s.saddle });
   // rails / springs
-  if (style === 'vintage') {
+  if (LOD === LODS.mini) {
+    // (the toy bike on the weathervane has no saddle rails)
+  } else if (style === 'vintage') {
     for (const zz of [-1, 1]) {
       for (let k = 0; k < 5; k++) F.add(B.metal, new THREE.TorusGeometry(0.014, 0.0035, 4, 10).rotateX(Math.PI / 2).translate(seat[0] - 0.08, seat[1] - 0.025 - k * 0.009, zz * 0.055), { color: '#cfd3d6', cast: false });
       F.add(B.metal, rod([seat[0] - 0.08, seat[1] - 0.07, zz * 0.055], [postTop[0] + 0.01, postTop[1] + 0.005, 0], 0.004, 0.004, 4), { color: '#cfd3d6', cast: false });
@@ -342,7 +361,8 @@ function buildDrive(F, s, style, rng) {
     const a = Math.atan2(-ny, -nx) + (i / 10) * Math.PI * 1.0;
     pts.push(v3([BB[0] + Math.cos(a) * rRing, BB[1] + Math.sin(a) * rRing, z]));
   }
-  F.add(B.metal, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true, 'centripetal'), 90, 0.0042, 4, true), { color: '#4a4744', cast: false });
+  if (LOD.chain[0] === 0) return;
+  F.add(B.metal, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true, 'centripetal'), LOD.chain[0], 0.0042 * (LOD === LODS.full ? 1 : 1.2), LOD.chain[1], true), { color: '#4a4744', cast: false });
   // rear derailleur: cage plates + pulleys + body
   for (const p of [pulley1, pulley2]) F.add(B.metal, new THREE.CylinderGeometry(0.012, 0.012, 0.006, 10).rotateX(Math.PI / 2).translate(...p), { color: '#2d2d2d', cast: false });
   F.add(B.metal, new THREE.BoxGeometry(0.016, 0.085, 0.004).rotateZ(-0.35).translate(REAR[0] + 0.022, REAR[1] - 0.105, z + 0.02), { color: '#3a3a3a', cast: false });
@@ -366,8 +386,8 @@ function buildCrank(F, s, style) {
   const B = bm();
   const z = 0.045;
   // chainring + spider
-  F.add(B.metal, new THREE.TorusGeometry(0.093, 0.005, 4, 40).translate(0, 0, z), { color: '#2e2e2e', cast: false });
-  F.add(B.metal, new THREE.CylinderGeometry(0.098, 0.098, 0.0025, 40, 1, true).rotateX(Math.PI / 2).translate(0, 0, z), { color: '#3a3a3a', cast: false });
+  F.add(B.metal, new THREE.TorusGeometry(0.093, 0.005, LOD === LODS.full ? 4 : 3, LOD.ring).translate(0, 0, z), { color: '#2e2e2e', cast: false });
+  F.add(B.metal, new THREE.CylinderGeometry(0.098, 0.098, 0.0025, LOD.ring, 1, true).rotateX(Math.PI / 2).translate(0, 0, z), { color: '#3a3a3a', cast: false });
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * TAU + 0.4;
     F.add(B.metal, rod([0, 0, z], [Math.cos(a) * 0.088, Math.sin(a) * 0.088, z], 0.009, 0.006, 4), { color: style === 'vintage' ? '#d8dcdf' : '#2b2b2b', cast: false });
@@ -490,14 +510,14 @@ function buildBasket(F, s, rng, G, flowers) {
     const fs = rng.range(0.03, 0.048);
     for (let p = 0; p < 5; p++) {
       const pa = (p / 5) * TAU + rng.next();
-      F.add(B.soft, new THREE.SphereGeometry(fs * 0.55, 6, 4).scale(1, 0.4, 0.6).translate(fs * 0.5, 0, 0).rotateY(pa).translate(x, y, z), { color: c, cast: false });
+      F.add(B.soft, new THREE.SphereGeometry(fs * 0.55, LOD.petal[0], LOD.petal[1]).scale(1, 0.4, 0.6).translate(fs * 0.5, 0, 0).rotateY(pa).translate(x, y, z), { color: c, cast: false });
     }
-    F.add(B.soft, new THREE.SphereGeometry(fs * 0.3, 6, 4).translate(x, y + 0.006, z), { color: '#e8b33a', cast: false });
+    F.add(B.soft, new THREE.SphereGeometry(fs * 0.3, LOD.petal[0], LOD.petal[1]).translate(x, y + 0.006, z), { color: '#e8b33a', cast: false });
   }
   for (let i = 0; i < 12; i++) {
     const a = rng.next() * TAU;
     const x = base[0] + w * 0.5 + Math.cos(a) * w * 0.48, z = base[2] + Math.sin(a) * d * 0.48;
-    const leaf = new THREE.SphereGeometry(0.03, 6, 4).scale(1, 0.25, 0.45).translate(0.03, 0, 0);
+    const leaf = new THREE.SphereGeometry(0.03, LOD.petal[0], LOD.petal[1]).scale(1, 0.25, 0.45).translate(0.03, 0, 0);
     leaf.rotateZ(-0.6);
     leaf.rotateY(-a);
     F.add(B.soft, leaf.translate(x, base[1] + h + 0.01, z), { color: rng.pick(['#5f8f3f', '#6f9a45', '#4f7a34']), cast: false });
@@ -534,6 +554,7 @@ let bikeCount = 0;
  * @param {boolean} [opts.flowers=true]
  * @param {boolean} [opts.spin=false]  keep wheels & cranks as separate pivots that update(dt) turns
  * @param {boolean} [opts.lite=false]  fewer segments, no tread knobs (bikes in the background)
+ * @param {'full'|'lite'|'mini'} [opts.detail]  level of detail (overrides lite; 'mini' = toy-sized)
  * @param {boolean} [opts.spinFront=true]  with spin: false keeps the front wheel static (one pivot fewer)
  * @param {Batch} [opts.batch]     merge the static parts into this batch …
  * @param {THREE.Matrix4} [opts.matrix]  … placed by this matrix
@@ -552,6 +573,7 @@ export function makeBike(opts = {}) {
   group.name = `bike-${style}`;
   const S = new THREE.Matrix4().makeScale(scale, scale, scale);
   const own = opts.batch ? null : new Batch('bike');
+  LOD = lodOf(opts);
   const base = castPolicy(opts.batch ? opts.batch.at((opts.matrix ?? IDENTITY).clone().multiply(S)) : own.at(S));
   const G = geometryOf(style);
 
@@ -579,10 +601,10 @@ export function makeBike(opts = {}) {
     group.add(pv);
     return pv;
   };
-  const lite = !!opts.lite;
-  pivots.rear = mk('rear-wheel', REAR, (F) => buildWheel(F, s, rng, { rear: true, drive: true, lite }));
-  pivots.front = mk('front-wheel', FRONT, (F) => buildWheel(F, s, rng, { rear: false, drive: false, lite }), opts.spinFront === false);
+  pivots.rear = mk('rear-wheel', REAR, (F) => buildWheel(F, s, rng, { rear: true, drive: true }));
+  pivots.front = mk('front-wheel', FRONT, (F) => buildWheel(F, s, rng, { rear: false, drive: false }), opts.spinFront === false);
   pivots.crank = mk('crank', BB, (F) => buildCrank(F, s, style));
+  LOD = LODS.full;
 
   if (own) own.build(group, `bike-${style}`);
 
@@ -617,6 +639,35 @@ export function makeBike(opts = {}) {
       height: (seat[1] + 0.05) * scale,
     },
   };
+}
+
+/**
+ * A bare frame, half built, for the frame jig: raw steel tubes with brass
+ * fillets at the joints, no fork or parts, only the drive-side chainstay tacked
+ * on — into opts.batch at opts.matrix (same frame coordinates as makeBike:
+ * origin under the bottom bracket, along +X). Returns the scaled key points.
+ */
+export function makeBareFrame(opts = {}) {
+  const scale = opts.scale ?? 0.6;
+  const S = new THREE.Matrix4().makeScale(scale, scale, scale);
+  const F = castPolicy(opts.batch.at((opts.matrix ?? IDENTITY).clone().multiply(S)));
+  const B = bm();
+  const steel = opts.color ?? '#9aa1a6', brass = opts.joint ?? '#c9a24a';
+  const G = geometryOf('gravel');
+  const T = (a, b, r) => F.add(B.paint, rod(a, b, r * 1.25, r * 1.25, 8, true), { color: steel });
+  const ttFront = add(G.htTop, G.sAx, -0.025), ttRear = add(G.stTop, G.stDir, -0.08);
+  const dtTop = add(G.htBot, G.sAx, 0.02);
+  T(add(G.htBot, G.sAx, -0.015), add(G.htTop, G.sAx, 0.01), 0.019);
+  T(ttFront, ttRear, 0.0135);
+  T(dtTop, BB, 0.02);
+  T(add(BB, [0, -0.01, 0]), add(G.stTop, G.stDir, 0.02), 0.016);
+  T(add(BB, [-0.02, 0, 0.03]), add(REAR, [0, 0, 0.062]), 0.0105);
+  F.add(B.paint, new THREE.CylinderGeometry(0.026, 0.026, 0.075, 10).rotateX(Math.PI / 2).translate(...BB), { color: steel });
+  for (const p of [ttFront, ttRear, dtTop, add(BB, [0.012, 0.03, 0]), add(G.htTop, G.sAx, -0.01)]) {
+    F.add(B.metal, new THREE.SphereGeometry(0.027, 8, 5).scale(1, 1, 0.9).translate(...p), { color: brass, cast: false });
+  }
+  const sc = (a) => new THREE.Vector3(a[0] * scale, a[1] * scale, a[2] * scale);
+  return { bb: sc(BB), htTop: sc(G.htTop), htBot: sc(G.htBot), stTop: sc(G.stTop), rear: sc(REAR) };
 }
 
 export const BIKE_STYLES = Object.keys(STYLES);

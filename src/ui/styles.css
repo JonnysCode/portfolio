@@ -65,10 +65,10 @@ button { font: inherit; color: inherit; }
 .loader__bar { width: min(540px, 86vw); margin-top: 18px; }
 .loader__vine { width: 100%; height: auto; overflow: visible; }
 .vine-ghost { fill: none; stroke: rgba(246, 230, 190, 0.16); stroke-width: 3; stroke-dasharray: 2 7; stroke-linecap: round; }
-.vine-grown { fill: none; stroke: #8fae55; stroke-width: 3.4; stroke-linecap: round; transition: stroke-dashoffset 0.45s ease; filter: drop-shadow(0 0 4px rgba(170, 220, 110, 0.35)); }
+.vine-grown { fill: none; stroke: #8fae55; stroke-width: 3.4; stroke-linecap: round; transition: stroke-dashoffset 0.35s linear; filter: drop-shadow(0 0 4px rgba(170, 220, 110, 0.35)); }
 .vine-leaf { opacity: 0; transform-box: fill-box; transform-origin: 0 0; transition: opacity 0.5s; }
 .vine-leaf.is-grown { opacity: 1; }
-.vine-snail { transition: transform 0.45s ease; }
+.vine-snail { transform-box: view-box; transform-origin: 0 0; transition: transform 0.35s linear; }
 .loader__label { margin-top: 6px; font-family: var(--font-hand); font-size: 20px; color: #e8dcbc; min-height: 1.4em; }
 .loader.is-failed .loader__label { color: #ffb4a0; }
 .loader__flies { position: absolute; inset: 0; overflow: hidden; }

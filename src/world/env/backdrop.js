@@ -268,9 +268,11 @@ const MIST_FRAG = /* glsl */ `
     a *= smoothstep(0.0, 0.06, h + 0.02);
     // fade the ends of the arc
     a *= smoothstep(0.0, 0.08, vUv.x) * smoothstep(1.0, 0.92, vUv.x);
-    a *= uOpacity * mix(0.55, 0.75, vLayer) * (1.0 + 0.3 * uNight);
+    a *= uOpacity * mix(0.55, 0.75, vLayer) * (0.7 + 0.6 * uNight);
     vec4 fogV = woodlandFog(vW);
-    vec3 col = fogV.rgb * mix(1.04, 1.12, n);
+    // by day the veils are a touch deeper than the haze (no fog-white walls);
+    // by night they catch the moon a little so the trunks stand out against them
+    vec3 col = fogV.rgb * mix(mix(0.94, 1.02, n), mix(1.1, 1.22, n), uNight);
     gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -457,5 +459,5 @@ export function buildBackdrop(ctx) {
   } };
 }
 
-const nightSky = new THREE.Color('#2a4268');
-const nightShade = new THREE.Color('#1a2c3c');
+const nightSky = new THREE.Color('#33507c');
+const nightShade = new THREE.Color('#1e3446');

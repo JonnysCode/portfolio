@@ -35,10 +35,18 @@ export default async function build(ctx) {
   const before = new Set(ctx.scene.children);
   const timings = {};
   let tLast = performance.now();
+  // per-phase build time and the triangles each phase added to the batch, per material
+  const phaseTris = {};
+  let lastTally = {};
   const lap = (name) => {
     const now = performance.now();
     timings[name] = Math.round(now - tLast);
     tLast = now;
+    const t = B.tally();
+    const d = {};
+    for (const [k, v] of Object.entries(t)) if (v - (lastTally[k] ?? 0) > 0) d[k] = Math.round(v - (lastTally[k] ?? 0));
+    if (Object.keys(d).length) phaseTris[name] = d;
+    lastTally = t;
   };
   const root = new THREE.Group();
   root.name = 'riverside';
@@ -104,7 +112,7 @@ export default async function build(ctx) {
   ctx.interactions.add(shop.truing, { entryId: 'wheel-building', area, focus: { distance: 2.6, height: 0.7 } });
 
   // what this module costs: objects it added to the scene (for the perf budget)
-  const stats = { meshes: 0, casters: 0, triangles: 0, timings };
+  const stats = { meshes: 0, casters: 0, triangles: 0, timings, phaseTris };
   for (const c of ctx.scene.children) {
     if (before.has(c)) continue;
     c.traverse((o) => {

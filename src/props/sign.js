@@ -17,7 +17,7 @@ import { materials } from '../core/materials.js';
 import { palette } from '../core/palette.js';
 import { createRng } from '../core/rng.js';
 import { Parts, xf, grainUV, groupFor, shade, opt, strut, invert } from './util.js';
-import { makeTextTexture, paintWood, drawFittedText, canvasTexture, FONT_DISPLAY } from './text.js';
+import { makeTextTexture, paintWood, drawFittedText, canvasTexture, FONT_DISPLAY, fontWeight, whenFontsReady } from './text.js';
 import { registerAnimated, propsSettings } from './ticker.js';
 
 export { makeTextTexture };
@@ -49,31 +49,42 @@ function textAtlas(panels, seed = 'sign') {
   canvas.height = pxH;
   const g = canvas.getContext('2d');
   const rects = [];
-  let y = 0;
-  panels.forEach((p, i) => {
-    const w = Math.ceil(p.w * ppu), h = rows[i];
-    g.save();
-    g.translate(0, y);
-    g.beginPath();
-    g.rect(0, 0, w, h);
-    g.clip();
-    paintWood(g, w, h, { color: woodHex(p.wood ?? 'spruce'), planks: p.planks ?? 1, seed: `${seed}-${i}`, painted: p.paint ?? null });
-    const ink = p.textColor ?? autoInk(p.paint ?? woodHex(p.wood ?? 'spruce'));
-    const padY = h * (p.padY ?? 0.16);
-    const padX = p.padX !== undefined ? p.padX * w : Math.max(h * 0.25, w * 0.05);
-    const x0 = p.textX0 !== undefined ? p.textX0 * w : padX;
-    const x1 = p.textX1 !== undefined ? p.textX1 * w : w - padX;
-    drawFittedText(g, String(p.text ?? '').split('\n'), { x: x0, y: padY, w: x1 - x0, h: h - padY * 2 }, {
-      color: ink,
-      style: p.carved ? 'carved' : 'paint',
-      weight: p.weight ?? 600,
-      font: p.font ?? FONT_DISPLAY,
+  const draw = () => {
+    let y = 0;
+    rects.length = 0;
+    panels.forEach((p, i) => {
+      const w = Math.ceil(p.w * ppu), h = rows[i];
+      g.save();
+      g.translate(0, y);
+      g.beginPath();
+      g.rect(0, 0, w, h);
+      g.clip();
+      paintWood(g, w, h, { color: woodHex(p.wood ?? 'spruce'), planks: p.planks ?? 1, seed: `${seed}-${i}`, painted: p.paint ?? null });
+      const ink = p.textColor ?? autoInk(p.paint ?? woodHex(p.wood ?? 'spruce'));
+      const padY = h * (p.padY ?? 0.16);
+      const padX = p.padX !== undefined ? p.padX * w : Math.max(h * 0.25, w * 0.05);
+      const x0 = p.textX0 !== undefined ? p.textX0 * w : padX;
+      const x1 = p.textX1 !== undefined ? p.textX1 * w : w - padX;
+      drawFittedText(g, String(p.text ?? '').split('\n'), { x: x0, y: padY, w: x1 - x0, h: h - padY * 2 }, {
+        color: ink,
+        style: p.carved ? 'carved' : 'paint',
+        weight: p.weight ?? 600,
+        font: p.font ?? FONT_DISPLAY,
+      });
+      g.restore();
+      rects.push({ u0: 0, u1: w / pxW, v0: 1 - (y + h) / pxH, v1: 1 - y / pxH });
+      y += h + 4;
     });
-    g.restore();
-    rects.push({ u0: 0, u1: w / pxW, v0: 1 - (y + h) / pxH, v1: 1 - y / pxH });
-    y += h + 4;
+  };
+  draw();
+  const texture = canvasTexture(canvas);
+  // web fonts (Fredoka / Patrick Hand): redraw once they are in, should they not be yet
+  const specs = panels.map((p) => `${fontWeight(p.font ?? FONT_DISPLAY, p.weight ?? 600)} 32px ${p.font ?? FONT_DISPLAY}`);
+  whenFontsReady(specs, panels.map((p) => p.text ?? '').join(''), () => {
+    draw();
+    texture.needsUpdate = true;
   });
-  return { texture: canvasTexture(canvas), rects };
+  return { texture, rects };
 }
 
 /** Map a geometry's XY bbox onto an atlas rect (optionally mirrored for back faces). */
@@ -390,7 +401,7 @@ export function makeSignpost(arrows = [], opts = {}) {
   const topY = opt(opts, 'height', 1.35 + arrows.length * gap);
   // measure text to size the planks
   const ctx2d = document.createElement('canvas').getContext('2d');
-  ctx2d.font = `600 100px ${FONT_DISPLAY}`;
+  ctx2d.font = `600 100px ${FONT_DISPLAY}`; // (main.js loads Fredoka before the world builds)
   const panels = arrows.map((a) => {
     const tw = ctx2d.measureText(String(a.text)).width / 100; // width at 1 unit font size
     const len = opts.length ?? THREE.MathUtils.clamp(tw * h * 0.62 + h * 1.1 + 0.2, 1.0, 2.2);

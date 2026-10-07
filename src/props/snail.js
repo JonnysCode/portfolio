@@ -11,13 +11,15 @@
 //                             switches the snail from self-ticking to manual mode)
 //
 // The body ripple runs in the vertex shader (one material per snail, shared
-// program), the eye stalks follow the same maths on the CPU.
+// program), the eye stalks follow the same maths on the CPU. Body, shell,
+// saddle, collar, stalks and eyes are ONE rigidly skinned mesh (each part
+// follows its Object3D "bone"): a snail is 1 draw call + 1 shadow draw.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { palette } from '../core/palette.js';
 import { materials } from '../core/materials.js';
 import { createRng, damp } from '../core/rng.js';
-import { Parts, cached, xf, paintFn, meshesFor, shade, mix, opt, blob, strut } from './util.js';
+import { Parts, cached, xf, paintFn, shade, mix, opt, blob, strut, restMatrix, mergeSkinned, skinnedMesh } from './util.js';
 import { makeManualSwitch, propsSettings } from './ticker.js';
 
 const BODY = palette.snailBody;
@@ -197,6 +199,9 @@ function makeBodyMaterial(uniforms) {
       shader.vertexShader.replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
+        #ifdef USE_SKINNING
+        if (skinIndex.x < 0.5) // only the body ripples (bone 0); shell, collar & eyes ride their bones
+        #endif
         {
           float zz = position.z;
           float back = 1.0 - smoothstep(0.25, 0.6, zz);
@@ -412,6 +417,29 @@ function collarGeos(post) {
   });
 }
 
+/** Generous culling volume (unscaled, group space) covering the crawl + a rider's seat. */
+const SNAIL_BOUNDS = { center: [0, 0.8, -0.1], radius: 1.55, pad: 0.06 };
+
+/**
+ * Body, shell + saddle, collar, stalks and eyes merged into one rigidly
+ * skinned geometry (bone order: body, shell, collar, stalkL, eyeL, stalkR, eyeR).
+ */
+function snailGeometry(o, body, shell, rest) {
+  const key = `snail-skin|${o.bodyColor}|${o.shellColor}|${o.stripe}|${o.post}|${o.saddle}|${o.blanket}`;
+  return cached(key, () => {
+    const parts = [
+      { geo: body.geos.paint, bone: 0, matrix: rest[0] },
+      { geo: shell.geos.paint, bone: 1, matrix: rest[1] },
+      { geo: collarGeos(o.post).paint, bone: 2, matrix: rest[2] },
+    ];
+    for (const k of [0, 1]) {
+      parts.push({ geo: stalkGeos(o.bodyColor).paint, bone: 3 + k * 2, matrix: rest[3 + k * 2] });
+      parts.push({ geo: eyeGeos().paint, bone: 4 + k * 2, matrix: rest[4 + k * 2] });
+    }
+    return mergeSkinned(parts);
+  });
+}
+
 let snailCount = 0;
 
 /**
@@ -440,33 +468,26 @@ export function makeSnail(opts = {}) {
   group.name = post ? 'schneckenpost' : 'snail';
   group.scale.setScalar(scale);
 
-  // body (own material instance for the ripple uniforms; program shared)
-  const uniforms = { uPhase: { value: 0 }, uMove: { value: 0 }, uHead: { value: new THREE.Vector2() } };
-  const bodyMat = makeBodyMaterial(uniforms);
-  const body = bodyGeos(o.bodyColor);
-  for (const m of meshesFor(body.geos)) {
-    m.material = bodyMat;
-    m.castShadow = true;
-    group.add(m);
-  }
-
-  // shell + saddle sway together; the seat rides on it
+  // ── hierarchy (bones) ──
+  // body (static frame), shell + saddle (sway together; the seat rides on it),
+  // collar & bell, two eye stalks with googly eyes — all drawn as ONE skinned
+  // mesh with the ripple material (the ripple only moves the body's vertices).
+  const bodyBone = new THREE.Group();
+  bodyBone.name = 'snail-frame';
+  group.add(bodyBone);
   const shellPivot = new THREE.Group();
   shellPivot.position.set(0, 0.3, -0.28);
   const shellInner = new THREE.Group();
   shellInner.position.set(0, -0.3, 0.28);
-  const shell = shellGeos(o);
-  for (const m of meshesFor(shell.geos)) shellInner.add(m);
   shellPivot.add(shellInner);
   group.add(shellPivot);
+  const body = bodyGeos(o.bodyColor);
+  const shell = shellGeos(o);
   const seat = new THREE.Object3D();
   seat.name = 'seat';
   seat.position.set(0, shell.seatY, shell.seatZ);
   shellInner.add(seat);
-
-  // collar & bell
   const collar = new THREE.Group();
-  for (const m of meshesFor(collarGeos(post), { cast: false })) collar.add(m);
   group.add(collar);
 
   // eye stalks
@@ -478,14 +499,20 @@ export function makeSnail(opts = {}) {
     pivot.position.copy(base);
     pivot.userData.base = base;
     pivot.rotation.set(-0.25, 0, -s * 0.28);
-    for (const m of meshesFor(stalkGeos(o.bodyColor), { cast: false })) pivot.add(m);
     const eye = new THREE.Group();
     eye.position.y = 0.38;
-    for (const m of meshesFor(eyeGeos(), { cast: false })) eye.add(m);
     pivot.add(eye);
     group.add(pivot);
     stalks.push({ pivot, eye, side: s, wob: 0, wobV: 0, look: 0, lookT: 0, lookTarget: 0, pitch: 0, pitchTarget: 0 });
   }
+
+  // body material: own instance for the ripple uniforms (program shared)
+  const uniforms = { uPhase: { value: 0 }, uMove: { value: 0 }, uHead: { value: new THREE.Vector2() } };
+  const bodyMat = makeBodyMaterial(uniforms);
+  const bones = [bodyBone, shellInner, collar, stalks[0].pivot, stalks[0].eye, stalks[1].pivot, stalks[1].eye];
+  const rest = bones.map((b) => restMatrix(b, group));
+  const mesh = skinnedMesh(snailGeometry(o, body, shell, rest), bodyMat, bones, rest, SNAIL_BOUNDS, post ? 'schneckenpost-body' : 'snail-body');
+  group.add(mesh);
 
   // ── animation ──
   let moving = 0, movingTarget = 0;

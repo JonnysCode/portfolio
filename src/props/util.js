@@ -299,6 +299,97 @@ export function groupFor(geos, opts = {}) {
   return g;
 }
 
+// ── rigid skinning (characters) ──────────────────────────────────────────────
+// Animated characters (villagers, snails) are built from a hierarchy of parts
+// (legs, arms, head, eye stalks …). Instead of one mesh per part, every part is
+// baked into ONE geometry in the character's rest pose, tagged with the index
+// of the Object3D ("bone") that moves it, and drawn as a single SkinnedMesh:
+// the hierarchy animates exactly as before (rotations, scales, blinks), but a
+// whole character is one draw call (+ one shadow draw). Weights are rigid (1).
+
+/**
+ * Rest matrix of `obj` relative to `ancestor` (product of local matrices).
+ * Call before any pose is applied.
+ */
+export function restMatrix(obj, ancestor, out = new THREE.Matrix4()) {
+  out.identity();
+  const tmp = new THREE.Matrix4();
+  for (let o = obj; o && o !== ancestor; o = o.parent) {
+    o.updateMatrix();
+    out.premultiply(tmp.copy(o.matrix));
+  }
+  return out;
+}
+
+/**
+ * Merge vertex-coloured part geometries into one rigidly skinned geometry.
+ * parts: [{ geo, bone (index), matrix (Matrix4 into the rest pose; optional) }]
+ * The input geometries are cloned (cached part geometries stay untouched).
+ */
+export function mergeSkinned(parts) {
+  const list = [];
+  for (const { geo, bone, matrix } of parts) {
+    if (!geo) continue;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', geo.attributes.position.clone());
+    g.setAttribute('normal', geo.attributes.normal.clone());
+    if (geo.attributes.color) g.setAttribute('color', geo.attributes.color.clone());
+    else paint(g, '#ffffff');
+    g.setIndex(geo.index ? geo.index.clone() : null);
+    if (!g.index) normalise(g, false);
+    if (matrix) g.applyMatrix4(matrix);
+    const n = g.attributes.position.count;
+    const si = new Uint16Array(n * 4);
+    const sw = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) {
+      si[i * 4] = bone;
+      sw[i * 4] = 1;
+    }
+    g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
+    g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
+    list.push(g);
+  }
+  const out = list.length === 1 ? list[0] : mergeGeometries(list, false);
+  if (!out) throw new Error('props: skinned merge failed');
+  if (list.length > 1) list.forEach((x) => x.dispose());
+  out.computeBoundingSphere();
+  out.computeBoundingBox();
+  return out;
+}
+
+const skinDepth = { depth: null, distance: null };
+/**
+ * A SkinnedMesh over `bones` (Object3Ds of the character hierarchy) whose
+ * geometry was baked with mergeSkinned() using `rest[i]` (bone i's rest matrix
+ * relative to the mesh). The mesh must sit at the identity under the
+ * hierarchy's root (the character group). `bounds` = { center: [x,y,z],
+ * radius } — generous culling sphere covering every pose — and `pad`: the
+ * box (raycast early-out, Box3.setFromObject) is the rest-pose box + pad.
+ */
+export function skinnedMesh(geometry, material, bones, rest, bounds, name = 'skinned') {
+  const inverses = rest.map((m) => m.clone().invert());
+  const skeleton = new THREE.Skeleton(bones, inverses);
+  const mesh = new THREE.SkinnedMesh(geometry, material);
+  mesh.name = name;
+  mesh.bind(skeleton, new THREE.Matrix4());
+  // the default bounds would be computed once from whatever pose came first
+  mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3().fromArray(bounds.center), bounds.radius);
+  mesh.boundingBox = geometry.boundingBox.clone().expandByScalar(bounds.pad ?? 0.1);
+  // dedicated (shared) shadow materials, so the renderer never flips the
+  // shared depth material between skinned and static programs per draw
+  if (!skinDepth.depth) {
+    skinDepth.depth = new THREE.MeshDepthMaterial();
+    skinDepth.depth.name = 'props-skinned-depth';
+    skinDepth.distance = new THREE.MeshDistanceMaterial();
+    skinDepth.distance.name = 'props-skinned-distance';
+  }
+  mesh.customDepthMaterial = skinDepth.depth;
+  mesh.customDistanceMaterial = skinDepth.distance;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
 /** Count triangles of a layer map (debug / budgets). */
 export function triCount(geos) {
   let n = 0;

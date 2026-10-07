@@ -181,6 +181,84 @@ export function cameraClearance(x, z) {
   return best;
 }
 
+// ─── level of detail: how close can a camera SEE this? ──────────────────────
+// Every pose the visitor can reach (each spot's composed shot swung through
+// its orbit range, zoomed in & out, panned; the -wide and -close variants;
+// the overview) as a camera position + a slightly widened frustum.
+// viewDistance(p) = distance from the nearest pose whose frustum contains p
+// (Infinity when no pose ever sees it). Builders spend triangles by it: full
+// detail where a lens can come close, simplified geometry far away.
+// (Orbit ranges mirror systems/cameraRig.js ORBIT.)
+const ORBIT_RANGE = {
+  glen: { az: 0.62, up: 0.32, down: 0.1, zoom: [0.42, 1.22], pan: 9 },
+  woodworking: { az: 0.55, up: 0.42, down: 0.06, zoom: [0.42, 1.45], pan: 3.5 },
+  code: { az: 0.5, up: 0.32, down: 0.12, zoom: [0.45, 1.4], pan: 3 },
+  home: { az: 0.5, up: 0.4, down: 0.06, zoom: [0.45, 1.4], pan: 3 },
+  interior: { az: 0.5, up: 0.4, down: 0.06, zoom: [0.4, 1.45], pan: 3 },
+  bikes: { az: 0.55, up: 0.4, down: 0.08, zoom: [0.42, 1.45], pan: 3.5 },
+};
+let poses = null;
+function lodPoses() {
+  if (poses) return poses;
+  poses = [];
+  const cam = new THREE.PerspectiveCamera(46, ASPECT, 0.3, 220);
+  const add = (pos, tgt, fov) => {
+    cam.fov = fov + 6;
+    cam.aspect = ASPECT;
+    cam.updateProjectionMatrix();
+    cam.position.copy(pos);
+    cam.lookAt(tgt);
+    cam.updateMatrixWorld(true);
+    const m = new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+    poses.push({ pos: pos.clone(), frustum: new THREE.Frustum().setFromProjectionMatrix(m) });
+  };
+  for (const s of SPOTS) {
+    const P = s.camera.position, T = s.camera.target, fov = s.camera.fov ?? 40;
+    const dx = P[0] - T[0], dy = P[1] - T[1], dz = P[2] - T[2];
+    const dist = Math.hypot(dx, dy, dz), az = Math.atan2(dx, dz), pol = Math.acos(dy / dist);
+    const R = ORBIT_RANGE[s.id] ?? ORBIT_RANGE.woodworking;
+    const pans = s.id === 'glen' ? [[0, 0], [5, 0], [-5, 0], [0, 5], [0, -5]] : [[0, 0]];
+    for (const a of [-R.az, -R.az / 2, 0, R.az / 2, R.az]) {
+      for (const p of [-R.up, 0, R.down]) {
+        for (const z of [R.zoom[0], 0.7, 1, R.zoom[1]]) {
+          for (const [px, pz] of pans) {
+            const tgt = new THREE.Vector3(T[0] + px, T[1], T[2] + pz);
+            add(new THREE.Vector3().setFromSphericalCoords(dist * z, Math.max(0.35, pol + p), az + a).add(tgt), tgt, fov);
+          }
+        }
+      }
+    }
+    add(new THREE.Vector3(T[0] + dx * 1.8, T[1] + dy * 1.8, T[2] + dz * 1.8), new THREE.Vector3(...T), fov);
+    const f = s.focus ?? T;
+    add(new THREE.Vector3(f[0] + dx * 0.55, f[1] + dy * 0.55, f[2] + dz * 0.55), new THREE.Vector3(...f), fov);
+  }
+  add(new THREE.Vector3(0, 34, 52), new THREE.Vector3(0, 4, -2), 40);
+  return poses;
+}
+const _lod = new THREE.Sphere();
+
+/** Distance from the nearest reachable camera pose that sees the sphere (Infinity if none does). */
+export function viewDistance(x, y, z, r = 0.5) {
+  _lod.center.set(x, y, z);
+  _lod.radius = r;
+  let best = Infinity;
+  for (const p of lodPoses()) {
+    const d = p.pos.distanceTo(_lod.center);
+    if (d < best && p.frustum.intersectsSphere(_lod)) best = d;
+  }
+  return best;
+}
+
+/**
+ * Detail factor 1 (a lens can come within `near`) → `min` (only ever seen
+ * from beyond `far`, or never).
+ */
+export function viewDetail(x, y, z, { r = 0.5, near = 14, far = 34, min = 0.5 } = {}) {
+  const d = viewDistance(x, y, z, r);
+  if (!Number.isFinite(d)) return min;
+  return 1 - (1 - min) * THREE.MathUtils.smoothstep(d, near, far);
+}
+
 /** Path distance (normalised) re-exported for convenience. */
 export { getPathDistance, getStreamDistance };
 

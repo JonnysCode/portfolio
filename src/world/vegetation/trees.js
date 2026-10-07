@@ -106,8 +106,11 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
   const H = t.height;
   const y0 = t.y0;
   // bark furrows: deep vertical fissures between broad plates, ~1.8 apart
+  // (t.lod < 1: a tree no lens ever comes close to gets fewer segments)
+  const lod = THREE.MathUtils.clamp(t.lod ?? 1, 0.5, 1);
   const nFur = birch ? 0 : Math.max(6, Math.round(R * 3.4));
-  const seg = birch ? 14 : Math.min(48, Math.max(24, nFur * 4));
+  const seg = birch ? Math.round(14 * (0.6 + 0.4 * lod)) : Math.max(18, Math.round(Math.min(48, Math.max(24, nFur * 4)) * lod));
+  const tubeK = lod < 0.8 ? 0.75 : 1;
   const leanDir = new THREE.Vector3(Math.sin(t.leanAz), 0, Math.cos(t.leanAz));
   const ph = rng.range(0, TAU);
   const center = (y) => {
@@ -233,7 +236,7 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
         const m = sstep(nrm.y + 0.3 * noise(p.x * 1.3, p.z * 1.3) + 0.25 * (1 - i / steps), -0.2, 0.45);
         return _col.copy(BARK).multiplyScalar(0.8).lerp(MOSS, m * 0.95).clone();
       };
-      tube(B.bark, pts, radii, 9, { wob: (i, th) => 1 + 0.08 * Math.sin(th * 3 + i), vcol: rootMoss });
+      tube(B.bark, pts, radii, Math.round(9 * tubeK), { wob: (i, th) => 1 + 0.08 * Math.sin(th * 3 + i), vcol: rootMoss });
       // a side rootlet
       if (rng.chance(0.6)) {
         const k = rng.int(3, 5);
@@ -293,7 +296,7 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
     // a limb whose leaves may not grow there (oak crown, a spot's view) would
     // read as a bare dead spike — leave it out
     if (!canopyOk(p, birch ? 2.6 : 4) || pts.some((q) => blocksView(q.x, q.y, q.z, R * 0.6))) continue;
-    tube(TB, pts, pts.map((_, k) => R * (birch ? 0.5 : 0.42) * (1 - k * 0.19)), birch ? 7 : 10, {
+    tube(TB, pts, pts.map((_, k) => R * (birch ? 0.5 : 0.42) * (1 - k * 0.19)), birch ? 7 : Math.round(10 * tubeK), {
       color: birch ? () => new THREE.Color('#d8d2c4') : (k) => _col.copy(BARK).lerp(HIGH, 0.5).multiplyScalar(0.9 - k * 0.04).clone(),
     });
     ends.push(p.clone());
@@ -322,7 +325,7 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
       }
       // only keep the limb if its leaves would not hide a spot
       if (!canopyOk(p, 3.2) || pts.some((q) => blocksView(q.x, q.y, q.z, R * 0.4))) continue;
-      tube(TB, pts, pts.map((_, k) => R * 0.3 * (1 - k * 0.22)), 8, {
+      tube(TB, pts, pts.map((_, k) => R * 0.3 * (1 - k * 0.22)), Math.round(8 * tubeK), {
         vcol: (k, j, nrm) => _col.copy(BARK).lerp(HIGH, 0.35).lerp(MOSS, sstep(nrm.y, 0.2, 0.7) * 0.7).clone(),
       });
       mids.push(p.clone());

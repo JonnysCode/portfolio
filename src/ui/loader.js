@@ -52,7 +52,7 @@ export function createLoader(root, { title, tagline }) {
   root.append(el);
 
   let shown = 0;
-  return {
+  const api = {
     el,
     setProgress(p, text) {
       const k = Math.max(shown, Math.min(1, p));
@@ -61,7 +61,8 @@ export function createLoader(root, { title, tagline }) {
       const pt = ghost.getPointAtLength?.(k * total) ?? { x: 10 + k * 520, y: 40 };
       const ahead = ghost.getPointAtLength?.(Math.min(total, k * total + 4)) ?? { x: pt.x + 4, y: pt.y };
       const ang = (Math.atan2(ahead.y - pt.y, ahead.x - pt.x) * 180) / Math.PI;
-      snail.setAttribute('transform', `translate(${pt.x.toFixed(1)} ${(pt.y - 2).toFixed(1)}) rotate(${ang.toFixed(1)})`);
+      // CSS transform (not the attribute) so the snail eases along with the growing vine
+      snail.style.transform = `translate(${pt.x.toFixed(1)}px, ${(pt.y - 3).toFixed(1)}px) rotate(${ang.toFixed(1)}deg) scale(1.45)`;
       for (const l of leaves) l.g.classList.toggle('is-grown', l.u <= k);
       bar.setAttribute('aria-valuenow', String(Math.round(k * 100)));
       if (text) label.textContent = text;
@@ -75,4 +76,6 @@ export function createLoader(root, { title, tagline }) {
       el.classList.add('is-failed');
     },
   };
+  api.setProgress(0);
+  return api;
 }

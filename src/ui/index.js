@@ -33,6 +33,7 @@ import { renderGuidebook } from './guidebook.js';
 import { createMap } from './map.js';
 
 const HINT_KEY = 'woodland:hinted';
+const GLEN_CAM = new THREE.Vector3(...SPOT_BY_ID.glen.camera.position);
 /** How high above each spot's focus its floating overview label hangs (clear of caps & roofs). */
 const LABEL_LIFT = { woodworking: 3.4, code: 2.4, home: 7.2, interior: 5.4, bikes: 5.8 };
 
@@ -141,7 +142,6 @@ export function createUI(ctx) {
   function go(id) {
     if (!ctx.cameraRig) return;
     if (ui.isPanelOpen) closeJournal({ release: false });
-    ctx.audio?.play?.('whoosh');
     ctx.cameraRig.goTo(id);
   }
   function step(dir) {
@@ -305,7 +305,6 @@ export function createUI(ctx) {
     ctx.audio?.unlock?.();
     ctx.audio?.setEnabled?.(ctx.audio?.preference ?? true);
     syncSound();
-    ctx.audio?.play?.('whoosh');
     hideIntro();
     ctx.cameraRig?.playIntro?.().then((ok) => {
       if (ok) showHintOnce();
@@ -381,7 +380,9 @@ export function createUI(ctx) {
     cam.updateMatrixWorld(); // the rig moved it this frame; project with fresh matrices
     const W = innerWidth, H = innerHeight;
     // floating spot labels in the overview
-    const showLabels = rig.spot === 'glen' && !rig.transitioning && !rig.focused && !ui.isModalOpen && !intro;
+    // (a debug/screenshot camera override shows them only when it looks at the glen from afar)
+    const atGlen = rig.overridden ? cam.position.distanceTo(GLEN_CAM) < 14 : rig.spot === 'glen';
+    const showLabels = atGlen && !rig.transitioning && !rig.focused && !ui.isModalOpen && !intro;
     for (const l of labels) {
       let on = showLabels;
       let edge = 0;
@@ -498,6 +499,7 @@ export function createUI(ctx) {
         ui.hideTooltip();
         // travelling elsewhere closes the open page (but not when the page itself flew us there)
         if (!focusing && journal.isOpen) closeJournal({ release: false });
+        if (!focusing && id) ctx.audio?.play?.('whoosh');
         if (id === 'glen') banner.classList.remove('is-visible');
       });
       rig?.onArrive?.((id) => {

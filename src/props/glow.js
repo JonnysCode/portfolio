@@ -1,5 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Soft additive glow halos (lanterns, windows, string lights, glowing shrooms).
+// Halos are deliberately small, soft and warm: a gaussian falloff without a
+// hot core, warm colours pulled to amber, and a soft brightness cap that keeps
+// a halo itself under the night bloom threshold (the bulb blooms, not the halo).
 //
 //   makeGlowSprite(color, size, opts)  → a single camera-facing halo (Mesh)
 //   glowQuads([{ x, y, z, size }], color, opts) → MANY halos in ONE draw call
@@ -17,14 +20,22 @@ import { noRaycast } from './util.js';
 const VERT = /* glsl */ `
   attribute vec2 aCorner;
   attribute float aSize;
+  #ifdef USE_TINT
+    attribute vec3 aTint;
+    varying vec3 vTint;
+  #endif
   varying vec2 vUv;
   varying float vFade;
   uniform float uPull;
+  uniform float uScale;
   void main() {
     vUv = aCorner;
+    #ifdef USE_TINT
+      vTint = aTint;
+    #endif
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     float sc = length(modelMatrix[0].xyz);
-    float s = aSize * sc;
+    float s = aSize * sc * uScale;
     // pull the halo towards the camera so the lamp geometry never clips it
     mv.xyz += normalize(-mv.xyz) * s * uPull;
     mv.xy += aCorner * s;
@@ -39,36 +50,85 @@ const FRAG = /* glsl */ `
   uniform float uNight;
   uniform float uDay;
   uniform float uNightI;
+  uniform float uKnee;
+  uniform float uCap;
+  #ifdef USE_TINT
+    varying vec3 vTint;
+  #endif
   varying vec2 vUv;
   varying float vFade;
   void main() {
-    float d = length(vUv);
-    if (d > 1.0) discard;
-    // bright core + wide soft falloff
-    float a = exp(-d * d * 5.5) * 0.75 + exp(-d * d * 22.0) * 0.6;
-    a *= 1.0 - smoothstep(0.7, 1.0, d);
+    float d2 = dot(vUv, vUv);
+    if (d2 > 1.0) discard;
+    // soft gaussian glow with a gentle core (no hot white disc), fading to
+    // exactly zero well inside the quad
+    float a = exp(-d2 * 7.0) * 0.6 + exp(-d2 * 30.0) * 0.25;
+    a *= 1.0 - smoothstep(0.3, 1.0, d2);
     float k = mix(uDay, uNightI, uNight) * vFade;
-    gl_FragColor = vec4(uColor * a * k, 1.0);
+    vec3 col = uColor * (a * k);
+    #ifdef USE_TINT
+      col *= vTint;
+    #endif
+    // brightness cap with a soft knee: dim halos pass untouched, bright ones
+    // saturate below the night bloom threshold, so bloom only picks up the
+    // small bulb / glass itself instead of turning the whole halo into a blob
+    float peak = max(max(col.r, col.g), col.b);
+    if (peak > uKnee) {
+      float r = uCap - uKnee;
+      col *= (uKnee + r * (1.0 - exp(-(peak - uKnee) / r))) / peak;
+    }
+    gl_FragColor = vec4(col, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
 `;
 
+const _hsl = { h: 0, s: 0, l: 0 };
+/**
+ * Halo colour: warm lights (candle / bulb yellows, oranges, near-whites) are
+ * pulled to a soft amber so halos read as warm light, never as white discs.
+ * Cool glows (cyan mushrooms, teal water) keep their hue.
+ */
+export function isWarmLight(color) {
+  new THREE.Color(color).getHSL(_hsl, THREE.SRGBColorSpace);
+  return (_hsl.h < 0.17 || _hsl.h > 0.95) && _hsl.s > 0.25;
+}
+export function haloColor(color) {
+  const c = new THREE.Color(color);
+  if (isWarmLight(color)) {
+    c.getHSL(_hsl, THREE.SRGBColorSpace);
+    const h = _hsl.h > 0.95 ? 0.08 : THREE.MathUtils.clamp(_hsl.h, 0.08, 0.11);
+    c.setHSL(h, Math.max(_hsl.s, 0.92), Math.min(_hsl.l, 0.63), THREE.SRGBColorSpace);
+  }
+  return c;
+}
+
 const matCache = new Map();
-/** Shared additive halo material per colour / intensity pair. */
-export function glowMaterial(color = palette.windowGlow, { day = 0.18, night = 1.1, pull = 0.6 } = {}) {
-  const key = `${new THREE.Color(color).getHexString()}|${day}|${night}|${pull}`;
+/**
+ * Shared additive halo material per colour / intensity pair.
+ * opts: { day=0.18, night=1.1 } intensities, { pull } towards the camera (× size),
+ * { tint } per-point colours (geometry attribute aTint, multiplied with `color`),
+ * { warm = true } amber-ise warm colours (and draw their halos at `scale` = 0.72 of the
+ * requested size: lamp & window halos were far too big), { cap = 0.55, knee = 0.3 } brightness cap.
+ */
+export function glowMaterial(color = palette.windowGlow, { day = 0.18, night = 1.1, pull = 0.6, tint = false, warm = true, cap = 0.55, knee = 0.3, scale = null } = {}) {
+  const sizeK = scale ?? (warm && !tint && isWarmLight(color) ? 0.72 : 1);
+  const key = `${new THREE.Color(color).getHexString()}|${day}|${night}|${pull}|${tint}|${warm}|${cap}|${knee}|${sizeK}`;
   let m = matCache.get(key);
   if (m) return m;
   m = new THREE.ShaderMaterial({
     name: 'props-glow-halo',
     uniforms: {
-      uColor: { value: new THREE.Color(color) },
+      uColor: { value: warm ? haloColor(color) : new THREE.Color(color) },
       uNight: sharedUniforms.uNight,
       uDay: { value: day },
       uNightI: { value: night },
       uPull: { value: pull },
+      uScale: { value: sizeK },
+      uKnee: { value: Math.min(knee, cap * 0.9) },
+      uCap: { value: cap },
     },
+    defines: tint ? { USE_TINT: '' } : {},
     vertexShader: VERT,
     fragmentShader: FRAG,
     transparent: true,
@@ -88,11 +148,13 @@ export function glowMaterial(color = palette.windowGlow, { day = 0.18, night = 1
  * Geometry with one billboard quad per point. points: [{ x, y, z, size }]
  * (size = halo radius in local units).
  */
-export function glowGeometry(points) {
+export function glowGeometry(points, { tint = false } = {}) {
   const n = points.length;
   const pos = new Float32Array(n * 12);
   const corner = new Float32Array(n * 8);
   const size = new Float32Array(n * 4);
+  const tints = tint ? new Float32Array(n * 12) : null;
+  const tc = new THREE.Color();
   const idx = new Uint16Array(n * 6);
   const C = [-1, -1, 1, -1, 1, 1, -1, 1];
   const box = new THREE.Box3();
@@ -104,6 +166,11 @@ export function glowGeometry(points) {
       corner[i * 8 + k * 2 + 1] = C[k * 2 + 1];
       size[i * 4 + k] = p.size;
     }
+    if (tints) {
+      if (p.color) tc.copy(haloColor(p.color));
+      else tc.setRGB(1, 1, 1);
+      for (let k = 0; k < 4; k++) tints.set([tc.r, tc.g, tc.b], i * 12 + k * 3);
+    }
     idx.set([i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3], i * 6);
     box.expandByPoint(new THREE.Vector3(p.x, p.y, p.z));
     maxS = Math.max(maxS, p.size);
@@ -112,6 +179,7 @@ export function glowGeometry(points) {
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('aCorner', new THREE.BufferAttribute(corner, 2));
   g.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+  if (tints) g.setAttribute('aTint', new THREE.BufferAttribute(tints, 3));
   g.setIndex(new THREE.BufferAttribute(idx, 1));
   box.expandByScalar(maxS * 1.5);
   g.boundingBox = box;
@@ -140,9 +208,14 @@ export function makeGlowSprite(color = palette.windowGlow, size = 1, opts = {}) 
   return noRaycast(m);
 }
 
-/** Many halos in one mesh: points [{ x, y, z, size }] in local coords. */
+/**
+ * Many halos in one mesh: points [{ x, y, z, size, color? }] in local coords.
+ * Points with their own `color` → one mesh with per-point tints (pass
+ * '#ffffff' as `color` then; it multiplies every tint).
+ */
 export function glowQuads(points, color = palette.windowGlow, opts = {}) {
-  const m = new THREE.Mesh(glowGeometry(points), glowMaterial(color, opts));
+  const tint = points.some((p) => p.color);
+  const m = new THREE.Mesh(glowGeometry(points, { tint }), glowMaterial(color, { ...opts, tint, warm: tint ? false : opts.warm }));
   m.name = 'glows';
   m.renderOrder = 3;
   return noRaycast(m);

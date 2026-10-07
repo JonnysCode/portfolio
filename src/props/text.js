@@ -15,6 +15,36 @@ import { palette } from '../core/palette.js';
 export const FONT_DISPLAY = '"Fredoka", "Trebuchet MS", system-ui, sans-serif';
 export const FONT_HAND = '"Patrick Hand", "Comic Sans MS", cursive';
 
+/** The weight a font stack is actually shipped in (Patrick Hand only has 400). */
+export const fontWeight = (font, weight = 600) => (String(font).includes('Patrick Hand') ? 400 : weight);
+
+/**
+ * Canvas text can only use a web font whose glyphs are already loaded — it
+ * silently falls back to a system font otherwise. main.js awaits Fredoka and
+ * Patrick Hand before the world builds, but a texture drawn earlier (or text
+ * needing another unicode subset, e.g. latin-ext) is redrawn here as soon as
+ * its font has arrived. specs: CSS font shorthands ('600 32px "Fredoka", …').
+ */
+export function whenFontsReady(specs, text, redraw) {
+  const fonts = typeof document !== 'undefined' ? document.fonts : null;
+  if (!fonts || typeof fonts.check !== 'function') return false;
+  const sample = String(text || ' ');
+  const missing = [...new Set(specs)].filter((spec) => {
+    try {
+      return !fonts.check(spec, sample);
+    } catch {
+      return false;
+    }
+  });
+  if (!missing.length) return false;
+  Promise.all(missing.map((spec) => fonts.load(spec, sample)))
+    .then((loaded) => {
+      if (loaded.some((list) => list.length)) redraw();
+    })
+    .catch(() => {});
+  return true;
+}
+
 /** Max anisotropy we ask for; three clamps it to what the GPU supports. */
 export const TEXT_ANISOTROPY = 8;
 
@@ -141,7 +171,6 @@ export function paintWood(g, w, h, opts = {}) {
 export function drawFittedText(g, lines, box, opts = {}) {
   const {
     font = FONT_DISPLAY,
-    weight = 600,
     color = palette.ink,
     align = 'center',
     maxSize = 400,
@@ -152,6 +181,7 @@ export function drawFittedText(g, lines, box, opts = {}) {
     outlineWidth = 0.08,
     letterSpacing = 0,
   } = opts;
+  const weight = fontWeight(font, opts.weight ?? 600);
   lines = lines.filter((l) => l !== undefined && l !== null).map(String);
   if (!lines.length) return 0;
   const n = lines.length;
@@ -233,18 +263,27 @@ export function makeTextTexture(text, opts = {}) {
   canvas.width = Math.round(width);
   canvas.height = Math.round(height);
   const g = canvas.getContext('2d');
-  if (background === 'wood') paintWood(g, canvas.width, canvas.height, opts.wood || {});
-  else if (background) {
-    g.fillStyle = background;
-    g.fillRect(0, 0, canvas.width, canvas.height);
-  }
-  const pad = padding * Math.min(canvas.width, canvas.height);
-  const padX = opts.paddingX !== undefined ? opts.paddingX * canvas.width : pad * 1.4;
-  const size = drawFittedText(g, lines, { x: padX, y: pad, w: canvas.width - padX * 2, h: canvas.height - pad * 2 }, {
-    style: background ? 'paint' : 'plain',
-    ...opts,
-  });
+  const draw = () => {
+    g.clearRect(0, 0, canvas.width, canvas.height);
+    if (background === 'wood') paintWood(g, canvas.width, canvas.height, opts.wood || {});
+    else if (background) {
+      g.fillStyle = background;
+      g.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    const pad = padding * Math.min(canvas.width, canvas.height);
+    const padX = opts.paddingX !== undefined ? opts.paddingX * canvas.width : pad * 1.4;
+    return drawFittedText(g, lines, { x: padX, y: pad, w: canvas.width - padX * 2, h: canvas.height - pad * 2 }, {
+      style: background ? 'paint' : 'plain',
+      ...opts,
+    });
+  };
+  const size = draw();
   const tex = canvasTexture(canvas);
   tex.userData.fontSize = size;
+  const font = opts.font ?? FONT_DISPLAY;
+  whenFontsReady([`${fontWeight(font, opts.weight ?? 600)} 32px ${font}`], lines.join(''), () => {
+    tex.userData.fontSize = draw();
+    tex.needsUpdate = true;
+  });
   return tex;
 }

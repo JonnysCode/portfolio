@@ -58,7 +58,9 @@ export function M() {
   MATS = {
     rock: m.surface('rock', { vertexColors: true, mossy: 0.5 }),
     pebble: m.surface('rock', { vertexColors: true, scale: 0.6, bump: 0.6, mossy: 0.06 }),
-    wallStone: m.surface('rock', { vertexColors: true, scale: 2.2, bump: 0.6, mossy: 0.36 }),
+    // masonry: the rock texture at stone scale (a tile ≈ 2 units: grain, pits, fine
+    // cracks and lichen on every stone), moss creeping over the stones' tops
+    wallStone: m.surface('rock', { vertexColors: true, scale: 0.4, bump: 1.3, mossy: 0.3 }),
     wood: m.surface('wood', { species: 'oak', vertexColors: true }),
     planks: m.surface('wood', { species: 'oak', planks: true, vertexColors: true }),
     timber: m.surface('timber', { vertexColors: true }),
@@ -201,6 +203,17 @@ export class Batch {
     e.cast ||= cast;
     e.geos.push(geo);
     return geo;
+  }
+  /** Triangles collected so far, per material name (perf bookkeeping). */
+  tally() {
+    const out = {};
+    for (const e of this.lists.values()) {
+      let n = 0;
+      for (const g of e.geos) n += (g.index ? g.index.count : g.attributes.position.count) / 3;
+      const k = e.material.name || 'mat';
+      out[k] = (out[k] ?? 0) + n;
+    }
+    return out;
   }
   /** A view of this batch that applies `matrix` to every added geometry. */
   at(matrix) {
@@ -490,10 +503,10 @@ export function boardBetween(a, b, w, h, { rng = null, up = [0, 1, 0], bow = 0.0
   return alongX(g, a, b, up);
 }
 
-/** A cylinder between two points (radius r1 at a, r2 at b). */
-export function rod(a, b, r1, r2 = r1, radial = 6) {
+/** A cylinder between two points (radius r1 at a, r2 at b); `open` drops the end caps. */
+export function rod(a, b, r1, r2 = r1, radial = 6, open = false) {
   const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-  const g = new THREE.CylinderGeometry(r2, r1, len, radial, 1, false);
+  const g = new THREE.CylinderGeometry(r2, r1, len, radial, 1, open);
   g.rotateZ(-Math.PI / 2); // along +X, r1 at −X
   uvBox(g, 'x', 2);
   return alongX(g, a, b);
@@ -575,9 +588,141 @@ export function boulderGeo(rng, w, h, d, { strata = 3, lump = 0.18, detail = 3, 
   return g;
 }
 
+// ─── masonry ────────────────────────────────────────────────────────────────
+/** Rubble & fieldstone tints (sRGB): weathered greys, warm ochres, cool blue-greys — wide in value. */
+export const MASONRY_TINTS = ['#8d8474', '#7e786c', '#9a8b72', '#6f6c62', '#857a66', '#a39478', '#77736a', '#8b8170', '#6a675c', '#9c8f7a', '#7b7f74', '#94886f'];
+/** Dressed sandstone (arch rings, quoins, sills): warmer and a touch lighter, still varied. */
+export const DRESSED_TINTS = ['#b29c76', '#a18c69', '#bba582', '#988567', '#ab946e', '#c0aa83', '#a39a84'];
+/** Mortar joints: dark, damp and a little mossy (drawn with the moss surface). */
+export const MORTAR = '#3b3a2c';
+
+const _ca = new THREE.Color();
+const _cb = new THREE.Color();
+/** A stone's colour with life in it: per-stone value, now and then lichen-green or iron-stained. */
+export function stoneTint(rng, tints = MASONRY_TINTS, spread = 1) {
+  _ca.set(rng.pick(tints)).multiplyScalar(1 + rng.range(-0.36, 0.16) * spread);
+  const k = rng.next();
+  if (k < 0.14) _ca.lerp(_cb.set('#76845e'), 0.32); // lichen-stained
+  else if (k < 0.26) _ca.lerp(_cb.set('#b0855a'), 0.24); // iron-stained ochre
+  else if (k < 0.36) _ca.lerp(_cb.set('#7d8590'), 0.2); // cool blue-grey
+  return '#' + _ca.getHexString();
+}
+
+/**
+ * The visible face of a rough wall stone: an irregular rounded cushion bulging
+ * out of the mortar along +Z. Its outline is a noisy rounded rectangle w × h
+ * (centred on the origin), its crown `proud` in front of z = 0 and its rim
+ * tucked `tuck` behind that plane (into the mortar). Vertex-coloured: `color`
+ * × a lit crown and a dark, grimy rim, so every joint reads as a recessed,
+ * shadowed line, plus a soft mottling. ≈ 5 · segs triangles (50 by default).
+ */
+export function cushionStone(rng, w, h, proud, { color = '#8a8273', segs = 10, round = 3.2, lump = 0.1, tuck = 0.03, rim = 0.42 } = {}) {
+  const RINGS = [[0.52, 1.0], [0.86, 0.74], [1.0, 0]]; // [radius fraction, height fraction]
+  const n = round * rng.range(0.75, 1.3);
+  const ox = rng.next() * 50, oy = rng.next() * 50;
+  const wob = [];
+  for (let s = 0; s < segs; s++) wob.push(1 + rng.jitter(lump));
+  const sw = wob.map((v, s) => (wob[(s + segs - 1) % segs] + 2 * v + wob[(s + 1) % segs]) / 4);
+  const cx = rng.jitter(w * 0.1), cy = rng.jitter(h * 0.1) + h * 0.04; // off-centre crown, a touch high
+  const crown = proud * rng.range(0.85, 1.12);
+  const pos = [cx, cy, crown];
+  const shade = [1.06];
+  const rot = rng.next() * 0.6;
+  for (const [rf, hf] of RINGS) {
+    for (let s = 0; s < segs; s++) {
+      const a = (s / segs) * TAU + rot;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const se = 1 / Math.pow(Math.pow(Math.abs(ca), n) + Math.pow(Math.abs(sa), n), 1 / n);
+      const ex = ca * se * (w / 2) * sw[s], ey = sa * se * (h / 2) * sw[s];
+      const x = cx + (ex - cx) * rf, y = cy + (ey - cy) * rf;
+      const bump = noiseA(x * 9 + ox, y * 9 + oy) * crown * 0.3 * hf;
+      pos.push(x, y, hf > 0 ? crown * hf + bump : -tuck);
+      shade.push(hf > 0.9 ? 1.0 + 0.08 * noiseB(x * 7 + oy, y * 7) : hf > 0 ? 0.9 : rim);
+    }
+  }
+  const idx = [];
+  for (let s = 0; s < segs; s++) idx.push(0, 1 + s, 1 + ((s + 1) % segs));
+  for (let r = 0; r < RINGS.length - 1; r++) {
+    const b0 = 1 + r * segs, b1 = b0 + segs;
+    for (let s = 0; s < segs; s++) {
+      const a = b0 + s, b = b0 + ((s + 1) % segs), c = b1 + s, d = b1 + ((s + 1) % segs);
+      idx.push(a, c, d, a, d, b);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  const base = new THREE.Color(color);
+  const col = new Float32Array(shade.length * 3);
+  for (let i = 0; i < shade.length; i++) {
+    const m = 1 + 0.12 * noiseA(pos[i * 3] * 6 + oy, pos[i * 3 + 1] * 6 - ox);
+    col[i * 3] = base.r * shade[i] * m;
+    col[i * 3 + 1] = base.g * shade[i] * m;
+    col[i * 3 + 2] = base.b * shade[i] * m;
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
+
+/**
+ * A loose, all-round stone (parapets, capstones, quoins, piers, sills): a
+ * lumpy rounded box w × h × d centred on the origin — squarish, but with
+ * soft irregular edges and a slightly sagging top. Vertex-coloured like
+ * cushionStone: dark grimy edges & underside (`under`), a lighter crown.
+ * ≈ 80 triangles.
+ */
+export function roundStone(rng, w, h, d, { color = '#8a8273', box = 0.42, lump = 0.07, under = 0.4, segs = 8, rows = 6, sag = 0.05 } = {}) {
+  let g = new THREE.SphereGeometry(1, segs, rows);
+  g.deleteAttribute('normal');
+  g.deleteAttribute('uv');
+  g = mergeVertices(g, 1e-4);
+  const e = box * rng.range(0.85, 1.2);
+  const ox = rng.next() * 50, oy = rng.next() * 50;
+  const pos = g.attributes.position;
+  const col = new Float32Array(pos.count * 3);
+  const base = new THREE.Color(color);
+  const p = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    p.fromBufferAttribute(pos, i);
+    const ax = Math.abs(p.x), ay = Math.abs(p.y), az = Math.abs(p.z);
+    // 1 on a face centre → ~0.33 on a corner: edges & corners get the grime
+    const face = ax ** 4 + ay ** 4 + az ** 4;
+    const k = 1 + lump * noiseA(p.x * 2.1 + ox, p.y * 2.1 + p.z * 1.3 + oy) + lump * 0.5 * noiseB(p.z * 4 + oy, p.x * 4);
+    let x = Math.sign(p.x) * ax ** e * (w / 2) * k;
+    let y = Math.sign(p.y) * ay ** e * (h / 2) * k;
+    const z = Math.sign(p.z) * az ** e * (d / 2) * k;
+    if (p.y > 0) y -= (x / (w / 2)) ** 2 * h * sag;
+    pos.setXYZ(i, x, y, z);
+    const lit = (0.58 + 0.42 * smooth01((face - 0.36) / 0.5)) * (1 - under * (1 - smooth01((p.y + 1) * 0.7)));
+    const m = lit * (1 + 0.1 * noiseB(p.x * 3 + ox, p.y * 3 + p.z * 2));
+    col[i * 3] = base.r * m;
+    col[i * 3 + 1] = base.g * m;
+    col[i * 3 + 2] = base.b * m;
+  }
+  g.computeVertexNormals();
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
+
+/**
+ * A voussoir: a roundStone bent around the arch centre (origin, XY plane) —
+ * radial thickness r0 → r1, between angles a0 and a1 (radians, CCW from +X),
+ * depth d along Z. Rounded edges leave a dark joint to each neighbour.
+ */
+export function archStone(rng, r0, r1, a0, a1, d, opts = {}) {
+  const rm = (r0 + r1) / 2, am = (a0 + a1) / 2;
+  const g = roundStone(rng, r1 - r0, Math.abs(a1 - a0) * rm, d, { under: 0, sag: 0, ...opts });
+  deform(g, (v) => {
+    const a = am + v.y / rm, r = rm + v.x;
+    v.set(Math.cos(a) * r, Math.sin(a) * r, v.z);
+  });
+  return g;
+}
+
 /** A soft moss cushion (flattened lumpy dome) sitting on y = 0. */
-export function mossGeo(rng, { r = 0.25, h = 0.08, sx = 1, sz = 1, seg = 10 } = {}) {
-  let g = new THREE.SphereGeometry(1, seg, 5, 0, Math.PI * 2, 0, Math.PI / 2);
+export function mossGeo(rng, { r = 0.25, h = 0.08, sx = 1, sz = 1, seg = 8 } = {}) {
+  let g = new THREE.SphereGeometry(1, seg, seg > 8 ? 5 : 4, 0, Math.PI * 2, 0, Math.PI / 2);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -720,26 +865,28 @@ export class Cards {
 // ─── little plants (into a batch or batch frame) ────────────────────────────
 export const FLOWER_COLORS = ['#f2c14e', '#e86a5a', '#f4f0e6', '#b48fd6', '#f29bb8', '#7fa7e0', '#ffd88a'];
 
-/** A small flower (petals + centre) into the vc material at (x, y, z). */
+/**
+ * A small flower into the vc material at (x, y, z): a thin stem, ONE cupped
+ * star of rounded petals and a domed centre (≈ 30 triangles).
+ */
 export function addFlower(F, rng, x, y, z, { color = null, size = 0.06, stem = 0.18 } = {}) {
   const MM = M();
   const c = color ?? rng.pick(FLOWER_COLORS);
   const h = stem * rng.range(0.7, 1.2);
   const lean = [rng.jitter(0.25), 0, rng.jitter(0.25)];
-  F.add(MM.vc, xf(new THREE.CylinderGeometry(0.006, 0.008, h, 3, 1).translate(0, h / 2, 0), [x, y, z], lean), { color: '#4f7a34', cast: false });
+  F.add(MM.vc, xf(new THREE.CylinderGeometry(0.006, 0.008, h, 3, 1, true).translate(0, h / 2, 0), [x, y, z], lean), { color: '#4f7a34', cast: false });
   const tip = new THREE.Vector3(0, h, 0).applyEuler(new THREE.Euler(lean[0], 0, lean[2])).add(new THREE.Vector3(x, y, z));
   const petals = rng.int(4, 5);
-  const rot = rng.next() * TAU;
-  for (let i = 0; i < petals; i++) {
-    const a = rot + (i / petals) * TAU;
-    const pg = new THREE.SphereGeometry(size * 0.5, 4, 2);
-    pg.scale(1, 0.3, 0.55);
-    pg.translate(size * 0.5, 0, 0);
-    pg.rotateY(a);
-    pg.rotateZ(0.25);
-    F.add(MM.vc, pg.translate(tip.x, tip.y, tip.z), { color: c, cast: false });
-  }
-  F.add(MM.vc, new THREE.SphereGeometry(size * 0.28, 4, 2).translate(tip.x, tip.y + size * 0.08, tip.z), { color: '#e8b33a', cast: false });
+  const head = new THREE.CircleGeometry(1, petals * 3);
+  deform(head, (v) => {
+    const a = Math.atan2(v.y, v.x);
+    const r = Math.hypot(v.x, v.y);
+    const k = 0.42 + 0.58 * Math.pow(Math.abs(Math.cos((a * petals) / 2)), 0.55);
+    v.set(v.x * k * size, v.y * k * size, r * r * size * 0.35);
+  });
+  head.rotateX(-Math.PI / 2 + lean[0] * 0.8).rotateZ(lean[2] * 0.8).rotateY(rng.next() * TAU);
+  F.add(MM.vc, head.translate(tip.x, tip.y, tip.z), { color: c, cast: false });
+  F.add(MM.vc, new THREE.ConeGeometry(size * 0.3, size * 0.22, 5, 1).translate(tip.x, tip.y + size * 0.1, tip.z), { color: '#e8b33a', cast: false });
 }
 
 /** A tuft of grass cards at (x, y, z) into `cards` (a Cards set). */
@@ -772,23 +919,23 @@ export function addToadstool(F, rng, x, y, z, { size = 0.12, color = '#c4301f', 
   const MM = M();
   const h = size * rng.range(1.1, 1.8);
   const rx = rng.jitter(lean), rz = rng.jitter(lean), ry = rng.next() * TAU;
-  const stem = new THREE.CylinderGeometry(size * 0.15, size * 0.22, h, 7, 2);
+  const stem = new THREE.CylinderGeometry(size * 0.15, size * 0.22, h, 6, 1, true);
   stem.translate(0, h / 2, 0);
-  const ring = new THREE.CylinderGeometry(size * 0.2, size * 0.24, size * 0.06, 7, 1, true).translate(0, h * 0.78, 0);
+  const ring = new THREE.CylinderGeometry(size * 0.2, size * 0.24, size * 0.06, 6, 1, true).translate(0, h * 0.78, 0);
   const capR = size * rng.range(0.5, 0.62);
-  const cap = new THREE.SphereGeometry(capR, 8, 4, 0, TAU, 0, Math.PI / 2);
+  const cap = new THREE.SphereGeometry(capR, 8, 3, 0, TAU, 0, Math.PI / 2);
   cap.scale(1, rng.range(0.55, 0.85), 1);
   cap.translate(0, h - capR * 0.08, 0);
-  const under = new THREE.CircleGeometry(capR * 0.98, 10).rotateX(Math.PI / 2).translate(0, h - capR * 0.06, 0);
+  const under = new THREE.CircleGeometry(capR * 0.98, 8).rotateX(Math.PI / 2).translate(0, h - capR * 0.06, 0);
   for (const [g, c, m] of [[stem, '#efe5cf', MM.stem], [ring, '#efe5cf', MM.stem], [cap, color, MM.cap], [under, gill, MM.vc]]) {
     xf(g, [x, y, z], [rx, ry, rz]);
     F.add(m, g, { color: c, cast: false });
   }
   if (warts) {
-    const n = rng.int(3, 6);
+    const n = rng.int(3, 5);
     for (let i = 0; i < n; i++) {
       const a = rng.next() * TAU, el = rng.range(0.35, 1.25);
-      const sp = new THREE.IcosahedronGeometry(size * rng.range(0.04, 0.07), 0);
+      const sp = new THREE.OctahedronGeometry(size * rng.range(0.045, 0.075), 0);
       sp.scale(1, 0.45, 1);
       const rr = capR;
       const cy = Math.sin(el) * rr * 0.7;
@@ -860,6 +1007,21 @@ export function plantGrass(F, rng, x, y, z, opts = {}) {
   const c = new Cards();
   addGrass(c, rng, x, y, z, opts);
   flushCards(F, c, opts.material ?? M().grass, new THREE.Vector3(x, y - 0.05, z), 0.6);
+}
+
+/**
+ * A little fern sprouting from a wall joint at `p` ([x,y,z]): its fronds fan
+ * out around `out` (the wall normal, tipped up) and arch down over the stones.
+ */
+export function wallFern(F, rng, p, out, { size = 0.32, fronds = 6 } = {}) {
+  const c = new Cards();
+  addFern(c, rng, 0, 0, 0, { size, fronds, tilt: 1.15 });
+  const g = c.geometry();
+  const axis = new THREE.Vector3(out[0], out[1], out[2]).normalize().multiplyScalar(0.8).add(new THREE.Vector3(0, 0.6, 0)).normalize();
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis));
+  g.translate(p[0], p[1], p[2]);
+  materials.foliageNormals(g, new THREE.Vector3(p[0], p[1] + size * 0.15, p[2]).addScaledVector(axis, size * 0.2), 0.7);
+  F.add(M().fern, g, { cast: false });
 }
 
 /** Random helpers. */

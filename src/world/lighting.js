@@ -11,7 +11,10 @@
 //                          becomes the moonlight (blue-lavender, back-right).
 //   hemi HemisphereLight   cool blue-green sky fill / warm mossy ground bounce.
 //   rim  DirectionalLight  faint cool light from the back-right that separates
-//                          the shaded sides from the misty background.
+//                          the shaded sides from the misty background; by
+//                          night a stronger, low cool moon-rim from the
+//                          back-left so the giant trunks, caps and the oak
+//                          keep a silvered edge against the night mist.
 //   scene.environment      a painted "under the canopy" PMREM (env/envmap.js) so
 //                          PBR surfaces get soft teal-green ambient and gentle
 //                          reflections; swapped for a night version at dusk.
@@ -44,17 +47,18 @@ const DAY = {
 };
 const NIGHT = {
   key: new THREE.Color('#a9b6ff'),
-  keyI: 1.7,
-  hemiSky: new THREE.Color('#34587f'),
-  hemiGround: new THREE.Color('#16232a'),
-  hemiI: 0.9,
-  rim: new THREE.Color('#5f86c8'),
-  rimI: 0.35,
-  envI: 0.45,
+  keyI: 2.05,
+  hemiSky: new THREE.Color('#3a6290'),
+  hemiGround: new THREE.Color('#18262e'),
+  hemiI: 1.0,
+  rim: new THREE.Color('#8fb4ec'),
+  rimI: 0.95,
+  envI: 0.56,
 };
 
 const RIM_DAY_DIR = dirFromAngles(24, 70);
-const RIM_NIGHT_DIR = dirFromAngles(30, 250);
+/** Night rim: low from the back-left, opposite the moon (back-right). */
+const RIM_NIGHT_DIR = dirFromAngles(16, 318);
 /** Centre of the fixed shadow frustum (the middle of the glen). */
 const SHADOW_CENTER = new THREE.Vector3(0, 3, -1);
 /** Half size of the fixed shadow frustum (light-space units). */

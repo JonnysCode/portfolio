@@ -11,6 +11,15 @@
 //   gills  materials.surface('gills', vertexColors)        radial lamellae under each cap
 //   warts  raised white spots (cream, rough)
 //   glow   bioluminescent caps (materials.glow — faint by day, teal at night)
+//   glowgills / glowwarts  enchanted fly agarics: the gills (and, faintly,
+//          the spots) glow soft mint at night — clones of the gills / wart
+//          materials with an emissive that follows ctx.env.night
+//          (updateMushroomGlow), near-invisible by day
+// Kits can share their cheap parts (gills, warts, glow …): new MushroomKit(rng,
+// { share: otherKit }) — the sharing kit then only emits caps & stems, so a
+// whole family of kits costs caps + stems per kit + one draw per shared part.
+// opts.lod (0.5..1) on every mushroom thins segments, rings and warts for
+// mushrooms that no camera ever sees up close.
 //
 // kit.amanita(x, y, z, opts)    fly agaric: bulbous volva, skirt ring, dome /
 //                               cone / flat cap, gills, raised warts
@@ -84,9 +93,8 @@ function lathe(B, F, profile, seg, { wob = null, color = null, flip = false, dis
 }
 
 /** A low-poly lumpy wart, flattened along the normal. */
-function wart(B, p, n, size, color, rng) {
+function wart(B, p, n, size, color, rng, seg = 5) {
   const F = frameFor(p, n);
-  const seg = 5;
   const base = B.count;
   const top = p.clone().addScaledVector(F.y, size * rng.range(0.3, 0.5)); // flattish flakes, not cones
   B.vert(top.x, top.y, top.z, F.y.x, F.y.y, F.y.z, 0.5, 0.5, color);
@@ -105,15 +113,52 @@ const C = (hex) => new THREE.Color(hex);
 export const CAP_REDS = ['#c4301f', '#cc3a20', '#b82a1c', '#d2481f', '#c83a28'];
 export const CAP_BROWNS = ['#a8653b', '#b07848', '#8c5634', '#b08a5a', '#c08a48'];
 
+// ─── night glow (enchanted gills & spots) ────────────────────────────────────
+const glowSets = new WeakMap();
+/** The cloned, night-driven materials for glowing gills & spots (one set per materials library). */
+export function mushroomGlowMaterials(ctx) {
+  const M = ctx.materials;
+  let set = glowSets.get(M);
+  if (set) return set;
+  const gills = M.surface('gills', { vertexColors: true }).clone();
+  gills.name = 'gills-glow';
+  gills.emissive = new THREE.Color('#86ecc4');
+  const warts = M.standard('#f3eada', { roughness: 0.9, vertexColors: true }).clone();
+  warts.name = 'warts-glow';
+  warts.emissive = new THREE.Color('#e4ffd8');
+  set = {
+    gills,
+    warts,
+    levels: [
+      [gills, 0.03, 1.15],
+      [warts, 0.0, 0.42],
+    ],
+  };
+  glowSets.set(M, set);
+  updateMushroomGlow(ctx, 0);
+  return set;
+}
+/** Follow the day/night cycle (call every frame; cheap). */
+export function updateMushroomGlow(ctx, night) {
+  const set = glowSets.get(ctx.materials);
+  if (!set) return;
+  const k = THREE.MathUtils.smoothstep(night, 0.1, 0.85);
+  for (const [m, day, nightI] of set.levels) m.emissiveIntensity = day + (nightI - day) * k;
+}
+
 export class MushroomKit {
-  constructor(rng) {
+  /** shared: another kit whose gills, warts and glow builders this kit writes into. */
+  constructor(rng, { share = null } = {}) {
     this.rng = rng;
     this.caps = new GeoBuilder();
     this.stems = new GeoBuilder();
-    this.gills = new GeoBuilder();
-    this.warts = new GeoBuilder();
-    this.glow = new GeoBuilder();
-    this.glowPoints = [];
+    this.shared = !!share;
+    this.gills = share ? share.gills : new GeoBuilder();
+    this.warts = share ? share.warts : new GeoBuilder();
+    this.glow = share ? share.glow : new GeoBuilder();
+    this.glowGills = share ? share.glowGills : new GeoBuilder();
+    this.glowWarts = share ? share.glowWarts : new GeoBuilder();
+    this.glowPoints = share ? share.glowPoints : [];
   }
 
   /**
@@ -126,9 +171,12 @@ export class MushroomKit {
     const R = opts.capR ?? H * 0.55;
     const shape = opts.shape ?? 'dome';
     const capCol = C(opts.color ?? rng.pick(CAP_REDS));
-    // (resolution follows size: giants are seen up close, buttons only as dots of colour)
-    const seg = opts.seg ?? (H > 1.2 ? 26 : H > 0.6 ? 16 : H > 0.3 ? 11 : 7);
-    const rings = H > 1.2 ? 9 : H > 0.4 ? 5 : 3;
+    // (resolution follows size: giants are seen up close, buttons only as dots
+    //  of colour — and opts.lod thins whatever no lens ever comes close to)
+    const lod = THREE.MathUtils.clamp(opts.lod ?? 1, 0.4, 1);
+    const seg = Math.max(6, Math.round((opts.seg ?? (H > 1.2 ? 24 : H > 0.6 ? 15 : H > 0.3 ? 10 : 7)) * lod));
+    const sseg = Math.max(5, Math.round(seg * (H > 1.2 ? 0.75 : 0.7)));
+    const rings = Math.max(2, (H > 1.2 ? 8 : H > 0.4 ? 4 : 2) - (lod < 0.75 ? 1 : 0));
     const leanAz = opts.leanAz ?? rng.range(0, TAU);
     const lean = opts.lean ?? rng.range(0, 0.12);
     const sink = opts.sink ?? H * 0.06;
@@ -163,8 +211,8 @@ export class MushroomKit {
         const t = k / rings;
         // darker, earthy foot
         const foot = 0.62 + 0.38 * Math.min(1, t * 4);
-        for (let i = 0; i <= seg; i++) {
-          const th = (i / seg) * TAU;
+        for (let i = 0; i <= sseg; i++) {
+          const th = (i / sseg) * TAU;
           // vertical fibres & snakeskin streaks, warmer and earthier towards the foot
           const streak = 1 - 0.16 * Math.max(0, Math.sin(th * 5 + phase) * Math.sin(th * 3 - phase * 2 + t * 3));
           const c = stemCol.clone().multiplyScalar(foot * streak);
@@ -175,11 +223,11 @@ export class MushroomKit {
           const cx = Math.cos(th), sx = Math.sin(th);
           _p.copy(p).addScaledVector(F.x, cx * r).addScaledVector(F.z, sx * r);
           _n.set(0, 0, 0).addScaledVector(F.x, cx).addScaledVector(F.z, sx).normalize();
-          B.vert(_p.x, _p.y, _p.z, _n.x, _n.y, _n.z, i / seg, t * Math.max(1, H * 0.8), c);
+          B.vert(_p.x, _p.y, _p.z, _n.x, _n.y, _n.z, i / sseg, t * Math.max(1, H * 0.8), c);
         }
       }
-      const row = seg + 1;
-      for (let k = 0; k < rings; k++) for (let i = 0; i < seg; i++) {
+      const row = sseg + 1;
+      for (let k = 0; k < rings; k++) for (let i = 0; i < sseg; i++) {
         const a = base + k * row + i;
         B.quad(a, a + row, a + row + 1, a + 1);
       }
@@ -201,7 +249,7 @@ export class MushroomKit {
         { r: vr * 0.98, y: -H * 0.015, v: 0 },
         { r: vr * 1.12, y: H * 0.012, v: 0.5 },
         { r: vr * 0.96, y: H * 0.03, v: 1 },
-      ], seg, { wob: (th) => 1 + 0.08 * Math.sin(th * 9 + phase), color: () => stemCol.clone().multiplyScalar(0.92) });
+      ], sseg, { wob: (th) => 1 + 0.08 * Math.sin(th * 9 + phase), color: () => stemCol.clone().multiplyScalar(0.92) });
     }
     // the skirt (annulus) hanging below the cap
     if (opts.ring ?? H > 0.6) {
@@ -216,18 +264,18 @@ export class MushroomKit {
         { r: r0 * 1.28, y: -drop * 0.35, v: 0.4 },
         { r: r0 * 1.42, y: -drop * 0.8, v: 0.8 },
         { r: r0 * 1.38, y: -drop, v: 1 },
-      ], seg, { wob: skirtWob, color: (k) => C('#f2e8d4').multiplyScalar(1 - k * 0.04) });
+      ], sseg, { wob: skirtWob, color: (k) => C('#f2e8d4').multiplyScalar(1 - k * 0.04) });
       // underside of the skirt (so it is not paper-thin from below)
       lathe(this.stems, RF, [
         { r: r0 * 0.98, y: -drop * 0.12, v: 0 },
         { r: r0 * 1.3, y: -drop * 0.85, v: 0.8 },
         { r: r0 * 1.34, y: -drop * 1.02, v: 1 },
-      ], seg, { flip: true, wob: skirtWob, color: () => C('#cbbb9c') });
+      ], sseg, { flip: true, wob: skirtWob, color: () => C('#cbbb9c') });
     }
 
     // cap profile: rim (v = 0) → apex (v = 1)
     const capH = shape === 'cone' ? R * rng.range(1.0, 1.35) : shape === 'flat' ? R * rng.range(0.22, 0.32) : R * rng.range(0.5, 0.68);
-    const n = H > 1.2 ? 9 : H > 0.6 ? 7 : H > 0.3 ? 5 : 4;
+    const n = Math.max(3, Math.round((H > 1.2 ? 9 : H > 0.6 ? 6 : H > 0.3 ? 4 : 3) * (0.6 + 0.4 * lod)));
     const prof = [];
     // the rim rolls under a little
     prof.push({ r: R * 0.93, y: -R * 0.045, v: 0 });
@@ -264,18 +312,21 @@ export class MushroomKit {
     // (some giants are bioluminescent: their gills glow softly at night)
     // (the gills face the ground and sit in the cap's shadow: painted lighter
     //  than white so they read warm cream like the references, not black)
-    const gillCol = C(opts.gillColor ?? '#f6ead2').multiplyScalar(opts.glowGills ? 1 : 1.7);
-    lathe(opts.glowGills ? this.glow : this.gills, F, gProf, seg, { flip: true, disc: R, wob: (th, k) => (k === 0 ? capWob(th, 0) : 1), color: () => gillCol });
+    // (enchanted ones glow soft mint at night: gills → the night-glow gill material)
+    const gillCol = C(opts.gillColor ?? '#f6ead2').multiplyScalar(1.7);
+    lathe(opts.glowGills ? this.glowGills : this.gills, F, gProf, seg, { flip: true, disc: R, wob: (th, k) => (k === 0 ? capWob(th, 0) : 1), color: () => gillCol });
     if (opts.glowGills) {
-      const under = F.o.clone().addScaledVector(F.y, -R * 0.25);
-      this.glowPoints.push({ x: under.x, y: under.y, z: under.z, size: R * 1.6 });
+      const under = F.o.clone().addScaledVector(F.y, -R * 0.3);
+      this.glowPoints.push({ x: under.x, y: under.y, z: under.z, size: R * (opts.haloK ?? 1.5) });
     }
 
     // raised warts, denser towards the top, following the cap surface
     const density = opts.warts ?? 1;
     // (bold enough to read from across the glen: a few big flakes, many small spots)
-    const nW = Math.round(density * (H > 1 ? 120 : H > 0.4 ? 28 : 8) * Math.min(2.2, R / Math.max(0.05, H * 0.5)));
+    const nW = Math.round(density * (H > 1 ? 112 : H > 0.4 ? 24 : 6) * Math.min(2.2, R / Math.max(0.05, H * 0.5)) * (0.5 + 0.5 * lod));
     const wartCol = C('#f5ecd8');
+    const wartB = opts.glowSpots ? this.glowWarts : this.warts;
+    const wartSeg = H > 1 && lod > 0.75 ? 5 : 4;
     for (let i = 0; i < nW; i++) {
       // pick a profile position (area-weighted towards the rim, but keep the apex covered)
       const t = Math.pow(rng.next(), 0.75) * 0.92;
@@ -292,7 +343,7 @@ export class MushroomKit {
       const l = Math.hypot(dr, dy) || 1;
       const nn = new THREE.Vector3().addScaledVector(F.x, c * (dy / l)).addScaledVector(F.z, s * (dy / l)).addScaledVector(F.y, -dr / l).normalize();
       const size = R * (rng.chance(0.3) ? rng.range(0.075, 0.125) : rng.range(0.035, 0.065)) * (1 - t * 0.25);
-      wart(this.warts, p, nn, size, wartCol.clone().multiplyScalar(rng.range(0.88, 1.02)), rng);
+      wart(wartB, p, nn, size, wartCol.clone().multiplyScalar(rng.range(0.88, 1.02)), rng, wartSeg);
     }
     return { top, capR: R, capTop: top.y + capH };
   }
@@ -412,7 +463,11 @@ export class MushroomKit {
     }
   }
 
-  /** Emit the meshes (skips empty parts). */
+  /**
+   * Emit the meshes (skips empty parts). A kit that shares another kit's
+   * parts only emits its caps & stems (the owner emits the shared parts —
+   * build the sharing kits FIRST, or their shared geometry is missed).
+   */
   build(ctx, name, { cast = false } = {}) {
     const M = ctx.materials;
     const out = [];
@@ -424,9 +479,15 @@ export class MushroomKit {
     };
     add(this.caps, M.surface('mushroomCap', { vertexColors: true }), 'caps');
     add(this.stems, M.surface('mushroomStem', { vertexColors: true }), 'stems');
+    if (this.shared) return out;
     add(this.gills, M.surface('gills', { vertexColors: true }), 'gills', false);
     add(this.warts, M.standard('#f3eada', { roughness: 0.9, vertexColors: true }), 'warts', false);
     add(this.glow, M.glow('#8ff5d6', { day: 0.12, night: 1.25 }), 'glowcaps', false);
+    if (this.glowGills.count || this.glowWarts.count) {
+      const G = mushroomGlowMaterials(ctx);
+      add(this.glowGills, G.gills, 'glowgills', false);
+      add(this.glowWarts, G.warts, 'glowwarts', false);
+    }
     return out;
   }
 }

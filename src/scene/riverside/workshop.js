@@ -27,10 +27,11 @@ import * as THREE from 'three';
 import { RIVERSIDE } from '../../world/layout.js';
 import { getHeight, getPathDistance, isInWater } from '../../world/ground.js';
 import {
-  Batch, M, TAU, WOOD, IRON, xf, mat4, deform, blockStone, stoneGeo, mossGeo, paramSurface, arcSegment, board, boardBetween, rod, tube,
+  Batch, M, TAU, WOOD, IRON, xf, mat4, deform, stoneGeo, mossGeo, paramSurface, board, boardBetween, rod, tube,
   Cards, plantFern, plantGrass, addFlower, addToadstool, addIvy, flushCards, uvPlanar, noiseA, noiseB, smooth01, sagCurve,
+  cushionStone, roundStone, archStone, stoneTint, wallFern, paint, paintFn, taperTube, DRESSED_TINTS, MORTAR,
 } from './kit.js';
-import { makeBike, makeWheel } from './bike.js';
+import { makeBike, makeWheel, makeBareFrame } from './bike.js';
 import { makePuffs } from './puffs.js';
 
 // ── dimensions ──
@@ -102,54 +103,68 @@ export function buildWorkshop(ctx, B, rng, halos) {
     const d = Math.abs(Math.atan2(Math.sin(phi - w.phi), Math.cos(phi - w.phi))) * wallR(y);
     return d < w.r + half + 0.04 && Math.abs(y - w.y) < w.r + 0.14;
   });
-  const WALL_TINTS = ['#a99c84', '#9b9585', '#b4a283', '#8f897b', '#a59176', '#8a8a80', '#b8a98a', '#9a8c74', '#7f8470', '#a0937a'];
+  // rough fieldstones laid course by course: each one an irregular cushion
+  // bulging out of dark, mossy mortar (bent around the drum), every stone its
+  // own value & hue; moss cushions on the ledges and little ferns in the joints
+  const wallFerns = [];
   {
     let y = -0.1;
     let row = 0;
     while (y < WALL_TOP - 0.05) {
-      const hc = Math.min(rng.range(0.15, 0.24), WALL_TOP - y);
+      const hc = Math.min(rng.range(0.17, 0.27), WALL_TOP - y);
       const yc = y + hc / 2;
       const r = wallR(yc);
-      let phi = rng.next() * 0.3 + row * 0.37;
+      let phi = rng.next() * 0.3 + row * 0.41;
       const end = phi + TAU;
       while (phi < end - 0.05) {
         // mostly modest stones, now and then a big one or a pair of small ones
-        const big = rng.chance(0.12);
-        const len = big ? rng.range(0.45, 0.62) : rng.range(0.22, 0.42);
+        const big = rng.chance(0.14);
+        const len = Math.min(big ? rng.range(0.5, 0.7) : rng.range(0.26, 0.48), (end - phi) * r + 0.02);
         const dphi = len / r;
         const pc = phi + dphi / 2;
-        phi += dphi + 0.012 / r;
+        phi += dphi;
         const x = Math.sin(pc) * r, z = Math.cos(pc) * r;
         if (z > 0 && clashesOpening(x, len, y, y + hc)) continue;
         if (nearWindow(pc, yc, len / 2)) continue;
-        const d = rng.range(0.16, 0.22);
-        const h = (big ? hc * rng.range(1.0, 1.25) : hc) - 0.025;
-        const g = blockStone(rng, len - 0.03, h, d, 0.2);
-        // follow the bulge (tilt) and sit just proud of the mortar
+        // follow the bulge (lean back) and hug the curve of the drum
         const slope = (wallR(yc + 0.05) - wallR(yc - 0.05)) / 0.1;
-        xf(g, [0, 0, 0], [-Math.atan(slope) + rng.jitter(0.05), 0, rng.jitter(0.06)]);
-        const out = d / 2 - 0.035 + rng.range(0, 0.025);
-        xf(g, [x * (1 - out / r), yc + rng.jitter(0.012), z * (1 - out / r)], [0, pc + rng.jitter(0.03), 0]);
-        // greener, damper stones towards the foot
-        const c = yc < 0.5 && rng.chance(0.6) ? rng.pick(['#7f8466', '#77805c', '#868a6c']) : rng.pick(WALL_TINTS);
-        F.add(MM.wallStone, g, { color: c, cast: row % 3 === 0 });
-        // a cushion of moss on some ledges
-        if (rng.chance(yc < 1 ? 0.16 : 0.07)) {
-          const m = mossGeo(rng, { r: rng.range(0.06, 0.12), h: 0.035, sx: 1.6, sz: 0.7 });
-          xf(m, [x * (1 + 0.05 / r), yc + h / 2 - 0.01, z * (1 + 0.05 / r)], [0, pc + Math.PI / 2, 0]);
+        const pair = !big && hc > 0.2 && rng.chance(0.12);
+        const parts = pair ? [[-hc / 4, hc / 2], [hc / 4, hc / 2]] : [[0, big ? Math.min(hc * rng.range(1.0, 1.2), hc + 0.04) : hc]];
+        for (const [dy, hh] of parts) {
+          const g = cushionStone(rng, len - 0.04, hh - 0.04, rng.range(0.045, 0.085), {
+            // greener, damper stones towards the foot
+            color: yc < 0.55 && rng.chance(0.5) ? stoneTint(rng, ['#717559', '#6a7352', '#7a7b62']) : stoneTint(rng),
+            segs: len > 0.45 ? 12 : 10,
+          });
+          g.rotateX(-Math.atan(slope) + rng.jitter(0.05));
+          g.rotateZ(rng.jitter(0.06));
+          const rr = r - 0.02;
+          const y0 = yc + dy + rng.jitter(0.012);
+          deform(g, (v) => {
+            const a = pc + v.x / rr, R = rr + v.z;
+            v.set(Math.sin(a) * R, y0 + v.y, Math.cos(a) * R);
+          });
+          F.add(MM.wallStone, g);
+        }
+        // a cushion of moss on some ledges, more of it low down
+        if (rng.chance(yc < 1 ? 0.2 : 0.08)) {
+          const m = mossGeo(rng, { r: rng.range(0.06, 0.13), h: 0.04, sx: 1.7, sz: 0.6, seg: 7 });
+          xf(m, [x * (1 + 0.035 / r), yc + hc / 2 - 0.02, z * (1 + 0.035 / r)], [0, pc + Math.PI / 2, 0]);
           F.add(MM.moss, m, { color: rng.pick(['#6f8f3a', '#5d7d30', '#7f9a44']), cast: false });
         }
+        if (yc > 0.3 && yc < 2.5 && rng.chance(0.012)) wallFerns.push([pc, yc + hc / 2]);
       }
-      y += hc + 0.004;
+      y += hc;
       row++;
     }
   }
-  // mortar shell behind the stones + whitewashed interior + the wall top
+  // the mortar behind the stones (dark, damp, mossy — every joint reads as a
+  // shadowed groove) + whitewashed interior
   const aOpen = (y) => {
     const hw = openingHalf(y);
     return hw > 0 ? Math.asin(Math.min(0.999, (hw + 0.02) / wallR(Math.max(0, y)))) : 0;
   };
-  const shell = (inset, color, mat, inside) => {
+  const shell = (inset, mat, inside, colorize) => {
     const g = paramSurface(
       (u, v, p) => {
         const y = -0.1 + (1 - v) * (WALL_TOP + 0.1);
@@ -158,14 +173,21 @@ export function buildWorkshop(ctx, B, rng, halos) {
         const r = wallR(Math.max(0, y)) - inset;
         p.set(Math.sin(phi) * r, y, Math.cos(phi) * r);
       },
-      64,
-      36,
+      52,
+      inside ? 24 : 22,
       { uv: (u, v, p) => [Math.atan2(p.x, p.z) * 0.9, p.y / 2], flip: inside }
     );
-    F.add(mat, g, { color, cast: !inside });
+    colorize(g);
+    F.add(mat, g, { cast: false });
   };
-  shell(0.08, '#6f685c', MM.stone, false);
-  shell(WALL_T, '#efe4cf', MM.plaster, true);
+  const mortarDark = new THREE.Color(MORTAR), mortarMoss = new THREE.Color('#3c5021');
+  shell(0.055, MM.moss, false, (g) =>
+    paintFn(g, MORTAR, (x, y, z, i, c) => {
+      const k = smooth01(0.25 + noiseA(x * 1.7 + z * 1.3, y * 2.2) * 0.8 - y * 0.25);
+      c.copy(mortarDark).lerp(mortarMoss, k);
+    })
+  );
+  shell(WALL_T, MM.plaster, true, (g) => paint(g, '#efe4cf'));
   // the reveal of the arched opening (jambs + soffit), from the outer face to the inner one
   {
     // outline: up the left jamb, over the arch, down the right jamb
@@ -189,7 +211,9 @@ export function buildWorkshop(ctx, B, rng, halos) {
       2,
       { uv: (u, v, p) => [p.z * 0.6, u * 4] }
     );
-    F.add(MM.plaster, reveal, { color: '#d8ccb4', cast: false });
+    // dressed stone, darker towards the inside
+    paintFn(reveal, '#958a74', (x, y, z, i, c) => c.multiplyScalar(0.62 + 0.38 * smooth01((z - 1.6) / 0.3)));
+    F.add(MM.stone, reveal, { cast: false });
   }
   // quoins: alternating long & short dressed blocks up both jambs
   for (const sx of [-1, 1]) {
@@ -198,12 +222,12 @@ export function buildWorkshop(ctx, B, rng, halos) {
     while (y < SPRING_Y - 0.05) {
       const h = Math.min(rng.range(0.25, 0.3), SPRING_Y - y);
       const long = k % 2 === 0;
-      const w = long ? 0.4 : 0.27;
+      const w = long ? 0.42 : 0.29;
       const xc = sx * (OPEN_HALF + w / 2 - 0.01);
       const zo = zFront(Math.abs(xc), y + h / 2);
-      const g = blockStone(rng, w, h - 0.02, 0.32, 0.1);
-      xf(g, [xc, y + h / 2, zo - 0.12], [0, Math.asin(Math.min(0.99, xc / wallR(y + h / 2))) * 0.6, 0]);
-      F.add(MM.stone, g, { color: rng.pick(['#c7b892', '#bfae8c', '#cdbd99']) });
+      const g = roundStone(rng, w - 0.03, h - 0.035, 0.34, { color: stoneTint(rng, DRESSED_TINTS, 0.7), box: 0.3, under: 0.25 });
+      xf(g, [xc, y + h / 2, zo - 0.13], [rng.jitter(0.03), Math.asin(Math.min(0.99, xc / wallR(y + h / 2))) * 0.6, rng.jitter(0.03)]);
+      F.add(MM.stone, g);
       y += h;
       k++;
     }
@@ -214,18 +238,24 @@ export function buildWorkshop(ctx, B, rng, halos) {
     for (let i = 0; i < NV; i++) {
       const a0 = Math.PI - (i / NV) * Math.PI, a1 = Math.PI - ((i + 1) / NV) * Math.PI;
       const key = i === (NV - 1) / 2;
-      const r1 = OPEN_HALF + ARCH_RING * rng.range(0.92, 1.08) + (key ? 0.1 : 0);
-      const seg = arcSegment(OPEN_HALF + 0.01, r1, a1 + 0.012, a0 - 0.012, 0.34, 2, 0.02);
+      const r1 = OPEN_HALF + ARCH_RING * rng.range(0.92, 1.1) + (key ? 0.12 : 0);
+      const seg = archStone(rng, OPEN_HALF - 0.01, r1, a1 + 0.02, a0 - 0.02, 0.36, { color: key ? '#c4ae84' : stoneTint(rng, DRESSED_TINTS, 0.7), box: 0.34 });
       const am = (a0 + a1) / 2;
       const xm = Math.cos(am) * (OPEN_HALF + 0.15), ym = SPRING_Y + Math.sin(am) * (OPEN_HALF + 0.15);
       const zo = zFront(Math.abs(xm), ym);
-      seg.translate(0, SPRING_Y, zo - 0.14 + (key ? 0.04 : 0));
-      F.add(MM.stone, seg, { color: key ? '#d8c9a4' : rng.pick(['#c7b892', '#bfae8c', '#cdbd99', '#c2b08c']) });
+      seg.translate(0, SPRING_Y, zo - 0.13 + (key ? 0.04 : 0));
+      F.add(MM.stone, seg);
     }
     // a worn stone threshold
-    const sill = blockStone(rng, OPEN_HALF * 2 + 0.36, 0.12, 0.62, 0.05);
+    const sill = roundStone(rng, OPEN_HALF * 2 + 0.36, 0.14, 0.62, { color: '#8f8676', box: 0.28, sag: -0.04 });
     xf(sill, [0, 0.0, zFront(0.6, 0) - 0.12]);
-    F.add(MM.stone, sill, { color: '#a59d8c' });
+    F.add(MM.stone, sill);
+  }
+  // little ferns sprouting from the joints, ivy-free spots only
+  for (const [pc, y] of wallFerns) {
+    const r = wallR(y) + 0.02;
+    if (Math.cos(pc) * r > 0 && Math.abs(Math.sin(pc) * r) < OPEN_HALF + 0.5) continue;
+    wallFern(F, rng, [Math.sin(pc) * r, y, Math.cos(pc) * r], [Math.sin(pc), 0, Math.cos(pc)], { size: rng.range(0.22, 0.34) });
   }
 
   // ── windows (frames, mullions, glowing panes, sills, flower boxes) ───────
@@ -242,9 +272,9 @@ export function buildWorkshop(ctx, B, rng, halos) {
       // voussoir ring around it
       for (let i = 0; i < 11; i++) {
         const a = (i / 11) * TAU;
-        const g = blockStone(rng, 0.16, 0.12, 0.2, 0.1);
-        xf(g, [Math.sin(a) * (w.r + 0.12), Math.cos(a) * (w.r + 0.12), 0], [0, 0, -a]);
-        W.add(MM.stone, g, { color: rng.pick(['#c7b892', '#bfae8c']), cast: false });
+        const g = cushionStone(rng, 0.17, 0.13, 0.06, { color: stoneTint(rng, DRESSED_TINTS, 0.7), segs: 8 });
+        xf(g, [Math.sin(a) * (w.r + 0.12), Math.cos(a) * (w.r + 0.12), 0.0], [0, 0, -a]);
+        W.add(MM.stone, g, { cast: false });
       }
     } else {
       const s = w.r;
@@ -260,7 +290,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
         sh.translate(sx * s * 0.95, 0, 0.02);
         W.add(MM.wood, sh, { color: '#4f7a86' });
       }
-      W.add(MM.stone, blockStone(rng, s * 2.4, 0.08, 0.22, 0.06).translate(0, -s - 0.08, 0.06), { color: '#b8ab90' });
+      W.add(MM.stone, roundStone(rng, s * 2.4, 0.09, 0.24, { color: stoneTint(rng, DRESSED_TINTS, 0.6), box: 0.3 }).translate(0, -s - 0.08, 0.06));
     }
     // window boxes with flowers under the square window
     if (w.kind === 'square') {
@@ -338,74 +368,296 @@ export function buildWorkshop(ctx, B, rng, halos) {
     halos.push({ ...toWorld(0.15, 2.18, 0.35), size: 1.1 });
   }
 
-  // ── interior: workbench, pegboard, shelves, hanging bike & wheels ─────────
+  // ── interior: a real tiny bike shop, packed into what the open doors show ──
+  // (from the yard the doorway frames the back wall: the workbench with a frame
+  // in its jig under a pegboard full of tools, a bike up on a wall hook, tyres
+  // on a peg, a parts shelf of jars, a worn rug with the shop cat asleep on it)
   {
-    const zb = -(rIn(0.9) - 0.42);
-    const top = 0.74;
+    const top = 0.78; // bench top
+    const bx = 0.15; // bench centre (x) — the wall-hook bike stands left of it
+    const BW = 1.5;
+    const zb = -(rIn(0.9) - 0.4);
     // bench top (thick, two boards), legs, stretchers, lower shelf
-    for (const dz of [-0.13, 0.13]) F.add(MM.wood, board(1.7, 0.07, 0.26, { rng }).translate(0, top, zb + dz), { color: WOOD.oak });
-    for (const lx of [-0.75, 0.75]) for (const lz of [-0.22, 0.22]) F.add(MM.wood, board(0.08, top - 0.03, 0.08, { along: 'y', rng }).translate(lx, (top - 0.03) / 2, zb + lz), { color: WOOD.oakLight });
-    F.add(MM.wood, board(1.55, 0.04, 0.46, { rng }).translate(0, 0.2, zb), { color: WOOD.oakLight, cast: false });
-    // vice on the left end
-    F.add(MM.metal, new THREE.BoxGeometry(0.14, 0.12, 0.18).translate(-0.72, top + 0.09, zb + 0.2), { color: '#3f5f73', cast: false });
-    F.add(MM.metal, rod([-0.72, top + 0.08, zb + 0.29], [-0.72, top + 0.08, zb + 0.42], 0.012, 0.012, 6), { color: '#c9cdd0', cast: false });
-    // boxes, cans, a wheel lying on the bench, a lamp
-    F.add(MM.vc, new THREE.BoxGeometry(0.26, 0.14, 0.18).translate(0.5, top + 0.11, zb - 0.02), { color: '#b03a2e', cast: false });
-    F.add(MM.vc, new THREE.CylinderGeometry(0.05, 0.05, 0.13, 10).translate(0.18, top + 0.1, zb + 0.08), { color: '#d9a441', cast: false });
-    F.add(MM.vc, new THREE.CylinderGeometry(0.035, 0.04, 0.16, 10).translate(0.3, top + 0.12, zb + 0.12), { color: '#3f6b5a', cast: false });
-    makeWheel({ style: 'road', batch: F, matrix: mat4([-0.2, top + 0.06, zb], [Math.PI / 2, 0, 0.3]), scale: 0.55, lite: true });
+    for (const dz of [-0.13, 0.13]) F.add(MM.wood, board(BW, 0.07, 0.26, { rng }).translate(bx, top - 0.035, zb + dz), { color: WOOD.oak });
+    for (const lx of [-BW / 2 + 0.07, BW / 2 - 0.07]) for (const lz of [-0.2, 0.2]) F.add(MM.wood, board(0.08, top - 0.07, 0.08, { along: 'y', rng }).translate(bx + lx, (top - 0.07) / 2, zb + lz), { color: WOOD.oakLight });
+    F.add(MM.wood, board(0.72, 0.04, 0.46, { rng }).translate(bx + 0.34, 0.2, zb), { color: WOOD.oakLight, cast: false });
+    // vice on the right end
+    const vx = bx + BW / 2 - 0.12;
+    F.add(MM.glossy, new THREE.BoxGeometry(0.14, 0.12, 0.18).translate(vx, top + 0.06, zb + 0.2), { color: '#3f5f73', cast: false });
+    F.add(MM.metal, rod([vx, top + 0.05, zb + 0.29], [vx, top + 0.05, zb + 0.42], 0.012, 0.012, 6), { color: '#c9cdd0', cast: false });
+    F.add(MM.metal, rod([vx - 0.07, top + 0.05, zb + 0.42], [vx + 0.07, top + 0.05, zb + 0.42], 0.008, 0.008, 4), { color: '#c9cdd0', cast: false });
+
+    // the frame jig: a steel rail on the bench, posts with blue clamps holding
+    // a half-built steel frame upright (brass fillets at the joints)
+    {
+      const fs = 0.72;
+      const fx = bx - 0.12, fy = top + 0.16 - 0.275 * fs, fz = zb + 0.02;
+      const k = makeBareFrame({ batch: F, matrix: mat4([fx, fy, fz]), scale: fs });
+      const at = (p) => [fx + p.x, fy + p.y, fz + p.z];
+      const bbP = at(k.bb), htP = at(k.htBot), stP = at(k.stTop), rP = at(k.rear);
+      F.add(MM.metal, new THREE.BoxGeometry(0.86, 0.045, 0.09).translate(fx + 0.02, top + 0.022, fz), { color: '#5a6066', cast: false });
+      const JIG = '#2f6f8f';
+      for (const [p, dz] of [[bbP, 0], [htP, 0], [stP, 0], [rP, 0.04]]) {
+        F.add(MM.glossy, rod([p[0], top + 0.04, fz + dz], [p[0], p[1] - 0.02, fz + dz], 0.016, 0.014, 6), { color: JIG, cast: false });
+        F.add(MM.glossy, new THREE.BoxGeometry(0.06, 0.05, 0.07).translate(p[0], p[1] - 0.01, fz + dz), { color: JIG, cast: false });
+        F.add(MM.metal, rod([p[0], p[1] - 0.01, fz + dz + 0.035], [p[0], p[1] - 0.01, fz + dz + 0.09], 0.006, 0.006, 4), { color: '#c9cdd0', cast: false });
+      }
+      // a brazing torch lying on the bench, hoses down to the gas bottles below
+      const tp = [bx + 0.38, top + 0.02, zb + 0.16];
+      F.add(MM.metal, rod(tp, [tp[0] + 0.2, tp[1] + 0.01, tp[2] - 0.04], 0.012, 0.008, 6), { color: '#c9a24a', cast: false });
+      F.add(MM.vc, tube([[tp[0] - 0.01, tp[1], tp[2]], [tp[0] - 0.12, tp[1] - 0.02, tp[2] + 0.12], [bx - 0.42, 0.62, zb + 0.24], [bx - 0.5, 0.58, zb + 0.06]], 0.008, 4, 14), { color: '#a83a2c', cast: false });
+      F.add(MM.vc, tube([[tp[0] - 0.01, tp[1], tp[2] - 0.01], [tp[0] - 0.14, tp[1] - 0.03, tp[2] + 0.1], [bx - 0.3, 0.6, zb + 0.24], [bx - 0.3, 0.58, zb + 0.06]], 0.008, 4, 14), { color: '#2f6a46', cast: false });
+      // two gas bottles under the bench (oxygen & acetylene), chained to a leg
+      for (const [x, c, h] of [[bx - 0.5, '#2f5f8f', 0.48], [bx - 0.3, '#8a2f2a', 0.44]]) {
+        F.add(MM.glossy, new THREE.CylinderGeometry(0.07, 0.07, h, 12, 1, true).translate(x, 0.05 + h / 2, zb + 0.02), { color: c });
+        F.add(MM.glossy, new THREE.SphereGeometry(0.07, 12, 4, 0, TAU, 0, Math.PI / 2).translate(x, 0.05 + h, zb + 0.02), { color: c, cast: false });
+        F.add(MM.metal, new THREE.CylinderGeometry(0.025, 0.03, 0.06, 8).translate(x, 0.08 + h + 0.04, zb + 0.02), { color: '#c9a24a', cast: false });
+      }
+    }
+    // a little cabinet of parts drawers on the bench's left end (a cabinetmaker's touch)
+    {
+      const cx = bx - BW / 2 + 0.2, cz = zb - 0.06;
+      F.add(MM.wood, board(0.32, 0.27, 0.2, { rng }).translate(cx, top + 0.135, cz), { color: WOOD.walnut });
+      for (let r = 0; r < 3; r++) {
+        for (let c = 0; c < 3; c++) {
+          const x = cx - 0.1 + c * 0.1, y = top + 0.05 + r * 0.085;
+          const out = (r * 3 + c) % 4 === 1 ? 0.03 : 0;
+          F.add(MM.wood, board(0.088, 0.072, 0.02, { rng }).translate(x, y, cz + 0.105 + out), { color: rng.pick([WOOD.oakLight, '#c9a77a', WOOD.spruce]), cast: false });
+          F.add(MM.metal, new THREE.SphereGeometry(0.008, 5, 3).translate(x, y, cz + 0.12 + out), { color: '#c9a24a', cast: false });
+        }
+      }
+    }
+    // on the bench: a mug, a rag, the spoke key that belongs on the pegboard, a box of bearings
+    F.add(MM.glossy, new THREE.CylinderGeometry(0.04, 0.035, 0.085, 10).translate(bx + 0.25, top + 0.042, zb - 0.1), { color: '#e9e2d2', cast: false });
+    F.add(MM.vc, new THREE.CircleGeometry(0.034, 8).rotateX(-Math.PI / 2).translate(bx + 0.25, top + 0.08, zb - 0.1), { color: '#4a2e1c', cast: false });
+    F.add(MM.vc, new THREE.CylinderGeometry(0.045, 0.045, 0.015, 10).translate(bx + 0.5, top + 0.008, zb + 0.15), { color: '#b03a2e', cast: false });
+    F.add(MM.vc, new THREE.BoxGeometry(0.14, 0.05, 0.1).translate(bx + 0.02, top + 0.025, zb + 0.17), { color: '#d9c39a', cast: false });
     // under the bench: tyres & a crate
-    for (let k = 0; k < 3; k++) F.add(MM.vc, new THREE.TorusGeometry(0.2, 0.035, 6, 20).rotateX(Math.PI / 2).translate(0.4, 0.26 + k * 0.07, zb), { color: '#2a2622', cast: false });
-    F.add(MM.wood, board(0.42, 0.26, 0.32, { rng }).translate(-0.35, 0.36, zb), { color: WOOD.spruce, cast: false });
-    // pegboard with tools on the wall above the bench
-    const pz = -(rIn(1.3) - 0.07);
-    const PY = -0.18; // pegboard sits a little lower so the spot camera sees it under the lintel
-    F.add(MM.wood, board(1.5, 0.75, 0.03, { rng }).translate(0, 1.45 + PY, pz), { color: '#c9a77a', cast: false });
-    for (let i = 0; i < 60; i++) F.add(MM.vc, new THREE.CircleGeometry(0.008, 5).translate(-0.7 + (i % 15) * 0.1, 1.15 + PY + Math.floor(i / 15) * 0.18, pz + 0.017), { color: '#6b5236', cast: false });
-    const TOOLS = ['#2b2b2b', '#b03a2e', '#3f5f73', '#d9a441'];
-    for (let i = 0; i < 9; i++) {
-      // a graded row of wrenches
-      const x = -0.62 + i * 0.07;
-      const L = 0.18 + i * 0.012;
-      F.add(MM.metal, new THREE.BoxGeometry(0.022, L, 0.012).translate(x, 1.55 + PY - L / 2, pz + 0.03), { color: '#b9bec2', cast: false });
-      F.add(MM.metal, new THREE.TorusGeometry(0.022, 0.008, 4, 10).translate(x, 1.57 + PY, pz + 0.03), { color: '#b9bec2', cast: false });
+    for (let k = 0; k < 3; k++) F.add(MM.vc, new THREE.TorusGeometry(0.2, 0.035, 5, 18).rotateX(Math.PI / 2).translate(bx + 0.4, 0.26 + k * 0.07, zb), { color: k === 1 ? '#b8925e' : '#2a2622', cast: false });
+
+    // pegboard: a shadow board of tools — every tool has its painted outline,
+    // one outline is empty (its spoke key lies on the bench)
+    const PZ = -Math.sqrt(rIn(1.4) ** 2 - 0.8 ** 2) + 0.01;
+    const PX = bx - 0.05;
+    const P0 = 1.0, P1 = 1.8;
+    F.add(MM.wood, board(1.6, P1 - P0, 0.025, { rng }).translate(PX, (P0 + P1) / 2, PZ), { color: '#c9a77a', cast: false });
+    // battens & a frame around it
+    for (const y of [P0 - 0.02, P1 + 0.02]) F.add(MM.wood, board(1.66, 0.04, 0.035, { rng }).translate(PX, y, PZ + 0.005), { color: WOOD.walnut, cast: false });
+    for (let i = 0; i < 64; i++) F.add(MM.vc, new THREE.CircleGeometry(0.007, 4).translate(PX - 0.75 + (i % 16) * 0.1, P0 + 0.07 + Math.floor(i / 16) * 0.2, PZ + 0.014), { color: '#6b5236', cast: false });
+    const SZ = PZ + 0.0135; // the board's face
+    const OUT = '#3a2c22';
+    /** A flat tool part w × h at (x, y), rotated a, with its painted outline behind it. */
+    const part = (mat, x, y, w, h, color, { a = 0, d = 0.012, outline = true, tool = true } = {}) => {
+      if (outline) F.add(MM.vc, new THREE.PlaneGeometry(w + 0.018, h + 0.018).rotateZ(a).translate(x, y, SZ + 0.001), { color: OUT, cast: false });
+      if (tool) F.add(mat, new THREE.BoxGeometry(w, h, d).rotateZ(a).translate(x, y, SZ + 0.004 + d / 2), { color, cast: false });
+    };
+    const ring = (x, y, r, color, outline = true) => {
+      if (outline) F.add(MM.vc, new THREE.CircleGeometry(r + 0.012, 8).translate(x, y, SZ + 0.001), { color: OUT, cast: false });
+      F.add(MM.metal, new THREE.TorusGeometry(r, r * 0.35, 3, 8).translate(x, y, SZ + 0.01), { color, cast: false });
+    };
+    const STEEL = '#b9bec2';
+    // a graded row of combination wrenches
+    for (let i = 0; i < 8; i++) {
+      const x = PX - 0.68 + i * 0.062;
+      const L = 0.17 + i * 0.013;
+      const yt = P1 - 0.1;
+      part(MM.metal, x, yt - L / 2, 0.02, L, STEEL);
+      ring(x, yt + 0.005, 0.02 + i * 0.001, STEEL, false);
+      part(MM.metal, x, yt - L - 0.01, 0.04, 0.03, STEEL);
     }
+    // screwdrivers with coloured handles
+    const HANDLES = ['#b03a2e', '#d9a441', '#3f5f73', '#2b2b2b', '#4f7a34'];
     for (let i = 0; i < 5; i++) {
-      const x = 0.08 + i * 0.1;
-      F.add(MM.vc, new THREE.CylinderGeometry(0.018, 0.022, 0.12, 6).translate(x, 1.62 + PY, pz + 0.035), { color: TOOLS[i % TOOLS.length], cast: false });
-      F.add(MM.metal, new THREE.CylinderGeometry(0.005, 0.005, 0.14, 4).translate(x, 1.49 + PY, pz + 0.035), { color: '#c9cdd0', cast: false });
+      const x = PX - 0.12 + i * 0.07;
+      const L = 0.1 + (i % 3) * 0.03;
+      part(MM.glossy, x, P1 - 0.12, 0.03, 0.11, HANDLES[i]);
+      part(MM.metal, x, P1 - 0.18 - L / 2, 0.008, L, '#c9cdd0', { d: 0.008 });
     }
-    // hammer & pliers
-    F.add(MM.wood, new THREE.BoxGeometry(0.03, 0.26, 0.02).translate(0.62, 1.42 + PY, pz + 0.035), { color: WOOD.oakLight, cast: false });
-    F.add(MM.metal, new THREE.BoxGeometry(0.12, 0.04, 0.035).translate(0.62, 1.56 + PY, pz + 0.04), { color: '#3a3a3a', cast: false });
-    F.add(MM.vc, new THREE.BoxGeometry(0.02, 0.2, 0.015).rotateZ(0.12).translate(-0.05, 1.3 + PY, pz + 0.035), { color: '#b03a2e', cast: false });
-    F.add(MM.vc, new THREE.BoxGeometry(0.02, 0.2, 0.015).rotateZ(-0.12).translate(0.0, 1.3 + PY, pz + 0.035), { color: '#b03a2e', cast: false });
-    // coiled cable / tube on a hook
-    F.add(MM.vc, new THREE.TorusGeometry(0.12, 0.014, 5, 18).translate(-0.35, 1.25 + PY, pz + 0.04), { color: '#2a2622', cast: false });
+    // hammer
+    part(MM.wood, PX + 0.32, P1 - 0.24, 0.028, 0.26, WOOD.oakLight);
+    part(MM.metal, PX + 0.32, P1 - 0.1, 0.13, 0.042, '#3a3a3a', { d: 0.03 });
+    // two pairs of pliers (crossed handles)
+    for (const [x, c] of [[PX + 0.45, '#b03a2e'], [PX + 0.53, '#3f5f73']]) {
+      part(MM.glossy, x - 0.012, P1 - 0.2, 0.018, 0.17, c, { a: 0.12 });
+      part(MM.glossy, x + 0.012, P1 - 0.2, 0.018, 0.17, c, { a: -0.12 });
+      part(MM.metal, x, P1 - 0.09, 0.022, 0.07, STEEL);
+    }
+    // tyre levers
+    for (let i = 0; i < 3; i++) part(MM.glossy, PX + 0.63 + i * 0.035, P1 - 0.14, 0.018, 0.11, ['#3a7bd5', '#f2c14e', '#3a7bd5'][i]);
+    // a Y-wrench, a chain whip and a coil of brake cable on the lower half
+    {
+      const x = PX + 0.62, y = P0 + 0.22;
+      for (const a of [0, 2.09, 4.19]) part(MM.metal, x + Math.sin(a) * 0.045, y + Math.cos(a) * 0.045, 0.02, 0.09, '#d9a441', { a: -a });
+    }
+    part(MM.wood, PX + 0.38, P0 + 0.2, 0.03, 0.2, '#2b2b2b', { a: 0.5 });
+    F.add(MM.metal, new THREE.TorusGeometry(0.07, 0.008, 3, 14, Math.PI * 1.4).rotateZ(-0.2).translate(PX + 0.27, P0 + 0.13, SZ + 0.012), { color: '#4a4744', cast: false });
+    F.add(MM.vc, new THREE.TorusGeometry(0.1, 0.012, 4, 18).translate(PX - 0.55, P0 + 0.18, SZ + 0.015), { color: '#2a2622', cast: false });
+    F.add(MM.vc, new THREE.TorusGeometry(0.085, 0.01, 4, 18).translate(PX - 0.53, P0 + 0.17, SZ + 0.022), { color: '#2a2622', cast: false });
+    // the empty outline of the spoke key (it's on the bench)
+    part(MM.metal, PX - 0.12, P0 + 0.2, 0.06, 0.06, STEEL, { a: 0.785, tool: false });
+    // a little hacksaw
+    part(MM.metal, PX - 0.06, P0 + 0.32, 0.36, 0.014, STEEL);
+    part(MM.metal, PX - 0.06, P0 + 0.25, 0.32, 0.006, '#d9dcdf', { outline: false, d: 0.004 });
+    part(MM.glossy, PX + 0.15, P0 + 0.28, 0.03, 0.09, '#b03a2e');
+    // a shelf of glass jars (screws, bearings, brass nipples) & boxes above it
+    {
+      const y = P1 + 0.08;
+      const z = PZ + 0.11;
+      F.add(MM.wood, board(1.3, 0.035, 0.2, { rng }).translate(PX, y, z), { color: WOOD.oak, cast: false });
+      for (const x of [-0.5, 0.5]) F.add(MM.wood, board(0.03, 0.12, 0.16, { rng, along: 'y' }).translate(PX + x, y - 0.075, z - 0.01), { color: WOOD.oak, cast: false });
+      const FILL = ['#7c8287', '#c9cdd0', '#c9a24a', '#5a5550', '#9aa0a4', '#b07a4a'];
+      let x = PX - 0.6;
+      while (x < PX + 0.6) {
+        if (rng.chance(0.3)) {
+          const w = rng.range(0.1, 0.16), h = rng.range(0.06, 0.1);
+          F.add(MM.vc, new THREE.BoxGeometry(w, h, 0.12).translate(x + w / 2, y + 0.018 + h / 2, z), { color: rng.pick(['#d9c39a', '#c2a878', '#b03a2e', '#e8dcc0']), cast: false });
+          x += w + 0.015;
+        } else {
+          const r = rng.range(0.035, 0.05), h = rng.range(0.08, 0.12);
+          F.add(MM.glossy, new THREE.CylinderGeometry(r, r, h, 8, 1, true).translate(x + r, y + 0.018 + h / 2, z), { color: rng.pick(FILL) });
+          F.add(MM.glossy, new THREE.CylinderGeometry(r * 1.02, r * 1.02, 0.025, 8).translate(x + r, y + 0.018 + h + 0.012, z), { color: rng.pick(['#b03a2e', '#d9a441', '#3f5f73', '#e9e2d2']), cast: false });
+          x += r * 2 + 0.012;
+        }
+      }
+    }
+
+    // a second bike up on a wall hook at the back-left: rear wheel on the floor,
+    // front wheel hooked high, parallel to the wall
+    {
+      const phi = -2.62;
+      const rw = rIn(0.6) - 0.27;
+      const yaw = Math.atan2(-Math.sin(phi), -Math.cos(phi));
+      const bm4 = mat4([Math.sin(phi) * rw, 0.43, Math.cos(phi) * rw], [0, yaw, 1.25, 'YXZ']);
+      makeBike({ style: 'road', color: '#3a7a9a', tape: '#2b2b2b', detail: 'lite', batch: F, matrix: bm4, scale: 0.6, seed: 'hooked' });
+      const hook = new THREE.Vector3(0.6 - 0.02, 0.34 + 0.33, 0).applyMatrix4(new THREE.Matrix4().makeScale(0.6, 0.6, 0.6)).applyMatrix4(bm4);
+      const wallP = [Math.sin(phi) * (rIn(1.0) - 0.01), hook.y + 0.05, Math.cos(phi) * (rIn(1.0) - 0.01)];
+      F.add(MM.metal, tube([wallP, [hook.x * 0.6 + wallP[0] * 0.4, hook.y + 0.07, hook.z * 0.6 + wallP[2] * 0.4], [hook.x, hook.y + 0.02, hook.z], [hook.x * 1.02, hook.y - 0.03, hook.z * 1.02]], 0.009, 4, 10), { color: IRON, cast: false });
+    }
+    // a little poster of the Gotthard pass above it: sky, two peaks with snow, the sun
+    {
+      const phi = -2.48, y = 1.38;
+      const r = rIn(y) - 0.015;
+      const PS = F.at(mat4([Math.sin(phi) * r, y, Math.cos(phi) * r], [0, phi + Math.PI, 0]));
+      PS.add(MM.wood, board(0.34, 0.26, 0.015, { rng }), { color: WOOD.dark, cast: false });
+      PS.add(MM.vc, new THREE.PlaneGeometry(0.3, 0.22).translate(0, 0, 0.009), { color: '#e8c79a', cast: false });
+      const peaks = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-0.15, -0.11, 0.011), new THREE.Vector3(0.0, -0.11, 0.011), new THREE.Vector3(-0.07, 0.05, 0.011),
+        new THREE.Vector3(-0.06, -0.11, 0.012), new THREE.Vector3(0.15, -0.11, 0.012), new THREE.Vector3(0.06, 0.09, 0.012),
+      ]);
+      PS.add(MM.vc, peaks, { color: '#4f6a7a', cast: false });
+      const snow = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0.025, 0.035, 0.013), new THREE.Vector3(0.095, 0.035, 0.013), new THREE.Vector3(0.06, 0.09, 0.013),
+        new THREE.Vector3(-0.09, 0.015, 0.013), new THREE.Vector3(-0.05, 0.015, 0.013), new THREE.Vector3(-0.07, 0.05, 0.013),
+      ]);
+      PS.add(MM.vc, snow, { color: '#f4f0e6', cast: false });
+      PS.add(MM.vc, new THREE.CircleGeometry(0.03, 8).translate(0.09, 0.05, 0.01), { color: '#e8763a', cast: false });
+      PS.add(MM.vc, new THREE.PlaneGeometry(0.3, 0.035).translate(0, -0.09, 0.014), { color: '#b03a2e', cast: false });
+    }
+    // tyres hanging on a peg at the back-right, above the tool chest
+    {
+      const phi = 2.56, y = 1.55;
+      const r = rIn(y);
+      const p = [Math.sin(phi) * r, y, Math.cos(phi) * r];
+      const n = [-Math.sin(phi), 0, -Math.cos(phi)];
+      F.add(MM.wood, rod([p[0], y, p[2]], [p[0] + n[0] * 0.2, y + 0.03, p[2] + n[2] * 0.2], 0.018, 0.016, 5), { color: WOOD.walnut, cast: false });
+      for (let k = 0; k < 3; k++) {
+        const d = 0.06 + k * 0.045;
+        F.add(MM.vc, xf(new THREE.TorusGeometry(0.21 - k * 0.01, 0.03, 5, 18), [p[0] + n[0] * d, y - 0.2 + k * 0.01, p[2] + n[2] * d], [0.05 * k, phi + Math.PI, 0]), { color: k === 1 ? '#b8925e' : '#2a2622', cast: false });
+      }
+    }
+    // a worn woven rug on the floor, fringed at the ends
+    {
+      const RM = F.at(mat4([0.0, 0.058, 0.42], [0, 0.14, 0]));
+      const L = 1.45, Wd = 0.92;
+      const STRIPES = ['#9a3a2c', '#c98a3c', '#e8dcc0', '#3f5a7a', '#c98a3c', '#9a3a2c', '#7a4a2a'];
+      const nS = 15;
+      const c0 = new THREE.Color(), faded = new THREE.Color('#d8c6a4');
+      for (let i = 0; i < nS; i++) {
+        const x0 = -L / 2 + (i / nS) * L, x1 = x0 + L / nS;
+        const g = new THREE.PlaneGeometry(x1 - x0, Wd, 1, 2).rotateX(-Math.PI / 2).translate((x0 + x1) / 2, 0, 0);
+        const ci = Math.abs(i - (nS - 1) / 2) < 1 ? 3 : i % STRIPES.length;
+        c0.set(STRIPES[ci]);
+        paintFn(g, STRIPES[ci], (x, y, z, k, c) => c.copy(c0).lerp(faded, 0.38 * (1 - smooth01(Math.hypot(x / 0.5, z / 0.35) - 0.2))));
+        RM.add(MM.fabric, g, { cast: false });
+      }
+      for (const sx of [-1, 1]) {
+        for (let i = 0; i < 14; i++) {
+          const z = -Wd / 2 + 0.04 + (i / 13) * (Wd - 0.08);
+          RM.add(MM.fabric, new THREE.PlaneGeometry(0.06, 0.012).rotateX(-Math.PI / 2).translate(sx * (L / 2 + 0.028), -0.001, z), { color: '#e8dcc0', cast: false });
+        }
+      }
+    }
+    // the shop cat, an orange tabby, curled up asleep on the rug
+    {
+      const C = F.at(mat4([-0.28, 0.06, 0.58], [0, 0.5, 0]));
+      const ORANGE = new THREE.Color('#d98b3a'), DARK = new THREE.Color('#a05a22'), WHITE = new THREE.Color('#f1e8d6');
+      const tabby = (g, chestAt = null) => paintFn(g, '#d98b3a', (x, y, z, i, c) => {
+        c.copy(ORANGE).lerp(DARK, 0.65 * smooth01(Math.sin(x * 46 + z * 12) * 2 - 0.4) * smooth01(y * 18 - 0.3));
+        if (chestAt && Math.hypot(x - chestAt[0], y - chestAt[1], z - chestAt[2]) < chestAt[3]) c.copy(WHITE);
+      });
+      // body: a curled loaf
+      const body = new THREE.SphereGeometry(1, 12, 8);
+      deform(body, (v) => {
+        const bend = v.x * v.x * 0.35;
+        v.set(v.x * 0.19, Math.max(v.y, -0.6) * 0.085 + 0.075, v.z * 0.13 + bend * 0.13);
+      });
+      C.add(MM.vc, tabby(body, [0.13, 0.05, 0.08, 0.06]));
+      // head resting on the front paws, ears up
+      const head = new THREE.SphereGeometry(0.068, 10, 7).scale(1, 0.82, 0.95).translate(0.15, 0.085, 0.12);
+      C.add(MM.vc, tabby(head, [0.19, 0.06, 0.17, 0.035]));
+      for (const sz of [-1, 1]) {
+        const ear = new THREE.ConeGeometry(0.026, 0.05, 4).rotateZ(sz * 0.25).rotateX(0.2);
+        C.add(MM.vc, ear.translate(0.15 + sz * 0.036, 0.15, 0.11), { color: '#c97a30', cast: false });
+      }
+      // paws & the tail wrapped round the front
+      for (const dx of [0.08, 0.14]) C.add(MM.vc, new THREE.SphereGeometry(0.022, 6, 4).scale(1.4, 0.7, 1).translate(dx + 0.06, 0.03, 0.19), { color: '#f1e8d6', cast: false });
+      const tail = taperTube([[-0.17, 0.04, 0.04], [-0.15, 0.03, 0.15], [-0.02, 0.025, 0.2], [0.1, 0.03, 0.2]], 0.026, 0.018, 6, 14);
+      C.add(MM.vc, tabby(tail));
+    }
+    // a three-legged stool by the bench
+    {
+      const T = F.at(mat4([0.42, 0.05, -0.48], [0, 0.4, 0]));
+      T.add(MM.wood, new THREE.CylinderGeometry(0.17, 0.17, 0.05, 14).translate(0, 0.5, 0), { color: WOOD.oak });
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * TAU;
+        T.add(MM.wood, rod([Math.sin(a) * 0.1, 0.48, Math.cos(a) * 0.1], [Math.sin(a) * 0.2, 0, Math.cos(a) * 0.2], 0.022, 0.02, 6), { color: WOOD.oakLight, cast: false });
+      }
+    }
+    // an anglepoise work lamp clamped to the bench, its warm pool on the jig
+    {
+      const base = [bx + 0.52, top, zb - 0.12];
+      const elbow = [bx + 0.5, top + 0.55, zb + 0.02];
+      const head = [bx + 0.22, top + 0.62, zb + 0.32];
+      F.add(MM.glossy, new THREE.CylinderGeometry(0.06, 0.07, 0.03, 12).translate(base[0], top + 0.015, base[2]), { color: '#2f5a4f', cast: false });
+      F.add(MM.metal, rod(base, elbow, 0.01, 0.01, 4), { color: '#c9cdd0', cast: false });
+      F.add(MM.metal, rod(elbow, head, 0.01, 0.01, 4), { color: '#c9cdd0', cast: false });
+      F.add(MM.metal, new THREE.SphereGeometry(0.018, 6, 4).translate(...elbow), { color: '#3a3a3a', cast: false });
+      const shade = new THREE.ConeGeometry(0.1, 0.13, 12, 1, true).rotateZ(-0.6).translate(head[0] - 0.03, head[1] - 0.06, head[2]);
+      F.add(MM.glossy, shade, { color: '#2f5a4f', cast: false });
+      F.add(MM.bulb, new THREE.SphereGeometry(0.04, 8, 6).translate(head[0] - 0.06, head[1] - 0.1, head[2]), { cast: false });
+      halos.push({ ...toWorld(head[0] - 0.07, head[1] - 0.12, head[2] + 0.02), size: 0.9 });
+    }
     // plank wainscot around the lower interior wall (a workshop, not a parlour)
     {
-      const n = 64;
+      const n = 56;
       for (let i = 0; i < n; i++) {
         const phi = (i / n) * TAU;
         const r = rIn(0.5) - 0.025;
         const x = Math.sin(phi) * r, z = Math.cos(phi) * r;
         if (z > 0 && Math.abs(x) < OPEN_HALF + 0.12) continue;
         const h = 0.92 + rng.jitter(0.02);
-        const g = board(0.17, h, 0.025, { along: 'y', rng });
+        const g = board((TAU * r) / n - 0.012, h, 0.025, { along: 'y', rng, segs: 1 });
         xf(g, [x, h / 2 + 0.05, z], [0, phi + Math.PI, 0]);
         F.add(MM.wood, g, { color: rng.pick(['#9a7350', '#8f6a48', '#a47a55']), cast: false });
       }
-      // a rail capping it, with hooks for small things
-      for (let i = 0; i < 40; i++) {
-        const phi = (i / 40) * TAU;
+      for (let i = 0; i < 32; i++) {
+        const phi = (i / 32) * TAU;
         const r = rIn(1.0) - 0.04;
         const x = Math.sin(phi) * r, z = Math.cos(phi) * r;
         if (z > 0 && Math.abs(x) < OPEN_HALF + 0.12) continue;
-        F.add(MM.wood, xf(board((TAU * r) / 40 + 0.01, 0.05, 0.05, { rng }), [x, 1.0, z], [0, phi + Math.PI, 0]), { color: WOOD.walnut, cast: false });
+        F.add(MM.wood, xf(board((TAU * r) / 32 + 0.01, 0.05, 0.05, { rng }), [x, 1.0, z], [0, phi + Math.PI, 0]), { color: WOOD.walnut, cast: false });
       }
     }
-    // a bike standing along the left wall, waiting for its turn
-    makeBike({ style: 'gravel', color: '#c2703d', tape: '#2b2b2b', batch: F, matrix: mat4([-1.18, 0.05, -0.2], [0, -Math.PI / 2 + 0.25, 0]), scale: 0.62, seed: 'waiting', lite: true });
     // a red rolling tool chest on the right, drawers half open
     {
       const T = F.at(mat4([1.05, 0.05, -0.55], [0, -1.05, 0]));
@@ -417,46 +669,23 @@ export function buildWorkshop(ctx, B, rng, halos) {
         T.add(MM.metal, new THREE.BoxGeometry(0.3, 0.018, 0.02).translate(0, dy + 0.02, 0.225 + out), { color: '#c9cdd0', cast: false });
       }
       T.add(MM.metal, new THREE.BoxGeometry(0.66, 0.03, 0.44).translate(0, 0.815, 0), { color: '#3a3a3a', cast: false });
-      for (const [x, z] of [[-0.26, -0.15], [0.26, -0.15], [-0.26, 0.15], [0.26, 0.15]]) T.add(MM.vc, new THREE.CylinderGeometry(0.035, 0.035, 0.03, 10).rotateZ(Math.PI / 2).translate(x, 0.04, z), { color: '#1f1e1d', cast: false });
-      // things on top: a work lamp, a coffee mug, a spoke tension meter
+      for (const [x, z] of [[-0.26, -0.15], [0.26, -0.15], [-0.26, 0.15], [0.26, 0.15]]) T.add(MM.vc, new THREE.CylinderGeometry(0.035, 0.035, 0.03, 8).rotateZ(Math.PI / 2).translate(x, 0.04, z), { color: '#1f1e1d', cast: false });
+      // things on top: a pump head, a coffee tin, a spoke tension meter
       T.add(MM.vc, new THREE.CylinderGeometry(0.04, 0.035, 0.08, 10).translate(-0.18, 0.87, 0.05), { color: '#f1ece2', cast: false });
       T.add(MM.metal, new THREE.BoxGeometry(0.22, 0.03, 0.05).translate(0.1, 0.845, 0.0), { color: '#d9a441', cast: false });
-    }
-    // a three-legged stool
-    {
-      const T = F.at(mat4([0.35, 0.05, 0.25], [0, 0.4, 0]));
-      T.add(MM.wood, new THREE.CylinderGeometry(0.17, 0.17, 0.05, 14).translate(0, 0.5, 0), { color: WOOD.oak });
-      for (let i = 0; i < 3; i++) {
-        const a = (i / 3) * TAU;
-        T.add(MM.wood, rod([Math.sin(a) * 0.1, 0.48, Math.cos(a) * 0.1], [Math.sin(a) * 0.2, 0, Math.cos(a) * 0.2], 0.022, 0.02, 6), { color: WOOD.oakLight, cast: false });
-      }
     }
     // tyres leaning against the right wall on the floor
     for (let k = 0; k < 3; k++) {
       const phi = 1.95 + k * 0.16;
       const r = rIn(0.4) - 0.12 - k * 0.04;
-      F.add(MM.vc, xf(new THREE.TorusGeometry(0.25, 0.035, 6, 22), [Math.sin(phi) * r, 0.3, Math.cos(phi) * r], [0.12, phi, 0]), { color: k === 1 ? '#b8925e' : '#2a2622', cast: false });
+      F.add(MM.vc, xf(new THREE.TorusGeometry(0.25, 0.035, 5, 20), [Math.sin(phi) * r, 0.3, Math.cos(phi) * r], [0.12, phi, 0]), { color: k === 1 ? '#b8925e' : '#2a2622', cast: false });
     }
-    // a road bike hanging upside down from ceiling hooks
-    makeBike({ style: 'road', color: '#2f5a8a', batch: F, matrix: mat4([-0.25, 2.62, -0.95], [Math.PI, 0.25, 0]), scale: 0.6, seed: 'hung', lite: true });
-    for (const hx of [-0.5, 0.18]) F.add(MM.metal, rod([hx, WALL_TOP - 0.05, -0.95 - hx * 0.25], [hx, 2.6, -0.95 - hx * 0.25], 0.008, 0.008, 4), { color: IRON, cast: false });
-    // wheels on the side walls
-    for (const [phi, y, st] of [[-2.0, 1.45, 'gravel'], [-1.6, 1.6, 'vintage'], [2.05, 1.5, 'road'], [1.7, 1.25, 'gravel']]) {
+    // wheels on the side walls (seen when the camera swings round)
+    for (const [phi, y, st] of [[-1.95, 1.5, 'vintage'], [1.85, 1.45, 'gravel']]) {
       const r = rIn(y) - 0.05;
       const p = [Math.sin(phi) * r, y, Math.cos(phi) * r];
       makeWheel({ style: st, batch: F, matrix: mat4(p, [0, phi, 0]), scale: 0.6, seed: `wall-${phi}`, lite: true });
       F.add(MM.metal, rod([p[0], y + 0.24, p[2]], [p[0] * 1.08, y + 0.24, p[2] * 1.08], 0.012, 0.012, 4), { color: IRON, cast: false });
-    }
-    // shelf with tyres & boxes on the right wall
-    {
-      const phi = 1.35, y = 2.05;
-      const r = rIn(y) - 0.2;
-      const sm = new THREE.Matrix4().makeRotationY(phi).setPosition(Math.sin(phi) * r, y, Math.cos(phi) * r);
-      const S = F.at(sm);
-      S.add(MM.wood, board(0.9, 0.04, 0.3, { rng }), { color: WOOD.oak, cast: false });
-      for (let k = 0; k < 2; k++) S.add(MM.vc, new THREE.TorusGeometry(0.15, 0.03, 5, 16).rotateX(Math.PI / 2).translate(-0.22, 0.04 + k * 0.06, 0), { color: k ? '#b8925e' : '#2a2622', cast: false });
-      S.add(MM.vc, new THREE.BoxGeometry(0.18, 0.14, 0.18).translate(0.15, 0.09, 0), { color: '#d9c39a', cast: false });
-      S.add(MM.vc, new THREE.BoxGeometry(0.14, 0.1, 0.14).translate(0.34, 0.07, 0), { color: '#6f8a5a', cast: false });
     }
   }
 
