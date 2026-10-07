@@ -4,7 +4,8 @@
 //
 //   dome      soft blue-green sky, a luminous warm haze around the low sun
 //             (back-left), thin painterly cloud wisps; at night deep blue with
-//             stars peeking and a haloed moon. At and below the horizon it is
+//             stars peeking and a big hazy moon low over the far forest at the
+//             back-right, between the trunks. At and below the horizon it is
 //             exactly the aerial-perspective mist colour, so the fogged far
 //             forest melts into it without a seam. On 'low' (thin far forest,
 //             no canopy shadows) the dome itself is pushed towards the mist so
@@ -107,7 +108,7 @@ const domeFragment = /* glsl */ `
       float md = max(dot(d, uMoonDir), 0.0);
       vec3 mr = normalize(cross(uMoonDir, vec3(0.0, 1.0, 0.0)));
       vec3 mu = cross(mr, uMoonDir);
-      vec2 ml = vec2(dot(d, mr), dot(d, mu)) / 0.04;
+      vec2 ml = vec2(dot(d, mr), dot(d, mu)) / 0.045;
       float r = length(ml);
       float clear = smoothstep(-0.01, 0.2, y);
       vec3 moonCol = vec3(1.3, 1.3, 1.4) * mix(vec3(1.05, 0.95, 0.82), vec3(1.0), clear);
@@ -123,6 +124,11 @@ const domeFragment = /* glsl */ `
     float az = atan(d.x, -d.z);
     float tl1 = 0.07 + 0.05 * envFbm(vec2(az * 9.0, 1.7)) + 0.03 * envNoise(vec2(az * 40.0, 3.1));
     float tl2 = 0.035 + 0.035 * envFbm(vec2(az * 14.0, 7.3)) + 0.02 * envNoise(vec2(az * 70.0, 5.5));
+    // by night the painted treelines dip around the low moon (a clearing far away)
+    float moonAz = atan(uMoonDir.x, -uMoonDir.z);
+    float notch = uNight * (1.0 - smoothstep(0.05, 0.17, abs(az - moonAz)));
+    tl1 *= 1.0 - 0.8 * notch;
+    tl2 *= 1.0 - 0.6 * notch;
     float fw = fwidth(y) * 1.5 + 0.002;
     vec3 far1 = mix(mist, uSkyZenith * 0.35 + mist * 0.45, 0.32 * day + 0.2 * uNight);
     vec3 far2 = mix(mist, uSkyZenith * 0.3 + mist * 0.4, 0.5 * day + 0.3 * uNight);
@@ -198,9 +204,18 @@ export default async function build(ctx) {
   const warm = new THREE.Color();
   const warmDay = new THREE.Color('#cfa565');
   const warmNight = new THREE.Color('#3d5a8c');
+  const isLow = (ctx.quality?.tier ?? 'high') === 'low';
 
   function applyNight(n) {
     for (const k of colourKeys) colourTargets[k].copy(pairs[k][0]).lerp(pairs[k][1], n);
+    if (isLow && n > 0) {
+      // no post grade on 'low': the filmic curve alone turns the night mist into
+      // saturated navy (gaps between the trunks read as flat patches) — use a
+      // greyer, slightly deeper night mist there
+      const f = U.uFogColor.value;
+      const l = f.r * 0.2126 + f.g * 0.7152 + f.b * 0.0722;
+      f.setRGB(l + (f.r - l) * (1 - 0.45 * n), l + (f.g - l) * (1 - 0.45 * n), l + (f.b - l) * (1 - 0.45 * n)).multiplyScalar(1 - 0.12 * n);
+    }
     scene.fog.color.copy(U.uFogColor.value);
     scene.background.copy(U.uFogColor.value);
     // in-scatter lobe: golden towards the sun by day, a faint cool moon glow by night

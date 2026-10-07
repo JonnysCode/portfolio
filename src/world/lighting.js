@@ -67,7 +67,7 @@ const DAY = {
   rimI: 0.4,
   envI: 0.5,
   beam: new THREE.Color('#ffcf8a'),
-  beamI: 3.1,
+  beamI: 2.9,
 };
 const NIGHT = {
   key: new THREE.Color('#aab4ff'),
@@ -80,7 +80,7 @@ const NIGHT = {
   rimI: 1.1,
   envI: 0.56,
   beam: new THREE.Color('#a8c0ff'),
-  beamI: 1.35,
+  beamI: 1.8,
 };
 
 /** The moonlit glen is exposed a touch brighter (all tiers; lights are tamed by post's night bloom). */

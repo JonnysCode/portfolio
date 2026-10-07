@@ -9,6 +9,8 @@
 //        (plain, -wide and -close shots, the overview)? Tall things (trees,
 //        giant mushrooms, big ferns, boulders) test a few spheres up their
 //        height with isClearOfViews().
+// Every spot is tested in its composed shot, its -wide and -close variants and
+// — when layout.js gives one — its phone (portrait) shot.
 // The view test uses a NARROWED frustum (the central ~70 % of each frame),
 // cut short before the target: things in the frame's margins are welcome —
 // that is foreground framing — but nothing may stand between a camera and
@@ -72,14 +74,24 @@ export const glenAzimuth = (x, z) => Math.atan2(x, z);
 
 // ─── spot-camera sight lines ────────────────────────────────────────────────
 const ASPECT = 16 / 9;
+/** A tall phone (SPOTS[].portrait shots are composed for it). */
+const ASPECT_PORTRAIT = 390 / 844;
+/** The phone shot of a spot, if it has one: { position, target, fov }. */
+const portraitOf = (s) => (s.portrait ? { position: s.portrait.position ?? s.camera.position, target: s.portrait.target ?? s.camera.target, fov: s.portrait.fov ?? (s.camera.fov ?? 40) + 5 } : null);
+/** The close-up of a spot: layout's `close` override, else 0.55 × the shot towards the focus. */
+const closeOf = (s) => {
+  if (s.close) return { position: s.close.position, target: s.close.target };
+  const p = s.camera.position, t = s.camera.target, f = s.focus ?? t;
+  return { position: [f[0] + (p[0] - t[0]) * 0.55, f[1] + (p[1] - t[1]) * 0.55, f[2] + (p[2] - t[2]) * 0.55], target: f };
+};
 const views = [];
 {
   const cam = new THREE.PerspectiveCamera(40, ASPECT, 0.5, 100);
-  const add = (id, p, t, fov, shrink, cut) => {
+  const add = (id, p, t, fov, shrink, cut, aspect = ASPECT) => {
     const pos = new THREE.Vector3(...p);
     const tgt = new THREE.Vector3(...t);
     cam.fov = fov * shrink;
-    cam.aspect = ASPECT;
+    cam.aspect = aspect;
     cam.near = 0.6;
     cam.far = Math.max(1, pos.distanceTo(tgt) - cut);
     cam.position.copy(pos);
@@ -97,8 +109,11 @@ const views = [];
     add(s.id, p, t, fov, shrink, 1.5);
     // (the glen's "-wide" shot sits far beyond the rig's max distance — never seen)
     if (s.id !== 'glen') add(`${s.id}-wide`, lerpTo(1.8), t, fov, shrink * 0.85, 1.5);
-    const f = s.focus ?? t;
-    add(`${s.id}-close`, [f[0] + (p[0] - t[0]) * 0.55, f[1] + (p[1] - t[1]) * 0.55, f[2] + (p[2] - t[2]) * 0.55], f, fov, 0.8, 1.0);
+    const c = closeOf(s);
+    add(`${s.id}-close`, c.position, c.target, fov, 0.8, 1.0);
+    // the phone's own composed shot (a tall frame)
+    const ph = portraitOf(s);
+    if (ph) add(`${s.id}-portrait`, ph.position, ph.target, ph.fov, shrink, 1.5, ASPECT_PORTRAIT);
   }
   add('overview', [0, 34, 52], [0, 4, -2], 40, 0.55, 3);
 }
@@ -114,9 +129,11 @@ for (const s of SPOTS) {
   const p = s.camera.position, t = s.camera.target;
   const rs = SUBJECT_R[s.id] ?? 5;
   const lerpTo = (k) => [t[0] + (p[0] - t[0]) * k, t[1] + (p[1] - t[1]) * k, t[2] + (p[2] - t[2]) * k];
-  const f = s.focus ?? t;
-  const close = [f[0] + (p[0] - t[0]) * 0.55, f[1] + (p[1] - t[1]) * 0.55, f[2] + (p[2] - t[2]) * 0.55];
-  for (const [cp, ct, r] of [[p, t, rs], [lerpTo(1.8), t, rs], [close, f, rs * 0.7]]) {
+  const c = closeOf(s);
+  const ph = portraitOf(s);
+  const takes = [[p, t, rs], [lerpTo(1.8), t, rs], [c.position, c.target, rs * 0.7]];
+  if (ph) takes.push([ph.position, ph.target, rs]);
+  for (const [cp, ct, r] of takes) {
     const pos = new THREE.Vector3(...cp);
     const tgt = new THREE.Vector3(...ct);
     const dir = tgt.clone().sub(pos);
@@ -234,8 +251,10 @@ function lodPoses() {
       }
     }
     add(new THREE.Vector3(T[0] + dx * 1.8, T[1] + dy * 1.8, T[2] + dz * 1.8), new THREE.Vector3(...T), fov);
-    const f = s.focus ?? T;
-    add(new THREE.Vector3(f[0] + dx * 0.55, f[1] + dy * 0.55, f[2] + dz * 0.55), new THREE.Vector3(...f), fov);
+    const c = closeOf(s);
+    add(new THREE.Vector3(...c.position), new THREE.Vector3(...c.target), fov);
+    const ph = portraitOf(s);
+    if (ph) add(new THREE.Vector3(...ph.position), new THREE.Vector3(...ph.target), ph.fov);
   }
   add(new THREE.Vector3(0, 34, 52), new THREE.Vector3(0, 4, -2), 40);
   return poses;
@@ -274,8 +293,9 @@ export function inShot(x, y, z, r = 0.3) {
   if (!shots) {
     shots = [];
     const cam = new THREE.PerspectiveCamera(42, ASPECT, 0.5, 220);
-    const add = (p, t, fov) => {
+    const add = (p, t, fov, aspect = ASPECT) => {
       cam.fov = fov + 2;
+      cam.aspect = aspect;
       cam.updateProjectionMatrix();
       cam.position.set(...p);
       cam.lookAt(t[0], t[1], t[2]);
@@ -288,6 +308,8 @@ export function inShot(x, y, z, r = 0.3) {
       // (the glen's wide shot too: a phone steps the overview back ×1.45 and
       //  zooming out adds ×1.22 — its whole front band must be dressed)
       add([t[0] + (p[0] - t[0]) * 1.8, t[1] + (p[1] - t[1]) * 1.8, t[2] + (p[2] - t[2]) * 1.8], t, fov);
+      const ph = portraitOf(s);
+      if (ph) add(ph.position, ph.target, ph.fov, ASPECT_PORTRAIT);
     }
     add([0, 34, 52], [0, 4, -2], 40);
   }
@@ -309,6 +331,12 @@ for (const s of SPOTS) {
   dir.normalize();
   lenses.push({ P, dir, dist });
   if (s.id !== 'glen') lenses.push({ P: T.clone().addScaledVector(dir, -dist * 1.8), dir, dist: dist * 1.8 });
+  const ph = portraitOf(s);
+  if (ph) {
+    const PP = new THREE.Vector3(...ph.position), d2 = new THREE.Vector3(...ph.target).sub(PP);
+    const l2 = d2.length();
+    lenses.push({ P: PP, dir: d2.normalize(), dist: l2 });
+  }
 }
 const _nf = new THREE.Vector3();
 /** True if (x, y, z) sits in the near field of a composed shot (closer than k × its focus distance, inside a generous cone). */

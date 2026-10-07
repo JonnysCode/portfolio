@@ -26,14 +26,18 @@
 //   ctx.interactions.setFocused(h | null)   (keyboard focus ring + tooltip)
 //   ctx.interactions.setOpen(h | null) / markVisited(entryId) / isVisited(entryId)   (UI bookkeeping)
 //   ctx.interactions.progress() → { visited, total }   ctx.interactions.onVisit(fn(h, progress))
-//   ctx.interactions.secrets() → { found, total }      ctx.interactions.onSecret(fn(h, secrets, isNew))
+//   ctx.interactions.secrets({ by: 'day' }?) → { found, total }   ctx.interactions.onSecret(fn(h, secrets, isNew))
 //   ctx.interactions.onGroundClick((point, event) => …)  (tap on empty ground)
 //   ctx.interactions.pickGround() / pickHotspot() / setPointerFromClient(x, y)
 //   ctx.interactions.refreshBounds(h)   (call if a hotspot object changes size a lot)
+//   ctx.interactions.firstSolidHit(origin, dir, near, far, ignore?) → distance | Infinity
+//   ctx.interactions.canvasRect          (the canvas box every projection uses)
 //   ctx.interactions.gestures           (shared pointer gesture classifier, pointerGestures.js)
-// Hotspot options: focus = { distance, height, azimuth, polar } for the camera
-// when its entry opens; markerHeight = marker height above the object's origin
-// (default: top of its bounds + 0.45); marker = false hides the sparkle.
+// Hotspot options: focus = { distance, lift, radius, azimuth, faceAzimuth, polar }
+// for the camera when its entry opens (cameraRig.focus); markerHeight = marker
+// height above the object's origin (default: top of its bounds + 0.45);
+// marker = false hides the sparkle; night = true: only there after dark.
+// Picking ignores hotspots hidden behind solid geometry (walls, decks, trunk).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { getHeight } from '../world/ground.js';
@@ -41,6 +45,7 @@ import { SPOT_BY_ID } from '../world/layout.js';
 import { palette } from '../core/palette.js';
 import { damp } from '../core/rng.js';
 import { createPointerGestures } from './pointerGestures.js';
+import { triGrid } from './triGrid.js';
 
 /**
  * Marker placement tweaks per entry (world offsets from the bounds centre, y
@@ -231,8 +236,12 @@ export function createInteractions(ctx) {
       if (o.isInstancedMesh && o.count > 400) return;
       if (o.userData.__hotspotProxy) return;
       const m = Array.isArray(o.material) ? o.material[0] : o.material;
-      if (!m || m.visible === false || m.depthWrite === false || (m.transparent && (m.opacity ?? 1) < 0.6)) return;
+      // (alpha-tested leaf / fern cards are full of holes: you can see — and click — through them)
+      if (!m || m.visible === false || m.depthWrite === false || m.alphaTest > 0 || (m.transparent && (m.opacity ?? 1) < 0.6)) return;
       if (!o.geometry?.boundingSphere) o.geometry?.computeBoundingSphere?.();
+      // the sky dome and far backdrops wrap the whole glen: never between the camera and a hotspot
+      const bs = o.geometry?.boundingSphere;
+      if (bs && bs.radius * o.matrixWorld.getMaxScaleOnAxis() > 150) return;
       solids.push(o);
     });
     return solids;
@@ -268,12 +277,45 @@ export function createInteractions(ctx) {
       }
       if (ignore && within(m, ignore)) continue;
       if (!isLive({ enabled: true, object: m })) continue;
+      const grid = !m.isInstancedMesh && triCount(m) > GRID_MIN_TRIS ? triGrid(m) : null;
+      if (grid) {
+        // the ray in the mesh's own space (scaled meshes: distances measured back in world space)
+        invM.copy(m.matrixWorld).invert();
+        localRay.copy(occRay.ray).applyMatrix4(invM);
+        lp0.copy(dir).multiplyScalar(near).add(origin).applyMatrix4(invM);
+        lp1.copy(dir).multiplyScalar(far).add(origin).applyMatrix4(invM);
+        const ln = lp0.distanceTo(localRay.origin), lf = lp1.distanceTo(localRay.origin);
+        const t = grid.raycastFirst(localRay, ln, lf);
+        if (t < Infinity) {
+          lp0.copy(localRay.direction).multiplyScalar(t).add(localRay.origin).applyMatrix4(m.matrixWorld);
+          const dw = lp0.distanceTo(origin);
+          if (dw >= near && dw <= far && dw < first) first = dw;
+        }
+        continue;
+      }
       occHits.length = 0;
       m.raycast(occRay, occHits);
       for (const hit of occHits) if (hit.distance >= near && hit.distance <= far && hit.distance < first) first = hit.distance;
     }
     return first;
   }
+  const invM = new THREE.Matrix4();
+  const localRay = new THREE.Ray();
+  const lp0 = new THREE.Vector3();
+  const lp1 = new THREE.Vector3();
+  const GRID_MIN_TRIS = 3000;
+  const triCount = (m) => {
+    const g = m.geometry;
+    return g ? (g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3 : 0;
+  };
+  // build the big meshes' triangle grids in idle time once the glen is up (not on the first tap)
+  let gridQueue = null;
+  function warmGrids(deadline) {
+    if (!gridQueue) gridQueue = solidMeshes().filter((m) => !m.isInstancedMesh && triCount(m) > GRID_MIN_TRIS);
+    while (gridQueue.length && (!deadline || deadline.timeRemaining() > 8)) triGrid(gridQueue.pop());
+    if (gridQueue.length) idle(warmGrids);
+  }
+  const idle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 2000 }) : setTimeout(() => fn(null), 60));
 
   /** Raycast hotspots (cheap bounding-sphere prefilter, then exact meshes). */
   function rawPick() {
@@ -466,7 +508,12 @@ export function createInteractions(ctx) {
   }
 
   // ─── per-frame ─────────────────────────────────────────────────────────────
+  let warmed = false;
   engine.addUpdate((dt, t) => {
+    if (!warmed && ctx.cameraRig && engine.frame > 30) {
+      warmed = true;
+      idle(warmGrids);
+    }
     canvasRect = canvas.getBoundingClientRect(); // once per frame (no layout thrash in the UI loop)
     const ui = ctx.ui;
     const panelOpen = !!ui?.isPanelOpen;
@@ -539,7 +586,7 @@ export function createInteractions(ctx) {
           // the overview's featured pieces: bigger than a firefly, with a slow halo
           featuredSeen.add(h.entryId);
           want = 1;
-          targetSize = isVisited ? 0.9 : 1.35;
+          targetSize = isVisited ? 0.85 : 1.2;
         } else if (!h.entryId && h.onActivate && h.area !== spot && spot !== 'glen') {
           // little "action" hotspots (the snail lift) beckon from neighbouring spots nearby
           h.object.getWorldPosition(wp);
@@ -907,7 +954,7 @@ function makeMarkerMaterial() {
           // featured (overview): the sparkle in the middle of a slowly breathing golden halo
           float br = 0.5 + 0.5 * sin(uTimeF * 1.7 + vPh);
           float ringR = 0.74 + 0.16 * br;
-          ringA = exp(-pow((r - ringR) / 0.07, 2.0)) * (0.55 - 0.3 * br) + exp(-r * r * 3.0) * 0.22;
+          ringA = exp(-pow((r - ringR) / 0.06, 2.0)) * (0.42 - 0.24 * br) + exp(-r * r * 3.0) * 0.18;
           uv *= 1.6;
           q *= 1.6;
           r = length(uv);

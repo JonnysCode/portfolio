@@ -104,7 +104,7 @@ export default async function build(ctx) {
     for (const c of veg.canopy ?? []) {
       if (Math.hypot(c.x, c.z) < 34) anchors.push({ x: c.x, y: c.y - c.r * 0.75, z: c.z, r: c.r * 0.7 });
     }
-    return createGlowWorms(ctx, { anchors, oakN, count: Math.round(Math.max(300, 600 * Math.min(1.2, density))), reduced, yRange: [11, 36] });
+    return createGlowWorms(ctx, { anchors, oakN, count: Math.round(Math.max(320, 640 * Math.min(1.2, density))), reduced, yRange: [11, 36] });
   });
   const motes = safe('motes', () => createMotes(ctx, { count: Math.round(Math.max(60, 160 * density) * k), reduced }));
   const leaves = safe('leaves', () => createLeaves(ctx, { count: Math.round(Math.max(14, 34 * density) * k), reduced }));

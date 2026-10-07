@@ -40,7 +40,7 @@ const HINT_KEY = 'woodland:hinted';
  */
 const FOCUS_TWEAKS = {
   // the Hobelbank: a 3/4 front view slightly above the top — vises, board, shavings and Jonny planing
-  'workbench-wip': { radius: 0.85, lift: 0.3, distance: 2.2, polar: 1.1 },
+  'workbench-wip': { radius: 0.9, lift: 0.35, distance: 2.4, polar: 1.22 },
 };
 const GLEN_CAM = new THREE.Vector3(...SPOT_BY_ID.glen.camera.position);
 /** How high above each spot's focus its floating overview label hangs (clear of caps & roofs). */
@@ -716,11 +716,12 @@ export function createUI(ctx) {
       currentEntry = entry;
       closeModal();
       // opened from a keyboard hotspot button: its focus ring, tooltip and hover
-      // ring must not stay drawn over the subject (focus moves into the page)
-      if (document.activeElement?.classList?.contains('hs-btn')) document.activeElement.blur();
+      // ring must not stay drawn over the subject — focus moves into the page
+      // (journal.open focuses the title at once; Esc brings it back to the button)
       ctx.interactions?.setFocused?.(null);
       ui.hideTooltip();
       journal.open(entry, { siblings: content.entriesForArea(entry.area) });
+      if (document.activeElement?.classList?.contains('hs-btn')) document.activeElement.blur();
       ui.isPanelOpen = true;
       root.classList.add('has-panel');
       banner.classList.remove('is-visible');

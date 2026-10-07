@@ -319,7 +319,7 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
   const mids = [];
   if (!birch && B.ivy && ends.length > 1 && rng.chance(0.55)) {
     const e = ends[rng.int(0, ends.length - 2)];
-    const c = center(e.y - 6);
+    const c = center(e.y - y0 - 6);
     const top = c.clone().lerp(e, 0.45);
     top.y = Math.min(e.y - 3, top.y);
     const strands = Math.max(1, Math.round(rng.int(2, 4) * density));

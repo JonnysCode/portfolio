@@ -7,17 +7,20 @@
 //   rig.onSpotChange(fn(spotId, prevId)) → unsubscribe   (fires when a glide starts)
 //   rig.onArrive(fn(spotId))         → unsubscribe        (fires when a spot glide lands)
 //   rig.next() / rig.prev()         cycle through SPOTS
-//   rig.focus(object3d | Vector3, { distance, height, azimuth, polar, spot })
-//                                   frame a detail (entry panels); `spot` switches
-//                                   the current spot silently (clicked from afar)
+//   rig.focus(object3d | Vector3, { distance, lift, radius, azimuth, faceAzimuth, polar, spot })
+//                                   frame a detail (entry panels): the centre of its
+//                                   bounds, fitted into the free part of the screen,
+//                                   swung around solid things in the sight line;
+//                                   `spot` switches the current spot silently
 //   rig.release()                   glide back to the current spot composition
 //   rig.focused                     true while framing a detail
 //   rig.transitioning               true while gliding
 //   rig.target                      THREE.Vector3 the camera looks at (lighting/DOF follow it)
 //   rig.focusDistance               distance camera → point of interest (for depth of field),
 //                                   accurate during glides, focus and orbiting
-//   rig.setInset({ right, bottom }) keep the subject centred in the part of the
-//                                   screen a panel / bottom sheet leaves free (px)
+//   rig.setInset({ right, bottom, top }) keep the subject centred in the part of
+//                                   the screen a panel / bottom sheet / HUD leaves free (px)
+// Phones: SPOTS[].portrait (layout.js) is the composed shot on a tall screen.
 //   rig.holdIntro()                 hover high above the canopy (behind the intro card)
 //   rig.playIntro() → Promise       cinematic descent from above the canopy into the glen
 //   rig.setOverride(position, lookAt) / rig.clearOverride() / rig.snap()   (debug, cut-scenes)

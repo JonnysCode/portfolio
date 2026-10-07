@@ -18,7 +18,29 @@ export function limbCurve(L) {
   const pts = L.pts.map(([rho, a, y]) => polar(a * DEG, rho, y));
   const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
   const radii = L.pts.map((p) => p[3]);
-  const radiusAtParam = (tp) => smoothTable(radii, tp);
+  // knobbly elbows: a local swelling (in arc length) at the kinked control points
+  const DIV = 240;
+  const lens = curve.getLengths(DIV);
+  const sAt = (tp) => {
+    const f = Math.min(Math.max(tp, 0), 1) * DIV;
+    const i = Math.min(Math.floor(f), DIV - 1);
+    return lens[i] + (lens[i + 1] - lens[i]) * (f - i);
+  };
+  const elbows = [];
+  L.pts.forEach((p, i) => {
+    if (p[4]) elbows.push({ s: sAt(i / (L.pts.length - 1)), k: p[4], w: 0.5 + p[3] * 0.75 });
+  });
+  const radiusAtParam = (tp) => {
+    let f = 1;
+    if (elbows.length) {
+      const s = sAt(tp);
+      for (const e of elbows) {
+        const d = (s - e.s) / e.w;
+        f += e.k * Math.exp(-d * d);
+      }
+    }
+    return smoothTable(radii, tp) * f;
+  };
   const radiusAt = (u) => radiusAtParam(curve.getUtoTmapping(u));
   return { curve, radiusAt, radiusAtParam };
 }

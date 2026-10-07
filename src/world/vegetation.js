@@ -1177,8 +1177,10 @@ export default async function build(ctx) {
   // (big ferns keep their folded fronds; medium ones are flat cards — they are
   //  seen from further away, where the fold no longer reads)
   // (long narrow fronds leaving the crown at 35–55°, tips drooping; fiddleheads in the heart)
-  addMesh(instanced('ferns-large', fernTemplate(fernRng, { fronds: [14, 15], length: [1.05, 1.4], e0: [0.62, 1.0], segs: 4, young: [2, 2], youngSegs: 5, width: 0.2 }), fernMat, fernL));
-  addMesh(instanced('ferns-medium', fernTemplate(fernRng, { fronds: [10, 11], length: [0.8, 1.05], e0: [0.66, 1.02], segs: 3, young: [1, 1], youngSegs: 4, flat: true, width: 0.23 }), fernMat, fernM));
+  // (the low tier gets lighter fountains: fewer fronds, coarser arches)
+  const lowT = tier === 'low';
+  addMesh(instanced('ferns-large', fernTemplate(fernRng, { fronds: lowT ? [11, 12] : [14, 15], length: [1.05, 1.4], e0: [0.62, 1.0], segs: lowT ? 3 : 4, young: lowT ? [1, 1] : [2, 2], youngSegs: lowT ? 4 : 5, width: 0.2 }), fernMat, fernL));
+  addMesh(instanced('ferns-medium', fernTemplate(fernRng, { fronds: lowT ? [8, 9] : [10, 11], length: [0.8, 1.05], e0: [0.66, 1.02], segs: 3, young: [1, 1], youngSegs: 4, flat: true, width: 0.23 }), fernMat, fernM));
   const grassRng = createRng('vegetation:grass-templates');
   addMesh(instanced('grass', grassTemplate(grassRng, { cards: [4, 5], height: [0.4, 0.6], spread: 0.1 }), grassMat, grassA));
   addMesh(instanced('clover', cloverTemplate(createRng('vegetation:clover'), { count: [6, 8], radius: 0.24 }), flowerMat, clover));

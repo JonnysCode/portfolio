@@ -101,6 +101,13 @@ function inNearField(x, y, z, wander, reach = 0.6) {
       dir.normalize();
       lenses.push({ P, dir, dist });
       if (s.id !== 'glen') lenses.push({ P: T.clone().addScaledVector(dir, -dist * 1.8), dir, dist: dist * 1.8 });
+      // (and the phone's own composed shot)
+      if (s.portrait) {
+        const PP = new THREE.Vector3(...(s.portrait.position ?? s.camera.position));
+        const d2 = new THREE.Vector3(...(s.portrait.target ?? s.camera.target)).sub(PP);
+        const l2 = d2.length();
+        lenses.push({ P: PP, dir: d2.normalize(), dist: l2 });
+      }
     }
   }
   for (const l of lenses) {
@@ -269,8 +276,9 @@ export function createGlowWorms(ctx, { anchors = [], oakN = 0, count = 450, redu
   };
   if (anchors.length) {
     for (let tries = 0; pos.length / 3 < count && tries < count * 8; tries++) {
-      // (two in three under the Great Oak, the rest under the giants' crowns)
-      const a = oakN && oakN < anchors.length ? (rng.chance(0.68) ? anchors[rng.int(0, oakN - 1)] : anchors[rng.int(oakN, anchors.length - 1)]) : rng.pick(anchors);
+      // (three in four under the Great Oak — the crown every overview looks at —
+      //  the rest under the giants' crowns)
+      const a = oakN && oakN < anchors.length ? (rng.chance(0.75) ? anchors[rng.int(0, oakN - 1)] : anchors[rng.int(oakN, anchors.length - 1)]) : rng.pick(anchors);
       const ang = rng.range(0, Math.PI * 2), d = Math.sqrt(rng.next()) * a.r;
       const x = a.x + Math.sin(ang) * d, z = a.z + Math.cos(ang) * d;
       // (most hang close under the leaves; some on long silk threads below them)

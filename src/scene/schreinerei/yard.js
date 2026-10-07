@@ -335,7 +335,7 @@ export function buildYard(ctx, B, mats) {
     }
   }
 
-  scatterGround(ctx, B, mats, rng);
+  scatterGround(ctx, B, mats, rng, chest);
 
   return {
     group,
@@ -350,7 +350,7 @@ export function buildYard(ctx, B, mats) {
  * alone): grass tufts, clover with tiny flowers, moss cushions, pebbles and
  * fallen leaves — everywhere nothing stands, never on the path.
  */
-function scatterGround(ctx, B, mats, rng) {
+function scatterGround(ctx, B, mats, rng, chest = null) {
   const { SCHREINEREI, OAK } = ctx.layout;
   const { getPathDistance, getHeight: gh } = ctx.ground;
   const A = SCHREINEREI.annex;
@@ -372,6 +372,9 @@ function scatterGround(ctx, B, mats, rng) {
     if (ax < -ANNEX.hx - 0.1 && ax > -ANNEX.hx - 0.85 && az > -2.0 && az < 2.6) return true; // lumber rack
     if (ax > 0.6 && ax < 2.95 && az > ANNEX.hz && az < ANNEX.hz + 1.85) return true; // porch floor
     if (ax > -1.3 && ax < 0.8 && az > ANNEX.hz && az < ANNEX.hz + 0.9) return true; // door apron
+    if (ax > -2.0 && ax < -1.2 && az > ANNEX.hz + 0.45 && az < ANNEX.hz + 1.85) return true; // lumber stack
+    if (ax > -0.95 && ax < -0.15 && az > ANNEX.hz + 2.0 && az < ANNEX.hz + 3.5) return true; // wheelbarrow
+    if (chest && Math.hypot(x - chest.x, z - chest.z) < 0.5) return true; // the chest on its sawhorses
     const [dx, dz] = toDeck(x, z);
     if (Math.abs(dx) < 2.15 && Math.abs(dz) < 1.6) return true; // deck
     if (dx < -1.0 && dx > -2.3 && dz > 1.3 && dz < 2.2) return true; // deck steps & planter

@@ -108,6 +108,8 @@ const FRAG = /* glsl */ `
     float g = 0.55;
     float hg = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * c, 1.5);
     float phase = 0.25 + hg * 0.22;
+    // moonbeams are lit stages seen from every side, not only against the light
+    phase = mix(phase, max(phase, 0.6), vKind.y);
     float a = prof * ends * streak * drift * lit * phase * vI * vView * uStrength;
     gl_FragColor = vec4(mix(uColor, uMoonColor, vKind.y) * a, 1.0);
     #include <tonemapping_fragment>

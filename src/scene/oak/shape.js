@@ -248,25 +248,29 @@ export const ROOTS = [
 ];
 
 // ─── Limbs ───────────────────────────────────────────────────────────────────
-// Main limbs: control points [ρ, a (deg), y, radius]. The first point sits
-// inside the trunk so the limb grows out of the fork. They twist, sweep and
-// branch further (limbs.js). L1 is the long low limb reaching front-left over
-// the cottage path (it carries the rope swing and two lanterns). Nothing
-// grows in front of the Code Loft (front-right, below y ≈ 16.5). The limbs to
-// the back and right stay low enough that the crown's underside forms a
-// ceiling across the top of the spot views.
+// Main limbs: control points [ρ, a (deg), y, radius, elbow?]. The first point
+// sits inside the trunk so the limb grows out of the fork. They twist, sweep
+// and branch further (limbs.js). Every limb is kinked two or three times — an
+// old oak's limbs zig-zag where they once lost a leader — and `elbow` (a
+// fraction of the radius) swells the bark into a knobbly elbow at that point.
+// L1 is the long low limb reaching front-left over the cottage path (it
+// carries two lanterns and fairy lights). Nothing grows in front of the
+// Code Loft (front-right, below y ≈ 16.5). The limbs to the back and right
+// stay low enough that the crown's underside forms a ceiling across the top
+// of the spot views. (Check: no limb tube may enter a spot camera frustum.)
 export const LIMBS = [
   {
     id: 'front-left-low',
     a0: -40,
     pts: [
       [0.9, -40, 13.6, 1.5],
-      [3, -41, 16.1, 1.28],
-      [6, -43, 15.3, 1.02],
-      [9, -41.5, 13.7, 0.8],
-      [12.2, -41, 13.1, 0.62],
-      [15, -47, 13.9, 0.46],
-      [17.6, -54, 15.6, 0.3],
+      [3, -41, 16.2, 1.3],
+      [5.6, -47, 15.7, 1.08, 0.24],
+      [8.2, -40, 14.2, 0.86],
+      [10.8, -37, 13.0, 0.72, 0.26],
+      [13.4, -45, 13.5, 0.56],
+      [15.6, -49, 14.7, 0.44, 0.2],
+      [17.6, -56, 15.9, 0.3],
     ],
     branches: 7,
   },
@@ -275,11 +279,12 @@ export const LIMBS = [
     a0: -125,
     pts: [
       [1, -125, 14.4, 1.55],
-      [3, -128, 17.4, 1.32],
-      [6, -132, 19.4, 1.06],
-      [9.5, -127, 21.8, 0.8],
-      [12.8, -121, 24.4, 0.56],
-      [15.2, -117, 27, 0.34],
+      [3, -128, 17.6, 1.33],
+      [5.6, -136, 19.0, 1.08, 0.24],
+      [8.0, -127, 21.6, 0.86],
+      [10.4, -123, 21.9, 0.72, 0.26],
+      [13.0, -118, 24.6, 0.52],
+      [15.2, -121, 27.4, 0.34],
     ],
     branches: 6,
   },
@@ -288,24 +293,29 @@ export const LIMBS = [
     a0: 150,
     pts: [
       [1, 150, 14.4, 1.55],
-      [2.8, 152, 17.5, 1.32],
-      [5.5, 147, 19.8, 1.05],
-      [8.6, 152, 22.3, 0.8],
-      [11.6, 158, 24.8, 0.55],
-      [13.8, 161, 27.4, 0.34],
+      [2.8, 152, 17.6, 1.33],
+      [5.2, 143, 19.2, 1.08, 0.24],
+      [7.6, 150, 22.0, 0.86],
+      [9.8, 158, 22.6, 0.72, 0.26],
+      [12.0, 156, 25.2, 0.52],
+      [13.8, 163, 27.6, 0.34],
     ],
     branches: 6,
   },
   {
+    // the limb above the Code Loft (its ropes & the swing hang from it):
+    // elbows UP over the treehouse roof, never down into it
     id: 'right',
     a0: 98,
     pts: [
       [1, 98, 14.8, 1.42],
-      [3, 96, 17, 1.22],
-      [6.5, 100, 17.6, 0.96],
-      [10, 106, 18.3, 0.72],
-      [13.5, 112, 19.8, 0.5],
-      [16.6, 116, 22, 0.32],
+      [3, 96, 17.3, 1.24],
+      [5.4, 102, 18.9, 1.04, 0.24],
+      [7.9, 96, 18.0, 0.86],
+      [10.3, 104, 18.5, 0.72, 0.26],
+      [12.9, 112, 19.9, 0.54],
+      [14.8, 110, 21.2, 0.42, 0.2],
+      [16.6, 117, 22.8, 0.3],
     ],
     branches: 6,
   },
@@ -314,11 +324,12 @@ export const LIMBS = [
     a0: 33,
     pts: [
       [1, 35, 15, 1.32],
-      [2.4, 32, 18.6, 1.15],
-      [4, 29, 23, 0.9],
-      [6.4, 25, 27.4, 0.68],
-      [8.4, 21, 31.8, 0.46],
-      [9.4, 19, 35.2, 0.3],
+      [2.4, 32, 18.8, 1.16],
+      [3.7, 24, 22.6, 0.96, 0.24],
+      [5.8, 29, 26.0, 0.74],
+      [7.3, 20, 29.4, 0.6, 0.26],
+      [8.6, 23, 32.6, 0.44],
+      [9.4, 17, 35.4, 0.3],
     ],
     branches: 4,
   },
@@ -327,11 +338,12 @@ export const LIMBS = [
     a0: -12,
     pts: [
       [1, -12, 15, 1.36],
-      [2.8, -10, 17.8, 1.16],
-      [5.5, -14, 19.4, 0.92],
-      [8.5, -10, 20.2, 0.7],
-      [11.4, -6, 21, 0.5],
-      [13.8, -2, 22.6, 0.32],
+      [2.8, -10, 17.9, 1.17],
+      [5.0, -17, 19.9, 0.98, 0.24],
+      [7.4, -10, 19.6, 0.8],
+      [9.6, -4, 21.4, 0.64, 0.26],
+      [11.8, -9, 22.0, 0.5],
+      [13.8, -1, 23.2, 0.32],
     ],
     branches: 6,
   },
@@ -340,11 +352,12 @@ export const LIMBS = [
     a0: 200,
     pts: [
       [0.6, 200, 15.4, 1.25],
-      [1.6, 195, 20, 1.08],
-      [2.4, 205, 25.5, 0.86],
-      [2, 215, 31, 0.62],
-      [2.8, 222, 36, 0.42],
-      [3.2, 226, 39.4, 0.26],
+      [1.6, 195, 20, 1.09],
+      [2.8, 208, 24.6, 0.92, 0.22],
+      [1.8, 214, 28.6, 0.72],
+      [3.0, 228, 32.4, 0.58, 0.24],
+      [2.4, 224, 36.2, 0.4],
+      [3.4, 234, 39.6, 0.26],
     ],
     branches: 5,
   },
@@ -359,7 +372,17 @@ export const BURLS = [
   { a: -78, y: 6.4, h: 0.26, r: 0.5 },
   { a: 228, y: 14.2, h: 0.3, r: 0.6 },
   { a: -30, y: 13.4, h: 0.22, r: 0.45 },
+  // big old swellings (±15 % of the radius) that break the silhouette seen
+  // from the glen: the left flank, high on the front-left, the back
+  { a: -104, y: 4.6, h: 0.46, r: 0.95 },
+  { a: -96, y: 10.6, h: 0.5, r: 1.1 },
+  { a: -84, y: 14.6, h: 0.4, r: 0.9 },
+  { a: -16, y: 9.4, h: 0.3, r: 0.8 },
+  { a: 214, y: 9.8, h: 0.42, r: 1.0 },
+  { a: 238, y: 2.6, h: 0.36, r: 0.9 },
 ];
+/** The trunk's broad lobes twist a quarter turn over 12 units of height. */
+export const LOBE_TWIST = Math.PI / 2 / 12;
 /** Knots: a ring of swollen bark around a dimple (old branch scars). */
 export const KNOTS = [
   { a: -47, y: 5.9, r: 0.32 },
@@ -448,15 +471,28 @@ export function trunkSample(a, y) {
     if (!root.flare) continue;
     const ac = root.a0 * DEG + TWIST * yc * 0.85;
     const d = angDiff(a, ac) * R0;
-    const w = 0.55 + 0.5 * Math.exp(-yc / 1.2);
-    const amp = root.flare * (0.18 + 1.15 * Math.exp(-yc / 1.05)) * (1 - smoothstep(4.5, 11, yc)) * (1 - 0.8 * att * smoothstep(1.6, 2.6, yc));
+    const w = 0.55 + 0.6 * Math.exp(-yc / 1.4);
+    // buttresses: ≈1.6× the radius at the ground, still clearly flared at y ≈ 1.5
+    const amp = root.flare * (0.2 + 1.2 * Math.exp(-yc / 1.45)) * (1 - smoothstep(4.5, 11, yc)) * (1 - 0.8 * att * smoothstep(1.6, 2.6, yc));
     r += amp * smoothBump(d * d, w * w);
   }
+  // the trunk swells towards each limb as it rises (a vase that splits into
+  // the limbs, not a column with branches stuck on); broad and strong where
+  // the bark is free, gentler on the loft side
   for (let i = 0; i < LIMBS.length; i++) {
     const ac = LIMBS[i].a0 * DEG + TWIST * (yc - FORK_Y);
     const d = angDiff(a, ac) * R0;
-    const amp = (0.13 + 0.1 * free) * smoothstep(8, 16, yc);
-    r += amp * smoothBump(d * d, 0.7);
+    const amp = (0.16 + 0.62 * free) * smoothstep(9, 16.5, yc) * (LIMBS[i].pts[0][3] / 1.45);
+    r += amp * smoothBump(d * d, 0.75 + 0.9 * free);
+  }
+
+  // 1b. Character: two or three broad lobes that spiral a quarter turn over
+  //     12 units, so the trunk reads as fused, twisting stems (silhouette
+  //     changes width as it rises); subtle where things attach.
+  {
+    const ph = a - yc * LOBE_TWIST;
+    const lobe = 0.62 * Math.cos(3 * ph + 0.4) + 0.38 * Math.cos(2 * ph - 1.1);
+    r += lobe * R0 * (0.035 + 0.11 * free) * (1 - 0.6 * smoothstep(14, 17.5, yc));
   }
 
   // 2. Furrows: V-shaped fissures (zero crossings of noise), stretched along
@@ -501,7 +537,7 @@ export function trunkSample(a, y) {
 
   // 5. The base swells into the ground everywhere except right at the door.
   const doorSide = Math.cos(a) > 0 ? 1 - smoothstep(1.4, 2.4, Math.abs(R0 * Math.sin(a))) : 0;
-  r += 0.42 * Math.exp(-yc / 0.7) * (1 - doorSide);
+  r += (0.3 * Math.exp(-yc / 0.7) + 0.32 * Math.exp(-yc / 1.6)) * (1 - doorSide);
 
   // 6. The door niche with its rolled bark collar (front only).
   const ca0 = Math.cos(a);

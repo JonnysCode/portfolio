@@ -62,9 +62,9 @@ export default async function build(ctx) {
     const ring = ctx.lights?.beams?.night;
     if (ring) {
       const axis = new THREE.Vector3().subVectors(ring.pos, ring.target);
-      shafts.addMoonbeam(ring.target.x, ring.target.z, { length: 22, width: 2.2, intensity: 1.1, axis });
+      shafts.addMoonbeam(ring.target.x, ring.target.z, { length: 22, width: 2.4, intensity: 1.3, axis });
     }
-    shafts.addMoonbeam(STREAM.pond.x, STREAM.pond.z, { length: 26, width: 3.4, intensity: 1 });
+    shafts.addMoonbeam(STREAM.pond.x, STREAM.pond.z, { length: 26, width: 3.6, intensity: 1.2 });
     shafts.addMoonbeam(STREAM.pool.x, STREAM.pool.z, { length: 26, width: 3, intensity: 0.9 });
     shafts.addMoonbeam(1.0, 8.6, { length: 24, width: 2.4, intensity: 0.8 });
   }

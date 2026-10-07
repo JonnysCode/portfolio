@@ -171,7 +171,7 @@ export const SPOTS = [
     focus: [-1.4, 1.1, -0.8],
     camera: { position: [0.9, 3.0, 11.4], target: [-0.6, 2.2, -0.7], fov: 40 },
     // phones: the Hobelbank with Jonny and the oak door (the deck is a swipe to the right)
-    portrait: { position: [-2.6, 3.6, 11.5], target: [-1.9, 1.9, -0.6] },
+    portrait: { position: [-2.9, 4.2, 14.5], target: [-1.95, 2.3, -0.6] },
   },
   {
     id: 'code',
@@ -191,7 +191,7 @@ export const SPOTS = [
     areas: ['home'],
     focus: [-15, 2.4, 4],
     camera: { position: [-2.6, 4.9, 9.9], target: [-14.6, 2.6, 3.9], fov: 40 },
-    portrait: { position: [-5.0, 5.5, 13.5], target: [-13.6, 2.6, 4.6] },
+    portrait: { position: [-0.9, 7.5, 17.7], target: [-13.8, 3.2, 4.4] },
     close: { position: [-8.6, 4.4, 9.4], target: [-14.4, 2.2, 4.6] },
   },
   {
@@ -202,7 +202,7 @@ export const SPOTS = [
     areas: ['interior'],
     focus: [-21.5, 1.8, 2.5],
     camera: { position: [-24.6, 3.8, 12.6], target: [-21.4, 2.0, 2.8], fov: 40 },
-    portrait: { position: [-24.6, 4.2, 14.5], target: [-21.6, 2.0, 3.0] },
+    portrait: { position: [-26.2, 4.6, 16.0], target: [-22.6, 2.1, 3.2] },
   },
   {
     id: 'bikes',

@@ -179,7 +179,10 @@ export class MushroomKit {
     const H = opts.height ?? 1;
     const R = opts.capR ?? H * 0.55;
     const shape = opts.shape ?? 'dome';
+    // (the cap texture is neutral — see build(): the vertex colour alone sets the
+    //  species' hue, lifted a little so the velvet keeps its glow; reds a touch more)
     const capCol = C(opts.color ?? rng.pick(CAP_REDS));
+    capCol.multiplyScalar(opts.capGain ?? (capCol.r > capCol.g * 4 ? 1.6 : 1.25));
     // (resolution follows size: giants are seen up close, buttons only as dots
     //  of colour — and opts.lod thins whatever no lens ever comes close to)
     const lod = THREE.MathUtils.clamp(opts.lod ?? 1, 0.4, 1);
@@ -513,7 +516,9 @@ export class MushroomKit {
       m.raycast = () => {};
       out.push(m);
     };
-    add(this.caps, M.surface('mushroomCap', { vertexColors: true }), 'caps');
+    // (a NEUTRAL cap texture: with the default red base every vertex-coloured
+    //  cap — ochre, tan, golden, brown — would be dragged towards red)
+    add(this.caps, M.surface('mushroomCap', { vertexColors: true, color: '#a0a0a0' }), 'caps');
     add(this.stems, M.surface('mushroomStem', { vertexColors: true }), 'stems');
     if (this.shared) return out;
     add(this.gills, M.surface('gills', { vertexColors: true }), 'gills', false);

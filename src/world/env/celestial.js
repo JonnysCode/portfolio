@@ -38,8 +38,13 @@ export const SUN_LIGHT_DIR = dirFromAngles(44, 292);
 export const SUN_SKY_DIR = dirFromAngles(16, 292);
 /** Moonlight: from the back-right, high enough to silver roofs & caps. */
 export const MOON_LIGHT_DIR = dirFromAngles(50, 62);
-/** Where the moon disc is drawn (peeks through a canopy gap at the back-right). */
-export const MOON_SKY_DIR = dirFromAngles(30, 40);
+/**
+ * Where the moon disc is drawn: low over the far forest at the back-right,
+ * glimpsed between the colossal trunks above the waterfall (top-right of the
+ * glen shot). The canopy is closed overhead, so a high moon would never be
+ * seen; the night mist's in-scatter glow also gathers around this direction.
+ */
+export const MOON_SKY_DIR = dirFromAngles(4, 19);
 
 /** Day / night colour sets (sRGB hex — converted to linear by THREE.Color). */
 export const SKY_COLORS = {
