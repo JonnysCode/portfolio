@@ -22,16 +22,18 @@ const param = (() => {
 export const showDrafts = param === 'show' ? true : param === 'hide' ? false : !!import.meta.env?.DEV;
 
 export const isDraft = (s) => typeof s === 'string' && /^\s*DRAFT\b/.test(s);
+/** 'DRAFT — Describe …' → 'Describe …' (the marker says it once, the text need not repeat it). */
+const strip = (s) => (isDraft(s) ? s.replace(/^\s*DRAFT\b\s*[—–:-]?\s*/, '') || '…' : s);
 const isExampleMail = (e) => typeof e === 'string' && /@example\.(com|org|net)$/i.test(e.trim());
 
 /** What of an entry is shown (drafts filtered out unless showDrafts). */
 export function presentEntry(entry) {
   const yearDraft = isDraft(entry.year);
   const year = !entry.year || (yearDraft && !showDrafts) ? null : yearDraft ? 'draft' : String(entry.year);
-  let body = (entry.body ?? []).map((text) => ({ text, draft: isDraft(text) })).filter((p) => showDrafts || !p.draft);
+  let body = (entry.body ?? []).map((text) => ({ text: strip(text), draft: isDraft(text) })).filter((p) => showDrafts || !p.draft);
   // nothing real to say yet: the one-line summary stands in (it is the owner's own text)
   if (!body.length && entry.summary && !isDraft(entry.summary)) body = [{ text: entry.summary, draft: false }];
-  const facts = (entry.facts ?? []).map(([k, v]) => [k, v, isDraft(v) || isDraft(k)]).filter((f) => showDrafts || !f[2]);
+  const facts = (entry.facts ?? []).map(([k, v]) => [strip(k), strip(v), isDraft(v) || isDraft(k)]).filter((f) => showDrafts || !f[2]);
   return { year, yearDraft, body, facts };
 }
 

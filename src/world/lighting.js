@@ -464,6 +464,8 @@ export default async function build(ctx) {
   // the canopy cookie: leaves sway (time), a little softer by moonlight
   const settings = ctx.lights.settings;
   const canopyMotion = engine.reducedMotion ? 0 : 1;
+  // the detail octave of the leaf pattern only on 'high' (phones: one octave less per lit pixel)
+  canopyParams.b[3] = q.tier === 'high' ? 1 : 0;
   engine.addUpdate((dt, t) => {
     if (!allocated && engine.frame > 1) allocate(); // safety net if post never ran
     const n = env?.night ?? 0;

@@ -5,9 +5,12 @@
 // moss, a bole of fused, wrung stems (broad lobes and cords spiralling a
 // quarter turn as it rises, big burls) that flares like a vase into the fork,
 // a door niche at its foot (the Schreinerei door goes there), hollows and
-// knots, massive limbs kinked at knobbly elbows, and a huge crown of painterly
-// leaf masses with windows onto the limbs and sun-kissed tops. All procedural
-// (see ./oak/*).
+// knots, massive limbs kinked at knobbly elbows (two high ones carry the crown
+// past the top of the wide shots), and a huge crown of painterly clusters-of-
+// clusters with windows onto the limbs and the sky, sun-kissed tops and cool
+// bellies (moonlit blue-grey at night). The bark is finely fissured (cavity
+// darkening, cross-checks, moss creeping into the crevices); the moss shell
+// hugs the bark and ends in a ragged, dithered edge. All procedural (see ./oak/*).
 //
 // Exposes for other builders:
 //   ctx.oak = {
@@ -18,7 +21,7 @@
 //     barkRadius(a, y),            // sculpted bark radius at azimuth a (rad, 0 = +Z, +π/2 = +X) & height y
 //     barkPoint(a, y, lift = 0),   // world point on the bark (lifted along the radial direction)
 //     roots: [{ id, a0, curve, size(t, out, tp), length }],  // buttress roots (curve is flat; add getHeight)
-//     hollows: [{ id, a, y, floor, position, normal }],         // 'owl' (front-left, y≈9.7) and 'den' (back)
+//     hollows: [{ id, a, y, floor, position, normal }],         // 'owl' (front-left, y≈9.7), 'den' (back), 'nook' (above the door)
 //     doorNiche: { halfWidth, spring, top, backZ },             // niche carved behind the Schreinerei door
 //     forkY, lanterns: [Vector3],                                // fork height, hanging lantern glass positions
 //   }
@@ -38,11 +41,19 @@ import { buildCrown } from './oak/crown.js';
 import { buildIvy } from './oak/ivy.js';
 import { buildDetails } from './oak/details.js';
 
-/** Merge geometries that share the oak's attribute layout (position/normal/uv, indexed). */
-function merge(list, name) {
+/**
+ * Merge geometries that share the oak's attribute layout (position/normal/uv,
+ * indexed). `extra` = { name: itemSize } attributes to keep (parts without one
+ * get zeros).
+ */
+function merge(list, name, extra = {}) {
+  const keepNames = ['position', 'normal', 'uv', ...Object.keys(extra)];
   const clean = list.map((g) => {
-    for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+    for (const k of Object.keys(g.attributes)) if (!keepNames.includes(k)) g.deleteAttribute(k);
     if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+    for (const [k, size] of Object.entries(extra)) {
+      if (!g.attributes[k]) g.setAttribute(k, new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * size), size));
+    }
     if (!g.index) {
       const n = g.attributes.position.count;
       const idx = new Uint32Array(n);
@@ -57,6 +68,78 @@ function merge(list, name) {
   out.computeBoundingSphere();
   out.computeBoundingBox();
   return out;
+}
+
+/** Add `attribute <type> <name>` → `varying <type> v<Name>` plumbing to a patched material clone. */
+function withVarying(base, { attr, type, tag, fragment }) {
+  const m = base.clone();
+  m.name = `${base.name}-${tag}`;
+  const prev = m.onBeforeCompile;
+  const v = 'v' + attr[0].toUpperCase() + attr.slice(1);
+  m.onBeforeCompile = (shader, renderer) => {
+    prev?.call(m, shader, renderer);
+    shader.vertexShader = `attribute ${type} ${attr};\nvarying ${type} ${v};\n` + shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>\n  ${v} = ${attr};`);
+    shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\nvarying ${type} ${v};`);
+    fragment(shader);
+  };
+  const key = m.customProgramCacheKey();
+  m.customProgramCacheKey = () => `${key}|${tag}`;
+  return m;
+}
+
+/**
+ * The trunk & root bark: a finer bark scale (plates and furrows read at hero
+ * distance), with the per-vertex `oak` attribute (x moss boost, y cavity,
+ * z trunk mask): moss creeps into the crevices where the shell thins out, the
+ * flute valleys and furrows darken, and short horizontal cross-checks break
+ * the long flutes so the bole reads as ancient fissured bark, not a planed board.
+ */
+function oakBarkMaterial(materials) {
+  return withVarying(materials.surface('bark', { mossy: 0.17, scale: 0.95, roughness: 1.15, color: '#73604a' }), {
+    attr: 'oak',
+    type: 'vec3',
+    tag: 'oak-bark',
+    fragment(shader) {
+      const before = shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader
+        .replace('float thr = 1.15 - sfQ.x * 1.75;', 'float thr = 1.15 - clamp(sfQ.x + vOak.x, 0.0, 0.92) * 1.75;')
+        .replace(
+          'diffuseColor.rgb *= sfCol;',
+          `diffuseColor.rgb *= sfCol;
+  {
+    // deep flute valleys & furrows: painterly cavity darkening
+    diffuseColor.rgb *= 1.0 - 0.32 * vOak.y;
+    // cross-checks: short horizontal fissures across the ridges of the bole
+    vec2 oq = vec2(atan(sfWPos.x - (${OAK.x.toFixed(3)}), sfWPos.z - (${OAK.z.toFixed(3)})), sfWPos.y);
+    float ow = sfNoise3(vec3(oq.x * 2.4, oq.y * 0.45, 3.7));
+    float ob = abs(fract(oq.y * 1.15 + ow * 1.3) - 0.5);
+    float oseg = smoothstep(0.5, 0.62, sfNoise3(vec3(oq.x * 11.0, oq.y * 2.2, 8.1)));
+    float ochk = (1.0 - smoothstep(0.012, 0.045, ob)) * oseg * (1.0 - vOak.y) * vOak.z * (1.0 - smoothstep(14.0, 17.0, oq.y));
+    diffuseColor.rgb *= 1.0 - 0.45 * ochk;
+  }`
+        );
+      if (shader.fragmentShader === before) console.warn('oak: bark shader patch did not apply');
+    },
+  });
+}
+
+/** Moss shell with a ragged edge: per-vertex `mossA` + a world-space dithered alpha test. */
+function mossShellMaterial(materials) {
+  return withVarying(materials.surface('moss'), {
+    attr: 'mossA',
+    type: 'float',
+    tag: 'oak-moss',
+    fragment(shader) {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <emissivemap_fragment>',
+        `{
+    float oakN = sfNoise3(sfWPos * 5.0) * 0.6 + sfNoise3(sfWPos * 17.0 + 3.1) * 0.4;
+    if (vMossA < 0.12 + 0.76 * oakN) discard;
+  }
+#include <emissivemap_fragment>`
+      );
+    },
+  });
 }
 
 function staticMesh(geo, material, { cast = true, receive = true, name = '' } = {}) {
@@ -89,16 +172,26 @@ export default async function build(ctx) {
   const skeleton = buildLimbs(rng.fork('limbs'), { detail: hi ? 1 : 0.7 });
   await tick();
 
-  const barkLow = merge([trunkGeo, ...roots.bark], 'trunk');
-  group.add(staticMesh(barkLow, materials.surface('bark', { mossy: 0.17, scale: 1.6 }), { name: 'oak-trunk' }));
+  // the moss shell is built on the bark grid (its normals), before the merge
+  const trunkMossGeo = buildTrunkMossGeometry(trunkGeo);
+  for (const g of roots.bark) g.setAttribute('oak', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 3), 3));
+  {
+    // trunk: (moss, cavity) + trunk mask 1 (the roots keep 0)
+    const src = trunkGeo.attributes.oak.array;
+    const oak3 = new Float32Array((src.length / 2) * 3);
+    for (let i = 0; i < src.length / 2; i++) oak3.set([src[i * 2], src[i * 2 + 1], 1], i * 3);
+    trunkGeo.setAttribute('oak', new THREE.BufferAttribute(oak3, 3));
+  }
+  const barkLow = merge([trunkGeo, ...roots.bark], 'trunk', { oak: 3 });
+  group.add(staticMesh(barkLow, oakBarkMaterial(materials), { name: 'oak-trunk' }));
   // ivy: woody stems join the limb bark, the leaf cards are one mesh
   const ivy = buildIvy(rng.fork('ivy'), skeleton.limbs, { density });
   const barkHigh = merge([...skeleton.tubes, ...ivy.stems], 'limbs');
   group.add(staticMesh(barkHigh, materials.surface('bark', { mossy: 0.3, scale: 1.25 }), { name: 'oak-limbs' }));
 
   // ── moss: the trunk's foot, the shady back, the fork, the root tops ─────
-  const mossGeo = merge([buildTrunkMossGeometry({ cols: hi ? 176 : 120 }), ...roots.moss], 'moss');
-  const mossMesh = staticMesh(mossGeo, materials.surface('moss'), { cast: false, name: 'oak-moss' });
+  const mossGeo = merge([trunkMossGeo, ...roots.moss], 'moss', { mossA: 1 });
+  const mossMesh = staticMesh(mossGeo, mossShellMaterial(materials), { cast: false, name: 'oak-moss' });
   mossMesh.visible = !debug.includes('nomoss');
   group.add(mossMesh);
 

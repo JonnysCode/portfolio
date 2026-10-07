@@ -22,18 +22,26 @@
 //                 hummocks, small logs with a mushroom family, stumps, rock
 //                 groups with moss caps, fern & foxglove clumps; a big mossy
 //                 log frames the bottom of the wide overview
-//   undergrowth   ferns (three sizes), grass tussocks, clover, wildflower
-//                 communities (bluebells, forget-me-nots, foxgloves, daisies,
-//                 buttercups, meadow mix), broad-leaf clumps, bilberry shrubs,
-//                 toadstools, boletes, bonnet tufts and tiny bioluminescent
-//                 mushrooms that glow at night — scattered by biome fields and
-//                 gathered into lush beds   (vegetation/plants.js, instanced, wind)
+//   undergrowth   CLUMPS, not confetti: a noise field pulled towards roots,
+//                 stones, logs, stumps and path edges, thresholded into clumps
+//                 with dense cores and feathered edges; each mixes 3–4 species
+//                 from a recipe for its place (sun, shade, damp, path edge) —
+//                 ferns (three sizes), bilberry & bramble bushlets, foxglove /
+//                 bluebell spikes, grass, clover, forget-me-nots, daisies,
+//                 buttercups, broad leaves, a mushroom tuft — with open glades
+//                 between them where the floor's own patches show (velvet
+//                 cushions, litter drifts, clover mats, bare soil & pebbles:
+//                 common.groundPatches, shared with the terrain shader); plus
+//                 lush beds  (vegetation/plants.js, instanced, wind)
 //   litter        fallen leaves & pebbles                 (vegetation/litter.js)
 //   framing       big fronds & broad leaves rising into the lower corners of
 //                 every spot shot, a fern fringe at the front edge
-//   no bare floor a gap-filling pass: whatever a composed shot still shows
-//                 empty gets tufts & ferns; beyond the wall (r > 35) big fern
+//   no bare floor a gap-filling pass: a big hole a composed shot still shows
+//                 gets a small clump (never a lone tuft) unless the floor
+//                 dresses it already; beyond the wall (r > 35) big fern
 //                 drifts, broad leaves and bushes
+//   tree feet     mossy root runs snaking out of the giants' bases, stones the
+//                 roots have lifted, shelf fungi under the broken snags
 //   night magic   enchanted giants (gills glow soft mint, spots shimmer),
 //                 will-o'-the-wisp mushroom clusters along the paths, a
 //                 glowing fairy ring, fairy lights spiralling up two giants,
@@ -41,6 +49,11 @@
 //                 (vegetation/lanterns.js); the canopy dims to moonlit
 //                 silhouettes with a silver rim (common.moonlit)
 //   secrets       a fairy ring (hotspot), snail stones for the wild snails
+//
+// Quality tiers: medium & low draw far less — counts follow density, the
+// tree-foot & framing loops √density, and detailK / FERN_T thin trunk, cap and
+// stem segments, fern fronds, grass cards and flower communities. Budgets:
+// VEG_BUDGET (stats.budget / stats.overBudget, result.budget).
 //
 // Triangle budget: detail follows zones.viewDistance() — how close any
 // reachable camera pose (spot shots swung through their orbit ranges, the
@@ -66,7 +79,7 @@ import { createRng } from '../core/rng.js';
 import { getHeight, getPathDistance, getStreamDistance, pathPolylines } from './ground.js';
 import { STREAM, SPOTS, RIVERSIDE } from './layout.js';
 import { glowQuads } from '../props/glow.js';
-import { fieldMid, fieldFine, fieldAlt, groundPatches, GeoBuilder, instanced, staticMesh, moonlit, TAU } from './vegetation/common.js';
+import { fieldMid, fieldFine, fieldAlt, groundPatches, GeoBuilder, instanced, staticMesh, moonlit, mossBalanced, TAU } from './vegetation/common.js';
 import { canGrow, isClearOfViews, isClearOfSubjects, blocksView, oakDist, cameraClearance, viewDistance, viewDetail, inShot, inNearField } from './vegetation/zones.js';
 import { forestPlan } from './vegetation/plan.js';
 import { canopyLanterns } from './vegetation/lanterns.js';
@@ -74,8 +87,11 @@ import { buildLitter } from './vegetation/litter.js';
 import { buildTree, clumpTemplate } from './vegetation/trees.js';
 import { MushroomKit, CAP_REDS, CAP_BROWNS, CAP_OCHRES, CAP_TANS, updateMushroomGlow } from './vegetation/mushrooms.js';
 import { placeFamily, pickWeighted, SPECIES } from './vegetation/families.js';
-import { mossyRock, mossMound, fallenLog, smallRoot, twig, stump, BARK_MEAN } from './vegetation/groundcover.js';
+import { mossyRock, mossMound, fallenLog, smallRoot, twig, stump, setGroundDetail, BARK_MEAN } from './vegetation/groundcover.js';
 import { fernTemplate, grassTemplate, cloverTemplate, flowerTemplate, broadleafTemplate, bilberryTemplate, brambleTemplate, FLOWER_KINDS } from './vegetation/plants.js';
+
+/** Triangle budgets per quality tier (checked into stats.overBudget; ctx.modules.vegetation.budget). */
+export const VEG_BUDGET = { high: 680000, medium: 340000, low: 250000 };
 
 /** Spatial hash of solid things (trunks, rocks, logs, giant stems) for spacing. */
 class Occupancy {
@@ -135,6 +151,7 @@ export default async function build(ctx) {
   group.name = 'vegetation';
   ctx.scene.add(group);
   const occ = new Occupancy(2);
+  setGroundDetail(tier);
   const stats = { drawCalls: 0, triangles: 0, instances: 0, meshes: {} };
   // (build time per section, ms — stats.timing)
   const timing = {};
@@ -168,21 +185,21 @@ export default async function build(ctx) {
   const clumps = [];
   for (const t of plan.trees) {
     // (giants no lens ever comes close to are built with fewer segments)
-    t.lod = viewDetail(t.x, t.y0 + 5, t.z, { r: t.radius * 1.8, near: 16, far: 32, min: 0.55 }) * (tier === 'high' ? 1 : tier === 'medium' ? 0.85 : 0.72);
+    t.lod = viewDetail(t.x, t.y0 + 5, t.z, { r: t.radius * 1.8, near: 16, far: 32, min: 0.55 }) * (tier === 'high' ? 1 : tier === 'medium' ? 0.75 : 0.6);
     buildTree(t, builders, clumps, { density });
     occ.add(t.x, t.z, t.radius * 1.6, 'tree');
   }
   lap('trees');
   // the canopy clump template (also used for the forest-edge bushes below)
-  const clumpGeo = clumpTemplate(rng.fork('clump'), tier === 'low' ? 48 : tier === 'medium' ? 58 : 70, { size: tier === 'low' ? [0.36, 0.5] : [0.32, 0.46] });
+  const clumpGeo = clumpTemplate(rng.fork('clump'), tier === 'low' ? 44 : tier === 'medium' ? 52 : 70, { size: tier === 'low' ? [0.37, 0.52] : tier === 'medium' ? [0.35, 0.49] : [0.32, 0.46] });
 
   // ── 2. giant fly agarics ──────────────────────────────────────────────────
   // (the small kit writes its gills, warts and glowing parts into the giant
   //  kit's builders: one draw per part for the whole mushroom kingdom)
-  const giantKit = new MushroomKit(rng.fork('giants'));
-  const smallKit = new MushroomKit(rng.fork('small'), { share: giantKit });
+  const giantKit = new MushroomKit(rng.fork('giants'), { detail: detailK });
+  const smallKit = new MushroomKit(rng.fork('small'), { share: giantKit, detail: detailK });
   const kits = { big: giantKit, small: smallKit };
-  const mushLod = (x, y, z, r) => viewDetail(x, y, z, { r, near: 10, far: 28, min: 0.5 }) * detailK;
+  const mushLod = (x, y, z, r) => viewDetail(x, y, z, { r, near: 10, far: 28, min: 0.5 }) * detailK * detailK;
   /** Ground test for a family member: free forest floor, clear of solids; tall ones out of the spot views. */
   const groundFor = (minClear = 0.12, { path = 1.25 } = {}) => (x, z, h) => {
     if (!canGrow(x, z, { path })) return null;
@@ -215,7 +232,7 @@ export default async function build(ctx) {
     const glowSpotsOn = glowGills && red && grng.chance(0.85);
     if (glowGills) glowSpots.push({ x, y: y + H * 0.8, z });
     const caps = { red: CAP_REDS, ochre: CAP_OCHRES, tan: CAP_TANS, brown: CAP_BROWNS }[hue];
-    const giantLod = viewDetail(x, y + H * 0.6, z, { r: R, near: 12, far: 32, min: 0.6 }) * (0.25 + 0.75 * detailK);
+    const giantLod = viewDetail(x, y + H * 0.6, z, { r: R, near: 12, far: 32, min: 0.6 }) * detailK;
     if (hue === 'tan') {
       // the pale giants are PARASOLS — a family of different ages: the lead
       // fully open, a half-open bell and a young drumstick or two, leaning out
@@ -325,6 +342,8 @@ export default async function build(ctx) {
   //     and rocks below, once those exist)
   const troops = [];
   const familyAt = (cx, cz, opts = {}) => {
+    // (lower tiers: fewer families — the giants and the clumps carry the shot)
+    if (thinK < 1 && !opts.keep && rng.next() > thinK) return false;
     if (!canGrow(cx, cz, { margin: 0.25, path: opts.path ?? 1.25 })) return false;
     if (troops.some((t) => Math.hypot(t.x - cx, t.z - cz) < (opts.gap ?? 3.0))) return false;
     if (occ.clearance(cx, cz, 2) < (opts.minClear ?? 0.15)) return false;
@@ -721,7 +740,7 @@ export default async function build(ctx) {
       // in the moss at its foot
       for (const f of [0.12, 0.48, 0.9]) {
         const p = log.pts[Math.round((log.pts.length - 1) * f)];
-        familyAt(p.x + rng.jitter(0.4), p.z - lr - 0.35, { side: Math.PI, gap: 1.0, minClear: 0.02, path: 0, size: rng.range(0.3, 0.6), ground: groundFor(0.02, { path: 0 }) });
+        familyAt(p.x + rng.jitter(0.4), p.z - lr - 0.35, { side: Math.PI, gap: 1.0, minClear: 0.02, path: 0, size: rng.range(0.3, 0.6), ground: groundFor(0.02, { path: 0 }), keep: true });
       }
       for (const e of [-0.56, 0.56]) vigFerns.push({ x: cx + Math.sin(yaw) * len * e, z: cz + Math.cos(yaw) * len * e, s: rng.range(1.5, 1.9), keep: true });
       vignettes.framing = 1;
@@ -774,7 +793,7 @@ export default async function build(ctx) {
   const SMALL_K = 0.66, GRASS_B_K = 0.7, FAR_FERN_K = 1.32;
   /** A big fern; beyond the lenses' reach it becomes a scaled-up medium fern. */
   const addFern = (it, keep = false) => {
-    if (!keep && viewDistance(it.x, it.y + it.s * 0.5, it.z, it.s * 0.8) > 26) fernM.push({ ...it, s: it.s * FAR_FERN_K });
+    if (!keep && viewDistance(it.x, it.y + it.s * 0.5, it.z, it.s * 0.8) > 23) fernM.push({ ...it, s: it.s * FAR_FERN_K });
     else fernL.push(it);
   };
   const clover = [];
@@ -798,12 +817,12 @@ export default async function build(ctx) {
   const broad = [];
   const shrubs = [];
   const RECIPES = {
-    brake: { fernL: 3, fernM: 3, bilberry: 2, foxgloves: 1, grass: 1 },
-    woodland: { fernM: 3, bluebells: 3, broad: 1, fernL: 1, mush: 0.4 },
+    brake: { fernL: 2.2, fernM: 2.6, bilberry: 1.5, foxgloves: 0.8, grass: 1.2 },
+    woodland: { fernM: 2.6, bluebells: 1.6, broad: 1, fernL: 1, mush: 0.4, grass: 0.6 },
     meadow: { grass: 2.5, daisies: 2, buttercups: 2, meadow: 2, clover: 1.2, forgetMeNots: 0.6 },
-    berry: { bilberry: 4, fernM: 2, bramble: 1.5, forgetMeNots: 1, mush: 0.3 },
-    damp: { forgetMeNots: 3, fernM: 3, broad: 2, grass: 1, bluebells: 0.6 },
-    shade: { fernM: 3, fernL: 2, bluebells: 2, bramble: 1.2, mush: 0.6 },
+    berry: { bilberry: 3, fernM: 2.5, bramble: 1, forgetMeNots: 1, grass: 1, mush: 0.3 },
+    damp: { forgetMeNots: 3, fernM: 3, broad: 1.5, grass: 1.5, bluebells: 0.5 },
+    shade: { fernM: 3, fernL: 1.4, bluebells: 1.5, bramble: 0.8, mush: 0.6, grass: 0.6 },
     edge: { grass: 3, clover: 2, daisies: 1.6, forgetMeNots: 1, buttercups: 1, fernM: 0.8 },
   };
   const BIG = { fernL: 1, bilberry: 1, bramble: 1, broad: 1, foxgloves: 1 };
@@ -825,8 +844,17 @@ export default async function build(ctx) {
     }
     return rec;
   };
-  /** Place one plant of a clump's species (false where a tall one would block a view). */
-  const placePlant = (kind, x, y, z, { grow = 1, edge = false, r = Math.hypot(x, z) } = {}) => {
+  /**
+   * Place one plant of a clump's species. A tall one that would block a spot
+   * camera's view becomes a low fringe plant instead (the clump stays a clump
+   * in the shots' foregrounds); false only if nothing fits.
+   */
+  const LOW_FALLBACK = ['grass', 'clover', 'forgetMeNots', 'daisies', 'grass'];
+  const placePlant = (kind, x, y, z, opts = {}) => {
+    if (placeOne(kind, x, y, z, opts)) return true;
+    return !SMALL[kind] && placeOne(LOW_FALLBACK[Math.floor(rng.next() * LOW_FALLBACK.length)], x, y, z, opts);
+  };
+  const placeOne = (kind, x, y, z, { grow = 1, edge = false, r = Math.hypot(x, z) } = {}) => {
     if (kind === 'fernL' || kind === 'fernM') {
       const big = kind === 'fernL';
       const s = (big ? rng.range(0.9, 1.5) : rng.range(0.55, 1.05)) * grow * (r > 25 ? 1.35 : 1);
@@ -871,7 +899,7 @@ export default async function build(ctx) {
   };
   const gp = {};
   const clumpStats = { plants: 0, glade: 0 };
-  const cell = 0.46 / Math.sqrt(density);
+  const cell = 0.56 / Math.sqrt(density);
   const LIM = 40;
   for (let gz = -LIM; gz < 47; gz += cell) {
     for (let gx = -LIM; gx < LIM; gx += cell) {
@@ -902,7 +930,7 @@ export default async function build(ctx) {
       // the clump field: noise patches + a pull towards solids and path edges
       const hug = Math.max(1 - THREE.MathUtils.smoothstep(occClear, 0.05, 1.6), edge ? 0.8 * (1 - THREE.MathUtils.smoothstep(pd, 1.3, 2.2)) : 0);
       const cv = fieldMid(x, z) * 0.55 + fieldAlt(x, z) * 0.25 + fieldFine(x, z) * 0.2 + hug * 0.42 - open * 0.35;
-      const p = THREE.MathUtils.smoothstep(cv, 0.5, 0.66);
+      const p = THREE.MathUtils.smoothstep(cv, 0.52, 0.68);
       // (clover mats get real clover; a glade otherwise)
       if (!rng.chance(p)) {
         if (gp.clover > 0.5 && rng.chance(0.35)) clover.push({ x, y: y + 0.005, z, ry: rng.range(0, TAU), s: rng.range(1.0, 1.5), color: jitterTint('#6a9a40', 0.02, 0.06) });
@@ -913,10 +941,10 @@ export default async function build(ctx) {
       const rec = recipeAt(x, z, damp ? 'damp' : edge && occClear > 0.6 ? 'edge' : shady ? 'shady' : 'sunny');
       // dense cores favour the big species, the feathered fringe the small ones
       const w = {};
-      for (const k in rec) w[k] = rec[k] * (BIG[k] ? 0.35 + 1.3 * core : SMALL[k] ? 1.5 - core : 1);
+      for (const k in rec) w[k] = rec[k] * (BIG[k] ? 0.3 + 1.0 * core : SMALL[k] ? 1.5 - core : 1);
       let kind = pickWeighted(rng, w);
       // (out at the forest wall only the big shapes read)
-      if (r > 26 && SMALL[kind] && kind !== 'grass') kind = rng.chance(0.5) ? 'fernM' : 'grass';
+      if (r > 26 && SMALL[kind] && kind !== 'grass') kind = rng.chance(0.3) ? 'fernM' : 'grass';
       clumpStats.plants += placePlant(kind, x, y, z, { grow: 0.85 + 0.35 * core, edge, r }) ? 1 : 0;
     }
   }
@@ -1228,7 +1256,7 @@ export default async function build(ctx) {
         if (Math.max(gp.cushion, gp.drift, gp.soil, gp.clover) > 0.35) continue;
         const shady = r > 21 || oakDist(x, z) < 13;
         const rec = recipeAt(x, z, shady ? 'shady' : 'sunny');
-        const n = rng.int(3, 5);
+        const n = tier === 'high' ? rng.int(3, 5) : tier === 'medium' ? rng.int(2, 4) : rng.int(2, 3);
         for (let i = 0; i < n; i++) {
           const a = rng.range(0, TAU), d = i ? rng.range(0.25, 0.8) : 0;
           const px = x + Math.sin(a) * d, pz = z + Math.cos(a) * d;
@@ -1288,9 +1316,10 @@ export default async function build(ctx) {
   // (at night the leaf masses dim to moonlit silhouettes with a silver rim on top)
   const canopyMat = moonlit(M.foliage({ variant: 'oak', vertexColors: true, translucency: 1.0, wind: { strength: 0.012, base: -0.4, speed: 0.7 } }));
   const ivyMat = M.foliage({ variant: 'ivy', vertexColors: true, volume: false });
-  const barkMat = M.surface('bark', { mossy: 0.3, scale: 1.8, vertexColors: true });
+  // (moss-balanced: moss on vertex-moss-tinted logs, roots & snags no longer goes black)
+  const barkMat = mossBalanced(M.surface('bark', { mossy: 0.3, scale: 1.8, vertexColors: true }), 1.3);
   const birchMat = M.surface('bark', { vertexColors: true, mossy: 0.12, scale: 0.6 });
-  const rockMat = M.surface('rock', { mossy: 0.62, vertexColors: true });
+  const rockMat = mossBalanced(M.surface('rock', { mossy: 0.62, vertexColors: true }), 1.15);
   const mossMat = M.surface('moss', { vertexColors: true, scale: 1.1, bump: 0.8 });
 
   // (template shapes come from their own fixed seeds: they no longer change
@@ -1321,7 +1350,7 @@ export default async function build(ctx) {
   addMesh(instanced('bilberry', bilberryTemplate(bushRng, { stems: lite ? [5, 6] : [6, 8], lite: tier === 'low' }), flowerMat, bilberry));
   addMesh(instanced('bramble', brambleTemplate(bushRng, { canes: lite ? [2, 3] : [3, 4], lite: tier === 'low' }), flowerMat, bramble));
   addMesh(instanced('canopy', clumpGeo, canopyMat, [...clumps, ...bushes, ...shrubs], { cast: true }));
-  addMesh(instanced('broadleaf', broadleafTemplate(createRng('vegetation:broadleaf'), { leaves: [5, 7] }), flowerMat, broad, { cast: false }));
+  addMesh(instanced('broadleaf', broadleafTemplate(createRng('vegetation:broadleaf'), { leaves: tier === 'high' ? [5, 7] : [4, 5] }), flowerMat, broad, { cast: false }));
 
   const meshOf = (name, B, mat, opts) => (B.count ? staticMesh(name, B.build(), mat, opts) : null);
   addMesh(meshOf('forest-bark', builders.bark, barkMat, { cast: true }));
@@ -1395,6 +1424,9 @@ export default async function build(ctx) {
     for (const g of giants) ctx.colliders.addCircle(g.x, g.z, g.R * 0.25, 'giant-mushroom');
   }
 
+  stats.triangles = Math.round(stats.triangles);
+  stats.budget = VEG_BUDGET[tier] ?? VEG_BUDGET.high;
+  stats.overBudget = stats.triangles > stats.budget;
   stats.ms = Math.round(performance.now() - t0);
   stats.timing = timing;
   stats.giants = giants.length;
@@ -1404,7 +1436,7 @@ export default async function build(ctx) {
   const canopy = clumps.map((c) => ({ x: c.x, y: c.y, z: c.z, r: c.s * 1.05 }));
   ctx.forest = { trees, giants, canopy, glowSpots, flowerPatches, mossyRocks, snailRocks, logs, stumps };
   return {
-    group, trees, giants, canopy, glowSpots, flowerPatches, mossyRocks, snailRocks, logs, stumps, treesNear, stats,
+    group, trees, giants, canopy, glowSpots, flowerPatches, mossyRocks, snailRocks, logs, stumps, treesNear, stats, budget: VEG_BUDGET,
     update() {
       // enchanted gills & spots follow the night
       updateMushroomGlow(ctx, ctx.env?.night ?? 0);

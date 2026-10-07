@@ -72,8 +72,12 @@ const INTRO = {
 const FOCUS_FILL = 0.8;
 /** Camera positions tried around a framed detail: [azimuth offset, polar offset] (rad), best first. */
 const FOCUS_TRIES = [[0, 0], [0.3, 0], [-0.3, 0], [0, -0.22], [0.3, -0.2], [-0.3, -0.2], [0.55, 0], [-0.55, 0]];
+/** search: 'wide' (a secret tucked between things): swing further round and look more from above. */
+const FOCUS_TRIES_WIDE = [...FOCUS_TRIES, [0, -0.42], [0.3, -0.42], [-0.3, -0.42], [0.55, -0.4], [-0.55, -0.4], [0.85, -0.2], [-0.85, -0.2], [0.85, -0.42], [-0.85, -0.42], [1.15, -0.3], [-1.15, -0.3]];
 /** Rays beside the lens (in fifths of the frame: right, up) that sweep the near part of a framing. */
 const NEAR_RAYS = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+/** …and for a wide search also two fifths out (a rail across the bottom third counts as blocking). */
+const NEAR_RAYS_WIDE = [...NEAR_RAYS, [0, -2], [-2, 0], [2, 0], [0, 2]];
 
 /** Convert a composed shot (position + target) into orbit parameters. */
 function toOrbit(position, target) {
@@ -122,6 +126,10 @@ export function createCameraRig(ctx) {
   const spotListeners = new Set();
   const arriveListeners = new Set();
   let dragging = false;
+  let azPinned = 0;
+  /** +1 / −1 while the orbit stands at its limit that way (the soft limit or something solid), else 0. */
+  let azEdge = 0;
+  let azPrev = 0;
 
   /** 0 on landscape screens → 1 on a tall phone: compositions were made for 16:9. */
   function portrait() {
@@ -189,6 +197,8 @@ export function createCameraRig(ctx) {
   }
 
   function resetOffsets() {
+    azEdge = 0;
+    azPrev = 0;
     dAz = dPol = 0;
     zoom = 1;
     pan.set(0, 0, 0);
@@ -292,6 +302,8 @@ export function createCameraRig(ctx) {
     gestures.on('dragstart', () => {
       dragging = true;
       velAz = velPol = 0;
+      // where the orbit stood when the finger went down (a swipe travels only from the edge of the orbit)
+      azPinned = azEdge;
     });
     gestures.on('drag', ({ dx, dy, button, pointerType, shift }) => {
       if (!canInput()) return;
@@ -308,10 +320,17 @@ export function createCameraRig(ctx) {
     gestures.on('dragend', ({ vx, vy, totalX, totalY, ms, pointerType }) => {
       dragging = false;
       if (!canInput()) return;
-      // a quick horizontal flick on touch = next / previous spot
-      if (pointerType !== 'mouse' && !ctx.ui?.isPanelOpen && Math.abs(totalX) > 70 && ms < 380 && Math.abs(totalX) > 2.2 * Math.abs(totalY)) {
+      // a quick horizontal flick on touch travels to the next / previous spot —
+      // but only once the camera has already swung as far round as it goes that
+      // way (the first flick looks around, the next one moves on), and with an
+      // undo toast: a visitor who just wanted to look must never be lost
+      const flick = Math.abs(totalX) > 70 && ms < 380 && Math.abs(totalX) > 2.2 * Math.abs(totalY);
+      const toward = totalX < 0 ? 1 : -1; // dragging left swings dAz up
+      if (pointerType !== 'mouse' && !ctx.ui?.isPanelOpen && flick && azPinned === toward) {
+        const from = spot;
         if (totalX < 0) rig.next();
         else rig.prev();
+        ctx.ui?.swipeTravelled?.(from, spot);
         return;
       }
       if (reduced) return;
@@ -465,8 +484,9 @@ export function createCameraRig(ctx) {
         const skip = Math.min(0.5, radius * 0.6);
         const tanV = Math.tan(THREE.MathUtils.degToRad(fovNow) / 2);
         let best = { az: az0, pol, clear: -1, score: -1 };
-        for (const [dAz, dPol] of FOCUS_TRIES) {
-          const pp = clamp(pol + dPol, 0.75, 1.45);
+        const wide = opts.search === 'wide';
+        for (const [dAz, dPol] of wide ? FOCUS_TRIES_WIDE : FOCUS_TRIES) {
+          const pp = clamp(pol + dPol, wide ? 0.6 : 0.75, 1.45);
           eye.setFromSphericalCoords(dist, pp, az0 + dAz).add(p);
           if (eye.y < getHeight(eye.x, eye.z) + 0.5 || obstacles.penetration(eye) > 0.05) continue;
           const clear = sightClear(p, eye, subject, skip);
@@ -478,7 +498,7 @@ export function createCameraRig(ctx) {
             upv.crossVectors(side, fV);
             const k = dist * tanV * 0.2;
             let off = 1;
-            for (const [a, b] of NEAR_RAYS) {
+            for (const [a, b] of wide ? NEAR_RAYS_WIDE : NEAR_RAYS) {
               q.copy(eye).addScaledVector(side, a * k * camera.aspect).addScaledVector(upv, b * k);
               off = Math.min(off, sightClear(p, q, subject, skip));
             }
@@ -640,7 +660,11 @@ export function createCameraRig(ctx) {
         velPol *= decay;
       }
       // soft limits around the composition
+      const azWant = dAz;
       dAz = clamp(dAz, -R.az, R.az);
+      if (azWant > dAz + 1e-4) azEdge = 1;
+      else if (azWant < dAz - 1e-4) azEdge = -1;
+      else if (azEdge && (dAz - azPrev) * azEdge < -0.01) azEdge = 0; // swung back away from the edge
       const polMin = Math.max(L.minPolar, goal.polar - R.up), polMax = Math.min(L.maxPolar, goal.polar + R.down);
       dPol = clamp(goal.polar + dPol, Math.min(polMin, goal.polar), Math.max(polMax, goal.polar)) - goal.polar;
       zoom = clamp(zoom, R.capSafe && Math.abs(dAz) > 0.3 ? Math.max(R.zoom[0], R.capSafe) : R.zoom[0], R.zoom[1]);
@@ -654,6 +678,7 @@ export function createCameraRig(ctx) {
       if (dAz !== 0 || dPol !== 0 || zoom !== 1 || pan.lengthSq() > 0) {
         if (goal.basePen === undefined) goal.basePen = obstacles.penetration(posePosition(goal, tmp));
         if (obstacles.penetration(desired) > goal.basePen + 0.05) {
+          if (Math.abs(dAz - good.dAz) > 1e-4) azEdge = dAz > good.dAz ? 1 : -1;
           dAz = good.dAz;
           dPol = good.dPol;
           zoom = good.zoom;
@@ -666,6 +691,7 @@ export function createCameraRig(ctx) {
           good.pan.copy(pan);
         }
       }
+      azPrev = dAz;
       // idle breathing: a slow, barely-there drift once the visitor rests
       const wantBreath = !reduced && idle > 3.5 && !dragging && !ctx.ui?.isModalOpen ? 1 : 0;
       breathW += (wantBreath - breathW) * damp(wantBreath ? 0.6 : 5, dt);

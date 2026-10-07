@@ -513,6 +513,32 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
     if (halos.length && props.glowQuads) parent.add(props.glowQuads(halos, '#7fe8ff', { day: 0.0, night: 0.5 }));
   }
 
+  // ── the mossy nook above the door: a tiny toadstool family on a cushion ──
+  {
+    const nook = hollows.find((h) => h.id === 'nook');
+    if (nook) {
+      const moss = materials.surface('moss');
+      // the floor of the cup (follow the carved bark down to where it levels)
+      const yF = nook.y - 0.26;
+      const fp = (da, dy, lift = 0) => polar(nook.a + da, trunkRadius(nook.a + da, yF + dy) + lift, yF + dy);
+      // a moss cushion filling the bottom of the cup
+      const cushion = blob(0.2, 1.25, 0.42, 0.95, 12, 8);
+      B.add(moss, xf(cushion, fp(0, -0.02, 0.07).toArray(), [0, nook.a, 0]));
+      const fam = [
+        [0.02, 0.16, 0.52],
+        [-0.075, 0.105, 0.5],
+        [0.085, 0.08, 0.55],
+        [-0.02, 0.05, 0.6],
+      ];
+      fam.forEach(([da, h, k], i) => {
+        const p = fp(da, 0.0, 0.1 + (i === 0 ? 0 : 0.06));
+        const tilt = new THREE.Quaternion().setFromEuler(new THREE.Euler(rng.range(-0.15, 0.2), 0, (da > 0 ? -1 : 1) * rng.range(0.05, 0.25)));
+        const m = new THREE.Matrix4().compose(p, tilt, new THREE.Vector3(1, 1, 1));
+        toadstool(B, mats, h, h * k, rng, m);
+      });
+    }
+  }
+
   // ── little round windows: someone lives up there ───────────────────────────
   {
     const glass = mats.windowGlass;

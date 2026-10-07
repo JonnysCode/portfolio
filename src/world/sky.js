@@ -15,7 +15,8 @@
 //
 // Also keeps scene.fog (colour + adaptive near/far) and the shared fog
 // parameters (env/fog.js) in sync with the time of day and the camera: the
-// zoomed-out overview stays crisp, close-ups get soft depth.
+// zoomed-out overview stays crisp, close-ups get soft depth. Tiers without
+// depth of field (medium, low) get a thicker aerial perspective instead.
 //
 // Exposes ctx.sky = { dome, backdrop, clouds (null — painted into the dome), uniforms (shared envUniforms) }.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -205,6 +206,7 @@ export default async function build(ctx) {
   const warmDay = new THREE.Color('#cfa565');
   const warmNight = new THREE.Color('#3d5a8c');
   const isLow = (ctx.quality?.tier ?? 'high') === 'low';
+  const noDof = ctx.quality?.post !== 'full';
 
   function applyNight(n) {
     for (const k of colourKeys) colourTargets[k].copy(pairs[k][0]).lerp(pairs[k][1], n);
@@ -248,8 +250,16 @@ export default async function build(ctx) {
     else focus.set(0, 4, -2);
     const camDist = camera.position.distanceTo(focus);
     const nightK = 1 - 0.15 * n;
-    scene.fog.near = (14 + camDist * 0.6) * nightK;
-    scene.fog.far = (scene.fog.near + 90 + camDist) * nightK;
+    if (noDof) {
+      // no depth of field (medium, low): a thicker aerial perspective does the
+      // job of the lens blur — the giants beyond the glen sink into the
+      // blue-green haze sooner, the glen itself stays clear
+      scene.fog.near = (12 + camDist * 0.5) * nightK;
+      scene.fog.far = (scene.fog.near + 70 + camDist * 0.75) * nightK;
+    } else {
+      scene.fog.near = (14 + camDist * 0.6) * nightK;
+      scene.fog.far = (scene.fog.near + 90 + camDist) * nightK;
+    }
   }
 
   // After the camera (order 80) so the fog matches this frame's camera.

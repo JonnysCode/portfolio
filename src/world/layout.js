@@ -170,8 +170,11 @@ export const SPOTS = [
     // the left third, the oak door in the middle, the deck still on the right
     focus: [-1.4, 1.1, -0.8],
     camera: { position: [0.9, 3.0, 11.4], target: [-0.6, 2.2, -0.7], fov: 40 },
-    // phones: the Hobelbank with Jonny and the oak door (the deck is a swipe to the right)
-    portrait: { position: [-2.0, 4.0, 13.9], target: [-1.95, 2.2, -0.6] },
+    // phones: the whole workshop at the foot of the giant oak — the Hobelbank with
+    // Jonny on the left, the door, the EFZ board and the deck with its four pieces
+    // on the right (all six sparkles in frame), the trunk and the loft stairs
+    // rising above: a tall frame for a tall tree
+    portrait: { position: [1.8, 5.9, 21.0], target: [1.1, 4.1, -0.5], fov: 60, focus: [0.8, 1.0, 0.3] },
   },
   {
     id: 'code',
@@ -181,7 +184,8 @@ export const SPOTS = [
     areas: ['code'],
     focus: [3.6, 12.6, -3.4],
     camera: { position: [9.5, 15, 7.5], target: [3.4, 12.6, -3.2], fov: 40 },
-    portrait: { position: [12.6, 16.2, 9.3], target: [4.6, 13, -4.8] },
+    // phones: the whole deck — the rack and the side-project bench on the left, the treehouse on the right
+    portrait: { position: [11.6, 17.2, 12.2], target: [3.4, 12.6, -3.6], fov: 52 },
   },
   {
     id: 'home',
@@ -202,7 +206,8 @@ export const SPOTS = [
     areas: ['interior'],
     focus: [-21.5, 1.8, 2.5],
     camera: { position: [-24.6, 3.8, 12.6], target: [-21.4, 2.0, 2.8], fov: 40 },
-    portrait: { position: [-26.2, 4.6, 16.0], target: [-22.6, 2.1, 3.2] },
+    // phones: the open front with the moodboard easel on the left and the model table on the right
+    portrait: { position: [-24.8, 5.2, 19.0], target: [-22.1, 2.0, 3.6], fov: 52 },
   },
   {
     id: 'bikes',
@@ -242,6 +247,6 @@ export const CAMERA_LIMITS = {
   maxPolar: 1.42,
   minDistance: 5,
   maxDistance: 52,
-  /** The orbit target stays inside this box. */
-  targetBox: { minX: -20, maxX: 20, minY: 0.5, maxY: 16, minZ: -14, maxZ: 16 },
+  /** The orbit target stays inside this box (wide enough for every spot's own target: the Wohnatelier's is at x ≈ −22). */
+  targetBox: { minX: -25, maxX: 21, minY: 0.5, maxY: 16, minZ: -14, maxZ: 16 },
 };

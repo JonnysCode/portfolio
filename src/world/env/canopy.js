@@ -18,7 +18,7 @@
 //     canopy plane, so the flecks on the ground, on walls, roofs and trunks
 //     all agree (vertical surfaces get the long slanted streaks of real dapples);
 //   • the pattern: two drifting value-noise octaves thresholded into
-//     high-contrast flecks (≈ 0.5–2 units), with a slow regional density so
+//     high-contrast flecks (≈ 0.5–2.5 units), with a slow regional density so
 //     sunny openings alternate with denser shade instead of an even leopard
 //     print; fades out up in the canopy (the crowns are the occluders);
 //   • the uniforms are shared live Float32Arrays (UniformsUtils.clone copies
@@ -26,15 +26,19 @@
 //     before anything compiles. A material compiled without them sees zeros,
 //     which means "off".
 //
+// Cost: only fragments the key light actually reaches evaluate it (shadowed
+// ones skip it), 2–3 value-noise lookups; the detail octave is off on the
+// phone tiers (lighting.js sets b.w from ctx.quality).
+//
 // canopyParams.a = [time, strength, canopy plane height, fade start height]
-// canopyParams.b = [shade level, fleck gain, pattern frequency, regional bias]
+// canopyParams.b = [shade level, fleck gain, pattern frequency, detail octave (0/1)]
 // installCanopy() is idempotent and runs on import.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 
 export const canopyParams = {
   a: new Float32Array([0, 1, 22, 15]),
-  b: new Float32Array([0.42, 1.14, 0.72, 0]),
+  b: new Float32Array([0.3, 1.3, 0.42, 1]),
 };
 
 const EXTRA_UNIFORMS = {
@@ -68,12 +72,19 @@ vec3 woodlandCanopy( vec3 viewPos, vec3 lightDirView ) {
 	// leaves sway (the flecks shimmer and slide back and forth) + a very slow drift
 	vec2 sway = vec2( sin( t * 0.37 ) + 0.4 * sin( t * 0.91 + 1.3 ), cos( t * 0.29 ) + 0.35 * sin( t * 0.77 ) ) * 0.12;
 	vec2 p = q * woodlandCanopyB.z + sway + vec2( t * 0.012, - t * 0.008 );
-	vec2 p2 = mat2( 0.8, - 0.6, 0.6, 0.8 ) * p * 2.37 - sway * 1.7 + 17.3;
-	float n = wcNoise( p ) * 0.64 + wcNoise( p2 ) * 0.36;
+	float n = wcNoise( p );
+	if ( woodlandCanopyB.w > 0.5 ) {
+		vec2 p2 = mat2( 0.8, - 0.6, 0.6, 0.8 ) * p * 2.37 - sway * 1.7 + 17.3;
+		n = n * 0.64 + wcNoise( p2 ) * 0.36;
+	}
 	// sunny openings vs dense leaf cover (a few metres across)
 	float region = wcNoise( q * 0.075 + 3.7 );
-	float thr = mix( 0.66, 0.43, region ) + woodlandCanopyB.w;
-	float fleck = smoothstep( thr - 0.035, thr + 0.035, n );
+	float thr = mix( 0.66, 0.43, region );
+	// crisp edges, widened with distance so they never shimmer into speckle
+	// (an estimate of the pattern's change per pixel — no derivatives, so it
+	// is safe inside the lit-only branch)
+	float aa = 0.03 + 0.0007 * length( viewPos ) * woodlandCanopyB.z;
+	float fleck = smoothstep( thr - aa, thr + aa, n );
 	// leaf-filtered half shade is a touch cooler; the flecks are pure sun
 	vec3 c = mix( woodlandCanopyB.x * vec3( 0.94, 1.0, 1.02 ), vec3( woodlandCanopyB.y ), fleck );
 	return mix( vec3( 1.0 ), c, k );
@@ -84,7 +95,7 @@ const DIR_BLOCK = '#if ( NUM_DIR_LIGHTS > 0 ) && defined( RE_Direct )';
 const DIR_CALL = 'RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );';
 const COOKIE = /* glsl */ `
 		#if UNROLLED_LOOP_INDEX == 0
-		directLight.color *= woodlandCanopy( geometryPosition, directLight.direction );
+		if ( directLight.color.r + directLight.color.g + directLight.color.b > 1e-4 ) directLight.color *= woodlandCanopy( geometryPosition, directLight.direction );
 		#endif
 		`;
 

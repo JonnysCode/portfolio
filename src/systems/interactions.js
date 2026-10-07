@@ -56,7 +56,7 @@ import { triGrid } from './triGrid.js';
 const MARKER_TWEAKS = {
   'workbench-wip': { dx: 0.7, dz: 0.35, y: 1.25 },
   // the two villagers sit at the table's back: the sparkle (and its leaf once read) floats over the free front end
-  'dining-table': { dx: -0.55, dz: 0.75, y: 1.05 },
+  'dining-table': { dx: 0.62, dz: 0.25, y: 1.0 },
 };
 
 const VISITED_KEY = 'woodland:visited';

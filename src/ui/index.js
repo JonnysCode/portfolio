@@ -888,7 +888,8 @@ export function createUI(ctx) {
     const rig = ctx.cameraRig;
     if (!rig || journal.isOpen || rig.transitioning || ui.isModalOpen) return;
     const r = hs.bounds?.r ?? 0.6;
-    rig.focus(hs.object, { distance: hs.focus?.distance ?? Math.max(2.2, r * 3.2), lift: hs.focus?.lift ?? 0.1, radius: Math.min(r, 1.6) });
+    // (secrets hide between things: search further round, and from above, for a clear look)
+    rig.focus(hs.object, { distance: hs.focus?.distance ?? Math.max(2.2, r * 3.2), lift: hs.focus?.lift ?? 0.1, radius: Math.min(r, 1.6), search: 'wide' });
     clearTimeout(secretLook);
     secretLook = setTimeout(() => {
       if (rig.focused && !journal.isOpen) rig.release();
@@ -988,9 +989,12 @@ export function createUI(ctx) {
       // history starts here: the place a link points to, or the overview (clean URL)
       try {
         const st = initialLink ? { spot: initialLink.spot, entry: null, modal: null } : { spot: rig?.spot ?? 'glen', entry: null, modal: null };
-        history.replaceState({ woodland: 1, i: 0, ...st }, '', initialLink ? hashFor(st) : location.pathname + location.search);
-        hist.states = [st];
-        hist.i = 0;
+        // (a reload keeps the browser's entries: carry on counting from where this one sits)
+        const i0 = history.state?.woodland && Number.isInteger(history.state.i) ? history.state.i : 0;
+        history.replaceState({ woodland: 1, i: i0, ...st }, '', initialLink ? hashFor(st) : location.pathname + location.search);
+        hist.states = [];
+        hist.states[i0] = st;
+        hist.i = i0;
         hist.ready = true;
       } catch {
         /* no history API (sandboxed): links simply do nothing */
@@ -1115,7 +1119,7 @@ export function createUI(ctx) {
           'ul',
           { class: 'help__list' },
           isTouch
-            ? [row(['drag'], 'look around'), row(['pinch'], 'zoom in & out'), row(['two fingers'], 'move sideways'), row(['swipe'], 'travel to the next place'), row(['tap ✦'], 'open a journal page')]
+            ? [row(['drag'], 'look around'), row(['pinch'], 'zoom in & out'), row(['two fingers'], 'move sideways'), row(['swipe', 'at the edge'], 'travel on to the next place'), row(['tap ✦'], 'open a journal page')]
             : [row(['drag'], 'look around'), row(['scroll'], 'zoom in & out'), row(['right-drag', 'shift-drag'], 'move sideways'), row(['click ✦'], 'open a journal page'), row(['←', '→'], 'previous / next place'), row(['1', '–', '6'], 'jump to a place'), row(['G'], 'guidebook'), row(['M'], 'map'), row(['N'], 'day & night'), row(['Esc'], 'close'), row(['Tab'], 'step through the things at a place')],
         ),
         h('p', { class: 'help__secret' }, h('span', { html: icon('sparkle') }), isTouch ? 'Not everything here has a sparkle. A few little secrets hide in the glen — tap anything that looks curious, some things answer.' : 'Not everything here has a sparkle. A few little secrets hide in the glen — hover around and see who answers.', foundAllByDay() && h('span', { class: 'help__night' }, ' Some things only show themselves after dark (N).')),

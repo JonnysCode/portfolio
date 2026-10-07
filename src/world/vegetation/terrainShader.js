@@ -160,11 +160,12 @@ const FRAG_MAIN = /* glsl */ `
   float tOpen = 1.0 - clamp(vSplat.x * 1.6, 0.0, 1.0);
   float tYard = clamp(vSplat.w * 1.8, 0.0, 1.0);
   float tFray = nSmall * 0.6 + nFine * 0.4;
-  float tCush = smoothstep(0.1, 0.75, vPatch.x * (0.8 + 0.4 * tFray)) * tOpen * (1.0 - 0.7 * tYard);
-  float tCushRim = smoothstep(0.08, 0.35, vPatch.x) * (1.0 - smoothstep(0.35, 0.8, vPatch.x)) * tOpen * (1.0 - 0.7 * tYard);
-  float tDrift = vPatch.y * smoothstep(0.25, 0.55, tFray * 0.8 + vPatch.y * 0.35) * tOpen * (1.0 - 0.5 * tYard);
-  float tClov = smoothstep(0.2, 0.6, vPatch.z * (0.75 + 0.5 * nFine)) * tOpen * (1.0 - tDamp * 0.5);
-  float tBare = vPatch.w * smoothstep(0.3, 0.6, tFray * 0.7 + vPatch.w * 0.4) * tOpen;
+  float tCush = smoothstep(0.1, 0.75, vPatch.x * (0.8 + 0.4 * tFray)) * tOpen * (1.0 - 0.45 * tYard);
+  float tCushRim = smoothstep(0.08, 0.35, vPatch.x) * (1.0 - smoothstep(0.35, 0.8, vPatch.x)) * tOpen * (1.0 - 0.45 * tYard);
+  float tDrift = vPatch.y * smoothstep(0.25, 0.55, tFray * 0.8 + vPatch.y * 0.35) * tOpen * (1.0 - 0.5 * tYard) * (1.0 - tDamp * 0.8);
+  // (the yards: more clover and worn, pebbly bare patches)
+  float tClov = smoothstep(0.2, 0.6, vPatch.z * (0.75 + 0.5 * nFine) * (1.0 + 0.9 * tYard)) * tOpen * (1.0 - tDamp * 0.5);
+  float tBare = clamp(vPatch.w * (1.0 + 0.7 * tYard), 0.0, 1.0) * smoothstep(0.3, 0.6, tFray * 0.7 + vPatch.w * 0.4) * tOpen;
   // paths: ragged edges, packed earth in the middle, a trampled soil fringe
   float tPathE = vSplat.x + (nMid - 0.5) * 0.5 + (nSmall - 0.5) * 0.55 + (sA.a - 0.5) * 0.3;
   float tWPath = smoothstep(0.5, 0.62, tPathE);
@@ -175,7 +176,9 @@ const FRAG_MAIN = /* glsl */ `
   mD = mix(mD, mD2, tSwap);
   float tHM = mA.a;
   float tBias = vSplat.z * 1.6 - 0.9 + tFringe * 1.2 + vSplat.w * 0.75 + tDamp * 0.3 + (nMid - 0.5) * 0.8 + (nSmall - 0.5) * 0.6;
-  tBias += tDrift * 1.25 + tBare * 1.2 - tCush * 1.1;
+  // (drifts: only the leaves show over the moss — the humus between them stays
+  //  moss, so a drift reads as fallen leaves, not as a dark hole)
+  tBias += tDrift * 0.8 + tBare * 1.1 - tCush * 1.1;
   float tWSoil = smoothstep(-0.14, 0.14, tBias + (sA.a - tHM) * 1.1);
   tWSoil = max(tWSoil, tWPath);
 
@@ -189,13 +192,13 @@ const FRAG_MAIN = /* glsl */ `
   tMossTint *= mix(vec3(0.9, 0.95, 1.06), vec3(1.07, 1.03, 0.86), smoothstep(0.3, 0.7, nMid));
   // dark velvet cushions: deep blue-green, their crowns lighter, a shadowed
   // crevice where they rise from the carpet; bigger lumps in their texture
-  tMossTint = mix(tMossTint, mix(tMossDeep, tMossMid, 0.4 + 0.45 * smoothstep(0.55, 1.0, vPatch.x) + 0.15 * nFine) * vec3(0.9, 1.0, 1.08), tCush * 0.7);
+  tMossTint = mix(tMossTint, mix(tMossDeep, tMossMid, 0.5 + 0.4 * smoothstep(0.55, 1.0, vPatch.x) + 0.15 * nFine) * vec3(0.9, 1.0, 1.06), tCush * 0.65);
   tMoss = mix(tMoss, mix(vec3(1.0), mA2.rgb / tMossMean, 0.55), tCush * 0.6);
-  tMoss *= tMossTint * (0.86 + 0.28 * nSmall) * (1.0 - 0.28 * tCushRim);
+  tMoss *= tMossTint * (0.86 + 0.28 * nSmall) * (1.0 - 0.3 * tCushRim);
   // soil: humus with leaves; litter patches warmer
   vec3 tSoil = sA.rgb * mix(vec3(1.0), tLitter / tSoilMean, clamp(vSplat.z * 0.8 + (nBig - 0.5) * 0.4, 0.0, 1.0) * 0.5);
   // leaf-litter drifts: warm russet & ochre leaves
-  tSoil = mix(tSoil, sA.rgb * tDriftCol / tSoilMean * (0.85 + 0.3 * nFine), tDrift * 0.7);
+  tSoil = mix(tSoil, max(sA.rgb / tSoilMean, vec3(0.75)) * tDriftCol * (0.85 + 0.3 * nFine), tDrift * 0.8);
   // bare soil with needles: rusty, fine streaks
   {
     float tNeedle = tNoise(vec2(dot(tP, vec2(0.8, 0.6)) * 26.0, dot(tP, vec2(-0.6, 0.8)) * 2.2) + nFine * 3.0);
@@ -212,10 +215,15 @@ const FRAG_MAIN = /* glsl */ `
     // clover mats (the leaflets fade into their mean tone before they would shimmer)
     if (tClov > 0.01) {
       float fadeC = 1.0 - smoothstep(0.02, 0.05, px);
-      float cm, cm2;
+      float cm;
       vec3 cc = tClover(tP, tCloverCol, cm);
+#if T_DETAIL > 1
+      float cm2;
       vec3 cc2 = tClover(vec2(tP.x * 0.8 - tP.y * 0.6, tP.x * 0.6 + tP.y * 0.8) + 3.1, tCloverCol * 0.9, cm2);
       vec3 cMat = mix(tCloverCol * 0.62, cc2, cm2);
+#else
+      vec3 cMat = tCloverCol * 0.62;
+#endif
       cMat = mix(cMat, cc, cm);
       cMat = mix(cMat, tCloverCol * 0.85, 1.0 - fadeC);
       tCol = mix(tCol, cMat, tClov * (1.0 - tWSoil * 0.7));
@@ -312,8 +320,10 @@ export function makeTerrainMaterial(ctx) {
   };
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 });
   m.name = 'forest-floor';
-  // (the low tier skips the per-pixel clover leaflets & pebbles: flat tones instead)
-  const detail = (ctx.quality?.tier ?? 'high') === 'low' ? 0 : 1;
+  // (per-pixel detail by tier: high two layers of clover leaflets + pebbles,
+  //  medium one layer + pebbles, low flat patch tones only)
+  const tier = ctx.quality?.tier ?? 'high';
+  const detail = tier === 'low' ? 0 : tier === 'medium' ? 1 : 2;
   m.defines = { T_DETAIL: detail };
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);

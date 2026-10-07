@@ -25,10 +25,22 @@ const _n = new THREE.Vector3();
 const _t = new THREE.Vector3();
 
 let icoCache = null;
+let icoDetail = 2;
+let moundSeg = [14, 5];
+/**
+ * Geometric detail of the rocks & moss mounds for a quality tier (call before
+ * building): 'low' → coarser boulders and cushions.
+ */
+export function setGroundDetail(tier) {
+  const d = tier === 'low' ? 1 : 2;
+  if (d !== icoDetail) icoCache = null;
+  icoDetail = d;
+  moundSeg = tier === 'high' ? [14, 5] : tier === 'medium' ? [12, 4] : [10, 4];
+}
 /** Indexed unit icosphere (smooth after displacement). */
 function ico() {
   if (!icoCache) {
-    const g = new THREE.IcosahedronGeometry(1, 2);
+    const g = new THREE.IcosahedronGeometry(1, icoDetail);
     g.deleteAttribute('normal');
     g.deleteAttribute('uv');
     icoCache = mergeVertices(g);
@@ -75,7 +87,7 @@ export function mossyRock(B, rng, x, z, size, { flat = 0.6, sink = 0.32, color =
 
 /** A soft moss mound / cushion (moss material). */
 export function mossMound(B, rng, x, z, w, h, { color = null } = {}) {
-  const seg = 14, rings = 5;
+  const [seg, rings] = moundSeg;
   const base = B.count;
   const idx0 = B.idx.length;
   const s = rng.range(0, 100);

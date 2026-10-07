@@ -396,7 +396,7 @@ export const LIMBS = [
       [13.6, 99, 35.2, 0.34, 0.2],
       [15.4, 104, 37.4, 0.26],
     ],
-    branches: 6,
+    branches: 8,
   },
 ];
 
@@ -427,11 +427,17 @@ export const KNOTS = [
   { a: 186, y: 9.4, r: 0.36 },
   { a: 238, y: 3.6, r: 0.3 },
   { a: -62, y: 12.2, r: 0.3 },
+  // old branch scars in the Schreinerei's hero frame (beside the sign)
+  { a: 14, y: 4.95, r: 0.24 },
+  { a: -41, y: 3.25, r: 0.22 },
 ];
 /** Hollows: a cup carved into the trunk with a swollen rim. `owl` gets a resident. */
 export const HOLLOWS = [
   { id: 'owl', a: -50, y: 9.7, rx: 0.6, ry: 0.82, depth: 1.05 },
   { id: 'den', a: 183, y: 1.55, rx: 0.7, ry: 0.95, depth: 1.15 },
+  // a shallow, mossy nook above the Schreinerei door (left of the sign) where
+  // a tiny family of toadstools lives — the hero shot's bark gets a story
+  { id: 'nook', a: -24, y: 4.55, rx: 0.32, ry: 0.42, depth: 0.4, rim: 0.15, mossy: true },
 ];
 
 // ─── Radius contract + sculpt ────────────────────────────────────────────────
@@ -569,7 +575,7 @@ export function trunkSample(a, y) {
     const da = angDiff(a, h.a * DEG) * R0, dy = y - h.y;
     const q = Math.hypot(da / h.rx, dy / h.ry);
     if (q < 2.2) {
-      r += 0.26 * Math.exp(-((q - 1.08) * (q - 1.08)) / 0.06); // swollen rim
+      r += (h.rim ?? 0.26) * Math.exp(-((q - 1.08) * (q - 1.08)) / 0.06); // swollen rim
       if (q < 1) {
         const cup = Math.sqrt(1 - q * q);
         r -= h.depth * cup;
@@ -667,6 +673,16 @@ export function trunkMoss(a, y) {
   const shady = back * (1 - smoothstep(2.5, 8, y)) * (0.4 + 0.9 * n);
   const fork = smoothstep(FORK_Y - 0.4, FORK_Y + 1.4, y);
   let m = Math.max(foot, shady, fork) * (0.7 + 0.55 * n) + 0.22 * n2 - 0.4;
+  // velvet cushions on the lip of a mossy hollow (thickest under it)
+  for (let i = 0; i < HOLLOWS.length; i++) {
+    const h = HOLLOWS[i];
+    if (!h.mossy) continue;
+    const R0 = baseRadius(y);
+    const q = Math.hypot((angDiff(a, h.a * DEG) * R0) / h.rx, (y - h.y) / h.ry);
+    if (q > 2.4) continue;
+    const below = y < h.y ? 1 : 0.3;
+    m = Math.max(m, 0.9 * below * Math.exp(-((q - 1.25) * (q - 1.25)) / 0.07) + 0.25 * n2 - 0.15);
+  }
   // keep the right side (stairs) & the door front tidy
   m -= attachMask(a, y) * 0.3;
   // …and the bark behind the EFZ certificate bare

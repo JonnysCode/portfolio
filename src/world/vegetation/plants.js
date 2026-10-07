@@ -351,8 +351,8 @@ const GREEN = '#6f9a48';
 const LEAF_GREEN = '#5d8a3a';
 
 // ─── flower communities ──────────────────────────────────────────────────────
-function bluebells(B, rng) {
-  const stems = rng.int(3, 5);
+function bluebells(B, rng, lite = false) {
+  const stems = lite ? rng.int(2, 3) : rng.int(3, 5);
   for (let s = 0; s < stems; s++) {
     const a = rng.range(0, TAU), d = rng.range(0, 0.14);
     const base = new THREE.Vector3(Math.sin(a) * d, 0, Math.cos(a) * d);
@@ -415,8 +415,8 @@ function forgetMeNots(B, rng) {
   }
 }
 
-function foxgloves(B, rng) {
-  const spikes = rng.int(1, 2);
+function foxgloves(B, rng, lite = false) {
+  const spikes = lite ? 1 : rng.int(1, 2);
   for (let s = 0; s < spikes; s++) {
     const base = new THREE.Vector3(rng.jitter(0.1), 0, rng.jitter(0.1));
     const h = rng.range(0.7, 1.05);
@@ -426,7 +426,7 @@ function foxgloves(B, rng) {
     stem(B, base, top, 0.011, col(GREEN), mid);
     const pink = col(rng.pick(['#c8509a', '#b8489c', '#d066a8', '#a85cb8', '#e8d8e8']));
     const inner = col('#f6e6f0');
-    const n = rng.int(8, 11);
+    const n = lite ? rng.int(7, 9) : rng.int(8, 11);
     const face = rng.range(0, TAU);
     for (let k = 0; k < n; k++) {
       const t = 0.32 + (k / n) * 0.62;
@@ -551,7 +551,7 @@ export function bilberryTemplate(rng, { stems = [6, 8], lite = false, berryColor
     const pts = archPoints(base, az, rng.range(0.32, 0.5), rng.range(1.05, 1.35), rng.range(0.3, 0.7), 2);
     for (let i = 0; i < pts.length - 1; i++) stem(B, pts[i], pts[i + 1], 0.008 * (1 - i * 0.3), twig);
     // leaves all along the twig (alternate, angled up and out)
-    const leaves = lite ? 3 : 5;
+    const leaves = lite ? 3 : 4;
     for (let k = 0; k < leaves; k++) {
       const t = 0.3 + (k / leaves) * 0.7;
       const idx = Math.min(pts.length - 2, Math.floor(t * (pts.length - 1)));
@@ -560,7 +560,7 @@ export function bilberryTemplate(rng, { stems = [6, 8], lite = false, berryColor
       const dir = new THREE.Vector3(Math.sin(la), rng.range(0.25, 0.7), Math.cos(la)).normalize();
       const red = rng.chance(0.14);
       const c = red ? col(rng.pick(['#a8483a', '#b86a3a'])) : col(rng.pick(['#5f9a3c', '#6aa040', '#548a38', '#78a848']));
-      blade(B, p, dir, new THREE.Vector3(Math.cos(la), 0, -Math.sin(la)), rng.range(0.05, 0.075), rng.range(0.022, 0.03), c, { droop: 0.2, segs: 2, flat: true });
+      blade(B, p, dir, new THREE.Vector3(Math.cos(la), 0, -Math.sin(la)), rng.range(0.05, 0.075), rng.range(0.022, 0.03), c, { droop: 0.2, segs: 1, flat: true });
     }
     // berries hang under the leaves
     if (rng.chance(lite ? 0.45 : 0.7)) {
@@ -582,7 +582,7 @@ export function brambleTemplate(rng, { canes = [3, 4], lite = false } = {}) {
   const cane = col('#7a5a46');
   for (let c = 0; c < n; c++) {
     const az = (c / n) * TAU + rng.jitter(0.6);
-    const pts = archPoints(new THREE.Vector3(rng.jitter(0.05), 0, rng.jitter(0.05)), az, rng.range(0.55, 0.85), rng.range(1.0, 1.25), rng.range(1.6, 2.3), lite ? 3 : 4);
+    const pts = archPoints(new THREE.Vector3(rng.jitter(0.05), 0, rng.jitter(0.05)), az, rng.range(0.55, 0.85), rng.range(1.0, 1.25), rng.range(1.6, 2.3), 3);
     for (let i = 0; i < pts.length - 1; i++) stem(B, pts[i], pts[i + 1], 0.012 * (1 - i * 0.18), cane);
     const nl = lite ? 2 : 3;
     for (let k = 0; k < nl; k++) {
@@ -591,11 +591,11 @@ export function brambleTemplate(rng, { canes = [3, 4], lite = false } = {}) {
       const p = pts[idx].clone().lerp(pts[idx + 1], t * (pts.length - 1) - idx);
       const la = az + (k % 2 ? 1 : -1) * rng.range(0.9, 1.5);
       const leafCol = col(rng.pick(['#3f7032', '#4a7a36', '#3a6630']));
-      const lf = lite ? 3 : rng.chance(0.5) ? 5 : 3;
+      const lf = lite || rng.chance(0.6) ? 3 : 5;
       for (let l = 0; l < lf; l++) {
         const off = (l - (lf - 1) / 2) * 0.55;
         const dir = new THREE.Vector3(Math.sin(la + off), 0.35 + rng.jitter(0.15), Math.cos(la + off)).normalize();
-        blade(B, p, dir, new THREE.Vector3(Math.cos(la + off), 0, -Math.sin(la + off)), rng.range(0.07, 0.1) * (l === (lf - 1) / 2 ? 1.15 : 0.9), 0.034, leafCol, { droop: 0.35, segs: 2, flat: true });
+        blade(B, p, dir, new THREE.Vector3(Math.cos(la + off), 0, -Math.sin(la + off)), rng.range(0.07, 0.1) * (l === (lf - 1) / 2 ? 1.15 : 0.9), 0.034, leafCol, { droop: 0.35, segs: 1, flat: true });
       }
     }
     // fruit at the cane's tip: a cluster of berries ripening red → black, or a bloom
@@ -622,7 +622,9 @@ export const FLOWER_KINDS = Object.keys(KINDS);
  */
 export function flowerTemplate(kind, rng, { lite = false } = {}) {
   const B = new GeoBuilder();
-  if (lite && kind === 'daisies') daisies(B, rng, [3, 5]);
+  if (lite && kind === 'bluebells') bluebells(B, rng, true);
+  else if (lite && kind === 'foxgloves') foxgloves(B, rng, true);
+  else if (lite && kind === 'daisies') daisies(B, rng, [3, 5]);
   else if (lite && kind === 'buttercups') buttercups(B, rng, [2, 4], [2, 3]);
   else if (lite && kind === 'meadow') {
     daisies(B, rng, [2, 4]);

@@ -11,11 +11,15 @@
 //                       pond, plunge pool, the path) stay on
 //   sunbeam dust        glittering motes that only sparkle in sunlight
 //                       (env/sunmotes.js)
+//   pixie dust          bigger twinkling gold & mint sparkles swirling around
+//                       the magical places (oak door, fairy ring, lily pond,
+//                       waterfall pool) and flashing in the god rays — the
+//                       daytime magic (env/sparkles.js)
 //   low mist            drifting veils over the stream, the pool and the glen's
 //                       rim, thicker & moonlit at night (env/groundMist.js)
 //
-// ctx.atmosphere = { fogParams, shafts, motes, mist, settings, addShaft(x, z, opts), addMoonbeam(x, z, opts) }
-//   settings.shafts / .motes / .mist — live multipliers (debug & tuning)
+// ctx.atmosphere = { fogParams, shafts, motes, sparkles, mist, settings, addShaft(x, z, opts), addMoonbeam(x, z, opts) }
+//   settings.shafts / .motes / .sparkles / .mist — live multipliers (debug & tuning)
 //   addShaft(x, z, { length, width, intensity }) — ask for a god ray falling on
 //     (x, z) (e.g. onto a doorstep); returns false when the budget is used up.
 //   Custom shaders can light things only where the sun gets through the
@@ -28,6 +32,7 @@ import { STREAM } from './layout.js';
 import { updateSunlight } from './env/sunlight.js';
 import { buildShafts } from './env/shafts.js';
 import { buildSunMotes } from './env/sunmotes.js';
+import { buildSparkles } from './env/sparkles.js';
 import { buildGroundMist } from './env/groundMist.js';
 
 installFog();
@@ -35,7 +40,7 @@ installFog();
 export default async function build(ctx) {
   const { scene, engine } = ctx;
   const tier = ctx.quality?.tier ?? 'high';
-  const settings = { shafts: 1, motes: 1, mist: 1 };
+  const settings = { shafts: 1, motes: 1, sparkles: 1, mist: 1 };
 
   const safe = (name, fn) => {
     try {
@@ -60,10 +65,13 @@ export default async function build(ctx) {
   function placeMoonbeams() {
     moonbeams = true;
     const ring = ctx.lights?.beams?.night;
-    if (ring) {
+    // the pixie dust gathers on the fairy ring the lighting found (vegetation's hotspot)
+    if (ring && sparkles) sparkles.anchors.ring.set(ring.target.x, ring.target.y - 0.15, ring.target.z);
+    if (ring && shafts) {
       const axis = new THREE.Vector3().subVectors(ring.pos, ring.target);
       shafts.addMoonbeam(ring.target.x, ring.target.z, { length: 22, width: 2.4, intensity: 1.3, axis });
     }
+    if (!shafts) return;
     shafts.addMoonbeam(STREAM.pond.x, STREAM.pond.z, { length: 26, width: 3.6, intensity: 1.2 });
     shafts.addMoonbeam(STREAM.pool.x, STREAM.pool.z, { length: 26, width: 3, intensity: 0.9 });
     shafts.addMoonbeam(1.0, 8.6, { length: 24, width: 2.4, intensity: 0.8 });
@@ -75,6 +83,13 @@ export default async function build(ctx) {
     motes.resize(h * engine.renderer.getPixelRatio());
     engine.onResize((w, hh) => motes.resize(hh * engine.renderer.getPixelRatio()));
   }
+  const sparkles = safe('pixie dust', () => buildSparkles(ctx));
+  if (sparkles) {
+    scene.add(sparkles.points);
+    const h = engine.renderer.domElement.clientHeight || window.innerHeight;
+    sparkles.resize(h * engine.renderer.getPixelRatio());
+    engine.onResize((w, hh) => sparkles.resize(hh * engine.renderer.getPixelRatio()));
+  }
   const mist = tier === 'low' ? null : safe('ground mist', () => buildGroundMist(ctx));
   if (mist) scene.add(mist.mesh);
 
@@ -83,6 +98,7 @@ export default async function build(ctx) {
     fogParams,
     shafts,
     motes,
+    sparkles,
     mist,
     settings,
     addShaft: (x, z, opts) => shafts?.addShaft(x, z, opts) ?? false,
@@ -92,12 +108,17 @@ export default async function build(ctx) {
   return {
     update(dt, t) {
       updateSunlight(ctx);
-      if (shafts && !moonbeams) placeMoonbeams();
+      if (!moonbeams) placeMoonbeams();
       const n = ctx.env?.night ?? 0;
       shafts?.update(n, t);
       if (shafts) shafts.uniforms.uStrength.value *= settings.shafts;
       motes?.update(n);
       if (motes) motes.uniforms.uStrength.value *= settings.motes;
+      sparkles?.update(n);
+      if (sparkles) {
+        sparkles.uniforms.uStrength.value = settings.sparkles;
+        sparkles.points.visible = settings.sparkles > 0.001;
+      }
       mist?.update(n, t);
       if (mist) mist.uniforms.uStrength.value *= settings.mist;
     },

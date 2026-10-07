@@ -96,9 +96,11 @@ export function clumpTemplate(rng, cards, { flat = 0.7, size = [0.17, 0.27] } = 
   return B.build();
 }
 
-/** Ring heights of a trunk (dense at the flare, sparse up high). */
-function ringHeights(H) {
-  const ys = [-2.4, -0.7, 0, 0.3, 0.7, 1.2, 1.9, 2.8, 4, 5.6, 7.6, 10, 13, 17, 22, 28, 35, 43, 52, 62];
+/** Ring heights of a trunk (dense at the flare, sparse up high; sparser still for a coarse lod). */
+function ringHeights(H, coarse = false) {
+  const ys = coarse
+    ? [-2.4, -0.7, 0, 0.45, 1.1, 2.0, 3.3, 5.2, 7.8, 11.5, 16, 22, 30, 40, 52, 62]
+    : [-2.4, -0.7, 0, 0.3, 0.7, 1.2, 1.9, 2.8, 4, 5.6, 7.6, 10, 13, 17, 22, 28, 35, 43, 52, 62];
   const out = ys.filter((y) => y < H - 1);
   out.push(H);
   return out;
@@ -116,10 +118,11 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
   const y0 = t.y0;
   // bark furrows: deep vertical fissures between broad plates, ~1.8 apart
   // (t.lod < 1: a tree no lens ever comes close to gets fewer segments)
-  const lod = THREE.MathUtils.clamp(t.lod ?? 1, 0.5, 1);
+  // (lower quality tiers pass lods below 0.5: the column keeps ≥ 14 sides)
+  const lod = THREE.MathUtils.clamp(t.lod ?? 1, 0.35, 1);
   const nFur = birch ? 0 : Math.max(6, Math.round(R * 3.4));
-  const seg = birch ? Math.round(14 * (0.6 + 0.4 * lod)) : Math.max(18, Math.round(Math.min(48, Math.max(24, nFur * 4)) * lod));
-  const tubeK = lod < 0.8 ? 0.75 : 1;
+  const seg = birch ? Math.round(14 * (0.6 + 0.4 * lod)) : Math.max(lod < 0.5 ? 14 : 18, Math.round(Math.min(48, Math.max(24, nFur * 4)) * lod));
+  const tubeK = lod < 0.5 ? 0.6 : lod < 0.8 ? 0.75 : 1;
   const leanDir = new THREE.Vector3(Math.sin(t.leanAz), 0, Math.cos(t.leanAz));
   const ph = rng.range(0, TAU);
   const center = (y) => {
@@ -168,7 +171,7 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
   };
 
   // ── trunk ──
-  const ys = ringHeights(H);
+  const ys = ringHeights(H, lod < 0.6);
   const TB = birch ? B.birch : B.bark;
   const base = TB.count;
   const idx0 = TB.idx.length;
@@ -224,7 +227,7 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
   // ── buttress roots running over the ground ──
   if (!birch) {
     for (const l of lobes) {
-      const steps = 8;
+      const steps = lod < 0.5 ? 6 : 8;
       const len = R * rng.range(2.2, 3.8) * l.amp;
       const pts = [];
       const radii = [];

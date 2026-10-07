@@ -18,7 +18,7 @@ export function buildViews() {
     const lerpTo = (k) => [t[0] + (p[0] - t[0]) * k, t[1] + (p[1] - t[1]) * k, t[2] + (p[2] - t[2]) * k];
     views[`${s.id}-wide`] = { position: lerpTo(1.8), target: t };
     views[`${s.id}-close`] = s.close ?? { position: lerpTo(0.55), target: s.focus ?? t };
-    if (s.portrait) views[`${s.id}-portrait`] = { position: s.portrait.position ?? p, target: s.portrait.target ?? t };
+    if (s.portrait) views[`${s.id}-portrait`] = { position: s.portrait.position ?? p, target: s.portrait.target ?? t, fov: s.portrait.fov ?? (s.camera.fov ?? 40) + 5 };
   }
   return views;
 }
@@ -32,8 +32,10 @@ export function installDebug(ctx) {
       const def = typeof nameOrDef === 'string' ? views[nameOrDef] : nameOrDef;
       if (!def) throw new Error(`unknown view ${nameOrDef}; known: ${Object.keys(views).join(', ')}`);
       ctx.cameraRig.setOverride(v3(def.position), v3(def.target));
-      if (def.fov && ctx.camera.fov !== def.fov) {
-        ctx.camera.fov = def.fov;
+      // (every composed shot is 40° unless it says otherwise: a portrait view must not leak its lens into the next)
+      const fov = def.fov ?? 40;
+      if (ctx.camera.fov !== fov) {
+        ctx.camera.fov = fov;
         ctx.camera.updateProjectionMatrix();
       }
       return def;

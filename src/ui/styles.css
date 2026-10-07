@@ -189,6 +189,27 @@ button { font: inherit; color: inherit; }
 .hs-btn { position: absolute; left: -22px; top: -22px; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent; pointer-events: none; opacity: 0; }
 .hs-btn:focus-visible { opacity: 1; outline: 3px dashed var(--gold-2); outline-offset: 2px; box-shadow: 0 0 0 6px rgba(255, 210, 110, 0.25); }
 
+/* edge chips: things of this place beyond the frame ("‹ 2 more") — a tap swings the camera round */
+.edge-chip {
+  position: fixed; top: 50%; z-index: 3; display: inline-flex; align-items: center; gap: 2px; max-width: min(46vw, 210px); height: 36px; padding: 0 12px 0 8px; margin-top: -18px;
+  border: 0; cursor: pointer; white-space: nowrap; font-family: var(--font-hand); font-size: 17px; color: #fff4d8;
+  background: rgba(34, 26, 16, 0.62); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  box-shadow: inset 0 0 0 1px rgba(246, 215, 138, 0.38), 0 6px 16px rgba(0, 0, 0, 0.3);
+  opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.35s ease, visibility 0.35s, transform 0.35s cubic-bezier(.3, 1.4, .5, 1);
+}
+.edge-chip.is-l { left: 0; border-radius: 0 999px 999px 0; transform: translateX(-12px); }
+.edge-chip.is-r { right: 0; padding: 0 8px 0 12px; border-radius: 999px 0 0 999px; transform: translateX(12px); }
+.edge-chip.is-shown { opacity: 1; visibility: visible; pointer-events: auto; transform: none; }
+.edge-chip__text { overflow: hidden; text-overflow: ellipsis; }
+.edge-chip__arrow { flex: none; width: 18px; height: 18px; color: var(--gold-2); }
+.edge-chip.is-shown .edge-chip__arrow { animation: chipNudgeL 1.8s ease-in-out infinite; }
+.edge-chip.is-r.is-shown .edge-chip__arrow { animation-name: chipNudgeR; }
+@keyframes chipNudgeL { 50% { transform: translateX(-3px); } }
+@keyframes chipNudgeR { 50% { transform: translateX(3px); } }
+.edge-chip:hover { background: rgba(50, 38, 22, 0.75); }
+.ui.is-night .edge-chip { background: rgba(16, 24, 30, 0.64); }
+.ui.is-intro .edge-chip, .ui.is-loading .edge-chip, .ui.has-panel .edge-chip, .ui.has-modal .edge-chip { opacity: 0; visibility: hidden; pointer-events: none; }
+
 /* a found secret's sparkle flying to the counter */
 .secret-fly { position: fixed; left: -12px; top: -12px; z-index: 6; width: 24px; height: 24px; color: var(--mint); pointer-events: none !important; filter: drop-shadow(0 0 6px rgba(200, 255, 240, 0.9)); }
 .secret-fly.is-flying { transition: transform 0.75s cubic-bezier(.5, 0, .3, 1), opacity 0.2s ease 0.7s; opacity: 0.2; }
@@ -217,6 +238,13 @@ button { font: inherit; color: inherit; }
 .toast.is-visible { opacity: 1; transform: translateY(0) rotate(-0.6deg); }
 .toast__icon { width: 20px; height: 20px; flex: none; color: var(--moss); }
 .toast.is-gold { background-image: var(--noise), linear-gradient(170deg, #fff4cf, #f6dd9a); }
+/* a toast with a way back ("‹ back to Schreinerei") */
+.toast.has-action { padding-right: 8px; clip-path: none; border-radius: 4px; }
+.toast__action {
+  display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; padding: 5px 12px 6px 8px; border: 0; border-radius: 999px; cursor: pointer; pointer-events: auto;
+  font-family: var(--font-hand); font-size: 17px; line-height: 1; color: #fff7e6; background: linear-gradient(170deg, var(--berry-2), var(--berry)); box-shadow: 0 2px 0 rgba(80, 20, 10, 0.35);
+}
+.toast__arrow { width: 16px; height: 16px; }
 .toast.is-gold .toast__icon { color: #b07a10; }
 
 /* ── arrival banner ─────────────────────────────────────────────────────── */
@@ -320,6 +348,7 @@ button { font: inherit; color: inherit; }
 .stamp-btn.is-draft { outline: 1.5px dashed rgba(160, 50, 30, 0.6); outline-offset: 3px; }
 .stamp-btn.is-draft::after { margin: 0 0 0 4px; }
 .cutlist tr.is-draft td, .cutlist tr.is-draft th { color: #6a5440; font-style: italic; }
+.cutlist tr.is-draft td:last-child::after { content: 'draft'; margin-left: 6px; padding: 0 4px; border-radius: 3px; font-family: var(--font-display); font-style: normal; font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #fff7ea; background: rgba(160, 50, 30, 0.55); }
 .journal__visited { position: absolute; right: 18px; top: 68px; width: 24px; height: 24px; color: var(--moss); transform: rotate(-12deg); }
 .journal__photos { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin: 18px 0 8px; }
 .polaroid {
@@ -557,7 +586,9 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px 4px; text-align: 
   .map-pin.is-current .map-pin__label::after { content: ''; }
   .map-pin__label { padding: 0 5px; }
   .toast { font-size: 14px; }
-  .journal { top: auto; right: 0; left: 0; bottom: 0; width: 100%; height: min(64vh, 620px); transform: translateY(105%); transform-origin: 50% 100%; }
+  /* (a short page — Say Hello — gets a short sheet: more of the glen stays in view) */
+  .journal { top: auto; right: 0; left: 0; bottom: 0; width: 100%; height: auto; max-height: min(64vh, 620px); transform: translateY(105%); transform-origin: 50% 100%; }
+  .journal__sheet { height: auto; max-height: min(64vh, 620px); }
   .journal.is-open { transform: none; }
   .journal.is-dragging { transition: none; }
   .journal__sheet { padding: 8px 20px 22px; border-radius: 18px 18px 0 0; clip-path: none; box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.35); }

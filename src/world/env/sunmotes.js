@@ -22,6 +22,7 @@ const VERT = /* glsl */ `
   uniform vec3 uCenter, uHalf, uAxis;
   varying float vA;
   varying float vTw;
+  varying float vSize;
   ${GLSL_NOISE}
   ${SUNLIGHT_GLSL}
   void main() {
@@ -49,6 +50,7 @@ const VERT = /* glsl */ `
     float swirl = smoothstep(0.42, 0.72, envNoise(p.xz * 0.16 + p.y * 0.1 + vec2(t * 0.015, -t * 0.01)));
     vA = lit * edge * near * swirl * (0.18 + 1.5 * fwd) * uStrength;
     gl_PointSize = clamp(aSeed.y * uScale / dist, 1.0, 9.0);
+    vSize = gl_PointSize;
     if (vA < 0.01) gl_PointSize = 0.0;
   }
 `;
@@ -57,10 +59,12 @@ const FRAG = /* glsl */ `
   uniform vec3 uColor;
   varying float vA;
   varying float vTw;
+  varying float vSize;
   void main() {
     vec2 c = gl_PointCoord - 0.5;
     float d = length(c) * 2.0;
-    float a = exp(-d * d * 4.0) * (1.0 - smoothstep(0.8, 1.0, d));
+    // (a 2–3 px speck only has pixels on its rim: small specks use a flat kernel)
+    float a = mix(1.0 - smoothstep(0.6, 1.0, d), exp(-d * d * 4.0), smoothstep(3.0, 7.0, vSize)) * (1.0 - smoothstep(0.8, 1.0, d));
     gl_FragColor = vec4(uColor * a * vA * vTw, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>

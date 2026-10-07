@@ -62,7 +62,7 @@ const sst = (a, b, x) => {
  */
 export function groundPatches(x, z, out = {}) {
   const c = 0.5 + 0.5 * fbm(nE, x * 0.24 + 3.1, z * 0.24 - 7.4, 2);
-  out.cushion = sst(0.58, 0.68, c);
+  out.cushion = sst(0.59, 0.67, c);
   const ax = x * 0.8 + z * 0.6, az = -x * 0.6 + z * 0.8;
   out.drift = sst(0.63, 0.73, 0.5 + 0.5 * fbm(nF, ax * 0.09, az * 0.22, 3)) * (1 - out.cushion * 0.8);
   out.clover = sst(0.64, 0.74, 0.5 + 0.5 * fbm(nG, x * 0.2 - 2.2, z * 0.2 + 5.1, 2)) * (1 - out.cushion);
@@ -76,7 +76,7 @@ const _gp = {};
  */
 export function microRelief(x, z) {
   groundPatches(x, z, _gp);
-  return 0.11 * _gp.cushion + 0.06 * nR(x * 0.55, z * 0.55) + 0.025 * nR(x * 1.4 + 9.1, z * 1.4 - 3.3) - 0.03 * _gp.soil;
+  return 0.15 * _gp.cushion + 0.06 * nR(x * 0.55, z * 0.55) + 0.025 * nR(x * 1.4 + 9.1, z * 1.4 - 3.3) - 0.03 * _gp.soil;
 }
 
 // ─── geometry accumulation ───────────────────────────────────────────────────
@@ -329,3 +329,33 @@ export function moonlit(base, { dim = 0.6, rim = 0.03, color = [0.55, 0.68, 0.92
   m.customProgramCacheKey = () => `${key}|moonlit-${dim}-${rim}`;
   return m;
 }
+
+// ─── moss-balanced surfaces ──────────────────────────────────────────────────
+/**
+ * A clone of a vertex-coloured, `mossy` surface material whose moss overlay
+ * ignores the vertex colour. (The overlay paints the moss texture's own albedo
+ * and the vertex colour then multiplies it again: on a moss-tinted log, root
+ * or stone top the two multiplied down to near black.) gain lifts the moss a
+ * little towards the sunlit carpet around it. The cached material is never
+ * mutated; if the surface shader changes the patch simply does nothing.
+ */
+export function mossBalanced(base, gain = 1.3) {
+  const m = base.clone();
+  m.name = `${base.name}-mossbal`;
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = (shader, renderer) => {
+    prev?.call(m, shader, renderer);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      'sfCol = mix(sfCol, mA.rgb * mix(vec3(1.0), vec3(1.1, 1.14, 0.9), up), m);',
+      `#ifdef USE_COLOR
+    sfCol = mix(sfCol, mA.rgb * mix(vec3(1.0), vec3(1.1, 1.14, 0.9), up) * ${gain.toFixed(3)} / max(vColor.rgb, vec3(0.05)), m);
+#else
+    sfCol = mix(sfCol, mA.rgb * mix(vec3(1.0), vec3(1.1, 1.14, 0.9), up), m);
+#endif`,
+    );
+  };
+  const key = m.customProgramCacheKey();
+  m.customProgramCacheKey = () => `${key}|mossbal-${gain}`;
+  return m;
+}
+

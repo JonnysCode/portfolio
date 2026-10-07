@@ -159,9 +159,14 @@ export function updateMushroomGlow(ctx, night) {
 }
 
 export class MushroomKit {
-  /** shared: another kit whose gills, warts and glow builders this kit writes into. */
-  constructor(rng, { share = null } = {}) {
+  /**
+   * share: another kit whose gills, warts and glow builders this kit writes into.
+   * detail (0..1, the quality tier's geometric detail): fewer but bigger wart
+   * flakes on lower tiers — the same spotted look for far fewer triangles.
+   */
+  constructor(rng, { share = null, detail = 1 } = {}) {
     this.rng = rng;
+    this.detail = THREE.MathUtils.clamp(detail, 0.3, 1);
     this.caps = new GeoBuilder();
     this.stems = new GeoBuilder();
     this.shared = !!share;
@@ -360,7 +365,9 @@ export class MushroomKit {
     // raised warts, denser towards the top, following the cap surface
     const density = opts.warts ?? 1;
     // (bold enough to read from across the glen: a few big flakes, many small spots)
-    const nW = Math.round(density * (H > 1 ? 96 : H > 0.4 ? 17 : 6) * Math.min(2.2, R / Math.max(0.05, H * 0.5)) * (0.5 + 0.5 * lod));
+    const dk = this.detail * this.detail;
+    const nW = Math.round(density * (H > 1 ? 96 : H > 0.4 ? 17 : 6) * Math.min(2.2, R / Math.max(0.05, H * 0.5)) * (0.5 + 0.5 * lod) * dk);
+    const wartK = 1 / Math.sqrt(dk);
     const wartCol = C(opts.wartColor ?? '#f5ecd8');
     const wartB = opts.glowSpots ? this.glowWarts : this.warts;
     const wartSeg = H > 2.2 && lod > 0.8 ? 5 : 4;
@@ -379,7 +386,7 @@ export class MushroomKit {
       const dr = prof[k1].r - prof[k0].r, dy = prof[k1].y - prof[k0].y;
       const l = Math.hypot(dr, dy) || 1;
       const nn = new THREE.Vector3().addScaledVector(F.x, c * (dy / l)).addScaledVector(F.z, s * (dy / l)).addScaledVector(F.y, -dr / l).normalize();
-      const size = R * (rng.chance(0.3) ? rng.range(0.075, 0.125) : rng.range(0.035, 0.065)) * (1 - t * 0.25);
+      const size = R * (rng.chance(0.3) ? rng.range(0.075, 0.125) : rng.range(0.035, 0.065)) * (1 - t * 0.25) * Math.min(1.5, wartK);
       wart(wartB, p, nn, size, wartCol.clone().multiplyScalar(rng.range(0.88, 1.02)), rng, wartSeg);
     }
     return { top, capR: R, capTop: top.y + capH };
@@ -544,7 +551,7 @@ export class MushroomKit {
     }
     // raised scale flakes in concentric rings (fewer on small ones)
     if (stage !== 'bud' && lod > 0.45) {
-      const nW = Math.round((H > 1 ? 60 : H > 0.4 ? 22 : 8) * (0.5 + 0.5 * lod));
+      const nW = Math.round((H > 1 ? 60 : H > 0.4 ? 22 : 8) * (0.5 + 0.5 * lod) * this.detail * this.detail);
       for (let i = 0; i < nW; i++) {
         const t = 0.12 + Math.pow(rng.next(), 0.8) * 0.62; // rim … umbo edge
         const th = rng.range(0, TAU);

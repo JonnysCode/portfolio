@@ -15,7 +15,7 @@ function trunkRows() {
   let y = -0.9;
   while (y < TRUNK_TOP - 0.08) {
     ys.push(y);
-    y += y < 4.8 ? 0.1 : y < FORK_Y - 1 ? 0.19 : 0.13;
+    y += y < 5.3 ? 0.1 : y < FORK_Y - 1 ? 0.19 : 0.13; // fine up to the nook above the door
   }
   ys.push(TRUNK_TOP);
   return ys;
@@ -263,7 +263,9 @@ export function buildHollowCavities() {
         const a = a0 - da + (j / cols) * da * 2;
         const y = ys[i];
         const q = Math.hypot(((a - a0) * R0) / h.rx, (y - h.y) / h.ry);
-        const r = trunkRadius(a, y) + (q < 0.97 ? 0.03 : -0.12);
+        // inside the mouth just in front of the carved cup; outside it sinks well
+        // under the (coarser) bark mesh so no corner of the patch shows
+        const r = trunkRadius(a, y) + (q < 0.93 ? 0.03 : -0.4);
         polar(a, r, y, v);
         pos.set([v.x, v.y, v.z], (i * (cols + 1) + j) * 3);
       }
