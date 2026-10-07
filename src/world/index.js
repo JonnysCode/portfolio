@@ -115,6 +115,11 @@ export function moduleStats(ctx) {
         s.triangles += Math.round(n * k);
       });
     }
+    const budget = ctx.modules?.[id]?.budget?.[ctx.quality?.tier];
+    if (budget) {
+      s.budget = budget;
+      s.overBudget = s.triangles > budget;
+    }
     out[id] = s;
   }
   return out;
