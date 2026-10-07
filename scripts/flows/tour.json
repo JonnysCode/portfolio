@@ -1,0 +1,7 @@
+[
+  { "name": "tour-glen", "eval": "__woodland.debug.goTo('glen', true)", "render": 4 },
+  { "name": "tour-woodworking", "key": "ArrowRight", "wait": 200, "render": 160 },
+  { "name": "tour-record", "eval": "__woodland.debug.activateHotspot('record-player')", "render": 120 },
+  { "name": "tour-guidebook", "key": "g", "wait": 500, "render": 2 },
+  { "name": "tour-night", "eval": "document.querySelector('.modal__close')?.click(); __woodland.debug.setNight(true)", "render": 4 }
+]
