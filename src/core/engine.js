@@ -69,6 +69,8 @@ export function createEngine(canvas) {
   let lastTime = -1;
   /** @type {{fn:(dt:number, t:number)=>void, order:number}[]} */
   const updaters = [];
+  /** Iteration copy of `updaters`, rebuilt lazily after any add/remove. */
+  let snapshot = null;
   let renderFn = () => renderer.render(scene, camera);
   const resizeListeners = new Set();
   let elapsed = 0;
@@ -93,12 +95,14 @@ export function createEngine(canvas) {
      * Returns an unsubscribe function.
      */
     addUpdate(fn, order = 20) {
-      const entry = { fn, order };
+      const entry = { fn, order, errors: 0 };
       updaters.push(entry);
       updaters.sort((a, b) => a.order - b.order);
+      snapshot = null;
       return () => {
         const i = updaters.indexOf(entry);
         if (i >= 0) updaters.splice(i, 1);
+        snapshot = null;
       };
     },
     /** Replace the default render call (used by post-processing). */
@@ -122,14 +126,23 @@ export function createEngine(canvas) {
       }
       elapsed += dt;
       frame++;
-      for (const u of updaters) {
+      // Iterate a snapshot so adding/removing updaters mid-frame never skips one.
+      if (!snapshot) snapshot = updaters.slice();
+      for (const u of snapshot) {
         try {
           u.fn(dt, elapsed);
+          u.errors = 0;
         } catch (err) {
-          // One broken updater must not freeze the whole world.
-          console.error('[engine] update failed', err);
-          const i = updaters.indexOf(u);
-          if (i >= 0) updaters.splice(i, 1);
+          // One broken updater must not freeze the whole world: log it, and only
+          // retire it if it keeps failing (a single hiccup shouldn't kill the camera).
+          u.errors++;
+          if (u.errors === 1) console.error('[engine] update failed', err);
+          if (u.errors >= 30) {
+            console.error('[engine] updater failed 30 frames in a row — disabling it', err);
+            const i = updaters.indexOf(u);
+            if (i >= 0) updaters.splice(i, 1);
+            snapshot = null;
+          }
         }
       }
       if (render) renderFn(dt);
