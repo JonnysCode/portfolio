@@ -15,6 +15,7 @@
 //     crates of old parts, a stool, a hanging "Code Loft" sign
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { DEG, TAU, IRON, BRASS, COPPER, Batch, smallBitsRemap, shelfFungus, radial, polar, board, timber, branch, tubeAlong, xf, mat4, alongX, mossGeo, addToadstool, ivyCard, deform, noiseA } from './kit.js';
 
 // one bulb colour: every colour of string light costs two more draw calls
@@ -60,8 +61,6 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
     // a roof disc of end grain with growth rings, moss & a toadstool on top
     SB.add(mats.wood('#c9a374'), xf(new THREE.CylinderGeometry(R + 0.04, R + 0.04, 0.06, 20), [0, Hh + 0.03, 0]));
     for (let k = 1; k <= 4; k++) SB.add(mats.paint('#9a7650'), xf(new THREE.TorusGeometry((R * k) / 4.5, 0.004, 3, 24).rotateX(Math.PI / 2), [0, Hh + 0.062, 0]), { cast: false });
-    SB.add(mats.moss(), xf(mossGeo(rng, { r: 0.2, h: 0.06, sx: 1.3 }), [-0.08, Hh + 0.06, 0.12]), { cast: false });
-    addToadstool(SB.at(new THREE.Matrix4()), mats, rng, -0.18, Hh + 0.06, -0.12, { size: 0.09 });
     // rack units: dark boxes with vents and LEDs (LEDs go in the screens' LED mesh)
     const units = [];
     for (let i = 0; i < 5; i++) {
@@ -89,6 +88,10 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
     g.updateMatrixWorld(true);
     // LEDs (world positions)
     const toW = (x, y, z) => new THREE.Vector3(x, y, z).applyMatrix4(g.matrixWorld);
+    // moss and a toadstool on the log's top (static, in the main batch)
+    const GW = B.at(g.matrixWorld);
+    GW.add(mats.moss(), xf(mossGeo(rng, { r: 0.2, h: 0.06, sx: 1.3 }), [-0.08, Hh + 0.06, 0.12]), { cast: false });
+    addToadstool(GW, mats, rng, -0.18, Hh + 0.06, -0.12, { size: 0.09 });
     const ledCols = ['#4dff7a', '#4dff7a', '#ffb02e', '#3ec9ff', '#4dff7a'];
     units.forEach((y, i) => {
       for (let k = 0; k < 5; k++) screens.addLed(toW(0.205, y + 0.03, -0.15 + k * 0.035), rng.pick(ledCols), { rate: k === 0 ? 0 : rng.pick([0.4, 3.5, 5, 2.6]), phase: rng.next() * 20, size: 0.016 });
@@ -552,11 +555,19 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
   }
 
   // ── the hanging sign on the lift posts ────────────────────────────────────
-  if (ctx.props.makeSign && deck.slot.bar) {
-    const sign = ctx.props.makeSign({ text: 'Snail Lift', style: 'hanging', bracket: false, width: 0.9, wood: 'oak', seed: 'loft-sign' });
-    sign.position.copy(deck.slot.bar);
-    sign.rotation.y = deck.slot.a; // facing out of the tree, across the slot
-    sign.scale.setScalar(0.62);
+  if (ctx.props.makeTextTexture && deck.slot.bar) {
+    const tex = ctx.props.makeTextTexture('Snail Lift', { width: 512, height: 150, background: 'wood', wood: { color: '#b08a5e', seed: 'lift' }, color: '#3b2a1e' });
+    const w = 0.66, h = (w * 150) / 512;
+    const c = deck.slot.bar.clone().add(new THREE.Vector3(0, -0.26, 0));
+    const m = new THREE.Matrix4().makeRotationY(deck.slot.a).setPosition(c);
+    const F = B.at(m);
+    F.add(mats.wood('#6b4a30'), board(w + 0.05, h + 0.05, 0.03, { rng }));
+    for (const sx of [-1, 1]) F.add(mats.metal(IRON), xf(new THREE.CylinderGeometry(0.006, 0.006, 0.22, 4), [sx * w * 0.38, h / 2 + 0.11, 0]), { cast: false });
+    const face = new THREE.PlaneGeometry(w, h).translate(0, 0, 0.017);
+    const back = new THREE.PlaneGeometry(w, h).rotateY(Math.PI).translate(0, 0, -0.017);
+    const g = mergeGeometries([face, back]).applyMatrix4(m);
+    const sign = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 }));
+    sign.name = 'loft-lift-sign';
     root.add(sign);
   }
 

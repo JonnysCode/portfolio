@@ -26,13 +26,14 @@ import {
   Cards, plantFern, plantGrass, addFlower, addToadstool, addIvy, flushCards, uvPlanar, noiseA, noiseB, smooth01, sagCurve,
 } from './kit.js';
 import { makeBike, makeWheel } from './bike.js';
+import { makePuffs } from './puffs.js';
 
 // ── dimensions ──
 const WALL_TOP = 3.0;
 const WALL_T = 0.3;
 const OPEN_HALF = 1.08; // half width of the door opening (planar cut x = ±OPEN_HALF)
 const LINTEL_Y = 2.12;
-const CAP_COLOR = '#c0602c';
+const CAP_COLOR = '#cf6a2e';
 const CAP_R = 3.05, CAP_RIM_Y = 2.7, CAP_H = 3.45;
 
 /** Outer radius of the stone drum at height y (gently bulging). */
@@ -412,7 +413,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
   const capTop = paramSurface((u, v, p) => capPoint(u * TAU, v, p), 80, 32, { uv: (u, v) => [u * 4, 1 - v] });
   {
     // painterly gradient: sunny orange towards the tip, deep rust at the rim, faint streaks
-    const top = new THREE.Color('#d9783a'), mid = new THREE.Color(CAP_COLOR), rim = new THREE.Color('#93421f');
+    const top = new THREE.Color('#e98a42'), mid = new THREE.Color(CAP_COLOR), rim = new THREE.Color('#9a4820');
     const pos = capTop.attributes.position;
     const col = new Float32Array(pos.count * 3);
     const c = new THREE.Color();
@@ -572,6 +573,50 @@ export function buildWorkshop(ctx, B, rng, halos) {
     }
   }
 
+  // a weathervane on the cap's tip: an iron arrow and a tiny bicycle riding the wind
+  {
+    const tip = capPoint(0, 0);
+    const vane = new THREE.Group();
+    vane.position.set(tip.x, tip.y + 0.02, tip.z);
+    vane.rotation.y = 0.6;
+    group.add(vane);
+    const V = new Batch('vane');
+    V.add(MM.metal, rod([0, -0.05, 0], [0, 0.75, 0], 0.016, 0.012, 6), { color: IRON });
+    V.add(MM.metal, new THREE.SphereGeometry(0.035, 8, 6).translate(0, 0.42, 0), { color: '#b8892e' });
+    for (const [dx, dz] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) V.add(MM.metal, rod([0, 0.3, 0], [dx * 0.16, 0.3, dz * 0.16], 0.006, 0.006, 3), { color: IRON });
+    const spin = new THREE.Group();
+    spin.position.y = 0.62;
+    vane.add(spin);
+    const VS = new Batch('vane-spin');
+    VS.add(MM.metal, rod([-0.3, 0, 0], [0.3, 0, 0], 0.008, 0.008, 4), { color: IRON });
+    VS.add(MM.metal, new THREE.ConeGeometry(0.035, 0.09, 4).rotateZ(-Math.PI / 2).translate(0.33, 0, 0), { color: IRON });
+    VS.add(MM.metal, new THREE.BoxGeometry(0.01, 0.1, 0.12).translate(-0.3, 0, 0), { color: IRON });
+    makeBike({ style: 'road', color: '#3a3530', tape: '#3a3530', saddle: '#3a3530', batch: VS, matrix: mat4([-0.08, 0.01, 0], [0, 0, 0]), scale: 0.22, lite: true, seed: 'vane' });
+    V.build(vane, 'vane');
+    VS.build(spin, 'vane');
+    updates.push((dt, t) => {
+      spin.rotation.y = 0.4 + Math.sin(t * 0.23) * 0.5 + Math.sin(t * 0.71) * 0.15;
+    });
+  }
+
+  // a worn flagstone apron in front of the doors, moss in the joints
+  {
+    const zc = zFront(0, 0) + 0.15;
+    for (let i = 0; i < 26; i++) {
+      const a = rng.range(-1.2, 1.2), d = Math.sqrt(rng.next()) * 1.45;
+      const x = Math.sin(a) * d, z = zc + Math.cos(a) * d * 0.75;
+      const r = rng.range(0.16, 0.26);
+      const g = stoneGeo(rng, { r, sx: rng.range(1.0, 1.5), sz: rng.range(0.8, 1.1), sy: 0.18, lump: 0.12, flatTop: 0.1, detail: 1 });
+      xf(g, [x, 0.01, z], [0, rng.next() * TAU, 0]);
+      F.add(MM.pebble, g, { color: rng.pick(['#8f8778', '#857e70', '#9a8f7a', '#7c776c']) });
+      if (rng.chance(0.4)) {
+        const m = mossGeo(rng, { r: rng.range(0.06, 0.12), h: 0.025 });
+        xf(m, [x + r, 0, z + rng.jitter(0.1)], [0, rng.next() * TAU, 0]);
+        F.add(MM.moss, m, { color: '#6f8f3a' });
+      }
+    }
+  }
+
   // ── the yard: hero bike on a repair stand, truing stand, wheels, bits ────
   const hero = makeBike({ style: 'gravel', spin: true, spinFront: false, seed: 'hero', scale: 0.8, color: '#e3d5b5', tape: '#6b4a2e' });
   const heroPos = new THREE.Vector3(-1.55, 0.2, 3.45);
@@ -601,9 +646,9 @@ export function buildWorkshop(ctx, B, rng, halos) {
   let mechanic = null;
   try {
     mechanic = ctx.props.makePerson({ seed: 'velo-mechanic', name: 'Mechanic', holding: 'wrench', action: 'work', apron: true, apronColor: '#3f5f73', hat: 'cap', hatColor: '#b03a2e', shirt: '#e8a838' });
-    const mp = new THREE.Vector3(-2.55, 0, 3.0);
+    const mp = new THREE.Vector3(-2.72, 0, 3.6);
     mechanic.group.position.copy(mp);
-    mechanic.group.rotation.y = Math.atan2(heroPos.x - 0.25 - mp.x, heroPos.z - mp.z) + 0.35;
+    mechanic.group.rotation.y = Math.atan2(heroPos.x - 0.35 - mp.x, heroPos.z - 0.05 - mp.z);
     group.add(mechanic.group);
   } catch (err) {
     console.warn('[riverside] mechanic skipped', err);
@@ -687,6 +732,33 @@ export function buildWorkshop(ctx, B, rng, halos) {
     group.add(sign);
   } catch (err) {
     console.warn('[riverside] sign skipped', err);
+  }
+
+  // a thin curl of smoke from the stovepipe (the stove is lit for the coffee)
+  const smoke = makePuffs(ctx, {
+    name: 'velowerkstatt-smoke',
+    seed: 'velo-smoke',
+    emitters: [{ p: toWorld(chimneyTop.x, chimneyTop.y + 0.18, chimneyTop.z), n: 26, spread: 0.04 }],
+    color: '#e2ddd4',
+    rise: 2.6,
+    spreadOut: 0.25,
+    drift: new THREE.Vector3(0.5, 0, -0.35),
+    size: [0.16, 0.3],
+    grow: 2.6,
+    life: [0.09, 0.14],
+    opacity: 0.32,
+  });
+  ctx.scene.add(smoke.points);
+  updates.push((dt, t) => smoke.update(t));
+
+  // colliders: the drum, the repair stand and the truing stump
+  if (ctx.colliders?.addCircle) {
+    const c = toWorld(0, 0, 0);
+    ctx.colliders.addCircle(c.x, c.z, wallR(0) + 0.1, 'velowerkstatt');
+    const h = toWorld(heroPos.x, 0, heroPos.z);
+    ctx.colliders.addCircle(h.x, h.z, 0.55, 'velowerkstatt-repair-stand');
+    const tw = toWorld(tPos.x, 0, tPos.z);
+    ctx.colliders.addCircle(tw.x, tw.z, 0.42, 'velowerkstatt-truing-stand');
   }
 
   // warm light inside the workshop (the doors spill it out at night)

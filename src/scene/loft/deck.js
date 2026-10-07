@@ -454,6 +454,32 @@ export function buildDeck(ctx, B, mats, env) {
     }
   }
 
+  // ── fallen leaves: drifts against the railing and the bark, a few in the open
+  {
+    const leafCols = ['#c9752e', '#d99a3a', '#a8502a', '#8a6a2e', '#b8862f', '#7f8a3a'];
+    const paintMat = mats.paint();
+    const shape = new THREE.Shape();
+    shape.moveTo(0, -0.05);
+    shape.quadraticCurveTo(0.035, -0.01, 0.0, 0.05);
+    shape.quadraticCurveTo(-0.035, -0.01, 0, -0.05);
+    const proto = new THREE.ShapeGeometry(shape, 3).rotateX(-Math.PI / 2);
+    let placed = 0;
+    for (let i = 0; i < 900 && placed < 140 * density; i++) {
+      const x = rng.range(-R0, R0), z = rng.range(-R0, R0);
+      if (!deckOK(x, z)) continue;
+      const nearEdge = !insideOutline(x, z, 0.55);
+      const nearBark = barkGap(x, z) < 0.6;
+      if (!nearEdge && !nearBark && rng.next() > 0.12) continue;
+      const g = proto.clone();
+      const s = rng.range(1.0, 1.8);
+      // curled a little
+      for (let v = 0, pos = g.attributes.position; v < pos.count; v++) pos.setY(v, Math.abs(pos.getX(v)) * 0.4 * rng.next());
+      xf(g, [x, 0.018 + rng.next() * 0.012, z], [rng.jitter(0.12), rng.next() * TAU, rng.jitter(0.12)], s);
+      F.add(paintMat, g, { color: rng.pick(leafCols), cast: false });
+      placed++;
+    }
+  }
+
   // ── toadstools in the corners by the bark ─────────────────────────────────
   {
     let placed = 0;

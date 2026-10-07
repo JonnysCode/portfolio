@@ -16,7 +16,7 @@
 // so the whole house leans.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { DEG, TAU, WOOD, IRON, BRASS, TILE, smallBitsRemap, board, timber, beamBox, peg, xf, mat4, uvBox, deform, layShingles, ShingleField, shingleGeo, mossGeo, branch, ivyCard, tubeAlong, alongX, noiseA } from './kit.js';
+import { DEG, TAU, WOOD, IRON, BRASS, TILE, smallBitsRemap, paintBy, board, timber, beamBox, peg, xf, mat4, uvBox, deform, layShingles, ShingleField, shingleGeo, mossGeo, branch, ivyCard, tubeAlong, alongX, noiseA } from './kit.js';
 
 // ── dimensions ──────────────────────────────────────────────────────────────
 export const HOUSE = {
@@ -146,6 +146,17 @@ export function buildHouse(ctx, B, mats, env, screens) {
       if (v.z > 0) v.z += 0.008 * noiseA(v.x * 3 + w.len, v.y * 3);
     });
     uvBox(slab, 'x', 1 / TILE.plaster, [rng.next() * 5, rng.next() * 5]);
+    // weathering: rain splash and a green bloom of algae at the foot of the
+    // walls, a little soot-grey under the plate — lime plaster never stays white
+    const clean = new THREE.Color('#efe2c4'), grime = new THREE.Color('#b9b08a'), soot = new THREE.Color('#d6cbb0');
+    const tc = new THREE.Color();
+    paintBy(slab, (x, y) => {
+      const foot = 1 - THREE.MathUtils.smoothstep(y, SILL, 0.75);
+      const n = 0.5 + 0.5 * noiseA(x * 2.3 + w.len * 3, y * 1.7);
+      tc.copy(clean).lerp(grime, foot * (0.55 + 0.45 * n));
+      if (y > EAVE - 0.45) tc.lerp(soot, ((y - (EAVE - 0.45)) / 0.45) * 0.5);
+      return tc;
+    });
     F.add(plaster, slab);
   }
 
@@ -718,6 +729,13 @@ function buildInterior(ctx, B, mats, env, { house, H, toWorldUp, screens }) {
     out.lamp = toWorldUp(j2[0] + 0.05, j2[1] - 0.15, j2[2]);
   }
   SB.build(screenGroup, 'loft-workstation', { mergeShadow: true, remap: smallBitsRemap(mats) });
+  // put the hotspot's origin at the monitors (the camera frames the hotspot's
+  // origin when its panel opens, and the hover "boing" scales around it)
+  const pivot = new THREE.Vector3(deskX + 0.05, deskTop + 0.32, -0.38);
+  for (const m of screenGroup.children) m.geometry.translate(-pivot.x, -pivot.y, -pivot.z);
+  screenGroup.matrix.multiply(new THREE.Matrix4().makeTranslation(pivot.x, pivot.y, pivot.z));
+  screenGroup.matrix.decompose(screenGroup.position, screenGroup.quaternion, screenGroup.scale);
+  screenGroup.matrixAutoUpdate = true; // so the hover "boing" (scale) works
   env.root.add(screenGroup);
   out.workstation = screenGroup;
 
@@ -745,7 +763,7 @@ function buildInterior(ctx, B, mats, env, { house, H, toWorldUp, screens }) {
 
   // ── Windsor chair, pulled out ─────────────────────────────────────────────
   {
-    const m = mat4([deskX + 0.62, 0, -0.42], [0, 2.2, 0]);
+    const m = mat4([deskX + 0.6, 0, -1.02], [0, 2.6, 0]);
     const F = H.at(m);
     const seatY = 0.3;
     const c = '#8a6440';

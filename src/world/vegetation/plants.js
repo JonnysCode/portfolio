@@ -342,7 +342,7 @@ const LEAF_GREEN = '#5d8a3a';
 
 // ─── flower communities ──────────────────────────────────────────────────────
 function bluebells(B, rng) {
-  const stems = rng.int(4, 7);
+  const stems = rng.int(4, 6);
   for (let s = 0; s < stems; s++) {
     const a = rng.range(0, TAU), d = rng.range(0, 0.14);
     const base = new THREE.Vector3(Math.sin(a) * d, 0, Math.cos(a) * d);
@@ -351,7 +351,7 @@ function bluebells(B, rng) {
     // arching stem: rises then nods over to one side
     const pts = archPoints(base, az, h * 1.15, rng.range(1.35, 1.5), rng.range(1.4, 2.0), 4);
     for (let i = 0; i < pts.length - 1; i++) stem(B, pts[i], pts[i + 1], 0.0055, col(GREEN));
-    const bells = rng.int(3, 6);
+    const bells = rng.int(3, 5);
     const blue = col(rng.pick(['#5a62d6', '#6a5ed0', '#4f6ad8', '#7a6ee0']));
     const inner = blue.clone().lerp(col('#d8d8ff'), 0.35);
     for (let k = 0; k < bells; k++) {
@@ -368,7 +368,7 @@ function bluebells(B, rng) {
     }
   }
   // strap leaves
-  const leaves = rng.int(4, 7);
+  const leaves = rng.int(3, 5);
   for (let i = 0; i < leaves; i++) {
     const az = rng.range(0, TAU);
     const pts = archPoints(new THREE.Vector3(rng.jitter(0.05), 0, rng.jitter(0.05)), az, rng.range(0.18, 0.3), rng.range(0.9, 1.3), rng.range(0.9, 1.5), 3);
@@ -405,7 +405,7 @@ function forgetMeNots(B, rng) {
 }
 
 function foxgloves(B, rng) {
-  const spikes = rng.int(1, 3);
+  const spikes = rng.int(1, 2);
   for (let s = 0; s < spikes; s++) {
     const base = new THREE.Vector3(rng.jitter(0.1), 0, rng.jitter(0.1));
     const h = rng.range(0.7, 1.05);
@@ -415,7 +415,7 @@ function foxgloves(B, rng) {
     stem(B, base, top, 0.011, col(GREEN), mid);
     const pink = col(rng.pick(['#c8509a', '#b8489c', '#d066a8', '#a85cb8', '#e8d8e8']));
     const inner = col('#f6e6f0');
-    const n = rng.int(10, 15);
+    const n = rng.int(9, 13);
     const face = rng.range(0, TAU);
     for (let k = 0; k < n; k++) {
       const t = 0.32 + (k / n) * 0.62;

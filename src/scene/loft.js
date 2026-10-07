@@ -85,7 +85,7 @@ export default async function build(ctx) {
 
   // ── hotspots ──────────────────────────────────────────────────────────────
   const area = 'code';
-  ctx.interactions?.add?.(house.interior.workstation, { entryId: 'this-portfolio', area, focus: { distance: 3.2, height: 0.4 }, approach: false });
+  ctx.interactions?.add?.(house.interior.workstation, { entryId: 'this-portfolio', area, focus: { distance: 3.4, height: 0.1 }, approach: false });
   if (props.server) ctx.interactions?.add?.(props.server, { entryId: 'project-backend', area, focus: { distance: 3, height: 0.4 }, approach: false });
   if (props.bench) ctx.interactions?.add?.(props.bench, { entryId: 'project-side', area, focus: { distance: 3, height: 0.4 }, approach: false });
   const duck = house.interior.duck;

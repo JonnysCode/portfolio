@@ -196,7 +196,7 @@ function bakeMask(B, rocks, impacts) {
         let v = Math.max(0, 1 - Math.abs(d - r.r * 1.02) / (0.12 + r.r * 0.25)) * 0.9;
         if (along > 0) {
           const k = along / len;
-          const halfW = r.r * (0.75 + k * 0.9);
+          const halfW = r.r * (0.45 + k * 0.55);
           const side = 1 - smoothstep(halfW * 0.5, halfW, Math.abs(across));
           v = Math.max(v, side * (1 - smoothstep(0.15, 1, k)) * (along < r.r * 0.8 ? smoothstep(r.r * 0.6, r.r * 0.95, d) : 1));
         } else if (along > -r.r * 1.6) {
@@ -329,8 +329,8 @@ float wFn = wNoise(vec2(vFlow.y * 4.2, (vFlow.x - wT * wSpeed * 1.3) * 1.6));
 float wFn2 = wNoise(vec2(vFlow.y * 9.0 + 3.1, (vFlow.x - wT * wSpeed * 1.5) * 3.4));
 float wFoamN = wFn * 0.65 + wFn2 * 0.35;
 // wakes behind the rocks: thin broken streaks trailing downstream
-float wWk = wNoise(vec2(vFlow.y * 9.0, (vFlow.x - wT * wSpeed * 1.4) * 1.1)) * 0.7 + wFn2 * 0.3;
-float wFoamA = pow(wWake, 1.3) * smoothstep(0.5, 0.72, wWk + wWake * 0.25) * 0.85;
+float wWk = wNoise(vec2(vFlow.y * 16.0, (vFlow.x - wT * wSpeed * 1.4) * 1.3)) * 0.7 + wFn2 * 0.3;
+float wFoamA = pow(wWake, 1.6) * smoothstep(0.6, 0.8, wWk + wWake * 0.2) * 0.5;
 // churning foam where the falls land
 float wChurn = wNoise(vWPos.xz * 3.2 + vec2(wT * 0.6, -wT * 0.9)) * 0.6 + wNoise(vWPos.xz * 7.0 - vec2(wT * 1.4, 0.0)) * 0.4;
 float wFoamB = smoothstep(0.75, 0.25, wChurn + (1.0 - wTurb) * 0.65) * step(0.05, wTurb);

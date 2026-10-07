@@ -47,6 +47,7 @@ export const IRON = '#3a3530';
 let MATS = null;
 let NEVER_CAST = new Set();
 let ALWAYS_CAST = new Set();
+let VARIED = new Set();
 /**
  * The riverside's shared materials (cached in core/materials.js — never mutate).
  * Vertex-coloured kinds take their hue from Batch.add(…, { color }).
@@ -93,6 +94,8 @@ export function M() {
   // small-part materials never cast shadows (keeps the shadow pass and the mesh count down)
   NEVER_CAST = new Set([MATS.moss, MATS.soil, MATS.gills, MATS.stem, MATS.plaster, MATS.planks, MATS.fabric, MATS.rope, MATS.leafy, MATS.lamp, MATS.bulb, MATS.glowBlue, MATS.fern, MATS.grass, MATS.ivy, MATS.reed, MATS.pebble, MATS.metal]);
   ALWAYS_CAST = new Set([MATS.cap, MATS.rock]);
+  // stones get per-vertex shading variation (grimy undersides, mottling)
+  VARIED = new Set([MATS.wallStone, MATS.rock, MATS.pebble]);
   return MATS;
 }
 
@@ -129,6 +132,24 @@ export function paintFn(geo, base, fn) {
   return geo;
 }
 
+/**
+ * A stone's colour with life in it: darker towards its underside (grime and
+ * contact shadow), a soft noisy mottling and a hint of green damp low down.
+ */
+export function paintStone(geo, color) {
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  const h = Math.max(1e-4, bb.max.y - bb.min.y);
+  const base = new THREE.Color(color);
+  const damp = new THREE.Color('#5f6a45');
+  return paintFn(geo, base, (x, y, z, i, c) => {
+    const t = (y - bb.min.y) / h;
+    const n = noiseA(x * 7.3 + z * 3.1, y * 7.3 - z * 2.3);
+    c.multiplyScalar(0.8 + 0.2 * smooth01(t * 1.6) + 0.08 * n);
+    c.lerp(damp, 0.12 * (1 - smooth01(t * 2.5)));
+  });
+}
+
 /** Make a geometry mergeable: indexed, normal + uv (+ colour), no groups/morphs. */
 export function prepare(geo, withColor) {
   if (geo.index === null) {
@@ -163,7 +184,10 @@ export class Batch {
     const cast = NEVER_CAST.has(material) ? false : ALWAYS_CAST.has(material) ? true : opts.cast ?? true;
     const receive = opts.receive ?? true;
     const vc = !!material.vertexColors;
-    if (vc && opts.color !== undefined && opts.color !== null) paint(geo, opts.color);
+    if (vc && opts.color !== undefined && opts.color !== null) {
+      if (VARIED.has(material) && opts.vary !== false) paintStone(geo, opts.color);
+      else paint(geo, opts.color);
+    }
     prepare(geo, vc);
     const key = `${material.uuid}|${cast ? 1 : 0}|${receive ? 1 : 0}`;
     let e = this.lists.get(key);

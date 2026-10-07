@@ -257,7 +257,12 @@ export class MushroomKit {
       { r: R * 0.62, y: gillTop * 0.35 - R * 0.03, v: 0.5 },
       { r: rs * 1.15, y: gillTop * 0.6, v: 1 },
     ];
-    lathe(this.gills, F, gProf, seg, { flip: true, disc: R, wob: (th, k) => (k === 0 ? capWob(th, 0) : 1), color: () => C(opts.gillColor ?? '#f1e4c8') });
+    // (some giants are bioluminescent: their gills glow softly at night)
+    lathe(opts.glowGills ? this.glow : this.gills, F, gProf, seg, { flip: true, disc: R, wob: (th, k) => (k === 0 ? capWob(th, 0) : 1), color: () => C(opts.gillColor ?? '#f1e4c8') });
+    if (opts.glowGills) {
+      const under = F.o.clone().addScaledVector(F.y, -R * 0.25);
+      this.glowPoints.push({ x: under.x, y: under.y, z: under.z, size: R * 1.6 });
+    }
 
     // raised warts, denser towards the top, following the cap surface
     const density = opts.warts ?? 1;

@@ -67,9 +67,13 @@ const FRAG_MAIN = /* glsl */ `
   // ── forest floor splat ──
   vec3 tGN = normalize((vec4(normal, 0.0) * viewMatrix).xyz); // world-space geometric normal
   vec2 tP = vTWorld.xz;
-  vec4 mA = texture2D(tMossA, tP * tTile.x, 0.4);
-  vec4 mD = texture2D(tMossD, tP * tTile.x, 0.4);
-  vec4 mA2 = texture2D(tMossA, tP * tTile.x * 0.43 + vec2(0.37, 0.61), 1.2);
+  // two scales of moss cushions, swapped in noisy patches so the carpet never reads as a pattern
+  vec2 tUv1 = tP * tTile.x;
+  vec2 tUv2 = vec2(tP.x * 0.71 - tP.y * 0.7, tP.x * 0.7 + tP.y * 0.71) * tTile.x * 0.58 + vec2(0.37, 0.61);
+  vec4 mA = texture2D(tMossA, tUv1, 0.4);
+  vec4 mD = texture2D(tMossD, tUv1, 0.4);
+  vec4 mA2 = texture2D(tMossA, tUv2, 0.6);
+  vec4 mD2 = texture2D(tMossD, tUv2, 0.6);
   vec4 sA = texture2D(tSoilA, tP * tTile.y);
   vec4 sD = texture2D(tSoilD, tP * tTile.y);
   vec4 sA2 = texture2D(tSoilA, tP * tTile.y * 0.41 + vec2(0.13, 0.71));
@@ -84,13 +88,16 @@ const FRAG_MAIN = /* glsl */ `
   float tWPath = smoothstep(0.5, 0.62, tPathE);
   float tFringe = smoothstep(0.2, 0.5, tPathE) * (1.0 - tWPath);
   // soil vs moss, height-blended with the relief of both textures
-  float tHM = mA.a * 0.6 + mA2.a * 0.4;
+  float tSwap = smoothstep(0.35, 0.65, tFbm(tP * 0.33 + 3.0));
+  mA = mix(mA, mA2, tSwap);
+  mD = mix(mD, mD2, tSwap);
+  float tHM = mA.a;
   float tBias = vSplat.z * 1.6 - 0.9 + tFringe * 1.2 + vSplat.w * 0.75 + tDamp * 0.3 + (nMid - 0.5) * 0.8 + (nSmall - 0.5) * 0.6;
   float tWSoil = smoothstep(-0.14, 0.14, tBias + (sA.a - tHM) * 1.1);
   tWSoil = max(tWSoil, tWPath);
 
   // moss: softened texture (velvet), three painterly tones in broad patches
-  vec3 tMoss = mix(vec3(1.0), (mA.rgb * 0.7 + mA2.rgb * 0.3) / tMossMean, 0.4);
+  vec3 tMoss = mix(vec3(1.0), mA.rgb / tMossMean, 0.42);
   vec3 tMossMid = mix(tMossDeep, tMossSun, 0.5);
   vec3 tMossTint = mix(tMossDeep, tMossMid, smoothstep(0.2, 0.5, nBig));
   tMossTint = mix(tMossTint, tMossSun, smoothstep(0.55, 0.85, nBig * 0.7 + nMid * 0.3));
@@ -108,7 +115,7 @@ const FRAG_MAIN = /* glsl */ `
   tCol *= 1.0 - tFringe * 0.12;
 
   // normals (planar XZ projection, whiteout blend)
-  vec3 tnM = tUnpack(mD.xy, 0.7);
+  vec3 tnM = tUnpack(mD.xy, 0.5);
   vec3 tnS = tUnpack(sD.xy, 1.0);
   vec3 tn = normalize(mix(tnM, tnS, tWSoil));
   tn.xy *= mix(1.0, 0.55, tWPath);
@@ -158,7 +165,7 @@ export function makeTerrainMaterial(ctx) {
     tSoilMean: { value: v3(lin(KINDS.soil.mean)) },
     tMossMean: { value: v3(lin(KINDS.moss.mean)) },
     tMossSun: { value: v3(lin('#86913a')) },
-    tMossDeep: { value: v3(lin('#2e4a24')) },
+    tMossDeep: { value: v3(lin('#34532a')) },
     tPathCol: { value: v3(lin('#9c7f5c')) },
     tLitter: { value: v3(lin('#6e4526')) },
   };

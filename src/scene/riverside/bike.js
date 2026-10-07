@@ -455,21 +455,23 @@ function buildBasket(F, s, rng, G, flowers) {
   const B = bm();
   const base = add(G.htBot, [0.1, 0.06, 0]);
   const w = 0.22, d = 0.3, h = 0.16;
-  // woven walls: stacked thin hoops (vertex-coloured stripes)
-  for (let k = 0; k < 7; k++) {
-    const y = base[1] + 0.012 + k * (h / 7);
-    const g = new THREE.TorusGeometry(1, 0.11, 4, 24);
+  // woven walls: thin hoops with gaps between them, woven over the uprights
+  for (let k = 0; k < 5; k++) {
+    const y = base[1] + 0.02 + k * (h / 5.2);
+    const g = new THREE.TorusGeometry(1, 0.08, 4, 22);
     g.rotateX(Math.PI / 2);
-    g.scale(w * 0.5, 0.11, d * 0.5);
+    g.scale(w * 0.5 * (1 + k * 0.03), 0.09, d * 0.5 * (1 + k * 0.03));
     g.translate(base[0] + w * 0.5, y, base[2]);
-    F.add(B.soft, g, { color: k % 2 ? '#b98f52' : '#a77c45' });
+    F.add(B.soft, g, { color: k % 2 ? '#c49a5c' : '#a77c45' });
   }
   F.add(B.soft, new THREE.CylinderGeometry(1, 1, 0.012, 20).scale(w * 0.5, 1, d * 0.5).translate(base[0] + w * 0.5, base[1] + 0.006, base[2]), { color: '#8f6a3a' });
+  // a dark inside so the weave reads, and a cloth lining peeking over the rim
+  F.add(B.soft, new THREE.CylinderGeometry(1, 0.97, h * 0.92, 18, 1, true).scale(w * 0.47, 1, d * 0.47).translate(base[0] + w * 0.5, base[1] + h * 0.47, base[2]), { color: '#4e3a26', cast: false });
   // uprights
-  for (let i = 0; i < 10; i++) {
-    const a = (i / 10) * TAU;
-    const x = base[0] + w * 0.5 + Math.cos(a) * w * 0.5, z = base[2] + Math.sin(a) * d * 0.5;
-    F.add(B.soft, rod([x, base[1], z], [x, base[1] + h, z], 0.004, 0.004, 3), { color: '#7d5a30', cast: false });
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * TAU;
+    const x = base[0] + w * 0.5 + Math.cos(a) * w * 0.51, z = base[2] + Math.sin(a) * d * 0.51;
+    F.add(B.soft, rod([x, base[1], z], [x * 1.0, base[1] + h, z], 0.005, 0.005, 3), { color: '#7d5a30', cast: false });
   }
   // handle-free rim
   F.add(B.soft, new THREE.TorusGeometry(1, 0.06, 5, 26).rotateX(Math.PI / 2).scale(w * 0.52, 0.012 / 0.06, d * 0.52).translate(base[0] + w * 0.5, base[1] + h, base[2]), { color: '#c79a5a' });
@@ -482,10 +484,10 @@ function buildBasket(F, s, rng, G, flowers) {
   for (let i = 0; i < n; i++) {
     const a = rng.next() * TAU, r = Math.sqrt(rng.next()) * 0.85;
     const x = base[0] + w * 0.5 + Math.cos(a) * w * 0.45 * r, z = base[2] + Math.sin(a) * d * 0.45 * r;
-    const y = base[1] + h + rng.range(0.0, 0.07);
+    const y = base[1] + h + rng.range(0.03, 0.12);
     F.add(B.soft, rod([x, base[1] + h * 0.5, z], [x + rng.jitter(0.03), y, z + rng.jitter(0.03)], 0.003, 0.003, 3), { color: '#4f7a34', cast: false });
     const c = rng.pick(COLORS);
-    const fs = rng.range(0.022, 0.035);
+    const fs = rng.range(0.03, 0.048);
     for (let p = 0; p < 5; p++) {
       const pa = (p / 5) * TAU + rng.next();
       F.add(B.soft, new THREE.SphereGeometry(fs * 0.55, 6, 4).scale(1, 0.4, 0.6).translate(fs * 0.5, 0, 0).rotateY(pa).translate(x, y, z), { color: c, cast: false });

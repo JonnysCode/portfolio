@@ -111,9 +111,6 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     BB.add(mats.paint('#6b4a30'), xf(new THREE.CylinderGeometry(0.006, 0.006, 0.3, 4), [-R, -HANG + 0.12, 0]), { cast: false });
     BB.build(basket, 'lift-basket', { mergeShadow: true, remap: smallBitsRemap(mats) });
   }
-  const basketGlow = ctx.props.makeGlowSprite('#ffc46e', 0.45, { day: 0.05, night: 0.9 });
-  basketGlow.position.set(0.3, -HANG - 0.09, 0);
-  basket.add(basketGlow);
   root.add(basket);
 
   // ── stations ──────────────────────────────────────────────────────────────

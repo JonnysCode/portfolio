@@ -53,7 +53,9 @@ void main() {
   float awake = smoothstep(aBlink.z, aBlink.z + 0.18, uNight);
   vAlpha = awake * glow * distFade(d);
   vColor = aColor;
-  gl_PointSize = clamp(aParams.w * uScale / max(d, 0.1), 0.0, 90.0) * (0.75 + 0.25 * glow);
+  gl_PointSize = clamp(aParams.w * uScale / max(d, 0.1), 0.0, 36.0) * (0.75 + 0.25 * glow);
+  // never a blurry blob in front of the lens
+  vAlpha *= smoothstep(1.5, 5.0, d);
   if (vAlpha < 0.004) gl_PointSize = 0.0;
   gl_Position = projectionMatrix * mv;
 }

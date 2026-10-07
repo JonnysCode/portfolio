@@ -28,10 +28,10 @@
 import * as THREE from 'three';
 import { createRng } from '../core/rng.js';
 import { getHeight, getPathDistance, getStreamDistance, pathPolylines } from './ground.js';
-import { OAK, STREAM } from './layout.js';
+import { STREAM, SPOTS } from './layout.js';
 import { glowQuads } from '../props/glow.js';
 import { fieldBroad, fieldMid, fieldFine, fieldAlt, GeoBuilder, instanced, staticMesh, TAU } from './vegetation/common.js';
-import { canGrow, isClearOfViews, blocksView, oakDist, padClearance, cameraClearance } from './vegetation/zones.js';
+import { canGrow, isClearOfViews, blocksView, oakDist, cameraClearance } from './vegetation/zones.js';
 import { forestPlan } from './vegetation/plan.js';
 import { buildTree, clumpTemplate } from './vegetation/trees.js';
 import { MushroomKit, CAP_REDS, CAP_BROWNS } from './vegetation/mushrooms.js';
@@ -118,7 +118,7 @@ export default async function build(ctx) {
     occ.add(t.x, t.z, t.radius * 1.6, 'tree');
   }
   // the canopy clump template (also used for the forest-edge bushes below)
-  const clumpGeo = clumpTemplate(rng.fork('clump'), tier === 'low' ? 110 : 170, { size: [0.22, 0.34] });
+  const clumpGeo = clumpTemplate(rng.fork('clump'), tier === 'low' ? 90 : 130, { size: [0.25, 0.38] });
 
   // ── 2. giant fly agarics ──────────────────────────────────────────────────
   const giantKit = new MushroomKit(rng.fork('giants'));
@@ -133,6 +133,8 @@ export default async function build(ctx) {
     if (!isClearOfViews(x, y, z, H + R * 0.5, R * 0.95)) return false;
     const brown = opts.brown ?? rng.chance(0.18);
     const shape = opts.shape ?? (rng.chance(0.12) ? 'cone' : rng.chance(0.3) ? 'flat' : 'dome');
+    const glowGills = brown && rng.chance(0.75);
+    if (glowGills) glowSpots.push({ x, y: y + H * 0.85, z });
     giantKit.amanita(x, y, z, {
       height: H,
       capR: R,
@@ -142,6 +144,7 @@ export default async function build(ctx) {
       leanAz: opts.leanAz ?? rng.range(0, TAU),
       warts: brown ? 0.6 : 1,
       gillColor: brown ? '#e8d4b0' : '#f2e6cc',
+      glowGills,
     });
     occ.add(x, z, R * 0.45, 'giant');
     giants.push({ x, y, z, H, R });
@@ -315,8 +318,8 @@ export default async function build(ctx) {
       // almost never seen up close, and behind the tree wall only big shapes read
       let vis = 1;
       if (z > 20) vis *= 0.3;
-      if (r > 25) vis *= 0.5;
-      if (r > 31) vis *= 0.4;
+      if (r > 24) vis *= 0.5;
+      if (r > 30) vis *= 0.45;
       if (!rng.chance(vis)) continue;
       if (!canGrow(x, z, { path: 1.12 })) continue;
       const occClear = occ.clearance(x, z, 3);
@@ -330,16 +333,18 @@ export default async function build(ctx) {
       // biome weights
       const wFern = (0.25 + fA * 0.9 + (shady ? 0.5 : 0) + (r > 24 ? 0.4 : 0)) * (edge ? 0.35 : 1);
       const wGrass = 0.55 + (1 - fA) * 0.5 + (edge ? 0.8 : 0);
-      const wFlower = (0.06 + (1 - fA) * 0.3 * fM + (edge ? 0.15 : 0)) * (r > 28 ? 0.25 : 1);
+      const wFlower = (0.1 + (1 - fA) * 0.4 * fM + (edge ? 0.2 : 0) + (r < 21 ? 0.3 : 0)) * (r > 26 ? 0.25 : 1);
       const wClover = (edge ? 0.35 : 0.06) + (fF > 0.75 ? 0.15 : 0);
       const wMush = (shady ? 0.07 : 0.025) + (occClear < 1.5 ? 0.08 : 0);
-      const wNone = 0.75 + fB * 0.4;
+      const wNone = (r < 22 ? 0.35 : 0.75) + fB * 0.4;
       const tot = wFern + wGrass + wFlower + wClover + wMush + wNone;
       let roll = rng.next() * tot;
       if ((roll -= wNone) < 0) continue;
       if ((roll -= wFern) < 0) {
+        // out at the forest wall: fewer but bigger ferns (they read from afar)
+        if (r > 25 && rng.chance(0.4)) continue;
         const big = fA > 0.55 && rng.chance(0.45);
-        const s = big ? rng.range(0.85, 1.55) * (r > 24 ? 1.35 : 1) : rng.range(0.5, 1.05);
+        const s = (big ? rng.range(0.85, 1.55) : rng.range(0.5, 1.05)) * (r > 25 ? 1.4 : 1);
         // tall ferns must not sit in a spot camera's view
         if (s * 0.9 > 0.7 && !isClearOfViews(x, y, z, s * 0.9, s * 0.8)) continue;
         const it = { x, y, z, ry: rng.range(0, TAU), s, sy: rng.range(0.8, 1.15), color: jitterTint(rng.pick(fernTints)) };
@@ -353,10 +358,12 @@ export default async function build(ctx) {
       }
       if ((roll -= wFlower) < 0) {
         let kind;
+        const inner = r < 21;
         if (damp && rng.chance(0.6)) kind = 'forgetMeNots';
-        else if (shady) kind = rng.pick(['bluebells', 'bluebells', 'foxgloves', 'forgetMeNots']);
-        else kind = rng.pick(['daisies', 'buttercups', 'meadow', 'meadow', 'bluebells', 'foxgloves']);
-        const s = rng.range(0.85, 1.35);
+        else if (shady && !inner) kind = rng.pick(['bluebells', 'bluebells', 'foxgloves', 'forgetMeNots']);
+        else kind = rng.pick(['daisies', 'buttercups', 'meadow', 'meadow', 'bluebells', 'forgetMeNots', 'foxgloves']);
+        // the open glen's flowers are a touch bigger so they read from the spots
+        const s = rng.range(0.85, 1.35) * (inner ? 1.3 : 1);
         if (kind === 'foxgloves' && !isClearOfViews(x, y, z, 1.1 * s, 0.3)) continue;
         flowers[kind].push({ x, y, z, ry: rng.range(0, TAU), s, color: jitterTint('#ffffff', 0.015, 0.05) });
         if (flowerPatches.length < 400) flowerPatches.push({ x, y: y + 0.3 * s, z, r: 0.3 * s, kind });
@@ -415,6 +422,32 @@ export default async function build(ctx) {
     fernL.push({ x, y, z, ry: rng.range(0, TAU), s, sy: rng.range(0.85, 1.1), color: jitterTint(rng.pick(fernTints)) });
   }
 
+  // (b) the bottom corners of every spot shot: a big fern or two close to the
+  //     lens, soft in the depth of field — the painter's foreground framing
+  {
+    const f = new THREE.Vector3(), rt = new THREE.Vector3();
+    for (const spot of SPOTS) {
+      if (spot.id === 'glen') continue;
+      const P = spot.camera.position, T = spot.camera.target;
+      f.set(T[0] - P[0], 0, T[2] - P[2]).normalize();
+      rt.set(-f.z, 0, f.x);
+      const hfov = Math.atan(Math.tan(THREE.MathUtils.degToRad((spot.camera.fov ?? 40) / 2)) * (16 / 9));
+      for (const side of [-1, 1]) {
+        for (const d of [5.5, 7, 8.5, 10]) {
+          const w = d * Math.tan(hfov) * rng.range(0.7, 0.95);
+          const x = P[0] + f.x * d + rt.x * w * side + rng.jitter(0.4);
+          const z = P[2] + f.z * d + rt.z * w * side + rng.jitter(0.4);
+          if (!canGrow(x, z, { margin: 0.2 }) || occ.clearance(x, z, 3) < 0.6) continue;
+          const y = getHeight(x, z);
+          const s = rng.range(1.5, 2.2);
+          if (!isClearOfViews(x, y, z, s * 0.8, s * 0.7)) continue;
+          fernL.push({ x, y, z, ry: rng.range(0, TAU), s, sy: rng.range(0.9, 1.15), color: jitterTint(rng.pick(fernTints)) });
+          break;
+        }
+      }
+    }
+  }
+
   // ── 6. meshes ─────────────────────────────────────────────────────────────
   const fernMat = M.foliage({ variant: 'fern', vertexColors: true, translucency: 0.9, wind: { strength: 0.045, base: 0.08, speed: 1.3 } });
   const grassMat = M.foliage({ variant: 'grass', vertexColors: true, translucency: 0.8, wind: { strength: 0.12, base: 0.02, speed: 1.7 } });
@@ -450,6 +483,30 @@ export default async function build(ctx) {
   // halos around the glowing caps (night)
   const glowPts = [...giantKit.glowPoints, ...smallKit.glowPoints];
   if (glowPts.length) addMesh(glowQuads(glowPts, '#7ff0d0', { day: 0.0, night: 0.9 }));
+
+  // ── 7. fairy lights spiralling up a giant or two (refs: the fly-agaric house between the roots) ──
+  const lit = plan.trees
+    .filter((t) => t.kind === 'giant' && t.centerAt && Math.hypot(t.x, t.z) < 27)
+    .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z))
+    .slice(0, 2);
+  for (const t of lit) {
+    const pts = [];
+    const turns = 2.2;
+    const a0 = rng.range(0, TAU);
+    const steps = Math.round(turns * 10);
+    for (let i = 0; i <= steps; i++) {
+      const f = i / steps;
+      const y = 1.6 + f * 5.5;
+      const th = a0 + f * turns * TAU;
+      const c = t.centerAt(y);
+      const r = t.radiusAt(y, th) + 0.12;
+      pts.push({ x: c.x + Math.cos(th) * r, y: c.y + Math.sin(f * 37) * 0.08, z: c.z + Math.sin(th) * r });
+    }
+    const lights = ctx.props.makeStringLights(pts, { sag: 0.04, spacing: 0.42 });
+    lights.name = 'forest-fairy-lights';
+    group.add(lights);
+    stats.drawCalls += 3;
+  }
 
   group.traverse((o) => {
     if (o.isMesh && !o.userData.keepRaycast) o.raycast = () => {};

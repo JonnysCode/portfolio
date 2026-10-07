@@ -30,6 +30,7 @@ import { getHeight } from '../../world/ground.js';
 import { fogUniforms } from '../../world/env/fog.js';
 import { envUniforms } from '../../world/env/celestial.js';
 import { sharedUniforms } from '../../core/materials.js';
+import { makePuffs } from './puffs.js';
 import { M, TAU, xf, boulderGeo, stoneGeo, mossGeo, plantFern, plantGrass, addToadstool, addFlower } from './kit.js';
 
 const WL = STREAM.waterLevel;
@@ -152,51 +153,6 @@ void main() {
   col *= light;
   col += vec3(0.25, 0.55, 0.6) * uNight * 0.12 * a;
   gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
-  #include <tonemapping_fragment>
-  #include <colorspace_fragment>
-  #include <fog_fragment>
-}
-`;
-
-// ─── spray particles (animated in the vertex shader) ─────────────────────────
-const SPRAY_VERT = /* glsl */ `
-#include <common>
-#include <fog_pars_vertex>
-attribute vec4 aSeed; // x: phase, y: speed, z: angle, w: size
-attribute vec3 aDir;  // forward drift direction (world), strength in length
-uniform float uTime;
-uniform float uScale;
-varying float vAlpha;
-void main() {
-  float life = fract(uTime * aSeed.y + aSeed.x);
-  vec3 p = position;
-  float ang = aSeed.z;
-  vec3 side = vec3(cos(ang), 0.0, sin(ang));
-  // puff up and out, then drift with the breeze and sink a little
-  p += side * (0.08 + life * 0.45) * (0.5 + aSeed.w);
-  p += aDir * life * 1.1;
-  p.y += sin(life * 3.14159) * 0.45 * (0.4 + aSeed.w) + life * 0.25;
-  vec4 mvPosition = viewMatrix * modelMatrix * vec4(p, 1.0);
-  gl_Position = projectionMatrix * mvPosition;
-  gl_PointSize = uScale * (0.08 + 0.22 * aSeed.w) * (0.7 + life * 1.8) / max(-mvPosition.z, 0.1);
-  vAlpha = smoothstep(0.0, 0.12, life) * (1.0 - smoothstep(0.45, 1.0, life));
-  #include <fog_vertex>
-}
-`;
-const SPRAY_FRAG = /* glsl */ `
-#include <common>
-#include <fog_pars_fragment>
-uniform vec3 uColor;
-uniform vec3 uSkyHorizon;
-uniform float uNight;
-varying float vAlpha;
-void main() {
-  vec2 c = gl_PointCoord - 0.5;
-  float d = length(c);
-  if (d > 0.5) discard;
-  float a = pow(smoothstep(0.5, 0.0, d), 1.5) * vAlpha * 0.28;
-  vec3 col = mix(uColor, uSkyHorizon, 0.3) * (1.0 - 0.55 * uNight);
-  gl_FragColor = vec4(col, a);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
   #include <fog_fragment>
@@ -427,59 +383,37 @@ export function buildFalls(ctx, B, rng) {
   water.frustumCulled = true;
   ctx.scene.add(water);
 
-  // ── spray ────────────────────────────────────────────────────────────────
-  const emitters = TIERS.map((T, i) => ({ p: toWorld(0, T.landY + 0.02, T.landW + 0.02), n: [150, 140, 320][i], spread: T.hw1 }));
-  const total = Math.round(emitters.reduce((a, e) => a + e.n, 0) * density);
-  const sp = new Float32Array(total * 3), seed = new Float32Array(total * 4), dir = new Float32Array(total * 3);
-  let k = 0;
+  // ── spray & mist (one vertex-animated cloud) ─────────────────────────────
   const across = new THREE.Vector3(1, 0, 0).transformDirection(frame);
-  for (const e of emitters) {
-    const n = Math.round(e.n * density);
-    for (let i = 0; i < n && k < total; i++, k++) {
-      const o = (rng.next() - 0.5) * 2 * e.spread;
-      sp.set([e.p.x + across.x * o, e.p.y, e.p.z + across.z * o], k * 3);
-      seed.set([rng.next(), rng.range(0.18, 0.35), rng.next() * TAU, rng.next()], k * 4);
-      const drift = rng.range(0.3, 1.0);
-      dir.set([FWD.x * drift + rng.jitter(0.2), 0, FWD.z * drift + rng.jitter(0.2)], k * 3);
-    }
-  }
-  const sg = new THREE.BufferGeometry();
-  sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
-  sg.setAttribute('aSeed', new THREE.BufferAttribute(seed, 4));
-  sg.setAttribute('aDir', new THREE.BufferAttribute(dir, 3));
-  sg.boundingSphere = new THREE.Sphere(toWorld(0, 2, 0.8), 6);
-  const su = {
-    ...fogUniforms(),
-    uTime: { value: 0 },
-    uScale: { value: 500 },
-    uColor: { value: new THREE.Color('#f2f7f6') },
-    uSkyHorizon: envUniforms.uSkyHorizon,
-    uNight: sharedUniforms.uNight,
-  };
-  const smat = new THREE.ShaderMaterial({ name: 'falls-spray', uniforms: su, vertexShader: SPRAY_VERT, fragmentShader: SPRAY_FRAG, transparent: true, depthWrite: false, fog: true });
-  const spray = new THREE.Points(sg, smat);
-  spray.name = 'falls-spray';
-  spray.renderOrder = 3;
-  ctx.scene.add(spray);
+  const spray = makePuffs(ctx, {
+    name: 'falls-spray',
+    seed: 'falls-spray',
+    emitters: [
+      ...TIERS.map((T, i) => ({ p: toWorld(0, T.landY + 0.02, T.landW + 0.02), n: [80, 70, 170][i], spread: T.hw1, across })),
+      // a low, slow veil of mist over the plunge pool
+      { p: toWorld(0, WL + 0.05, TIERS[2].landW + 0.5), n: 40, spread: 1.3, depth: 0.7, across },
+    ],
+    color: '#f2f7f6',
+    rise: 0.75,
+    spreadOut: 0.35,
+    drift: FWD.clone().multiplyScalar(0.9),
+    size: [0.05, 0.42],
+    grow: 1.8,
+    life: [0.16, 0.34],
+    opacity: 0.26,
+  });
+  ctx.scene.add(spray.points);
 
   const animate = !ctx.engine?.reducedMotion;
-  const renderer = ctx.engine?.renderer;
-  const size = new THREE.Vector2();
   return {
     impacts: planFalls().impacts,
     halos,
     water,
-    spray,
+    spray: spray.points,
     toWorld,
     update(dt, t) {
-      const tt = animate ? t : t * 0.2;
-      wu.uTime.value = tt;
-      su.uTime.value = tt;
-      // keep particle sizes in world units whatever the canvas height
-      if (renderer) {
-        renderer.getDrawingBufferSize(size);
-        su.uScale.value = size.y * 0.9;
-      }
+      wu.uTime.value = animate ? t : t * 0.2;
+      spray.update(t);
     },
   };
 }

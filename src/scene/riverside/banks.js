@@ -108,8 +108,8 @@ function wetPaint(geo, base, yWorldOffset) {
   const c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const y = pos.getY(i) + yWorldOffset;
-    const k = 1 - smooth01((y - WL - 0.02) / 0.14);
-    c.copy(c0).lerp(wet, k);
+    const k = 1 - smooth01((y - WL + 0.02) / 0.07);
+    c.copy(c0).lerp(wet, k * 0.85);
     col.set([c.r, c.g, c.b], i * 3);
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -119,7 +119,7 @@ function wetPaint(geo, base, yWorldOffset) {
 export function buildBanks(ctx, B, rng, rocks) {
   const MM = M();
   const density = Math.max(0.5, ctx.quality?.density ?? 1);
-  const tints = ['#8a877c', '#7f7d73', '#938d7e', '#77766e', '#8b8577'];
+  const tints = ['#9d998c', '#928f83', '#a59f8e', '#8c8a80', '#a09885'];
 
   // ── boulders in the stream: river-worn and rounded, wet at the waterline ──
   for (const r of rocks) {
@@ -165,8 +165,8 @@ export function buildBanks(ctx, B, rng, rocks) {
           const gy = Math.max(getHeight(xx, zz), WL - 0.2);
           const g = stoneGeo(rng, { r, sy: rng.range(0.3, 0.55), sx: rng.range(1, 1.7), sz: rng.range(0.7, 1.1), detail: 1, lump: 0.3 });
           g.rotateY(rng.next() * TAU);
-          wetPaint(g, rng.pick(tints), gy);
-          g.translate(xx, gy + r * 0.12, zz);
+          wetPaint(g, rng.pick(['#7e7c70', '#74746a', '#868174', '#6f7366']), gy);
+          g.translate(xx, gy + r * 0.05, zz);
           B.add(MM.pebble, g, { cast: r > 0.22 });
         }
       }

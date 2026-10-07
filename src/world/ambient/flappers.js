@@ -315,7 +315,10 @@ export function createFlappers(ctx, { flowerPatches = [], butterflies = 18, bird
         bFlap.setXY(i, b.phase, amp);
         p.set(b.x, b.y, b.z);
         q.setFromEuler(e.set(b.rest > 0 ? 0 : -0.25, b.yaw, 0));
-        s.setScalar(b.active ? b.size * vis : 0);
+        // never a big blur right in front of the lens
+        const camD = p.distanceTo(ctx.camera.position);
+        const near = Math.min(1, Math.max(0, (camD - 2) / 2.5));
+        s.setScalar(b.active ? b.size * vis * near : 0);
         m.compose(p, q, s);
         bMesh.setMatrixAt(i, m);
       }

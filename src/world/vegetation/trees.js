@@ -130,6 +130,10 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
     return R * taper * flare * bark;
   };
 
+  // expose the sculpted surface (string lights, brackets, ivy … can hug it)
+  t.centerAt = center;
+  t.radiusAt = radiusAt;
+
   // ── trunk ──
   const ys = ringHeights(H);
   const TB = birch ? B.birch : B.bark;
@@ -273,7 +277,7 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
   for (const e of [...ends, ...mids]) {
     const mid = mids.includes(e);
     const far = Math.hypot(t.x, t.z) > 31;
-    const n = Math.round(rng.int(birch || mid || far ? 2 : 3, birch || far ? 3 : mid ? 3 : 4) * Math.min(1, 0.6 + 0.4 * density));
+    const n = Math.round(rng.int(birch || mid || far ? 2 : 3, birch || far ? 2 : mid ? 3 : 4) * Math.min(1, 0.6 + 0.4 * density));
     for (let k = 0; k < n; k++) {
       const s = (birch ? rng.range(2.2, 3.4) : mid ? rng.range(2.4, 3.8) : rng.range(3.6, 6.2)) * (R > 2 ? 1.1 : 1);
       const p = e.clone().add(new THREE.Vector3(rng.jitter(s * 0.9), rng.jitter(s * 0.35), rng.jitter(s * 0.9)));
