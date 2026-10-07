@@ -31,7 +31,12 @@ All text lives in **[`src/content/content.js`](src/content/content.js)**:
 your profile, the intro of each area and every project ("entry"). Entries are
 referenced by id from the 3D world, so you can rewrite titles, text, facts,
 tags and links without touching any three.js code. Placeholder copy is marked
-`DRAFT`.
+`DRAFT`: it shows (with a little "draft" marker) while you run `npm run dev`,
+and is hidden from visitors in the production build — so replace it before
+you publish, and set `profile.email` (the example address is hidden too).
+
+Every place and page has a deep link: `#woodworking`, `#woodworking/dining-table`,
+`#guidebook` — handy for sharing a single piece.
 
 Photos: put them in `public/images/` and add them to an entry:
 
