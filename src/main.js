@@ -2,9 +2,9 @@
 // Jonny's Woodland — boot sequence.
 // See docs/ARCHITECTURE.md for how the pieces fit together.
 // ─────────────────────────────────────────────────────────────────────────────
-import '@fontsource/fredoka/400.css';
-import '@fontsource/fredoka/600.css';
-import '@fontsource/patrick-hand/400.css';
+import '@fontsource/fredoka/latin-400.css';
+import '@fontsource/fredoka/latin-600.css';
+import '@fontsource/patrick-hand/latin-400.css';
 import './ui/styles.css';
 
 import * as THREE from 'three';
