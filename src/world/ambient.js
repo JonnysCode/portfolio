@@ -63,7 +63,7 @@ export default async function build(ctx) {
     }),
   );
   const post = safe('schneckenpost', () => createSnailPost(ctx, { reduced }));
-  const wild = safe('wild snails', () => createWildSnails(ctx, { rocks: veg.mossyRocks ?? [] }));
+  const wild = safe('wild snails', () => createWildSnails(ctx, { rocks: veg.mossyRocks ?? [], snailRocks: veg.snailRocks ?? [] }));
 
   const focus = new THREE.Vector3(0, 0, 4);
   return {

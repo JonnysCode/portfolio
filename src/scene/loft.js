@@ -9,9 +9,14 @@
 //                     (monitors + laptop scrolling code) and the rubber duck
 //   loft/screens.js   the code / terminal screens and blinking LEDs (shader)
 //   loft/props.js     telescope, weather vane, twig antenna, server log,
-//                     tinkering bench with a little robot, lanterns, plants …
-//   loft/stairs.js    the winding plank stair cantilevered from the bark
-//   loft/elevator.js  the snail lift crawling up and down the bark
+//                     tinkering bench with a little robot, lanterns, firefly
+//                     jars, hanging baskets, fairy lights, plants …
+//   loft/boards.js    the painted "Snail Lift" signs and the chalkboard (one
+//                     canvas atlas, one mesh)
+//   loft/stairs.js    the winding plank stair cantilevered from the bark,
+//                     lanterns and fairy lights along its rope handrail
+//   loft/elevator.js  the snail lift crawling up and down the bark between a
+//                     stilted boarding platform on the roots and the deck
 //   loft/kit.js       geometry helpers, materials and per-material batching
 //
 // Hotspots (area 'code'): 'this-portfolio' (the workstation behind the big
@@ -21,6 +26,7 @@
 //
 // Exposes ctx.sites.loft = { deck, house, elevator, anchors: { deck, door,
 //   window, chimneyTop, telescope, stairBottom, liftBottom, liftTop } }.
+// elevator.setPhase(u) / setTime(t) jump the lift (screenshots & debugging).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { OAK } from '../world/layout.js';
@@ -29,10 +35,12 @@ import { Batch, Halos, smallBitsRemap, makeMats, makeBark, makeRootTop, deckFram
 import { buildDeck } from './loft/deck.js';
 import { buildHouse } from './loft/house.js';
 import { createScreens } from './loft/screens.js';
+import { createBoards } from './loft/boards.js';
 import { buildProps } from './loft/props.js';
 import { buildStairs } from './loft/stairs.js';
 import { buildElevator } from './loft/elevator.js';
 import { makeSmoke } from './cottage/smoke.js';
+import { glowMaterial } from '../props/glow.js';
 
 export default async function build(ctx) {
   const root = new THREE.Group();
@@ -54,6 +62,7 @@ export default async function build(ctx) {
     density: ctx.quality?.density ?? 1,
   };
   const screens = createScreens(ctx);
+  env.boards = createBoards(ctx); // painted signs & the chalkboard: one atlas, one mesh
   const updates = [];
 
   const deck = buildDeck(ctx, B, mats, env);
@@ -70,8 +79,9 @@ export default async function build(ctx) {
   // ── merge the static geometry ─────────────────────────────────────────────
   B.build(root, 'loft', { mergeShadow: true, remap: smallBitsRemap(mats) });
   const scr = screens.build(root);
+  env.boards.build(root);
   halos.build(ctx, root, { day: 0.06, night: 0.5 });
-  if (props.lightsGroup) root.add(mergeByMaterial(props.lightsGroup, 'loft-fairy-lights'));
+  if (props.lightsGroup) root.add(tameFairyLights(ctx, mergeByMaterial(props.lightsGroup, 'loft-fairy-lights')));
 
   // chimney smoke from the stovepipe
   if (house.chimneyTop) {
@@ -85,12 +95,15 @@ export default async function build(ctx) {
 
   // ── hotspots ──────────────────────────────────────────────────────────────
   const area = 'code';
-  ctx.interactions?.add?.(house.interior.workstation, { entryId: 'this-portfolio', area, focus: { distance: 3.4, height: 0.1 }, approach: false });
+  ctx.interactions?.add?.(house.interior.workstation, { entryId: 'this-portfolio', area, focus: { distance: 3.4, height: 0.1 }, approach: false, markerHeight: 0.85 });
   if (props.server) ctx.interactions?.add?.(props.server, { entryId: 'project-backend', area, focus: { distance: 3, height: 0.4 }, approach: false });
   if (props.bench) ctx.interactions?.add?.(props.bench, { entryId: 'project-side', area, focus: { distance: 3, height: 0.4 }, approach: false });
   const duck = house.interior.duck;
   if (duck) {
     let quackT = -10;
+    // ui.speech lifts the bubble 1.6 above its anchor (villager height): anchor
+    // it below the duck so the bubble pops up right above the little thing
+    const speechAt = new THREE.Vector3();
     ctx.interactions?.add?.(duck, {
       kind: 'secret',
       area,
@@ -99,7 +112,8 @@ export default async function build(ctx) {
       onActivate: () => {
         quackT = performance.now() / 1000;
         ctx.audio?.play?.('pop');
-        ctx.ui?.speech?.('Quack. Have you tried explaining it to me?', duck);
+        duck.getWorldPosition(speechAt).y -= 1.3;
+        ctx.ui?.speech?.('Quack. Have you tried explaining it to me?', speechAt);
       },
     });
     // a little squeeze-hop when it is clicked
@@ -169,3 +183,23 @@ export default async function build(ctx) {
 }
 
 const HOUSE_DESK_TOP = 0.5;
+
+/**
+ * The loft strings far more fairy lights than anywhere else and is seen from
+ * close up: with the shared bulb glow and halo size, at night they bloom into
+ * a necklace of fat blobs. Re-tune the merged bulbs and halos to small,
+ * sparkling points (the shared props stay untouched).
+ */
+function tameFairyLights(ctx, group) {
+  const bulb = ctx.materials.glow(FAIRY_BULB, { day: 0.6, night: 2.4 }); // makeStringLights' bulbs
+  for (const m of group.children) {
+    if (m.material === bulb) m.material = ctx.materials.glow(FAIRY_BULB, { day: 0.55, night: 1.35 });
+    else if (m.material?.name === 'props-glow-halo' && m.geometry.attributes.aSize) {
+      const s = m.geometry.attributes.aSize;
+      for (let i = 0; i < s.count; i++) s.setX(i, s.getX(i) * 0.55);
+      m.material = glowMaterial(FAIRY_BULB, { day: 0.05, night: 0.7 });
+    }
+  }
+  return group;
+}
+const FAIRY_BULB = '#ffd9a0';

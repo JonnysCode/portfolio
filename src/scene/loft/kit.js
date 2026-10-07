@@ -180,6 +180,8 @@ export function makeMats(ctx) {
     warm: () => m.glow('#ffc46e', { day: 0.45, night: 1.9 }),
     warmBright: () => m.glow('#ffc46e', { day: 0.45, night: 1.9 }), // (same as warm: one draw call)
     red: () => m.glow('#ff5a3c', { day: 1.2, night: 2.6 }),
+    /** the cool will-o'-wisp light of the glow-caps and the firefly jars */
+    wisp: () => m.glow('#8ff3ff', { day: 0.35, night: 2.4 }),
   };
 }
 
@@ -781,6 +783,57 @@ export function addFern(F, mats, rng, x, y, z, { size = 0.45, fronds = 7 } = {})
     const a = (i / fronds) * TAU + rng.jitter(0.4);
     xf(g, [x, y, z], [-0.35 + rng.jitter(0.2), a, 0, 'YXZ']);
     F.add(mats.fern(), g, { cast: false });
+  }
+}
+
+/** Flower colours of the window boxes, pots and baskets. */
+export const BLOOMS = ['#e85d75', '#ffd166', '#f4f1ff', '#c77dff', '#ff8c42', '#f08aa8', '#ffffff'];
+
+let _petals = null;
+/** A five-petal flower head (flat, facing +Y, radius 1), shared & cloned. */
+function petalGeo() {
+  if (!_petals) {
+    const s = new THREE.Shape();
+    const N = 40;
+    for (let i = 0; i <= N; i++) {
+      const a = (i / N) * TAU;
+      const r = 0.45 + 0.55 * Math.abs(Math.cos(a * 2.5)); // five round petals
+      const x = Math.cos(a) * r, y = Math.sin(a) * r;
+      if (i === 0) s.moveTo(x, y);
+      else s.lineTo(x, y);
+    }
+    _petals = new THREE.ShapeGeometry(s, 1).rotateX(-Math.PI / 2);
+    // cup the petals up a little
+    deform(_petals, (v) => (v.y = (v.x * v.x + v.z * v.z) * 0.25), true);
+  }
+  return _petals.clone();
+}
+
+/**
+ * A tuft of greenery with little flowers on stems at (x, y, z) into frame F:
+ * a few fern / ivy cards, 3–7 five-petal blooms with a yellow eye. Replaces
+ * the old "balls of colour" in window boxes, pots and baskets.
+ */
+export function addFlowerTuft(F, mats, rng, x, y, z, { r = 0.1, h = 0.14, blooms = 4, colors = BLOOMS, fern = false } = {}) {
+  const leafMat = fern ? mats.fern() : mats.ivy();
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * TAU + rng.jitter(0.5);
+    const L = h * rng.range(1.0, 1.5);
+    const g = new THREE.PlaneGeometry(L * 0.5, L, 1, 2).translate(0, L / 2, 0);
+    deform(g, (v) => (v.z += (v.y / L) ** 2 * L * 0.5), true);
+    xf(g, [x + Math.cos(a) * r * 0.3, y, z + Math.sin(a) * r * 0.3], [-0.3 + rng.jitter(0.2), a, 0, 'YXZ']);
+    F.add(leafMat, g, { cast: false });
+  }
+  const col = rng.pick(colors);
+  for (let k = 0; k < blooms; k++) {
+    const a = rng.next() * TAU, rr = Math.sqrt(rng.next()) * r;
+    const fy = y + h * rng.range(0.55, 1.05);
+    const p = [x + Math.cos(a) * rr, fy, z + Math.sin(a) * rr];
+    F.add(mats.paint(), xf(new THREE.CylinderGeometry(0.004, 0.005, fy - y, 3).translate(0, -(fy - y) / 2, 0), p), { color: '#4f7a34', cast: false });
+    const fs = rng.range(0.026, 0.04);
+    const tilt = [rng.jitter(0.5), rng.next() * TAU, rng.jitter(0.5), 'YXZ'];
+    F.add(mats.paint(), xf(petalGeo(), p, tilt, fs), { color: rng.next() < 0.75 ? col : rng.pick(colors), cast: false });
+    F.add(mats.paint(), xf(new THREE.SphereGeometry(fs * 0.32, 5, 3), [p[0], p[1] + fs * 0.12, p[2]]), { color: '#f2b62e', cast: false });
   }
 }
 

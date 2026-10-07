@@ -3,38 +3,45 @@
 // mushroom with a rust-orange spotted cap across the bridge (ref: the stone
 // mushroom cottage).
 //
-//   • a bulging drum of rough, mossy fieldstones laid course by course, quoined
-//     jambs and a big oak lintel over a wide opening
-//   • ledged-and-braced plank barn doors swung wide open on strap hinges
+//   • a bulging drum of rough, mossy fieldstones laid course by course, with
+//     an arched doorway: quoined jambs and a ring of dressed voussoirs
+//   • ledged-and-braced plank doors cut to the arch, swung open on strap
+//     hinges — the left one folded back as a backdrop for the hero bike
 //   • a warm lit interior: plank floor, whitewashed walls, a beamed ceiling,
 //     the workbench with a vice, a pegboard of tools, wheels and a road bike
 //     hanging from hooks, shelves of tyres & parts, a hanging lamp
-//   • the cap: a rust-orange bell with a rolled rim, cream warts, real gills
-//     underneath and fairy lights strung along the rim; a crooked stovepipe
+//   • the cap: a pointed rust-orange bell pushed back like a hat (so its real
+//     gills show from the yard), a rolled rim, cream spots, fairy lights
+//     along the rim, a crooked stovepipe and a bicycle weathervane
 //   • round & square windows glowing, ivy, moss, ferns & toadstools at the foot
 //   • out front: the hero gravel bike on a repair stand (cranks & wheels
 //     turning), the mechanic with a wrench, a truing stand with a slowly
-//     spinning wheel on a stump bench, wheels on wall pegs, tyres, a pump,
-//     an oil can, a crate of parts and a hanging "Velowerkstatt" sign
+//     spinning wheel on a stump bench, wheels on wall pegs over a bench,
+//     flower pots under a hanging lantern, a split-rail fence with a road
+//     bike and a kid's bike, a chalkboard, tyres, a pump, an oil can, a crate
+//     of parts and a hanging "Velowerkstatt" sign
 //
 // Local frame: origin on the pad centre, the doors face +Z.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { RIVERSIDE } from '../../world/layout.js';
+import { getHeight, getPathDistance, isInWater } from '../../world/ground.js';
 import {
-  Batch, M, TAU, STONE_TINTS, WOOD, IRON, xf, mat4, deform, blockStone, stoneGeo, mossGeo, paramSurface, board, boardBetween, rod, tube, taperTube,
+  Batch, M, TAU, WOOD, IRON, xf, mat4, deform, blockStone, stoneGeo, mossGeo, paramSurface, arcSegment, board, boardBetween, rod, tube,
   Cards, plantFern, plantGrass, addFlower, addToadstool, addIvy, flushCards, uvPlanar, noiseA, noiseB, smooth01, sagCurve,
 } from './kit.js';
 import { makeBike, makeWheel } from './bike.js';
 import { makePuffs } from './puffs.js';
 
 // ── dimensions ──
-const WALL_TOP = 3.0;
+const WALL_TOP = 3.25;
 const WALL_T = 0.3;
-const OPEN_HALF = 1.08; // half width of the door opening (planar cut x = ±OPEN_HALF)
-const LINTEL_Y = 2.12;
-const CAP_COLOR = '#cf6a2e';
-const CAP_R = 3.05, CAP_RIM_Y = 2.7, CAP_H = 3.45;
+const OPEN_HALF = 0.84; // half width of the arched door opening
+const SPRING_Y = 1.62; // where the door arch springs from the jambs
+const ARCH_TOP = SPRING_Y + OPEN_HALF; // intrados crown of the door arch
+const ARCH_RING = 0.3; // depth of the voussoir ring around the arch
+const CAP_COLOR = '#cc632b';
+const CAP_R = 2.95, CAP_RIM_Y = 3.05, CAP_H = 3.15;
 
 /** Outer radius of the stone drum at height y (gently bulging). */
 export function wallR(y) {
@@ -42,14 +49,32 @@ export function wallR(y) {
   return 1.98 + 0.16 * Math.sin(t * Math.PI * 0.85) - 0.1 * t * t;
 }
 
-/** Cap profile from the apex to the rim edge: [r, y] — a tall cone flaring into a wide skirt (ref: the stone mushroom cottage). */
+/** Intrados height of the door arch at |x| (the straight jambs below SPRING_Y). */
+const archTop = (x) => SPRING_Y + Math.sqrt(Math.max(0, OPEN_HALF * OPEN_HALF - x * x));
+/** Half width of the door opening at height y (0 above the arch). */
+const openingHalf = (y) => (y <= SPRING_Y ? OPEN_HALF : y >= ARCH_TOP ? 0 : Math.sqrt(OPEN_HALF * OPEN_HALF - (y - SPRING_Y) ** 2));
+/** Does a wall stone spanning |x| ± len/2 and y0..y1 (front face) clash with the jambs' quoins or the arch ring? */
+function clashesOpening(x, len, y0, y1) {
+  const xn = Math.max(0, Math.abs(x) - len / 2);
+  if (y0 < SPRING_Y && xn < OPEN_HALF + 0.3) return true;
+  const yn = Math.min(Math.max(SPRING_Y, y0), y1);
+  return Math.hypot(xn, yn - SPRING_Y) < OPEN_HALF + ARCH_RING + 0.02;
+}
+
+/**
+ * Cap profile from the apex to the rim edge: [r, y] — a pointed bell: a steep,
+ * slightly convex crown that flares (concave) into a wide brim (ref: the
+ * stone mushroom cottage).
+ */
 const CAP_PROFILE = [
-  [0, 1], [0.05, 0.985], [0.11, 0.945], [0.19, 0.872], [0.29, 0.765], [0.4, 0.64], [0.52, 0.505], [0.64, 0.372], [0.76, 0.248], [0.86, 0.145], [0.94, 0.062], [1, 0],
+  [0, 1], [0.06, 0.982], [0.13, 0.935], [0.2, 0.86], [0.27, 0.765], [0.335, 0.655], [0.4, 0.54], [0.48, 0.42], [0.58, 0.3], [0.7, 0.19], [0.82, 0.105], [0.92, 0.045], [1, 0],
 ].map(([r, y]) => [r * CAP_R, CAP_RIM_Y + y * CAP_H]);
 const capCurve = new THREE.SplineCurve(CAP_PROFILE.map(([r, y]) => new THREE.Vector2(r, y)));
-const capPts = capCurve.getSpacedPoints(40);
-/** Cap tilt (a cute lean towards the back-left). */
-const LEAN = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(-0.05, 0, 0.04));
+/** Cap tilt: pushed back like a hat (so the gills show from the yard) with a cute lean, pivoting on the wall top. */
+const LEAN = new THREE.Matrix4()
+  .makeTranslation(0, WALL_TOP, 0)
+  .multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(-0.1, 0, 0.045)))
+  .multiply(new THREE.Matrix4().makeTranslation(0, -WALL_TOP, 0));
 
 export function buildWorkshop(ctx, B, rng, halos) {
   const MM = M();
@@ -66,11 +91,12 @@ export function buildWorkshop(ctx, B, rng, halos) {
 
   // ── stone drum ────────────────────────────────────────────────────────────
   const zFront = (x, y) => Math.sqrt(Math.max(0, wallR(y) ** 2 - x * x));
-  const inOpening = (x, z, y0, y1) => z > 0 && Math.abs(x) < OPEN_HALF + 0.02 && y0 < LINTEL_Y + 0.22;
   const windows = [
     { phi: -1.05, y: 1.45, r: 0.3, kind: 'round' },
     { phi: 1.2, y: 1.35, r: 0.27, kind: 'square' },
     { phi: 2.6, y: 1.5, r: 0.24, kind: 'round' },
+    // a little loft window up under the cap
+    { phi: 0.78, y: 2.72, r: 0.19, kind: 'round' },
   ];
   const nearWindow = (phi, y, half) => windows.some((w) => {
     const d = Math.abs(Math.atan2(Math.sin(phi - w.phi), Math.cos(phi - w.phi))) * wallR(y);
@@ -94,7 +120,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
         const pc = phi + dphi / 2;
         phi += dphi + 0.012 / r;
         const x = Math.sin(pc) * r, z = Math.cos(pc) * r;
-        if (inOpening(x, z, y, y + hc) && Math.abs(x) - len / 2 < OPEN_HALF + 0.1) continue;
+        if (z > 0 && clashesOpening(x, len, y, y + hc)) continue;
         if (nearWindow(pc, yc, len / 2)) continue;
         const d = rng.range(0.16, 0.22);
         const h = (big ? hc * rng.range(1.0, 1.25) : hc) - 0.025;
@@ -119,61 +145,86 @@ export function buildWorkshop(ctx, B, rng, halos) {
     }
   }
   // mortar shell behind the stones + whitewashed interior + the wall top
-  const aOpen = (y) => Math.asin(Math.min(0.999, (OPEN_HALF + 0.02) / wallR(y)));
+  const aOpen = (y) => {
+    const hw = openingHalf(y);
+    return hw > 0 ? Math.asin(Math.min(0.999, (hw + 0.02) / wallR(Math.max(0, y)))) : 0;
+  };
   const shell = (inset, color, mat, inside) => {
     const g = paramSurface(
       (u, v, p) => {
         const y = -0.1 + (1 - v) * (WALL_TOP + 0.1);
-        const ao = y < LINTEL_Y + 0.15 ? aOpen(y) : 0;
+        const ao = aOpen(y);
         const phi = ao + u * (TAU - 2 * ao);
         const r = wallR(Math.max(0, y)) - inset;
         p.set(Math.sin(phi) * r, y, Math.cos(phi) * r);
       },
       64,
-      12,
+      36,
       { uv: (u, v, p) => [Math.atan2(p.x, p.z) * 0.9, p.y / 2], flip: inside }
     );
     F.add(mat, g, { color, cast: !inside });
   };
   shell(0.08, '#6f685c', MM.stone, false);
   shell(WALL_T, '#efe4cf', MM.plaster, true);
-  // wall top ring (hidden under the cap but closes the gap) and jamb returns
+  // the reveal of the arched opening (jambs + soffit), from the outer face to the inner one
+  {
+    // outline: up the left jamb, over the arch, down the right jamb
+    const outline = [];
+    for (let i = 0; i <= 6; i++) outline.push([-OPEN_HALF - 0.02, -0.05 + (SPRING_Y + 0.05) * (i / 6)]);
+    for (let i = 1; i < 24; i++) {
+      const a = Math.PI - (i / 24) * Math.PI;
+      outline.push([Math.cos(a) * (OPEN_HALF + 0.02), SPRING_Y + Math.sin(a) * (OPEN_HALF + 0.02)]);
+    }
+    for (let i = 0; i <= 6; i++) outline.push([OPEN_HALF + 0.02, SPRING_Y - (SPRING_Y + 0.05) * (i / 6)]);
+    const n = outline.length - 1;
+    const reveal = paramSurface(
+      (u, v, p) => {
+        const [x, y] = outline[Math.round(u * n)];
+        const yy = Math.max(0, y);
+        const zo = Math.sqrt(Math.max(0, (wallR(yy) - 0.06) ** 2 - x * x));
+        const zi = Math.sqrt(Math.max(0, (wallR(yy) - WALL_T - 0.01) ** 2 - x * x));
+        p.set(x, y, zo + (zi - zo) * v);
+      },
+      n,
+      2,
+      { uv: (u, v, p) => [p.z * 0.6, u * 4] }
+    );
+    F.add(MM.plaster, reveal, { color: '#d8ccb4', cast: false });
+  }
+  // quoins: alternating long & short dressed blocks up both jambs
   for (const sx of [-1, 1]) {
-    const zo = zFront(OPEN_HALF + 0.02, 1);
-    const zi = Math.sqrt(Math.max(0, (wallR(1) - WALL_T) ** 2 - (OPEN_HALF + 0.02) ** 2));
-    const jamb = new THREE.PlaneGeometry(zo - zi + 0.04, LINTEL_Y + 0.12);
-    jamb.rotateY(sx > 0 ? -Math.PI / 2 : Math.PI / 2);
-    jamb.translate(sx * (OPEN_HALF + 0.02), (LINTEL_Y + 0.12) / 2 - 0.05, (zo + zi) / 2);
-    uvPlanar(jamb, 'z', 'y', 0.6);
-    F.add(MM.plaster, jamb, { color: '#d8ccb4', cast: false });
-    // quoins: alternating long & short dressed blocks on the jambs
     let y = -0.06;
     let k = sx > 0 ? 0 : 1;
-    while (y < LINTEL_Y - 0.05) {
-      const h = Math.min(rng.range(0.26, 0.32), LINTEL_Y - y);
+    while (y < SPRING_Y - 0.05) {
+      const h = Math.min(rng.range(0.25, 0.3), SPRING_Y - y);
       const long = k % 2 === 0;
-      const w = long ? 0.42 : 0.28;
-      const d = (zo - zi) + 0.1;
-      const g = blockStone(rng, w, h - 0.02, d, 0.1);
-      const xc = sx * (OPEN_HALF + w / 2 - 0.02);
-      xf(g, [xc, y + h / 2, (zo + zi) / 2 + 0.03], [0, -sx * 0.25 * (long ? 1 : 0.6), 0]);
+      const w = long ? 0.4 : 0.27;
+      const xc = sx * (OPEN_HALF + w / 2 - 0.01);
+      const zo = zFront(Math.abs(xc), y + h / 2);
+      const g = blockStone(rng, w, h - 0.02, 0.32, 0.1);
+      xf(g, [xc, y + h / 2, zo - 0.12], [0, Math.asin(Math.min(0.99, xc / wallR(y + h / 2))) * 0.6, 0]);
       F.add(MM.stone, g, { color: rng.pick(['#c7b892', '#bfae8c', '#cdbd99']) });
       y += h;
       k++;
     }
   }
-  // oak lintel (adzed, with peg heads) & a stone sill
+  // the arch ring: dressed sandstone voussoirs, the keystone proud and taller
   {
-    const L = (OPEN_HALF + 0.42) * 2;
-    const g = board(L, 0.24, 0.42, { along: 'x', rng, c: 0.03 });
-    deform(g, (v) => {
-      v.y += Math.sin((v.x / L + 0.5) * Math.PI) * -0.015 + noiseA(v.x * 3, v.z * 3) * 0.008;
-    });
-    xf(g, [0, LINTEL_Y + 0.12, zFront(0.6, LINTEL_Y) - 0.2]);
-    F.add(MM.timber, g, { color: '#7d6550' });
-    for (const px of [-0.95, 0.95]) F.add(MM.wood, new THREE.CylinderGeometry(0.035, 0.035, 0.05, 8).rotateX(Math.PI / 2).translate(px, LINTEL_Y + 0.12, zFront(0.6, LINTEL_Y) + 0.02), { color: WOOD.walnut, cast: false });
-    const sill = blockStone(rng, OPEN_HALF * 2 + 0.3, 0.12, 0.7, 0.05);
-    xf(sill, [0, 0.0, zFront(0.8, 0) - 0.15]);
+    const NV = 11;
+    for (let i = 0; i < NV; i++) {
+      const a0 = Math.PI - (i / NV) * Math.PI, a1 = Math.PI - ((i + 1) / NV) * Math.PI;
+      const key = i === (NV - 1) / 2;
+      const r1 = OPEN_HALF + ARCH_RING * rng.range(0.92, 1.08) + (key ? 0.1 : 0);
+      const seg = arcSegment(OPEN_HALF + 0.01, r1, a1 + 0.012, a0 - 0.012, 0.34, 2, 0.02);
+      const am = (a0 + a1) / 2;
+      const xm = Math.cos(am) * (OPEN_HALF + 0.15), ym = SPRING_Y + Math.sin(am) * (OPEN_HALF + 0.15);
+      const zo = zFront(Math.abs(xm), ym);
+      seg.translate(0, SPRING_Y, zo - 0.14 + (key ? 0.04 : 0));
+      F.add(MM.stone, seg, { color: key ? '#d8c9a4' : rng.pick(['#c7b892', '#bfae8c', '#cdbd99', '#c2b08c']) });
+    }
+    // a worn stone threshold
+    const sill = blockStone(rng, OPEN_HALF * 2 + 0.36, 0.12, 0.62, 0.05);
+    xf(sill, [0, 0.0, zFront(0.6, 0) - 0.12]);
     F.add(MM.stone, sill, { color: '#a59d8c' });
   }
 
@@ -219,31 +270,41 @@ export function buildWorkshop(ctx, B, rng, halos) {
     halos.push({ ...toWorld(...new THREE.Vector3(0, 0, 0.12).applyMatrix4(fm).toArray()), size: w.r * 2.6 });
   }
 
-  // ── barn doors, swung wide open ──────────────────────────────────────────
+  // ── arched plank doors, swung open: the left one folded right back (a warm
+  // wooden backdrop for the hero bike), the right one standing out into the yard
   for (const sx of [-1, 1]) {
     const hz = zFront(OPEN_HALF, 1) + 0.02;
-    const a = 2.5; // opening angle (folded well back)
+    const a = sx < 0 ? 2.86 : 1.8; // opening angle
     const dir = new THREE.Vector3(sx * -Math.cos(a), 0, Math.sin(a));
-    const leafW = OPEN_HALF + 0.02, leafH = LINTEL_Y - 0.04;
+    const leafW = OPEN_HALF + 0.02;
+    const hingeX = OPEN_HALF + 0.04;
+    /** Top of the leaf at leaf-x lx (follows the arch, a finger's gap below it). */
+    const leafTop = (lx) => archTop(Math.min(OPEN_HALF, Math.max(0, hingeX - lx))) - 0.04 - 0.05;
+    const leafH = leafTop(leafW);
     // leaf frame (right-handed): local x from the hinge along `dir`, y up, z = dir × up.
     // The leaf's INNER face (ledges & brace, now facing the yard) is on local z·sx.
     const nrm = new THREE.Vector3(-dir.z, 0, dir.x);
     const zin = sx;
-    const m = new THREE.Matrix4().makeBasis(dir, new THREE.Vector3(0, 1, 0), nrm).setPosition(sx * (OPEN_HALF + 0.04), 0.04, hz);
+    const m = new THREE.Matrix4().makeBasis(dir, new THREE.Vector3(0, 1, 0), nrm).setPosition(sx * hingeX, 0.04, hz);
     const D = F.at(m);
     const nP = 6;
     for (let i = 0; i < nP; i++) {
       const pw = leafW / nP;
-      const ph = leafH - (i === nP - 1 ? 0.02 : rng.range(0, 0.03));
+      const ph = leafH;
       const g = board(pw - 0.012, ph, 0.05, { along: 'y', rng });
       g.translate(pw * (i + 0.5), ph / 2, 0);
+      // cut the plank tops to the curve of the arch
+      deform(g, (v) => {
+        if (v.y > ph - 1e-3) v.y = leafTop(v.x) - rng.range(0, 0.012);
+      });
       D.add(MM.timber, g, { color: rng.pick(['#8a7360', '#7f6a58', '#937a63']) });
     }
     // ledges & brace on the (now visible) inner face
-    for (const ly of [0.25, leafH - 0.28]) D.add(MM.wood, board(leafW - 0.06, 0.13, 0.04, { rng }).translate(leafW / 2, ly, zin * 0.045), { color: WOOD.oak });
-    D.add(MM.wood, boardBetween([0.08, 0.3, zin * 0.045], [leafW - 0.1, leafH - 0.33, zin * 0.045], 0.12, 0.035, { rng, up: [0, 0, 1] }), { color: WOOD.oak });
+    const ledges = [0.25, SPRING_Y - 0.32];
+    for (const ly of ledges) D.add(MM.wood, board(leafW - 0.06, 0.13, 0.04, { rng }).translate(leafW / 2, ly, zin * 0.045), { color: WOOD.oak });
+    D.add(MM.wood, boardBetween([0.1, ledges[0] + 0.06, zin * 0.045], [leafW - 0.1, ledges[1] - 0.06, zin * 0.045], 0.12, 0.035, { rng, up: [0, 0, 1] }), { color: WOOD.oak });
     // strap hinges on the outer face + a ring pull
-    for (const ly of [0.25, leafH - 0.28]) {
+    for (const ly of ledges) {
       D.add(MM.metal, new THREE.BoxGeometry(leafW * 0.62, 0.05, 0.012).translate(leafW * 0.31, ly, -zin * 0.032), { color: IRON, cast: false });
       D.add(MM.metal, new THREE.CylinderGeometry(0.025, 0.025, 0.1, 8).translate(0.0, ly, 0.0), { color: IRON, cast: false });
       for (let k = 0; k < 3; k++) D.add(MM.metal, new THREE.SphereGeometry(0.012, 5, 3).translate(0.1 + k * 0.18, ly, -zin * 0.04), { color: '#2a2622', cast: false });
@@ -410,19 +471,20 @@ export function buildWorkshop(ctx, B, rng, halos) {
     out.set(Math.sin(phi) * pt.x * wob - curl * 0.42, y - curl * 0.12, Math.cos(phi) * pt.x * wob - curl * 0.12);
     return out.applyMatrix4(LEAN);
   };
-  const capTop = paramSurface((u, v, p) => capPoint(u * TAU, v, p), 80, 32, { uv: (u, v) => [u * 4, 1 - v] });
+  const capTop = paramSurface((u, v, p) => capPoint(u * TAU, v, p), 80, 36, { uv: (u, v) => [u * 4, 1 - v] });
   {
-    // painterly gradient: sunny orange towards the tip, deep rust at the rim, faint streaks
-    const top = new THREE.Color('#e98a42'), mid = new THREE.Color(CAP_COLOR), rim = new THREE.Color('#9a4820');
+    // painterly gradient: a sun-bleached orange crown, burnt orange body, deep
+    // rust towards the rim — with soft blotches and faint vertical streaks
+    const top = new THREE.Color('#e3904a'), mid = new THREE.Color(CAP_COLOR), rim = new THREE.Color('#8e3c1a');
     const pos = capTop.attributes.position;
+    const uv = capTop.attributes.uv;
     const col = new Float32Array(pos.count * 3);
     const c = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
-      const y = pos.getY(i);
-      const t = (y - CAP_RIM_Y) / CAP_H;
-      c.copy(rim).lerp(mid, smooth01(t * 3.2)).lerp(top, smooth01((t - 0.45) * 1.8));
-      const ph = Math.atan2(pos.getX(i), pos.getZ(i));
-      c.multiplyScalar(0.94 + 0.08 * noiseA(ph * 6, t * 3));
+      const t = uv.getY(i); // 0 rim → 1 apex
+      const ph = uv.getX(i) * 1.5708;
+      c.copy(rim).lerp(mid, smooth01(t * 3.4)).lerp(top, smooth01((t - 0.5) * 1.9));
+      c.multiplyScalar(0.92 + 0.1 * noiseA(Math.cos(ph) * 2.2 + t * 2, Math.sin(ph) * 2.2) + 0.04 * noiseB(ph * 9, t * 1.5));
       col.set([c.r, c.g, c.b], i * 3);
     }
     capTop.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -439,59 +501,82 @@ export function buildWorkshop(ctx, B, rng, halos) {
     const rim = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 160, 0.075, 6, true);
     F.add(MM.cap, rim, { color: '#8e3f1e' });
   }
-  // gills: a conical underside from the rim to the wall top (disc UVs) + lamella fins
+  // gills: the underside from the wall top (which doesn't tilt) out to the
+  // tilted rim (disc UVs for the lamellae texture) + real lamella fins
   {
-    const R0 = wallR(WALL_TOP) - 0.05, R1 = CAP_R - 0.06;
-    const y0 = WALL_TOP + 0.05, y1 = CAP_PROFILE[CAP_PROFILE.length - 1][1] - 0.02;
-    const gills = paramSurface(
-      (u, v, p) => {
-        const phi = u * TAU;
-        const r = R0 + (R1 - R0) * v;
-        p.set(Math.sin(phi) * r, y0 + (y1 - y0) * v + Math.sin(v * Math.PI) * 0.12, Math.cos(phi) * r);
-      },
-      72,
-      6,
-      { uv: (u, v, p) => [p.x / (2 * R1) + 0.5, p.z / (2 * R1) + 0.5], flip: true }
-    );
-    gills.applyMatrix4(LEAN);
+    const R0 = wallR(WALL_TOP) - 0.06;
+    const y0 = WALL_TOP + 0.04;
+    const inner = (phi, out) => out.set(Math.sin(phi) * R0, y0, Math.cos(phi) * R0);
+    const outer = (phi, out) => {
+      capPoint(phi, 1, out);
+      // a little inside and above the rolled rim
+      const k = (Math.hypot(out.x, out.z) - 0.07) / Math.hypot(out.x, out.z);
+      return out.set(out.x * k, out.y + 0.02, out.z * k);
+    };
+    const _i = new THREE.Vector3(), _o = new THREE.Vector3();
+    const gillAt = (phi, v, out) => {
+      inner(phi, _i);
+      outer(phi, _o);
+      return out.copy(_i).lerp(_o, v).setY(_i.y + (_o.y - _i.y) * v + Math.sin(v * Math.PI) * 0.1);
+    };
+    const RD = CAP_R + 0.1;
+    const gills = paramSurface((u, v, p) => gillAt(u * TAU, v, p), 80, 6, { uv: (u, v, p) => [p.x / (2 * RD) + 0.5, p.z / (2 * RD) + 0.5], flip: true });
     F.add(MM.gills, gills, { color: '#e3cfa8', cast: false });
-    const nF = 90;
+    // lamellae hanging below the underside, deepest in the middle of their run
+    const nF = 110;
+    const pos = [], idx = [];
+    const p = new THREE.Vector3();
+    const NS = 6;
     for (let i = 0; i < nF; i++) {
-      const phi = (i / nF) * TAU + rng.jitter(0.01);
-      const s = new THREE.Shape();
-      const L = R1 - R0;
-      s.moveTo(0, 0);
-      s.lineTo(L, 0);
-      s.quadraticCurveTo(L * 0.6, -0.16 - rng.range(0, 0.05), 0, -0.04);
-      const fin = new THREE.ShapeGeometry(s, 3);
-      // fin in the radial plane: shape x → radius, y → down
-      const m = new THREE.Matrix4().makeBasis(new THREE.Vector3(Math.sin(phi), 0, Math.cos(phi)), new THREE.Vector3(0, 1, 0), new THREE.Vector3(Math.cos(phi), 0, -Math.sin(phi)));
-      fin.applyMatrix4(new THREE.Matrix4().makeShear((y1 - y0) / L, 0, 0, 0, 0, 0));
-      fin.applyMatrix4(m);
-      fin.translate(Math.sin(phi) * R0, y0 - 0.01, Math.cos(phi) * R0);
-      fin.applyMatrix4(LEAN);
-      F.add(MM.gills, fin, { color: '#d8c39a', cast: false });
+      const phi = (i / nF) * TAU + rng.jitter(0.008);
+      const depth = rng.range(0.13, 0.2);
+      const base = pos.length / 3;
+      for (let k = 0; k <= NS; k++) {
+        const v = 0.04 + (k / NS) * 0.94;
+        gillAt(phi, v, p);
+        pos.push(p.x, p.y + 0.005, p.z);
+        pos.push(p.x, p.y - depth * Math.pow(Math.sin(v * Math.PI), 0.7) * (0.6 + 0.4 * v), p.z);
+      }
+      for (let k = 0; k < NS; k++) {
+        const a = base + k * 2;
+        idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      }
     }
+    const fins = new THREE.BufferGeometry();
+    fins.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    fins.setIndex(idx);
+    fins.computeVertexNormals();
+    uvPlanar(fins, 'x', 'z', 1 / (2 * RD), [0.5, 0.5]);
+    F.add(MM.gills, fins, { color: '#d8c39a', cast: false });
   }
-  // warts: cream, raised, following the cap surface — big near the tip, freckles near the rim
+  // spots: cream, softly raised patches following the cap surface — larger
+  // round ones on the body, a scatter of freckles towards the rim (none
+  // overlapping, a little blue-grey shade at their edges from the vertex tint)
   {
-    const nW = 120;
     const p0 = new THREE.Vector3(), pu = new THREE.Vector3(), pv = new THREE.Vector3();
-    for (let i = 0; i < nW; i++) {
-      const v = Math.pow(rng.next(), 0.75) * 0.93 + 0.02;
+    const placed = [];
+    for (let tries = 0; tries < 900 && placed.length < 170; tries++) {
+      const v = Math.pow(rng.next(), 0.8) * 0.94 + 0.03;
       const phi = rng.next() * TAU;
       capPoint(phi, v, p0);
+      const size = (rng.chance(0.25) ? rng.range(0.11, 0.17) : rng.range(0.045, 0.1)) * (1.1 - v * 0.45);
+      if (placed.some((q) => q.p.distanceTo(p0) < (q.s + size) * 1.15)) continue;
+      placed.push({ p: p0.clone(), s: size });
       capPoint(phi + 0.01, v, pu).sub(p0);
       capPoint(phi, v + 0.01, pv).sub(p0);
       const nrm = new THREE.Vector3().crossVectors(pv, pu).normalize();
       if (nrm.y < 0) nrm.negate();
-      const size = rng.range(0.05, 0.15) * (1.15 - v * 0.6);
-      const g = new THREE.IcosahedronGeometry(1, size > 0.09 ? 1 : 0);
-      g.scale(size, size * 0.4, size * rng.range(0.65, 1));
+      const g = new THREE.SphereGeometry(1, size > 0.09 ? 9 : 6, 3, 0, TAU, 0, Math.PI / 2);
+      deform(g, (q) => {
+        const k = 1 + 0.18 * noiseA(q.x * 2.5 + size * 97, q.z * 2.5 + placed.length);
+        q.set(q.x * k, q.y, q.z * k);
+      });
+      g.scale(size, size * 0.22, size * rng.range(0.7, 1));
+      g.translate(0, -size * 0.06, 0);
       g.rotateY(rng.next() * TAU);
       g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), nrm));
       g.translate(p0.x, p0.y, p0.z);
-      F.add(MM.vc, g, { color: rng.pick(['#f2e9d6', '#efe3c9', '#f6efe0', '#e8dcc0']), cast: false });
+      F.add(MM.vc, g, { color: rng.pick(['#f2e9d6', '#efe3c9', '#f6efe0', '#ece0c4']), cast: false });
     }
   }
   // stovepipe chimney poking through the back of the cap, with a rain hat
@@ -573,29 +658,36 @@ export function buildWorkshop(ctx, B, rng, halos) {
     }
   }
 
-  // a weathervane on the cap's tip: an iron arrow and a tiny bicycle riding the wind
+  // a weathervane on the cap's tip: an iron arrow and a tiny bicycle riding the
+  // wind. The mast merges into the shop; the turning part is ONE iron mesh.
   {
     const tip = capPoint(0, 0);
-    const vane = new THREE.Group();
-    vane.position.set(tip.x, tip.y + 0.02, tip.z);
-    vane.rotation.y = 0.6;
-    group.add(vane);
-    const V = new Batch('vane');
+    const vm = mat4([tip.x, tip.y + 0.02, tip.z], [0, 0.6, 0]);
+    const V = F.at(vm);
     V.add(MM.metal, rod([0, -0.05, 0], [0, 0.75, 0], 0.016, 0.012, 6), { color: IRON });
     V.add(MM.metal, new THREE.SphereGeometry(0.035, 8, 6).translate(0, 0.42, 0), { color: '#b8892e' });
     for (const [dx, dz] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) V.add(MM.metal, rod([0, 0.3, 0], [dx * 0.16, 0.3, dz * 0.16], 0.006, 0.006, 3), { color: IRON });
     const spin = new THREE.Group();
-    spin.position.y = 0.62;
-    vane.add(spin);
+    spin.position.set(tip.x, tip.y + 0.02 + 0.62, tip.z);
+    spin.rotation.y = 0.6;
+    group.add(spin);
     const VS = new Batch('vane-spin');
-    VS.add(MM.metal, rod([-0.3, 0, 0], [0.3, 0, 0], 0.008, 0.008, 4), { color: IRON });
-    VS.add(MM.metal, new THREE.ConeGeometry(0.035, 0.09, 4).rotateZ(-Math.PI / 2).translate(0.33, 0, 0), { color: IRON });
-    VS.add(MM.metal, new THREE.BoxGeometry(0.01, 0.1, 0.12).translate(-0.3, 0, 0), { color: IRON });
-    makeBike({ style: 'road', color: '#3a3530', tape: '#3a3530', saddle: '#3a3530', batch: VS, matrix: mat4([-0.08, 0.01, 0], [0, 0, 0]), scale: 0.22, lite: true, seed: 'vane' });
-    V.build(vane, 'vane');
+    // every part of the turning vane (the tiny bike too) in one iron material
+    const ironOnly = (mx = new THREE.Matrix4()) => ({
+      add: (m, g) => {
+        g.applyMatrix4(mx);
+        return VS.add(MM.metal, g, { color: '#3a3530', cast: false });
+      },
+      at: (child) => ironOnly(mx.clone().multiply(child)),
+    });
+    const I = ironOnly();
+    I.add(null, rod([-0.3, 0, 0], [0.3, 0, 0], 0.008, 0.008, 4));
+    I.add(null, new THREE.ConeGeometry(0.035, 0.09, 4).rotateZ(-Math.PI / 2).translate(0.33, 0, 0));
+    I.add(null, new THREE.BoxGeometry(0.01, 0.1, 0.12).translate(-0.3, 0, 0));
+    makeBike({ style: 'road', batch: I, matrix: mat4([-0.08, 0.01, 0], [0, 0, 0]), scale: 0.22, lite: true, seed: 'vane' });
     VS.build(spin, 'vane');
     updates.push((dt, t) => {
-      spin.rotation.y = 0.4 + Math.sin(t * 0.23) * 0.5 + Math.sin(t * 0.71) * 0.15;
+      spin.rotation.y = 0.6 + 0.4 + Math.sin(t * 0.23) * 0.5 + Math.sin(t * 0.71) * 0.15;
     });
   }
 
@@ -618,7 +710,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
   }
 
   // ── the yard: hero bike on a repair stand, truing stand, wheels, bits ────
-  const hero = makeBike({ style: 'gravel', spin: true, spinFront: false, seed: 'hero', scale: 0.8, color: '#e3d5b5', tape: '#6b4a2e' });
+  const hero = makeBike({ style: 'gravel', spin: true, spinFront: false, seed: 'hero', scale: 0.8, color: '#2e6a66', tape: '#6b4a2e' });
   const heroPos = new THREE.Vector3(-1.55, 0.2, 3.45);
   hero.group.position.copy(heroPos);
   hero.group.rotation.y = 0.12;
@@ -645,10 +737,11 @@ export function buildWorkshop(ctx, B, rng, halos) {
   // the mechanic
   let mechanic = null;
   try {
-    mechanic = ctx.props.makePerson({ seed: 'velo-mechanic', name: 'Mechanic', holding: 'wrench', action: 'work', apron: true, apronColor: '#3f5f73', hat: 'cap', hatColor: '#b03a2e', shirt: '#e8a838' });
-    const mp = new THREE.Vector3(-2.72, 0, 3.6);
+    mechanic = ctx.props.makePerson({ seed: 'velo-mechanic', name: 'Mechanic', holding: 'wrench', action: 'work', apron: true, apronColor: '#3f5f73', hat: 'bandana', hatColor: '#b03a2e', hair: 'curly', shirt: '#e8a838', beard: true });
+    // at the front of the bike, turned three-quarters to the yard, wrench at the bars
+    const mp = new THREE.Vector3(-0.56, 0, 3.3);
     mechanic.group.position.copy(mp);
-    mechanic.group.rotation.y = Math.atan2(heroPos.x - 0.35 - mp.x, heroPos.z - 0.05 - mp.z);
+    mechanic.group.rotation.y = -0.78;
     group.add(mechanic.group);
   } catch (err) {
     console.warn('[riverside] mechanic skipped', err);
@@ -668,11 +761,12 @@ export function buildWorkshop(ctx, B, rng, halos) {
     // stump bench: a thick log round on three legs
     const top = 0.52;
     const stump = new THREE.CylinderGeometry(0.34, 0.37, 0.16, 16).translate(0, top - 0.08, 0);
-    T.add(MM.wood, stump, { color: WOOD.oak });
-    T.add(MM.vc, new THREE.CylinderGeometry(0.335, 0.335, 0.01, 18).translate(0, top + 0.002, 0), { color: '#d8b98a', cast: false });
+    T.add(MM.wood, stump, { color: '#6e5643' });
+    T.add(MM.vc, new THREE.CylinderGeometry(0.33, 0.33, 0.01, 18).translate(0, top + 0.002, 0), { color: '#a88a64', cast: false });
+    for (let k = 1; k <= 3; k++) T.add(MM.vc, new THREE.TorusGeometry(0.08 * k, 0.004, 3, 24).rotateX(Math.PI / 2).translate(0.01, top + 0.008, -0.01), { color: '#8a6e4e', cast: false });
     for (let i = 0; i < 3; i++) {
       const a = (i / 3) * TAU + 0.5;
-      T.add(MM.wood, rod([Math.sin(a) * 0.2, top - 0.12, Math.cos(a) * 0.2], [Math.sin(a) * 0.33, 0, Math.cos(a) * 0.33], 0.035, 0.03, 6), { color: WOOD.oakLight });
+      T.add(MM.wood, rod([Math.sin(a) * 0.2, top - 0.12, Math.cos(a) * 0.2], [Math.sin(a) * 0.33, 0, Math.cos(a) * 0.33], 0.035, 0.03, 6), { color: '#7d6550' });
     }
     // the truing stand: base + two uprights holding the axle, a caliper arm
     const axleY = top + 0.06 + 0.34 * 0.6 + 0.05;
@@ -717,11 +811,126 @@ export function buildWorkshop(ctx, B, rng, halos) {
     oc.add(MM.metal, rod([0, 0.17, 0], [0.16, 0.26, 0], 0.008, 0.004, 4), { color: '#c9a24a', cast: false });
   }
 
+  // a bench against the wall under the wheels on their pegs: a thick oak
+  // plank on two log-round legs, a coffee mug and a rag on it
+  {
+    const phi = 0.98;
+    const r = wallR(0.3) + 0.32;
+    const S = F.at(mat4([Math.sin(phi) * r, 0, Math.cos(phi) * r], [0, phi, 0]));
+    const seat = board(1.05, 0.07, 0.3, { rng, c: 0.012 });
+    deform(seat, (v) => {
+      v.y -= Math.cos((v.x / 1.05) * Math.PI) * 0.008;
+    });
+    S.add(MM.wood, seat.translate(0, 0.42, 0), { color: '#9a7a55' });
+    for (const lx of [-0.38, 0.38]) {
+      S.add(MM.wood, new THREE.CylinderGeometry(0.11, 0.13, 0.39, 10).translate(lx, 0.195, 0), { color: '#7a5f45' });
+      S.add(MM.vc, new THREE.CircleGeometry(0.105, 12).rotateX(-Math.PI / 2).translate(lx, 0.392, 0), { color: '#cfae80', cast: false });
+    }
+    S.add(MM.glossy, new THREE.CylinderGeometry(0.045, 0.04, 0.09, 12).translate(0.25, 0.505, 0.02), { color: '#e9e2d2', cast: false });
+    S.add(MM.vc, new THREE.TorusGeometry(0.025, 0.008, 4, 10).translate(0.3, 0.51, 0.02), { color: '#e9e2d2', cast: false });
+    S.add(MM.vc, new THREE.CircleGeometry(0.038, 10).rotateX(-Math.PI / 2).translate(0.25, 0.545, 0.02), { color: '#4a2e1c', cast: false });
+    const rag = new THREE.PlaneGeometry(0.28, 0.2, 4, 3).rotateX(-Math.PI / 2);
+    deform(rag, (v) => {
+      v.y += noiseA(v.x * 9, v.z * 9) * 0.012 + (Math.abs(v.z) > 0.08 ? -0.02 : 0);
+    });
+    S.add(MM.vc, rag.translate(-0.2, 0.47, 0.03), { color: '#b8483a', cast: false });
+  }
+  // flower pots and a watering can by the right jamb, under a lantern hanging from the cap
+  {
+    for (const [x, z, s, col] of [[1.42, 2.06, 1, '#f29bb8'], [1.66, 1.86, 0.8, '#f2c14e'], [1.3, 2.32, 0.7, '#f4f0e6']]) {
+      const pot = new THREE.CylinderGeometry(0.14 * s, 0.1 * s, 0.22 * s, 12, 1).translate(x, 0.11 * s, z);
+      F.add(MM.vc, pot, { color: '#c06a42' });
+      F.add(MM.vc, new THREE.TorusGeometry(0.14 * s, 0.022 * s, 4, 14).rotateX(Math.PI / 2).translate(x, 0.215 * s, z), { color: '#b55f3a', cast: false });
+      F.add(MM.soil, new THREE.CircleGeometry(0.125 * s, 12).rotateX(-Math.PI / 2).translate(x, 0.2 * s, z), { color: '#5a4430', cast: false });
+      plantFern(F, rng, x, 0.2 * s, z, { size: 0.28 * s, fronds: 7, tilt: 0.9 });
+      for (let f = 0; f < 4; f++) addFlower(F, rng, x + rng.jitter(0.07 * s), 0.2 * s, z + rng.jitter(0.07 * s), { color: col, size: 0.05, stem: 0.2 * s });
+    }
+    const wc = F.at(mat4([1.88, 0, 2.2], [0, -0.6, 0]));
+    wc.add(MM.metal, new THREE.CylinderGeometry(0.1, 0.11, 0.2, 12).translate(0, 0.1, 0), { color: '#5f7f6a' });
+    wc.add(MM.metal, rod([0.08, 0.08, 0], [0.26, 0.24, 0], 0.014, 0.01, 5), { color: '#5f7f6a', cast: false });
+    wc.add(MM.metal, new THREE.TorusGeometry(0.08, 0.01, 4, 12, Math.PI).translate(-0.02, 0.2, 0), { color: '#5f7f6a', cast: false });
+    // the lantern hangs on a chain from the gills, lighting the doorway at night
+    const lp = capPoint(0.62, 1);
+    const lx = lp.x * 0.84, lz = lp.z * 0.84, ly = 2.38;
+    F.add(MM.metal, rod([lx, lp.y + 0.25, lz], [lx, ly + 0.27, lz], 0.006, 0.006, 3), { color: IRON, cast: false });
+    for (const [g, m, c] of [
+      [new THREE.TorusGeometry(0.03, 0.007, 4, 10).translate(0, 0.27, 0), MM.metal, IRON],
+      [new THREE.ConeGeometry(0.13, 0.1, 6, 1).translate(0, 0.21, 0), MM.metal, IRON],
+      [new THREE.CylinderGeometry(0.075, 0.065, 0.18, 6, 1).translate(0, 0.07, 0), MM.lamp, null],
+      [new THREE.CylinderGeometry(0.09, 0.08, 0.03, 6, 1).translate(0, -0.035, 0), MM.metal, IRON],
+    ]) F.add(m, g.translate(lx, ly, lz), { color: c, cast: false });
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * TAU;
+      F.add(MM.metal, new THREE.BoxGeometry(0.014, 0.18, 0.014).translate(lx + Math.sin(a) * 0.075, ly + 0.07, lz + Math.cos(a) * 0.075), { color: IRON, cast: false });
+    }
+    halos.push({ ...toWorld(lx, ly + 0.07, lz), size: 0.8 });
+  }
+
+  // the front-right of the yard: a short split-rail fence with a customer's
+  // road bike and a little kid's bike leaning on it, a chalkboard, grass & flowers
+  {
+    const fz = 3.3;
+    const posts = [2.1, 3.0, 3.9];
+    for (const px of posts) {
+      const h = 0.62 + rng.jitter(0.04);
+      F.add(MM.timber, rod([px + rng.jitter(0.02), -0.15, fz], [px + rng.jitter(0.03), h, fz + rng.jitter(0.02)], 0.055, 0.045, 7), { color: '#8d8274' });
+      F.add(MM.timber, new THREE.ConeGeometry(0.058, 0.08, 7).translate(px, h + 0.04, fz), { color: '#8d8274', cast: false });
+    }
+    for (const ry of [0.24, 0.5]) {
+      F.add(MM.timber, boardBetween([posts[0] - 0.12, ry + rng.jitter(0.02), fz - 0.05], [posts[2] + 0.14, ry + rng.jitter(0.03), fz - 0.05], 0.06, 0.07, { rng, bow: 0.02 }), { color: '#9a8a76' });
+    }
+    // moss on the rails, grass at the posts
+    for (const px of posts) {
+      plantGrass(F, rng, px + 0.06, 0, fz + 0.05, { size: 0.32, blades: 5 });
+      if (rng.chance(0.6)) addToadstool(F, rng, px - 0.1, 0, fz + 0.1, { size: 0.08 });
+    }
+    // the bikes lean back against the top rail
+    const road = { style: 'road', color: '#b0392c', tape: '#f1ece2', lite: true, seed: 'customer', scale: 0.62 };
+    makeBike({ ...road, batch: F, matrix: new THREE.Matrix4().makeTranslation(2.62, 0, fz + 0.2).multiply(new THREE.Matrix4().makeRotationX(-0.16)) });
+    makeBike({ style: 'vintage', color: '#f2c14e', basket: false, lite: true, seed: 'kid', scale: 0.42, batch: F, matrix: new THREE.Matrix4().makeTranslation(3.62, 0, fz + 0.16).multiply(new THREE.Matrix4().makeRotationX(-0.2)) });
+    // a little chalkboard on an A-frame: "Velo-Service · offen"
+    try {
+      const tex = ctx.props.makeTextTexture(['Velo-Service', 'heute offen!'], { width: 384, height: 256, background: '#27322c', color: '#f1eee4', font: '"Patrick Hand", "Comic Sans MS", cursive', weight: 400, style: 'plain', padding: 0.14 });
+      const cm = mat4([1.05, 0, 4.15], [0, 0.35, 0]);
+      const chalk = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.31), ctx.materials.standard('#ffffff', { map: tex, roughness: 0.95 }));
+      const cw = frame.clone().multiply(cm);
+      chalk.position.set(0, 0.4, 0.052).applyMatrix4(cw);
+      chalk.quaternion.setFromRotationMatrix(cw).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.28));
+      chalk.castShadow = false;
+      chalk.name = 'velowerkstatt-chalkboard';
+      ctx.scene.add(chalk);
+      const C = F.at(cm);
+      for (const sx of [-1, 1]) {
+        C.add(MM.wood, boardBetween([sx * 0.25, 0, 0.12], [sx * 0.25, 0.62, -0.02], 0.035, 0.03, { rng }), { color: WOOD.oak });
+        C.add(MM.wood, boardBetween([sx * 0.25, 0, -0.26], [sx * 0.25, 0.6, -0.04], 0.035, 0.03, { rng }), { color: WOOD.oak, cast: false });
+      }
+      C.add(MM.wood, board(0.56, 0.04, 0.03, { rng }).translate(0, 0.6, -0.03), { color: WOOD.oak, cast: false });
+      C.add(MM.wood, board(0.52, 0.36, 0.02, { rng }).rotateX(-0.28).translate(0, 0.4, 0.035), { color: '#4a3a2a' });
+    } catch (err) {
+      console.warn('[riverside] chalkboard skipped', err);
+    }
+    // grass tufts, clover & flowers fill the yard's edges (never the apron or the paths)
+    for (let i = 0; i < 46; i++) {
+      const x = rng.range(-3.6, 4.2), z = rng.range(0.5, 4.8);
+      if (Math.hypot(x, z) < wallR(0) + 0.5) continue;
+      if (Math.abs(x) < 1.6 && z > 1.6 && z < 4.0) continue; // the apron & the door
+      if (x < -0.6 && z > 2.3 && z < 4.3) continue; // the repair stand
+      if (x > 1.4 && x < 2.6 && z > 2.6 && z < 3.5) continue; // the truing stand
+      const wp = toWorld(x, 0, z);
+      if (getPathDistance(wp.x, wp.z) < 1.2 || isInWater(wp.x, wp.z, 0.3)) continue;
+      const gy = getHeight(wp.x, wp.z);
+      const k = rng.next();
+      if (k < 0.5) plantGrass(F, rng, x, gy, z, { size: rng.range(0.22, 0.4), blades: rng.int(3, 5) });
+      else if (k < 0.8) for (let f = 0; f < 3; f++) addFlower(F, rng, x + rng.jitter(0.15), gy, z + rng.jitter(0.15), { size: 0.045, stem: 0.14 });
+      else plantFern(F, rng, x, gy, z, { size: rng.range(0.35, 0.6), fronds: 7 });
+    }
+  }
+
   // a hanging sign on a bracket left of the doors
   let sign = null;
   try {
     sign = ctx.props.makeSign({ text: 'Velowerkstatt', style: 'hanging', bracket: false, width: 1.25, wood: 'oak', seed: 'velowerkstatt' });
-    const phi = -0.82, y = 2.4;
+    const phi = -1.32, y = 2.62;
     const r = wallR(y);
     const bx = Math.sin(phi) * (r + 0.55), bz = Math.cos(phi) * (r + 0.55);
     F.add(MM.metal, rod([Math.sin(phi) * (r - 0.05), y + 0.05, Math.cos(phi) * (r - 0.05)], [bx, y + 0.05, bz], 0.018, 0.016, 5), { color: IRON });

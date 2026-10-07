@@ -306,23 +306,23 @@ float wE = 0.06;
 float wH0 = wHeight(wFq, vWPos.xz, wCalm, wTurb);
 float wHu = wHeight(wFq + vec2(wE, 0.0), vWPos.xz + wPerp * wE, wCalm, wTurb);
 float wHs = wHeight(wFq + vec2(0.0, wE), vWPos.xz + wDir * wE, wCalm, wTurb);
-float wAmp = mix(0.055, 0.03, wCalm) * (1.0 + wTurb * 1.6);
+float wAmp = mix(0.08, 0.042, wCalm) * (1.0 + wTurb * 1.6);
 vec2 wG = ((wHu - wH0) * wPerp + (wHs - wH0) * wDir) / wE * wAmp;
 vec3 wN = normalize(vec3(-wG.x, 1.0, -wG.y));
 
 // ── body colour: shallow turquoise → deep teal ──
 float wDk = smoothstep(0.0, 1.05, wDepth);
 vec3 wCol = mix(wShallow, wDeep, wDk);
-// painted flow streaks: long, thin, broken lighter lines that travel with the water
-float wSl = wNoise(vec2(vFlow.y * 1.25, (vFlow.x - wT * wSpeed * 1.15) * 0.16));
-float wStreakM = smoothstep(0.03, 0.0, abs(wSl - 0.5)) * (1.0 - wCalm) * smoothstep(0.15, 0.45, wDepth);
-wStreakM *= smoothstep(0.45, 0.75, wNoise(vec2(vFlow.y * 0.7 + 3.0, (vFlow.x - wT * wSpeed) * 0.9)));
-wCol = mix(wCol, wStreak, wStreakM * 0.4);
+// painterly body: soft darker & lighter patches drifting with the flow
+float wPatch = wNoise(vec2(vFlow.y * 0.55 + 11.0, (vFlow.x - wT * wSpeed * 0.8) * 0.35)) * 0.6 + wNoise(vWPos.xz * 0.9 + 4.0) * 0.4;
+wCol *= 0.86 + 0.26 * wPatch;
+// painted flow streaks: short, broken lighter dashes that travel with the water
+float wSl = wNoise(vec2(vFlow.y * 2.1, (vFlow.x - wT * wSpeed * 1.15) * 0.45));
+float wStreakM = smoothstep(0.035, 0.0, abs(wSl - 0.5)) * (1.0 - wCalm) * smoothstep(0.15, 0.45, wDepth);
+wStreakM *= smoothstep(0.5, 0.78, wNoise(vec2(vFlow.y * 1.3 + 3.0, (vFlow.x - wT * wSpeed) * 1.6)));
+wCol = mix(wCol, wStreak, wStreakM * 0.28);
 // the shallows by the banks turn pale and clear
 wCol = mix(wCol, wStreak * 0.85, (1.0 - smoothstep(0.02, 0.22, wDepth)) * 0.35);
-// pond: drifting "ink" contour lines
-float wPl = wNoise(vWPos.xz * 0.75 + vec2(wT * 0.04, -wT * 0.03));
-wCol = mix(wCol, wStreak, smoothstep(0.018, 0.0, abs(wPl - 0.5)) * wCalm * 0.12 * smoothstep(0.1, 0.4, wDepth));
 
 // ── foam ──
 float wFn = wNoise(vec2(vFlow.y * 4.2, (vFlow.x - wT * wSpeed * 1.3) * 1.6));
@@ -438,7 +438,7 @@ export function buildWater(ctx, { rocks = [], impacts = [] } = {}) {
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${FRAG_NORMAL}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${FRAG_LIGHT}`);
   };
-  material.customProgramCacheKey = () => 'riverside-water-v1';
+  material.customProgramCacheKey = () => 'riverside-water-v2';
 
   const mesh = new THREE.Mesh(geo, material);
   mesh.position.y = WL;

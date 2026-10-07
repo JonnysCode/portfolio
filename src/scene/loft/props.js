@@ -15,8 +15,7 @@
 //     crates of old parts, a stool, a hanging "Code Loft" sign
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { DEG, TAU, IRON, BRASS, COPPER, Batch, smallBitsRemap, shelfFungus, radial, polar, board, timber, branch, tubeAlong, xf, mat4, alongX, mossGeo, addToadstool, ivyCard, deform, noiseA } from './kit.js';
+import { DEG, TAU, IRON, BRASS, COPPER, addFlowerTuft, Batch, smallBitsRemap, shelfFungus, radial, polar, board, timber, branch, tubeAlong, xf, mat4, alongX, mossGeo, addToadstool, ivyCard, deform, noiseA } from './kit.js';
 
 // one bulb colour: every colour of string light costs two more draw calls
 const FAIRY = ['#ffd9a0'];
@@ -372,7 +371,7 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
     lantern.position.set(hook.x, hook.y - 0.12, hook.z);
     lightsGroup.add(lantern);
     const glass = new THREE.Vector3(hook.x, hook.y - 0.12 - 0.5 * 1.25 + 0.17 * 1.25, hook.z);
-    halos.push(glass, 1.2, '#ffc46e');
+    halos.push(glass, 0.9, '#ffc46e');
     out.lanternLight = glass;
     // moss & a toadstool at its foot, ivy up the post
     B.add(mats.moss(), xf(mossGeo(rng, { r: 0.22, h: 0.07 }), [p0.x, deck.y + 0.01, p0.z]), { cast: false });
@@ -415,7 +414,7 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
     const n0 = Math.floor(posts.length * 0.12), n1 = Math.floor(posts.length * 0.62);
     for (let i = n0; i + 2 <= n1; i += 2) {
       if (posts[i].distanceTo(posts[i + 2]) > 2.2) continue;
-      lightsGroup.add(ctx.props.makeStringLights([posts[i].clone().add(new THREE.Vector3(0, 0.02, 0)), posts[i + 2].clone().add(new THREE.Vector3(0, 0.02, 0))], { sag: 0.16, spacing: 0.45, colors: FAIRY }));
+      lightsGroup.add(ctx.props.makeStringLights([posts[i].clone().add(new THREE.Vector3(0, 0.02, 0)), posts[i + 2].clone().add(new THREE.Vector3(0, 0.02, 0))], { sag: 0.16, spacing: 0.56, colors: FAIRY }));
     }
     // up the bark above the deck (like the trunk in the fly-agaric reference)
     const bark = env.bark;
@@ -427,6 +426,52 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
       pts.push(new THREE.Vector3(Math.sin(a) * r, y, -6 + Math.cos(a) * r));
     }
     lightsGroup.add(ctx.props.makeStringLights(pts, { sag: 0.1, spacing: 0.42, colors: FAIRY }));
+  }
+
+  // ── firefly jars & hanging baskets: little hanging things everywhere ──────
+  {
+    const ropeMat = mats.rope();
+    const wisp = mats.wisp();
+    /** a glass jar full of fireflies hanging on a string from `hook` */
+    const jar = (hook, drop = 0.35, s = 1) => {
+      const c = hook.clone().add(new THREE.Vector3(rng.jitter(0.02), -drop, rng.jitter(0.02)));
+      B.add(ropeMat, tubeAlong([hook, hook.clone().lerp(c, 0.5).add(new THREE.Vector3(0.01, 0, 0)), c.clone().add(new THREE.Vector3(0, 0.02, 0))], 0.006, 3, 4), { cast: false });
+      // wire handle, cork, the softly glowing jar (a little bulge, a neck)
+      B.add(mats.metal(IRON), xf(new THREE.TorusGeometry(0.045 * s, 0.004, 3, 10, Math.PI), [c.x, c.y - 0.02 * s, c.z], [0, rng.next() * 3, 0]), { cast: false });
+      B.add(mats.wood('#8a6440'), xf(new THREE.CylinderGeometry(0.036 * s, 0.03 * s, 0.035 * s, 8), [c.x, c.y - 0.03 * s, c.z]), { cast: false });
+      const body = new THREE.LatheGeometry([[0.001, 0], [0.05, 0.004], [0.058, 0.04], [0.056, 0.1], [0.04, 0.125], [0.034, 0.14]].map(([r, y]) => new THREE.Vector2(r * s, y * s)), 10);
+      B.add(wisp, xf(body, [c.x, c.y - 0.19 * s, c.z]), { cast: false });
+      halos.push(new THREE.Vector3(c.x, c.y - 0.12 * s, c.z), 0.38 * s, '#9fd6ff');
+    };
+    /** a moss-lined hanging basket overflowing with trailing ivy and flowers */
+    const basket = (hook, drop = 0.42) => {
+      const c = hook.clone().add(new THREE.Vector3(0, -drop, 0));
+      for (let k = 0; k < 3; k++) {
+        const a = (k / 3) * TAU;
+        const rim = c.clone().add(new THREE.Vector3(Math.cos(a) * 0.15, 0, Math.sin(a) * 0.15));
+        B.add(ropeMat, tubeAlong([hook, rim], 0.006, 3, 2), { cast: false });
+      }
+      const bowl = new THREE.SphereGeometry(0.17, 12, 5, 0, TAU, Math.PI / 2, Math.PI / 2);
+      B.add(mats.wood('#7a5a3e'), xf(bowl, [c.x, c.y + 0.02, c.z], null, [1, 0.8, 1]));
+      B.add(mats.moss(), xf(mossGeo(rng, { r: 0.16, h: 0.07 }), [c.x, c.y, c.z]), { cast: false });
+      for (let k = 0; k < 7; k++) {
+        const a = (k / 7) * TAU + rng.jitter(0.3);
+        const out = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
+        B.add(mats.ivy(), ivyCard(c.clone().addScaledVector(out, 0.14).add(new THREE.Vector3(0, 0.02, 0)), new THREE.Vector3(out.x * 0.25, -1, out.z * 0.25), out, rng.range(0.28, 0.55), rng.next() < 0.5), { cast: false });
+      }
+      addFlowerTuft(B.at(new THREE.Matrix4()), mats, rng, c.x, c.y + 0.04, c.z, { r: 0.11, h: 0.16, blooms: 6 });
+    };
+    // from the front eave corners of the house
+    const L0 = house.lightPts[0], L1 = house.lightPts[1];
+    if (L0?.length) jar(L0[0].clone().add(new THREE.Vector3(0, -0.02, 0)), 0.32, 1.1);
+    if (L1?.length) basket(L1[L1.length - 1].clone().add(new THREE.Vector3(0, -0.02, 0)), 0.36);
+    // from the lift gate's free post top and the crossbar ends
+    if (deck.slot.postR) jar(deck.slot.postR.clone().add(new THREE.Vector3(0, -0.02, 0)), 0.3);
+    // from the deck's hanging ropes, just above the railing
+    for (const r of deck.ropes.slice(0, 3)) {
+      const h = r.low.clone().lerp(r.top, 0.3);
+      jar(h, 0.28, 0.9);
+    }
   }
 
   // ── pots, ferns, flowers, crates, a watering can ──────────────────────────
@@ -444,11 +489,9 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
         }
       }
       else {
-        for (let k = 0; k < 10; k++) {
-          const a = rng.next() * TAU, rr = rng.next() * r * 0.8;
-          B.add(mats.paint(), xf(new THREE.SphereGeometry(rng.range(0.04, 0.065), 6, 4), [p.x + Math.cos(a) * rr, p.y + r * 1.35 + rng.range(0, 0.1), p.z + Math.sin(a) * rr]), { color: rng.pick(['#4f7f36', '#5f9440']), cast: false });
-          if (k % 2) B.add(mats.paint(), xf(new THREE.SphereGeometry(rng.range(0.03, 0.045), 6, 4), [p.x + Math.cos(a) * rr, p.y + r * 1.42 + rng.range(0, 0.12), p.z + Math.sin(a) * rr]), { color: rng.pick(['#e85d75', '#ffd166', '#f4f1ff', '#c77dff', '#ff8c42']), cast: false });
-        }
+        const F0 = B.at(new THREE.Matrix4());
+        addFlowerTuft(F0, mats, rng, p.x, p.y + r * 1.22, p.z, { r: r * 0.75, h: r * 1.6, blooms: rng.int(5, 8) });
+        addFlowerTuft(F0, mats, rng, p.x + rng.jitter(r * 0.3), p.y + r * 1.22, p.z + rng.jitter(r * 0.3), { r: r * 0.5, h: r * 1.1, blooms: 3 });
       }
     };
     const hf = house.footprint;
@@ -518,7 +561,7 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
       }
     }
     // glow-caps: a cluster of tiny luminous toadstools by the bark, between the stairwell and the lift
-    const glowCap = ctx.materials.glow('#8ff3ff', { day: 0.35, night: 2.4 });
+    const glowCap = mats.wisp();
     const stemMat = mats.paint('#e8f0e0');
     // a cluster of glow-caps on the bark above the server log (they light up at night)
     for (let i = 0; i < 13; i++) {
@@ -554,24 +597,31 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
     out.person = person;
   }
 
-  // ── the hanging sign on the lift posts ────────────────────────────────────
-  if (ctx.props.makeTextTexture && deck.slot.bar) {
-    const tex = ctx.props.makeTextTexture('Snail Lift', { width: 512, height: 150, background: 'wood', wood: { color: '#b08a5e', seed: 'lift' }, color: '#3b2a1e' });
-    const w = 0.66, h = (w * 150) / 512;
-    const c = deck.slot.bar.clone().add(new THREE.Vector3(0, -0.26, 0));
-    const m = new THREE.Matrix4().makeRotationY(deck.slot.a).setPosition(c);
-    const F = B.at(m);
-    F.add(mats.wood('#6b4a30'), board(w + 0.05, h + 0.05, 0.03, { rng }));
-    for (const sx of [-1, 1]) F.add(mats.metal(IRON), xf(new THREE.CylinderGeometry(0.006, 0.006, 0.22, 4), [sx * w * 0.38, h / 2 + 0.11, 0]), { cast: false });
-    const face = new THREE.PlaneGeometry(w, h).translate(0, 0, 0.017);
-    const back = new THREE.PlaneGeometry(w, h).rotateY(Math.PI).translate(0, 0, -0.017);
-    const g = mergeGeometries([face, back]).applyMatrix4(m);
-    const sign = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 }));
-    sign.name = 'loft-lift-sign';
-    root.add(sign);
+  // ── the "Snail Lift" plate, nailed to the bark high above the lift gate —
+  //    over the snail's head when it rests at the top, clear of the server log
+  if (env.boards) {
+    const a = deck.slot.a;
+    const y = deck.y + 2.38;
+    const c = polar(a, env.bark(a, y) + 0.1, y);
+    const m = new THREE.Matrix4().makeRotationY(a).multiply(new THREE.Matrix4().makeRotationZ(0.04)).setPosition(c);
+    addSignPlate(B, mats, rng, env.boards, m, 0.66);
+    // hung from two iron spikes driven into the bark
+    for (const sx of [-1, 1]) {
+      const sp = c.clone().add(new THREE.Vector3(Math.cos(a) * sx * 0.25, 0.14, -Math.sin(a) * sx * 0.25));
+      B.add(mats.metal(IRON), xf(new THREE.CylinderGeometry(0.01, 0.01, 0.12, 5).rotateX(Math.PI / 2), [sp.x, sp.y, sp.z], [0, a, 0]), { cast: false });
+      B.add(mats.rope(), tubeAlong([sp, c.clone().add(new THREE.Vector3(Math.cos(a) * sx * 0.25, 0.06, -Math.sin(a) * sx * 0.25)).addScaledVector(radial(a), 0.01)], 0.005, 3, 2), { cast: false });
+    }
   }
 
   return out;
+}
+
+/** A wooden plate with two nails and the painted "Snail Lift" faces (boards atlas). */
+export function addSignPlate(B, mats, rng, boards, m, w = 0.6) {
+  const F = B.at(m);
+  const h = boards.addSign(m, w);
+  F.add(mats.wood('#6b4a30'), board(w + 0.05, h + 0.05, 0.03, { rng }));
+  for (const sx of [-1, 1]) F.add(mats.metal(IRON), xf(new THREE.CylinderGeometry(0.012, 0.012, 0.012, 6).rotateX(Math.PI / 2), [sx * (w / 2 - 0.02), 0, 0.022]), { cast: false });
 }
 
 /** Reverse a geometry's faces (for the inside of the hollow log). */

@@ -15,8 +15,9 @@
 import * as THREE from 'three';
 import { OAK } from '../../world/layout.js';
 import { getHeight } from '../../world/ground.js';
-import { DEG, TAU, IRON, BRASS, Batch, smallBitsRemap, polar, radial, timber, branch, tubeAlong, xf, stoneGeo, mossGeo } from './kit.js';
+import { DEG, TAU, IRON, BRASS, addFlowerTuft, Batch, smallBitsRemap, polar, radial, timber, branch, tubeAlong, xf, stoneGeo, mossGeo } from './kit.js';
 import { ELEVATOR_AZ, LIFT } from './deck.js';
+import { addSignPlate } from './props.js';
 
 const SCALE = LIFT.scale;
 const ARM = LIFT.arm; // hook arm length out of the saddle
@@ -111,7 +112,10 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     BB.add(mats.paint('#6b4a30'), xf(new THREE.CylinderGeometry(0.006, 0.006, 0.3, 4), [-R, -HANG + 0.12, 0]), { cast: false });
     BB.build(basket, 'lift-basket', { mergeShadow: true, remap: smallBitsRemap(mats) });
   }
-  root.add(basket);
+  // the basket rides in the carrier (so a click on it counts as a click on
+  // the lift hotspot) but its matrix is solved every frame to hang level
+  basket.matrixAutoUpdate = false;
+  carrier.add(basket);
 
   // ── stations ──────────────────────────────────────────────────────────────
   // top: basket floor level with the deck; bottom: on a boarding platform on the roots
@@ -162,11 +166,26 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
       const p0 = polar(a, r0, yP - 0.1).addScaledVector(lat, s * W / 2);
       const p1 = polar(a, r0 + Dp, yP - 0.1).addScaledVector(lat, s * W / 2);
       B.add(mats.timber('#7a6450'), timber(p0, p1, 0.09, 0.1, { rng }));
-      // posts down to the roots / ground
+      // crooked posts down to the roots / ground, X-braced between them
+      const feet = [];
       for (const u of [0.5, 1]) {
         const top = p0.clone().lerp(p1, u);
         const g = Math.max(getHeight(top.x, top.z), isFinite(rootTop(top.x, top.z)) ? rootTop(top.x, top.z) : -1);
-        if (top.y - g > 0.08) B.add(mats.bark(), branch([top, top.clone().setY(g - 0.1)], 0.05, 0.055, { radial: 6, seed: u * 3 + s }), { cast: false });
+        if (top.y - g > 0.08) {
+          const foot = top.clone().setY(g - 0.1).addScaledVector(lat, s * 0.06);
+          const mid = top.clone().lerp(foot, 0.5).add(new THREE.Vector3(rng.jitter(0.05), 0, rng.jitter(0.05)));
+          B.add(mats.bark(), branch([top, mid, foot], 0.065, 0.08, { radial: 7, seed: u * 3 + s }));
+          feet.push({ top, foot });
+        }
+      }
+      if (feet.length === 2) {
+        const [A, Bf] = feet;
+        const lo = (f) => f.top.clone().lerp(f.foot, 0.82);
+        const hi = (f) => f.top.clone().lerp(f.foot, 0.12);
+        for (const [p, q] of [[lo(A), hi(Bf)], [hi(A), lo(Bf)]]) {
+          const m = p.clone().lerp(q, 0.5).addScaledVector(lat, s * 0.04);
+          B.add(mats.bark(), branch([p, m, q], 0.03, 0.026, { radial: 5, seed: p.y * 7 }), { cast: false });
+        }
       }
       // a little railing on the sides
       const r0p = p0.clone().lerp(p1, 0.5).add(new THREE.Vector3(0, 0.1, 0));
@@ -206,6 +225,25 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
       B.add(mats.metal(BRASS), xf(new THREE.CylinderGeometry(0.03, 0.065, 0.1, 10, 1, true), [armEnd.x, armEnd.y - 0.1, armEnd.z]));
       B.add(mats.metal(BRASS), xf(new THREE.SphereGeometry(0.02, 6, 4), [armEnd.x, armEnd.y - 0.16, armEnd.z]), { cast: false });
       B.add(mats.rope(), tubeAlong([armEnd.clone().add(new THREE.Vector3(0, -0.15, 0)), armEnd.clone().add(new THREE.Vector3(0.03, -0.45, 0)), armEnd.clone().add(new THREE.Vector3(0.02, -0.7, 0.02))], 0.008, 4), { cast: false });
+      // the station's name plate on the gallows post, facing out of the tree
+      if (env.boards) {
+        const c = bp.clone().add(new THREE.Vector3(0, 0.62, 0)).addScaledVector(n, 0.06);
+        addSignPlate(B, mats, rng, env.boards, new THREE.Matrix4().makeRotationY(a).multiply(new THREE.Matrix4().makeRotationZ(-0.04)).setPosition(c), 0.5);
+      }
+    }
+    // a lantern on the outer railing post, moss and a pot of flowers on the boards
+    {
+      const lp = polar(a, r0 + Dp, yP + 0.65).addScaledVector(lat, -W / 2);
+      const l = ctx.props.makeLantern({ color: '#ffc46b', halo: false });
+      l.scale.setScalar(0.6);
+      l.position.copy(lp);
+      env.extraLights?.add(l);
+      env.halos.push(lp.clone().add(new THREE.Vector3(0, 0.12, 0)), 0.7, '#ffc46e');
+      const mp = polar(a, r0 + Dp - 0.3, yP + 0.005).addScaledVector(lat, -0.3);
+      B.add(mats.moss(), xf(mossGeo(rng, { r: 0.2, h: 0.05, sx: 1.4 }), [mp.x, mp.y, mp.z]), { cast: false });
+      const pp = polar(a, r0 + Dp - 0.22, yP).addScaledVector(lat, 0.3);
+      B.add(mats.clay('#b5633e'), xf(new THREE.CylinderGeometry(0.09, 0.07, 0.13, 10), [pp.x, pp.y + 0.065, pp.z]));
+      addFlowerTuft(B.at(new THREE.Matrix4()), mats, rng, pp.x, pp.y + 0.12, pp.z, { r: 0.07, h: 0.15, blooms: 5 });
     }
     // stones & moss around the foot of the steps
     for (let k = 0; k < 4; k++) {
@@ -229,6 +267,12 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
         B.add(mats.wood('#5e4433'), xf(new THREE.BoxGeometry(0.08, 0.12, 0.08), [p.x - n.x * 0.04, p.y, p.z - n.z * 0.04], [0, a, 0]), { cast: false });
         B.add(mats.metal(IRON), xf(new THREE.CylinderGeometry(0.014, 0.014, 0.02, 5).rotateX(Math.PI / 2), [p.x + n.x * 0.035, p.y, p.z + n.z * 0.035], [0, a, 0]), { cast: false });
       }
+    }
+    // little slats between the rails every so often (it reads as a track)
+    for (let y = y0 + 0.25; y <= y1 - 0.2; y += 0.75) {
+      // tucked close to the bark so the snail's sole glides over them
+      const c = polar(a, bark(a, y) + 0.035, y);
+      B.add(mats.wood('#6b4a30'), timber(c.clone().addScaledVector(lat, -0.22), c.clone().addScaledVector(lat, 0.22), 0.05, 0.03, { rng, wobble: 0.002, up: [n.x, 0, n.z] }), { cast: false });
     }
     // the glistening slime trail
     const trail = [];
@@ -256,6 +300,9 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
   const REST = 6.5, TURN = 2.6;
   const cycle = 2 * (travel + REST);
   const M = new THREE.Matrix4();
+  const Minv = new THREE.Matrix4();
+  const BW = new THREE.Matrix4();
+  const _rx = new THREE.Matrix4();
   const hookW = new THREE.Vector3();
   let sway = 0, swayV = 0, prevY = bottomHookY, prevV = 0;
   const camPos = new THREE.Vector3();
@@ -302,17 +349,29 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     snail.setMoving(moving);
     // the basket hangs from the hook, level, with a little pendulum swing
     hookW.set(hookLocal.x, hookLocal.y, shellZ).applyMatrix4(M);
-    const v = dt > 0 ? (hookY - prevY) / dt : 0;
-    const acc = dt > 0 ? (v - prevV) / dt : 0;
-    prevY = hookY;
-    prevV = v;
-    if (!reduced && dt > 0) {
-      swayV += (-sway * 14 - swayV * 1.6 - acc * 0.6) * dt;
-      sway += swayV * dt;
+    // pendulum: driven by the hook's vertical acceleration (start / stop jerk).
+    // Sub-stepped and clamped so a frame hitch (or a debug time jump) can't blow it up.
+    if (dt > 0 && dt < 0.5) {
+      const v = (hookY - prevY) / dt;
+      const acc = THREE.MathUtils.clamp((v - prevV) / dt, -3, 3);
+      prevV = v;
+      if (!reduced) {
+        const n = Math.ceil(dt / (1 / 60));
+        const h = dt / n;
+        for (let i = 0; i < n; i++) {
+          swayV += (-sway * 14 - swayV * 1.6 - acc * 0.6) * h;
+          sway += swayV * h;
+        }
+      }
+    } else {
+      prevV = 0;
+      sway = swayV = 0;
     }
-    basket.position.copy(hookW);
-    basket.rotation.set(0, a, 0);
-    basket.rotateX(THREE.MathUtils.clamp(sway, -0.25, 0.25) + (reduced ? 0 : Math.sin(t * 0.9) * 0.015));
+    prevY = hookY;
+    BW.makeRotationY(a).multiply(_rx.makeRotationX(THREE.MathUtils.clamp(sway, -0.25, 0.25) + (reduced ? 0 : Math.sin(t * 0.9) * 0.015)));
+    BW.setPosition(hookW);
+    basket.matrix.multiplyMatrices(Minv.copy(M).invert(), BW);
+    basket.matrixWorldNeedsUpdate = true;
     // the snail watches the visitor while it rests
     if (moving === 0 && ctx.camera) snail.lookAt(ctx.camera.getWorldPosition(camPos));
     else snail.lookAt(null);
@@ -324,6 +383,13 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     time += dt;
     place(time, dt);
   });
+  // debug / screenshots: jump along the ride — u in [0, 0.5) is the way up
+  // (0.25 = half way), [0.5, 1) the way down (0.75 = half way)
+  const setPhase = (u) => {
+    u = ((u % 1) + 1) % 1;
+    time = u < 0.5 ? 2 * u * travel : travel + REST + (2 * u - 1) * travel;
+    place(time);
+  };
 
   return {
     snail,
@@ -334,6 +400,16 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     top: polar(a, bark(a, OAK.loft.y) + 0.9, OAK.loft.y),
     /** where the hook is, every frame */
     hook: hookW,
+    /** seconds for a full up-rest-down-rest loop */
+    cycle,
+    /** seconds of one ride (up or down); a rest of REST seconds follows each */
+    travel,
+    setPhase,
+    /** debug: jump to cycle time t (seconds; 0 = leaving the bottom) */
+    setTime(t) {
+      time = t;
+      place(time);
+    },
   };
 }
 

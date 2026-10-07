@@ -3,19 +3,28 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#2f4a2b" />
+    <meta name="theme-color" content="#1c2a1e" />
+    <meta name="color-scheme" content="light" />
     <title>Jonny's Woodland</title>
     <meta
       name="description"
-      content="A tiny woodland world to explore: woodworking (Schreiner EFZ), bike building, interior design and software engineering by Jonny."
+      content="A tiny enchanted forest glen to explore: woodworking (Schreiner EFZ), bike building, interior design and software engineering by Jonny — every mushroom and plank made in code."
     />
     <meta property="og:title" content="Jonny's Woodland" />
     <meta
       property="og:description"
-      content="Explore a cozy mushroom village full of furniture, bikes, interiors and code."
+      content="Wander a miniature fantasy glen under a giant oak: a cabinetmaker's workshop in its roots, a code loft in its branches, mushroom houses, a bike workshop by the stream."
     />
     <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <style>
+      /* shown before the app's CSS arrives (and without JavaScript) */
+      html, body { margin: 0; height: 100%; background: #1c2a1e; }
+      .noscript { max-width: 560px; margin: 12vh auto; padding: 32px 36px; color: #3a2a1c; background: #f4e9cf; border-radius: 4px; font: 16px/1.55 system-ui, sans-serif; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45); }
+      .noscript h1 { margin: 0 0 4px; font-size: 34px; }
+      .noscript a { color: #b8432f; }
+    </style>
   </head>
   <body>
     <canvas id="world" aria-label="Interactive 3D woodland village" tabindex="0"></canvas>
@@ -23,9 +32,13 @@
     <noscript>
       <div class="noscript">
         <h1>Jonny's Woodland</h1>
+        <p><strong>Software engineer · Schreiner EFZ · tinkerer</strong></p>
         <p>
-          This portfolio is a little 3D world and needs JavaScript. You can still find me on
-          <a href="https://github.com/JonnysCode">GitHub</a>.
+          This portfolio is a little enchanted forest glen built in 3D, so it needs JavaScript: a cabinetmaker's
+          workshop in the roots of a giant oak, a code loft in its branches, mushroom houses and a bike workshop by the stream.
+        </p>
+        <p>
+          Until then, you can find me on <a href="https://github.com/JonnysCode">GitHub</a>.
         </p>
       </div>
     </noscript>

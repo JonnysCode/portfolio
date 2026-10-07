@@ -172,7 +172,7 @@ export function prepare(geo, withColor) {
 }
 
 // ─── batching ────────────────────────────────────────────────────────────────
-/** Collects geometry per material and merges it into one mesh per (material, shadow) pair. */
+/** Collects geometry per material and merges it into one mesh per material. */
 export class Batch {
   constructor(name = 'riverside') {
     this.name = name;
@@ -189,12 +189,15 @@ export class Batch {
       else paint(geo, opts.color);
     }
     prepare(geo, vc);
-    const key = `${material.uuid}|${cast ? 1 : 0}|${receive ? 1 : 0}`;
+    // ONE mesh per material: if any part casts, the merged mesh casts (a few
+    // extra triangles in the shadow pass are cheaper than a second draw call)
+    const key = `${material.uuid}|${receive ? 1 : 0}`;
     let e = this.lists.get(key);
     if (!e) {
       e = { material, cast, receive, geos: [] };
       this.lists.set(key, e);
     }
+    e.cast ||= cast;
     e.geos.push(geo);
     return geo;
   }

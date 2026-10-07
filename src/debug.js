@@ -76,6 +76,42 @@ export function installDebug(ctx) {
     step(n = 1, dt = 1 / 60, renderAll = false) {
       for (let i = 0; i < n; i++) ctx.engine.step(dt, renderAll || i === n - 1);
     },
+    /**
+     * Experience flows (screenshots of the real UI): glide like a visitor and
+     * advance the clock until the camera has landed (renders only the last frame).
+     *   --eval "__woodland.debug.glide('bikes')" --views free --ui
+     */
+    glide(id, maxFrames = 600) {
+      ctx.cameraRig.clearOverride();
+      ctx.cameraRig.goTo(id);
+      return api.settle(maxFrames);
+    },
+    /** Step the clock until no camera glide is running; returns the frames stepped. */
+    settle(maxFrames = 600) {
+      let i = 0;
+      while (ctx.cameraRig.transitioning && i++ < maxFrames) ctx.engine.step(1 / 60, false);
+      ctx.engine.step(1 / 60, true);
+      return i;
+    },
+    /** Real-time wait (lets CSS transitions finish) — await it inside --eval. */
+    wait(ms = 700) {
+      return new Promise((r) => setTimeout(r, ms));
+    },
+    /** Open the UI's modals: 'guide' | 'map' | 'help'. */
+    open(what) {
+      if (what === 'map') ctx.ui.showMap();
+      else if (what === 'help') ctx.ui.showHelp();
+      else ctx.ui.showGuidebook();
+    },
+    /** Where the experience is right now. */
+    state() {
+      const rig = ctx.cameraRig;
+      return {
+        spot: rig.spot, focused: rig.focused, transitioning: rig.transitioning, focusDistance: +rig.focusDistance.toFixed(2),
+        camera: ctx.camera.position.toArray().map((x) => +x.toFixed(2)), panel: ctx.ui.isPanelOpen, modal: ctx.ui.isModalOpen,
+        secrets: ctx.interactions.secrets?.(), progress: ctx.interactions.progress?.(),
+      };
+    },
     stats() {
       const info = ctx.engine.renderer.info;
       let meshes = 0, instanced = 0, tris = 0;

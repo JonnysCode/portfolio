@@ -468,7 +468,7 @@ export function buildPond(ctx, B, rng) {
   }
 
   // ── a duck family paddling slow loops ──
-  const ducks = makeDucks(group);
+  const ducks = makeDucks(group, !!ctx.engine?.reducedMotion);
 
   return {
     group,
@@ -556,7 +556,7 @@ function duckGeometry(scale = 1, yellow = false) {
   return g;
 }
 
-function makeDucks(parent) {
+function makeDucks(parent, reduced = false) {
   const mat = M().vc;
   const mum = new THREE.Mesh(duckGeometry(1.1), mat);
   mum.name = 'duck';
@@ -570,7 +570,6 @@ function makeDucks(parent) {
   parent.add(kids);
   const cx = POND.x + 0.4, cz = POND.z;
   const R = 2.5;
-  const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const speed = reduced ? 0.03 : 0.09;
   const a = new THREE.Vector3(), b = new THREE.Vector3();
   const o = new THREE.Object3D();
@@ -638,7 +637,7 @@ export function buildDrifters(ctx, rng) {
     hull.setIndex([0, 2, 3, 0, 3, 1, 0, 1, 5, 0, 5, 4, 2, 6, 7, 2, 7, 3, 4, 5, 9, 4, 9, 8, 0, 6, 2, 1, 3, 7, 0, 4, 8, 1, 9, 5, 6, 10, 7, 8, 9, 10, 0, 8, 10, 0, 10, 6, 1, 7, 10, 1, 10, 9]);
     hull.computeVertexNormals();
     tinted(hull, '#f4efe2');
-    const mesh = new THREE.Mesh(hull, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, side: THREE.DoubleSide }));
+    const mesh = new THREE.Mesh(hull, materials.standard('#ffffff', { vertexColors: true, roughness: 0.9, side: THREE.DoubleSide }));
     mesh.castShadow = false;
     boat.add(mesh);
     boat.scale.setScalar(0.9);

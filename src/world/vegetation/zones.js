@@ -104,6 +104,52 @@ const views = [];
 }
 const _sph = new THREE.Sphere();
 
+// ─── subject cones (for foreground framing) ─────────────────────────────────
+// What each spot came to see, as a sphere around its target. Framing plants
+// may stand anywhere in a frame — corners, bottom edge, close to the lens —
+// as long as they do not overlap the subject seen from the camera.
+const SUBJECT_R = { glen: 11, woodworking: 6, code: 5, home: 5, interior: 4.5, bikes: 4.5 };
+const cones = [];
+for (const s of SPOTS) {
+  const p = s.camera.position, t = s.camera.target;
+  const rs = SUBJECT_R[s.id] ?? 5;
+  const lerpTo = (k) => [t[0] + (p[0] - t[0]) * k, t[1] + (p[1] - t[1]) * k, t[2] + (p[2] - t[2]) * k];
+  const f = s.focus ?? t;
+  const close = [f[0] + (p[0] - t[0]) * 0.55, f[1] + (p[1] - t[1]) * 0.55, f[2] + (p[2] - t[2]) * 0.55];
+  for (const [cp, ct, r] of [[p, t, rs], [lerpTo(1.8), t, rs], [close, f, rs * 0.7]]) {
+    const pos = new THREE.Vector3(...cp);
+    const tgt = new THREE.Vector3(...ct);
+    const dir = tgt.clone().sub(pos);
+    const dist = dir.length();
+    dir.normalize();
+    cones.push({ pos, dir, dist, tan: r / dist });
+  }
+}
+const _d = new THREE.Vector3();
+
+/**
+ * True if a sphere at (x, y, z) radius r overlaps any spot's SUBJECT as seen
+ * from that spot's cameras (plain, -wide, -close). Looser than blocksView:
+ * use it for framing elements that are meant to stand in the frames' margins.
+ */
+export function blocksSubject(x, y, z, r) {
+  for (const c of cones) {
+    _d.set(x - c.pos.x, y - c.pos.y, z - c.pos.z);
+    const along = _d.dot(c.dir);
+    if (along <= 0.3 || along > c.dist) continue; // behind the lens or behind the subject
+    const perp = Math.sqrt(Math.max(0, _d.lengthSq() - along * along));
+    if (perp - r < c.tan * along) return true;
+  }
+  return false;
+}
+
+/** blocksSubject for an upright thing (spheres stacked up its height). */
+export function isClearOfSubjects(x, y0, z, height, radius) {
+  const steps = Math.max(1, Math.ceil(height / Math.max(0.4, radius * 1.2)));
+  for (let i = 0; i <= steps; i++) if (blocksSubject(x, y0 + (i / steps) * height, z, radius)) return false;
+  return true;
+}
+
 /** True if a sphere at (x, y, z) with radius r intrudes into the core of any spot view. */
 export function blocksView(x, y, z, r) {
   _sph.center.set(x, y, z);

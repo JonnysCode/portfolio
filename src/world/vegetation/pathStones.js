@@ -93,16 +93,24 @@ export function buildPathStones(ctx, material) {
   const fits = (x, z, r) => {
     if (getPadAt(x, z, r * 0.3)) return false;
     if (isInWater(x, z, 0.15)) return false;
+    // (r = mean radius: the slabs are elongated and lie across the path, so a
+    //  max-radius circle test would reject most neighbours)
     for (let i = stones.length - 1; i >= 0 && i > stones.length - 40; i--) {
       const s = stones[i];
-      if (Math.hypot(s.x - x, s.z - z) < s.r + r + 0.07) return false;
+      if (Math.hypot(s.x - x, s.z - z) < (s.r + r) * 0.88 + 0.05) return false;
     }
     return true;
   };
 
   const place = (x, z, rx, rz, yaw) => {
-    const r = Math.max(rx, rz);
-    if (!fits(x, z, r)) return false;
+    let r = (rx + rz) / 2;
+    if (!fits(x, z, r)) {
+      // try a smaller stone in the gap before giving up
+      rx *= 0.72;
+      rz *= 0.72;
+      r *= 0.72;
+      if (!fits(x, z, r)) return false;
+    }
     const y = getHeight(x, z);
     getNormal(x, z, nrm);
     // sit with the ground, a tiny random rock, top just proud of the soil

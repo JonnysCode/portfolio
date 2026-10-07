@@ -61,6 +61,24 @@ vec3 tUnpack(vec2 xy, float s) {
   return vec3(n * s, sqrt(clamp(1.0 - dot(n, n), 0.0, 1.0)));
 }
 float tVelvet;
+// tiny wildflowers dotted through the sunny moss: one candidate per cell,
+// daisies (with a yellow eye), buttercups, forget-me-nots, a pink one now and then
+vec3 tFlowerDots(vec2 p, float amount, float cellSize, out float mask) {
+  vec2 q = p / cellSize;
+  vec2 cell = floor(q);
+  vec2 f = fract(q);
+  mask = 0.0;
+  float h = tHash(cell);
+  if (h > amount) return vec3(0.0);
+  vec2 c = vec2(tHash(cell + 3.7), tHash(cell + 9.1)) * 0.56 + 0.22;
+  float r = 0.13 + 0.09 * tHash(cell + 1.3);
+  float d = length(f - c);
+  mask = 1.0 - smoothstep(r * 0.55, r, d);
+  float k = tHash(cell + 5.5);
+  vec3 col = k < 0.42 ? vec3(0.86, 0.86, 0.8) : k < 0.66 ? vec3(0.95, 0.62, 0.03) : k < 0.88 ? vec3(0.2, 0.38, 0.92) : vec3(0.88, 0.32, 0.52);
+  if (k < 0.42) col = mix(vec3(0.95, 0.62, 0.05), col, smoothstep(r * 0.18, r * 0.32, d));
+  return col;
+}
 `;
 
 const FRAG_MAIN = /* glsl */ `
@@ -111,6 +129,20 @@ const FRAG_MAIN = /* glsl */ `
   tPathC = mix(tPathC, tPathC * vec3(0.75, 0.72, 0.68), tDamp * 0.7);
   vec3 tCol = mix(tMoss, tSoil, tWSoil);
   tCol = mix(tCol, tPathC, tWPath);
+  // wildflower speckles in the sunny moss of the open glen (fade out before they would shimmer)
+  {
+    float meadow = smoothstep(0.42, 0.75, nBig * 0.6 + nMid * 0.4) * (1.0 - tWSoil) * (1.0 - tDamp * 0.7);
+    meadow *= 1.0 - smoothstep(20.0, 27.0, length(tP));
+    float px = max(fwidth(tP.x), fwidth(tP.y));
+    float fade = 1.0 - smoothstep(0.035, 0.07, px);
+    if (meadow * fade > 0.01) {
+      float m1, m2;
+      vec3 f1 = tFlowerDots(tP, meadow * 0.55, 0.22, m1);
+      vec3 f2 = tFlowerDots(tP + vec2(0.11, 0.07), meadow * 0.3, 0.13, m2);
+      tCol = mix(tCol, f1, m1 * fade);
+      tCol = mix(tCol, f2, m2 * fade * 0.9);
+    }
+  }
   // darker trampled band where the moss gives way to the path
   tCol *= 1.0 - tFringe * 0.12;
 
@@ -182,7 +214,7 @@ export function makeTerrainMaterial(ctx) {
       .replace('#include <aomap_fragment>', FRAG_AO)
       .replace('#include <lights_fragment_end>', FRAG_VELVET);
   };
-  m.customProgramCacheKey = () => 'forest-floor-v1';
+  m.customProgramCacheKey = () => 'forest-floor-v2';
   m.userData.uniforms = uniforms;
   return m;
 }

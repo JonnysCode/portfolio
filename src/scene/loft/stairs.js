@@ -4,10 +4,13 @@
 // right side from the ground at the back-right to the stairwell at the deck's
 // front tip.
 //
-//   • every tread is its own plank (tone, twist, ragged end) on a bracket
-//     pinned into the bark with an iron pin, a cleat under its inner end
+//   • every tread is its own plank (tone, twist, a dished walking line, two
+//     pegs) on a bracket pinned into the bark, a cleat under its inner end;
+//     every seventh one a split half-log, moss and toadstools here and there
 //   • a rope handrail on crooked branch balusters along the outside, a second
-//     rope through iron eyes along the bark
+//     rope through iron eyes along the bark; little lanterns on three
+//     balusters and fairy lights spiralling up with the handrail
+//   • shelf fungi on the bark beside some brackets
 //   • half-way up, where the snail lift's track crosses, the stair rests on a
 //     wider LANDING with a slot at the bark the snail passes through
 //   • at the foot: a mossy stone step, stepping stones, a lantern on a stake
@@ -17,7 +20,7 @@
 import * as THREE from 'three';
 import { OAK } from '../../world/layout.js';
 import { getHeight } from '../../world/ground.js';
-import { DEG, TAU, IRON, polar, radial, board, timber, branch, tubeAlong, xf, stoneGeo, mossGeo, addToadstool, ivyCard } from './kit.js';
+import { DEG, TAU, IRON, WOOD, polar, radial, board, timber, branch, tubeAlong, xf, deform, stoneGeo, mossGeo, addToadstool, ivyCard, shelfFungus } from './kit.js';
 import { ELEVATOR_AZ, STAIR_WELL, LIFT } from './deck.js';
 
 /** The stair's course: azimuths in degrees around the oak (it climbs clockwise). */
@@ -68,6 +71,7 @@ export function buildStairs(ctx, B, mats, env) {
   const barkMat = mats.bark();
   const ropeMat = mats.rope();
   const tones = ['#8c7558', '#86735f', '#7d6a56', '#958068', '#8f8478', '#7a6450', '#6f604f'];
+  const fungusSpots = []; // shelf fungi on the bark beside some brackets
   const outerTops = []; // baluster tops (outer rope)
   const innerEyes = []; // iron eyes (inner rope)
   const L = STAIR.length;
@@ -79,20 +83,46 @@ export function buildStairs(ctx, B, mats, env) {
     if (s.landing) return; // built below
     const r0 = bark(a, s.y) + STAIR.inner;
     const r1 = r0 + L + rng.jitter(0.05);
-    // the tread: a thick plank, radial, a touch tilted and twisted
-    const g = board(L + 0.04, 0.065, STAIR.depth - rng.range(0.0, 0.03), { along: 'x', rng, c: 0.012 });
-    const m = new THREE.Matrix4().makeBasis(n, new THREE.Vector3(0, 1, 0), t.clone().negate());
+    const basis = new THREE.Matrix4().makeBasis(n, new THREE.Vector3(0, 1, 0), t.clone().negate());
+    // the tread: a thick plank, radial, a touch tilted and twisted — every
+    // seventh one a split half-log (a repair with whatever lay around)
+    const TH = 0.075;
+    let g;
+    if (i % 7 === 3) {
+      g = new THREE.CylinderGeometry(STAIR.depth * 0.55, STAIR.depth * 0.55, L + 0.02, 9, 3, false, 0, Math.PI);
+      // axis along X, the round side down, flattened: a split log
+      g.rotateZ(Math.PI / 2).rotateX(Math.PI).scale(1, 0.42, 1);
+      g.translate(0, 0.015, 0);
+      B.add(mats.bark(), g.applyMatrix4(basis.clone().setPosition(polar(a, (r0 + r1) / 2, s.y - TH / 2))), { cast: false });
+      // its flat, sawn top
+      g = board(L + 0.02, 0.02, STAIR.depth * 1.08, { along: 'x', rng, c: 0.006 });
+      g.translate(0, TH / 2 - 0.01, 0);
+    } else {
+      g = board(L + 0.04, TH, STAIR.depth - rng.range(0.0, 0.03), { along: 'x', rng, c: 0.014 });
+      // worn: the middle of the walking line is dished a little
+      deform(g, (v) => {
+        if (v.y > 0) v.y -= 0.012 * Math.exp(-((v.x / L + 0.08) ** 2) * 9);
+      });
+    }
+    const m = basis.clone();
     m.multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rng.jitter(0.02), rng.jitter(0.04), rng.jitter(0.012))));
-    m.setPosition(polar(a, (r0 + r1) / 2, s.y - 0.0325));
+    m.setPosition(polar(a, (r0 + r1) / 2, s.y - TH / 2));
     g.applyMatrix4(m);
     B.add(mats.wood(rng.pick(tones)), g);
+    // two pegs through the tread into the bracket
+    for (const k of [-1, 1]) {
+      const pp = polar(a, r0 + L * 0.68, s.y + 0.002).addScaledVector(t, k * 0.06);
+      B.add(mats.wood(WOOD.dark), xf(new THREE.CylinderGeometry(0.016, 0.016, 0.012, 6), [pp.x, pp.y, pp.z]), { cast: false });
+    }
     // the bracket: a diagonal strut from the bark up to under the tread, and a cleat
-    const foot = polar(a, bark(a, s.y - 0.5) + 0.02, s.y - 0.5);
-    const head = polar(a, r0 + L * 0.68, s.y - 0.08);
-    B.add(timberMat, timber(foot, head, 0.06, 0.06, { rng, wobble: 0.004, up: [t.x, 0, t.z] }), { cast: false });
-    B.add(timberMat, timber(polar(a, r0 - 0.02, s.y - 0.11), polar(a, r0 + 0.42, s.y - 0.11), 0.07, 0.08, { rng, wobble: 0.002 }), { cast: false });
+    const foot = polar(a, bark(a, s.y - 0.55) + 0.02, s.y - 0.55);
+    const head = polar(a, r0 + L * 0.68, s.y - 0.09);
+    B.add(timberMat, timber(foot, head, 0.075, 0.075, { rng, wobble: 0.006, up: [t.x, 0, t.z] }), { cast: false });
+    B.add(timberMat, timber(polar(a, r0 - 0.02, s.y - TH - 0.045), polar(a, r0 + L * 0.74, s.y - TH - 0.045), 0.08, 0.09, { rng, wobble: 0.003 }), { cast: false });
     // iron pin through the cleat into the bark
-    B.add(ironMat, xf(new THREE.CylinderGeometry(0.018, 0.018, 0.03, 6), [0, 0, 0], [0, 0, Math.PI / 2]).applyMatrix4(new THREE.Matrix4().makeBasis(n, new THREE.Vector3(0, 1, 0), t.clone().negate()).setPosition(polar(a, r0 + 0.08, s.y - 0.11).addScaledVector(t, 0.045))), { cast: false });
+    B.add(ironMat, xf(new THREE.CylinderGeometry(0.02, 0.02, 0.03, 6), [0, 0, 0], [0, 0, Math.PI / 2]).applyMatrix4(basis.clone().setPosition(polar(a, r0 + 0.08, s.y - TH - 0.045).addScaledVector(t, 0.05))), { cast: false });
+    // shelf fungi and moss creep along some brackets
+    if (i % 5 === 2) fungusSpots.push({ a, y: s.y - 0.3, t });
     // balusters on every second tread, iron eyes on every third
     if (i % 2 === 0) {
       const b0 = polar(a, r1 - 0.06, s.y - 0.05);
@@ -106,7 +136,8 @@ export function buildStairs(ctx, B, mats, env) {
       innerEyes.push(e.clone().addScaledVector(n, 0.02));
     }
     // moss on some treads near the bark, a toadstool here and there
-    if (rng.next() < 0.3) B.add(mats.moss(), xf(mossGeo(rng, { r: 0.1, h: 0.035, sx: 1.4 }), [0, 0, 0]).applyMatrix4(new THREE.Matrix4().makeBasis(n, new THREE.Vector3(0, 1, 0), t.clone().negate()).setPosition(polar(a, r0 + 0.12, s.y))), { cast: false });
+    if (rng.next() < 0.4) B.add(mats.moss(), xf(mossGeo(rng, { r: rng.range(0.08, 0.13), h: 0.035, sx: 1.4 }), [0, 0, 0]).applyMatrix4(basis.clone().setPosition(polar(a, r0 + 0.12, s.y - 0.005))), { cast: false });
+    if (i % 6 === 1 && i > 6) addToadstool(B.at(new THREE.Matrix4()), mats, rng, ...polar(a + 0.03, r0 + 0.1, s.y).toArray(), { size: rng.range(0.05, 0.08) });
   });
 
   // ── the landing where the snail lift passes (a slot at the bark) ─────────
@@ -208,6 +239,49 @@ export function buildStairs(ctx, B, mats, env) {
       }
       rp.push(eyes[eyes.length - 1]);
       B.add(ropeMat, tubeAlong(rp, 0.016, 4, rp.length * 2), { cast: false });
+    }
+  }
+
+  // ── lights along the climb: little lanterns on a few balusters and a
+  //    string of fairy lights spiralling up with the handrail ───────────────
+  {
+    const azOf = (p) => Math.atan2(p.x - OAK.x, p.z - OAK.z) / DEG;
+    const tops = [...outerTops].sort((p, q) => azOf(q) - azOf(p)); // bottom → top
+    const lanternAt = [Math.round(tops.length * 0.22), Math.round(tops.length * 0.58), Math.round(tops.length * 0.86)];
+    for (const k of lanternAt) {
+      const p = tops[k];
+      if (!p) continue;
+      const l = ctx.props.makeLantern({ color: '#ffc46b', halo: false });
+      l.scale.setScalar(0.62);
+      l.position.copy(p).add(new THREE.Vector3(0, 0.01, 0));
+      l.rotation.y = rng.next() * TAU;
+      env.extraLights?.add(l);
+      halos.push(p.clone().add(new THREE.Vector3(0, 0.12, 0)), 0.75, '#ffc46e');
+    }
+    // fairy lights: tied a little below the rope, from post to post (skipping the lantern posts' tops)
+    const pts = tops.filter((_, k) => k % 2 === 0).map((p) => p.clone().add(new THREE.Vector3(0, -0.05, 0)));
+    for (let k = 0; k + 1 < pts.length; k++) {
+      if (pts[k].distanceTo(pts[k + 1]) > 2.4) continue; // the landing gap
+      env.extraLights?.add(ctx.props.makeStringLights([pts[k], pts[k + 1]], { sag: 0.12, spacing: 0.5, colors: ['#ffd9a0'] }));
+    }
+  }
+
+  // ── shelf fungi on the bark beside some brackets ──────────────────────────
+  {
+    const fTop = mats.paint('#b06a34'), fUnder = mats.paint('#efe0c0');
+    for (const f of fungusSpots) {
+      const k = rng.int(2, 3);
+      for (let j = 0; j < k; j++) {
+        const a = f.a + (rng.next() < 0.5 ? -1 : 1) * rng.range(0.05, 0.09);
+        const y = f.y - j * 0.13 + rng.jitter(0.03);
+        const r = rng.range(0.07, 0.12) * (1 - j * 0.15);
+        const { top, under } = shelfFungus(r, rng);
+        const n = radial(a);
+        const x = new THREE.Vector3(0, 1, 0).cross(n).normalize();
+        const m = new THREE.Matrix4().makeBasis(x, new THREE.Vector3(0, 1, 0), n).setPosition(polar(a, bark(a, y) - 0.01, y));
+        B.add(fTop, top.applyMatrix4(m), { color: rng.pick(['#b06a34', '#c47f45', '#9a5a2e', '#d2a060']), cast: false });
+        B.add(fUnder, under.applyMatrix4(m), { cast: false });
+      }
     }
   }
 

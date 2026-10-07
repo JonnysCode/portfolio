@@ -40,7 +40,8 @@ function buildRoute() {
       jIdx = i;
     }
   });
-  for (let i = 0; i <= jIdx; i++) if (main.pts[i].z < 17.5) pts.push({ x: main.pts[i].x, z: main.pts[i].z, bridge: false });
+  // (from the front of the glen, where the fly-agaric avenue begins)
+  for (let i = 0; i <= jIdx; i++) if (main.pts[i].z < 23) pts.push({ x: main.pts[i].x, z: main.pts[i].z, bridge: false });
   for (const p of bridgePath.pts) pts.push({ x: p.x, z: p.z, bridge: false });
   // over the bridge
   const A = PATHS.bridge[PATHS.bridge.length - 1], Bp = PATHS.farBank[0];
@@ -84,7 +85,7 @@ function sample(route, s, out = _a) {
     const ya = a.bridge ? deckHeight(a.lx) : getHeight(a.x, a.z);
     const yb = b.bridge ? deckHeight(b.lx) : getHeight(b.x, b.z);
     out.y = ya + (yb - ya) * t;
-  } else out.y = getHeight(out.x, out.z);
+  } else out.y = getHeight(out.x, out.z) + 0.03; // (riding over the flagstones)
   return out;
 }
 
@@ -114,11 +115,13 @@ export function createSnailPost(ctx, { reduced = false } = {}) {
   });
 
   const speed = reduced ? 0.32 : 0.5;
-  // state machine: crawl → pause (ends, bridge crest, now and then)
-  let s = route.length * 0.35;
+  // state machine: crawl → pause (ends, bridge crest, now and then).
+  // It starts with a breather on the bridge's crest, the best seat in the glen
+  // (and out of every spot camera's way).
+  let s = route.crestS;
   let dir = 1;
-  let pause = 0;
-  let crestDone = false;
+  let pause = 6;
+  let crestDone = true;
   let yaw = 0, pitch = 0;
   const p = { x: 0, y: 0, z: 0 }, q = { x: 0, y: 0, z: 0 }, r = { x: 0, y: 0, z: 0 };
   let nextBreather = 12;
@@ -179,14 +182,15 @@ export function createSnailPost(ctx, { reduced = false } = {}) {
 }
 
 /** Wild garden snails on mossy rocks; the first one is a secret. */
-export function createWildSnails(ctx, { rocks = [] } = {}) {
+export function createWildSnails(ctx, { rocks = [], snailRocks = [] } = {}) {
   const { makeSnail } = ctx.props;
   const out = [];
-  // pick mossy rocks inside the glen that a spot camera can see (not too far out)
+  // the vegetation's snail stones first (placed where a spot camera finds them),
+  // else mossy rocks inside the glen near the paths
   const cands = rocks
-    .filter((r) => Math.hypot(r.x, r.z) < 24 && Math.hypot(r.x - OAK.x, r.z - OAK.z) > 9 && r.r > 0.35 && r.r < 1.4)
+    .filter((r) => !snailRocks.includes(r) && Math.hypot(r.x, r.z) < 24 && Math.hypot(r.x - OAK.x, r.z - OAK.z) > 9 && r.r > 0.35 && r.r < 1.4)
     .sort((a, b) => Math.hypot(a.x - 2, a.z - 6) - Math.hypot(b.x - 2, b.z - 6));
-  const picks = cands.slice(0, 2);
+  const picks = [...snailRocks, ...cands].slice(0, 2);
   const shells = ['#c98a4b', '#b39ddb'];
   picks.forEach((rock, i) => {
     const s = makeSnail({ seed: `wild-snail-${i}`, scale: 0.22, shellColor: shells[i], saddle: false, blanket: null });

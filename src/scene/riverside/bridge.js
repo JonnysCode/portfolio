@@ -40,6 +40,8 @@ const PARAPET_T = 0.26;
 const PARAPET_H = 0.5;
 const END = 3.62; // where the deck meets the paths
 const DECK_CROWN = 1.3;
+/** Where the vintage bike leans on the downstream parapet (local x, side) — kept clear of plants. */
+export const BIKE_SPOT = { x: 3.05, side: 1, offset: 0.27 };
 /** Dressed sandstone for the arch ring (lighter and warmer than the rubble). */
 const VOUSSOIR_TINTS = ['#cdbb94', '#c4b08a', '#d2c29e', '#bfae8c', '#c9b796'];
 /** Rubble: darker, cooler, more varied. */
@@ -257,15 +259,13 @@ export function buildBridge(ctx, B, rng) {
         F.add(MM.wallStone, g, { color: tint() });
         y += h;
       }
-      // pyramid cap stone
-      const cap = new THREE.CylinderGeometry(0.02, 0.29, 0.2, 4, 1);
-      cap.rotateY(Math.PI / 4);
-      xf(cap, [px, y + 0.1, zc]);
-      F.add(MM.wallStone, cap, { color: '#b5aa92' });
-      const base = blockStone(rng, 0.42, 0.07, 0.42, 0.05);
-      xf(base, [px, y + 0.02, zc]);
-      F.add(MM.wallStone, base, { color: '#aca28c' });
-      piers.push({ x: px, z: zc, top: y + 0.2, side, sx });
+      // an overhanging capstone with a dressed ball finial on a little plinth
+      const base = blockStone(rng, 0.44, 0.09, 0.44, 0.05);
+      xf(base, [px, y + 0.035, zc], [0, rng.jitter(0.06), 0]);
+      F.add(MM.wallStone, base, { color: '#b3a88f' });
+      F.add(MM.stone, new THREE.CylinderGeometry(0.07, 0.09, 0.06, 10).translate(px, y + 0.11, zc), { color: '#bcae92' });
+      F.add(MM.stone, new THREE.SphereGeometry(0.1, 12, 8).translate(px, y + 0.22, zc), { color: '#c7b896' });
+      piers.push({ x: px, z: zc, top: y + 0.32, side, sx });
     }
   }
 
@@ -298,6 +298,7 @@ export function buildBridge(ctx, B, rng) {
         const z = side * (HALF_W + rng.range(0.15, 0.9));
         const gy = ground(x, z);
         if (gy < -0.5) continue; // in the water
+        if (side === BIKE_SPOT.side && Math.hypot(x - BIKE_SPOT.x, z - side * (HALF_W + BIKE_SPOT.offset)) < 0.75) continue; // the bike leans here
         const r = rng.next();
         if (r < 0.4) plantFern(F, rng, x, gy, z, { size: rng.range(0.35, 0.6), fronds: rng.int(6, 9) });
         else if (r < 0.75) plantGrass(F, rng, x, gy, z, { size: rng.range(0.25, 0.4), blades: 4 });

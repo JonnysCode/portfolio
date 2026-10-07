@@ -43,7 +43,9 @@ const _c = new THREE.Color();
  * uv and colour (linear RGB) so all outputs merge cleanly.
  */
 export class GeoBuilder {
-  constructor() {
+  /** defaultColor: vertex colour used when a vertex is added without one (THREE.Color or hex). */
+  constructor(defaultColor = null) {
+    this.def = defaultColor ? new THREE.Color(defaultColor) : null;
     this.pos = [];
     this.nor = [];
     this.uv = [];
@@ -60,6 +62,7 @@ export class GeoBuilder {
     this.uv.push(u, v);
     if (color && color.isColor) this.col.push(color.r, color.g, color.b);
     else if (color) this.col.push(color[0], color[1], color[2]);
+    else if (this.def) this.col.push(this.def.r, this.def.g, this.def.b);
     else this.col.push(1, 1, 1);
     return this.pos.length / 3 - 1;
   }
@@ -89,6 +92,11 @@ export class GeoBuilder {
         if (nm) _n.applyMatrix3(nm).normalize();
       } else _n.set(0, 1, 0);
       let r = 1, g = 1, b = 1;
+      if (!c && !tint && this.def) {
+        r = this.def.r;
+        g = this.def.g;
+        b = this.def.b;
+      }
       if (c) {
         r = c.getX(i);
         g = c.getY(i);

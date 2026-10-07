@@ -88,7 +88,7 @@ function wart(B, p, n, size, color, rng) {
   const F = frameFor(p, n);
   const seg = 5;
   const base = B.count;
-  const top = p.clone().addScaledVector(F.y, size * rng.range(0.45, 0.7));
+  const top = p.clone().addScaledVector(F.y, size * rng.range(0.3, 0.5)); // flattish flakes, not cones
   B.vert(top.x, top.y, top.z, F.y.x, F.y.y, F.y.z, 0.5, 0.5, color);
   for (let i = 0; i < seg; i++) {
     const a = (i / seg) * TAU + rng.jitter(0.3);
@@ -126,8 +126,9 @@ export class MushroomKit {
     const R = opts.capR ?? H * 0.55;
     const shape = opts.shape ?? 'dome';
     const capCol = C(opts.color ?? rng.pick(CAP_REDS));
-    const seg = opts.seg ?? (H > 1.2 ? 28 : H > 0.4 ? 14 : 8);
-    const rings = H > 1.2 ? 10 : H > 0.4 ? 6 : 4;
+    // (resolution follows size: giants are seen up close, buttons only as dots of colour)
+    const seg = opts.seg ?? (H > 1.2 ? 26 : H > 0.6 ? 16 : H > 0.3 ? 11 : 7);
+    const rings = H > 1.2 ? 9 : H > 0.4 ? 5 : 3;
     const leanAz = opts.leanAz ?? rng.range(0, TAU);
     const lean = opts.lean ?? rng.range(0, 0.12);
     const sink = opts.sink ?? H * 0.06;
@@ -164,9 +165,10 @@ export class MushroomKit {
         const foot = 0.62 + 0.38 * Math.min(1, t * 4);
         for (let i = 0; i <= seg; i++) {
           const th = (i / seg) * TAU;
-          // faint vertical fibres / streaks
-          const streak = 1 - 0.07 * Math.max(0, Math.sin(th * 5 + phase) * Math.sin(th * 3 - phase * 2));
+          // vertical fibres & snakeskin streaks, warmer and earthier towards the foot
+          const streak = 1 - 0.16 * Math.max(0, Math.sin(th * 5 + phase) * Math.sin(th * 3 - phase * 2 + t * 3));
           const c = stemCol.clone().multiplyScalar(foot * streak);
+          c.lerp(C('#c8b08a'), 0.25 * (1 - t));
           if (t < 0.25) c.lerp(C('#8a7350'), (0.25 - t) * 1.6);
           const w = 1 + 0.04 * Math.sin(th * 3 + phase + t * 4) + (t < 0.2 ? 0.07 * Math.sin(th * 7 + phase) : 0);
           const r = stemProfile[k] * w;
@@ -191,7 +193,7 @@ export class MushroomKit {
     const F = frameFor(top, capAxis);
 
     // volva scales: two ragged ridges around the bulb top
-    if (H > 0.4 && (opts.volva ?? true)) {
+    if (H > 0.6 && (opts.volva ?? true)) {
       const vp = axisAt(0.13);
       const vr = stemProfile[Math.round(rings * 0.13)] * 1.02;
       const VF = frameFor(vp, axisAt(0.2).sub(axisAt(0.08)));
@@ -202,7 +204,7 @@ export class MushroomKit {
       ], seg, { wob: (th) => 1 + 0.08 * Math.sin(th * 9 + phase), color: () => stemCol.clone().multiplyScalar(0.92) });
     }
     // the skirt (annulus) hanging below the cap
-    if (opts.ring ?? H > 0.45) {
+    if (opts.ring ?? H > 0.6) {
       const t0 = 0.78;
       const rp = axisAt(t0);
       const r0 = stemProfile[Math.round(rings * t0)];
@@ -225,7 +227,7 @@ export class MushroomKit {
 
     // cap profile: rim (v = 0) → apex (v = 1)
     const capH = shape === 'cone' ? R * rng.range(1.0, 1.35) : shape === 'flat' ? R * rng.range(0.22, 0.32) : R * rng.range(0.5, 0.68);
-    const n = H > 1.2 ? 9 : H > 0.4 ? 7 : 5;
+    const n = H > 1.2 ? 9 : H > 0.6 ? 7 : H > 0.3 ? 5 : 4;
     const prof = [];
     // the rim rolls under a little
     prof.push({ r: R * 0.93, y: -R * 0.045, v: 0 });
@@ -266,7 +268,8 @@ export class MushroomKit {
 
     // raised warts, denser towards the top, following the cap surface
     const density = opts.warts ?? 1;
-    const nW = Math.round(density * (H > 1 ? 120 : H > 0.4 ? 30 : 7) * Math.min(2.2, R / Math.max(0.05, H * 0.5)));
+    // (bold enough to read from across the glen: a few big flakes, many small spots)
+    const nW = Math.round(density * (H > 1 ? 150 : H > 0.4 ? 32 : 8) * Math.min(2.2, R / Math.max(0.05, H * 0.5)));
     const wartCol = C('#f5ecd8');
     for (let i = 0; i < nW; i++) {
       // pick a profile position (area-weighted towards the rim, but keep the apex covered)
@@ -283,7 +286,7 @@ export class MushroomKit {
       const dr = prof[k1].r - prof[k0].r, dy = prof[k1].y - prof[k0].y;
       const l = Math.hypot(dr, dy) || 1;
       const nn = new THREE.Vector3().addScaledVector(F.x, c * (dy / l)).addScaledVector(F.z, s * (dy / l)).addScaledVector(F.y, -dr / l).normalize();
-      const size = R * (rng.chance(0.25) ? rng.range(0.055, 0.09) : rng.range(0.025, 0.05)) * (1 - t * 0.3);
+      const size = R * (rng.chance(0.3) ? rng.range(0.075, 0.125) : rng.range(0.035, 0.065)) * (1 - t * 0.25);
       wart(this.warts, p, nn, size, wartCol.clone().multiplyScalar(rng.range(0.88, 1.02)), rng);
     }
     return { top, capR: R, capTop: top.y + capH };
@@ -336,20 +339,19 @@ export class MushroomKit {
       const F0 = frameFor(base, tip.clone().sub(base));
       lathe(this.stems, F0, [
         { r: R * 0.18, y: 0, v: 0 },
-        { r: R * 0.13, y: H * 0.5, v: 0.5 },
         { r: R * 0.11, y: base.distanceTo(tip), v: 1 },
-      ], 5, { color: () => C(glow ? '#e8f4ec' : '#e2d2b4') });
+      ], 4, { color: () => C(glow ? '#e8f4ec' : '#e2d2b4') });
       const F = frameFor(tip, tip.clone().sub(base).normalize().lerp(UP, 0.5));
       lathe(capB, F, [
         { r: R * 0.95, y: -R * 0.08, v: 0 },
         { r: R * 0.85, y: R * 0.45, v: 0.4 },
         { r: R * 0.45, y: R * 0.85, v: 0.75 },
         { r: 0, y: R * 1.05, v: 1 },
-      ], 7, { color: () => col });
+      ], 6, { color: () => col });
       lathe(this.gills, F, [
         { r: R * 0.95, y: -R * 0.08, v: 0 },
         { r: R * 0.12, y: R * 0.3, v: 1 },
-      ], 7, { flip: true, disc: R, color: () => C(glow ? '#cfeee4' : '#e8d8bc') });
+      ], 6, { flip: true, disc: R, color: () => C(glow ? '#cfeee4' : '#e8d8bc') });
       if (glow) this.glowPoints.push({ x: tip.x, y: tip.y + R * 0.4, z: tip.z, size: R * 3.2 });
     }
   }

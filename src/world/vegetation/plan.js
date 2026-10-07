@@ -54,10 +54,16 @@ export function forestPlan() {
   const inner = [
     [-21.5, -11], [-16.5, -19.5], [12, -22], [24, -3.5], [-24.5, 1.5], [-22, 17], [22.5, 14.5], [-9.5, -24],
   ];
+  // (as colossal as the spot allows: ⌀ up to 6, slimmer only where space or sight lines demand)
   for (const [x, z] of inner) {
-    const radius = rng.range(1.5, 2.3);
-    const height = rng.range(48, 62);
-    if (ok(x, z, radius, height, 'giant')) add(x, z, radius, height, 'giant');
+    const height = rng.range(52, 66);
+    const r0 = rng.range(2.6, 3.0);
+    for (const k of [1, 0.85, 0.72, 0.6]) {
+      if (ok(x, z, r0 * k, height, 'giant')) {
+        add(x, z, r0 * k, height, 'giant');
+        break;
+      }
+    }
   }
 
   // 2. the wall: two staggered rings, sides and back

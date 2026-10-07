@@ -161,7 +161,7 @@ export function grassTemplate(rng, { cards = [3, 5], height = [0.45, 0.65], spre
 // ─── clover ──────────────────────────────────────────────────────────────────
 /** One heart-shaped leaflet fan; UV maps the leaf texture (base V=0 → tip V=1). */
 function leaflet(B, m, size, color) {
-  const seg = 5;
+  const seg = 4;
   const base = B.count;
   const nm = new THREE.Matrix3().getNormalMatrix(m);
   const n = new THREE.Vector3(0, 1, 0).applyMatrix3(nm).normalize();
@@ -342,7 +342,7 @@ const LEAF_GREEN = '#5d8a3a';
 
 // ─── flower communities ──────────────────────────────────────────────────────
 function bluebells(B, rng) {
-  const stems = rng.int(4, 6);
+  const stems = rng.int(3, 5);
   for (let s = 0; s < stems; s++) {
     const a = rng.range(0, TAU), d = rng.range(0, 0.14);
     const base = new THREE.Vector3(Math.sin(a) * d, 0, Math.cos(a) * d);
@@ -351,7 +351,7 @@ function bluebells(B, rng) {
     // arching stem: rises then nods over to one side
     const pts = archPoints(base, az, h * 1.15, rng.range(1.35, 1.5), rng.range(1.4, 2.0), 4);
     for (let i = 0; i < pts.length - 1; i++) stem(B, pts[i], pts[i + 1], 0.0055, col(GREEN));
-    const bells = rng.int(3, 5);
+    const bells = rng.int(3, 4);
     const blue = col(rng.pick(['#5a62d6', '#6a5ed0', '#4f6ad8', '#7a6ee0']));
     const inner = blue.clone().lerp(col('#d8d8ff'), 0.35);
     for (let k = 0; k < bells; k++) {
@@ -378,7 +378,7 @@ function bluebells(B, rng) {
 }
 
 function forgetMeNots(B, rng) {
-  const stems = rng.int(5, 8);
+  const stems = rng.int(4, 6);
   for (let s = 0; s < stems; s++) {
     const a = rng.range(0, TAU), d = rng.range(0, 0.16);
     const base = new THREE.Vector3(Math.sin(a) * d, 0, Math.cos(a) * d);
@@ -393,7 +393,7 @@ function forgetMeNots(B, rng) {
       blade(B, lb, dir, new THREE.Vector3(Math.cos(az), 0, -Math.sin(az)), 0.05, 0.012, col(LEAF_GREEN), { droop: 0.4, segs: 1 });
     }
     // a little scorpioid cluster of tiny flowers
-    const n = rng.int(4, 7);
+    const n = rng.int(3, 5);
     const blue = col(rng.pick(['#6fa8f0', '#7ab4f4', '#5f9ae8', '#8ab8f0']));
     for (let k = 0; k < n; k++) {
       const p = top.clone().add(new THREE.Vector3(rng.jitter(0.028), rng.jitter(0.012), rng.jitter(0.028)));
@@ -415,7 +415,7 @@ function foxgloves(B, rng) {
     stem(B, base, top, 0.011, col(GREEN), mid);
     const pink = col(rng.pick(['#c8509a', '#b8489c', '#d066a8', '#a85cb8', '#e8d8e8']));
     const inner = col('#f6e6f0');
-    const n = rng.int(9, 13);
+    const n = rng.int(8, 11);
     const face = rng.range(0, TAU);
     for (let k = 0; k < n; k++) {
       const t = 0.32 + (k / n) * 0.62;
@@ -425,7 +425,7 @@ function foxgloves(B, rng) {
       const out = new THREE.Vector3(Math.sin(az), 0, Math.cos(az));
       const axis = out.clone().multiplyScalar(0.8).add(new THREE.Vector3(0, -0.55, 0)).normalize();
       const sz = 1 - t * 0.55;
-      bell(B, p.clone().addScaledVector(out, 0.012), axis, 0.06 * sz, 0.016 * sz, pink, inner, { flare: 0.35, seg: 6 });
+      bell(B, p.clone().addScaledVector(out, 0.012), axis, 0.06 * sz, 0.016 * sz, pink, inner, { flare: 0.35, seg: 5 });
     }
     // tip buds
     for (let k = 0; k < 3; k++) {
@@ -443,7 +443,7 @@ function foxgloves(B, rng) {
 }
 
 function daisies(B, rng) {
-  const n = rng.int(5, 10);
+  const n = rng.int(4, 8);
   for (let s = 0; s < n; s++) {
     const a = rng.range(0, TAU), d = rng.range(0, 0.18);
     const base = new THREE.Vector3(Math.sin(a) * d, 0, Math.cos(a) * d);
@@ -452,7 +452,7 @@ function daisies(B, rng) {
     stem(B, base, top, 0.0035, col(GREEN));
     const nrm = new THREE.Vector3(rng.jitter(0.5), 1, rng.jitter(0.5)).normalize();
     const tipPink = rng.chance(0.4) ? col('#f4c8d8') : null;
-    radialFlower(B, top, nrm, { petals: rng.int(11, 14), len: 0.022, wid: 0.006, petal: tipPink ?? col('#fbfbf4'), disc: col('#f2c230'), discR: 0.0065, tilt: 0.08 });
+    radialFlower(B, top, nrm, { petals: rng.int(9, 12), len: 0.022, wid: 0.007, petal: tipPink ?? col('#fbfbf4'), disc: col('#f2c230'), discR: 0.0065, tilt: 0.08 });
   }
   // basal rosettes of spoon leaves
   for (let i = 0; i < rng.int(4, 7); i++) {
@@ -516,4 +516,76 @@ export function flowerTemplate(kind, rng) {
   const B = new GeoBuilder();
   (KINDS[kind] ?? meadow)(B, rng);
   return B.build();
+}
+
+// ─── broad leaves ────────────────────────────────────────────────────────────
+/**
+ * A rosette of big round leaves on arching stalks (butterbur / wild ginger /
+ * hosta — the lush foreground leaves of the reference paintings). Each blade
+ * is a cupped, drooping disc mapped onto the 'leaf' surface (veins!), darker
+ * at the heart, lighter at the rim. opts: { leaves, size, height, droop }
+ */
+export function broadleafTemplate(rng, { leaves = [5, 8], size = [0.26, 0.38], height = [0.22, 0.5], droop = 0.35, color = '#ffffff' } = {}) {
+  const B = new GeoBuilder();
+  const n = rng.int(leaves[0], leaves[1]);
+  const phase = rng.range(0, TAU);
+  const base = col(color);
+  for (let i = 0; i < n; i++) {
+    const az = phase + (i / n) * TAU + rng.jitter(0.4);
+    const L = rng.range(size[0], size[1]);
+    const h = rng.range(height[0], height[1]);
+    const out = rng.range(0.08, 0.2) + L * 0.25;
+    const dirOut = new THREE.Vector3(Math.sin(az), 0, Math.cos(az));
+    // the stalk arches up and out; the blade hangs from its tip
+    const attach = new THREE.Vector3(dirOut.x * out, h, dirOut.z * out);
+    stem(B, new THREE.Vector3(dirOut.x * 0.02, 0, dirOut.z * 0.02), attach, 0.012, col('#7a9a50'), new THREE.Vector3(dirOut.x * out * 0.35, h * 0.75, dirOut.z * out * 0.35));
+    leafBlade(B, rng, attach, dirOut, L, rng.range(0.82, 1.0), rng.range(0.1, 0.25), droop * rng.range(0.6, 1.3), base);
+  }
+  return B.build();
+}
+
+/** One cupped round leaf blade starting at `p`, pointing along `dir` (horizontal unit). */
+function leafBlade(B, rng, p, dir, L, widthK, cup, droop, tint) {
+  const side = new THREE.Vector3(dir.z, 0, -dir.x);
+  const NV = 5, NU = 4;
+  const base = B.count;
+  const idx0 = B.idx.length;
+  const heart = col('#5b8a3a').multiply(tint);
+  const rim = col('#9cc266').multiply(tint);
+  const lift = rng.range(0.15, 0.4); // the blade is raised a little towards the sky
+  for (let a = 0; a <= NV; a++) {
+    const v = a / NV;
+    // round leaf with a notched (cordate) base where the stalk joins
+    const w = (L * widthK * 0.5) * Math.pow(Math.sin(Math.PI * Math.min(1, 0.1 + v * 0.92)), 0.7);
+    for (let b = 0; b <= NU; b++) {
+      const u = (b / NU) * 2 - 1;
+      const x = u * w;
+      const along = v * L - (a === 0 ? 0 : 0.06 * L * (1 - Math.abs(u)) * (1 - v));
+      const y = cup * x * x / Math.max(0.01, L) * 2 + lift * along - droop * v * v * L;
+      const px = p.x + dir.x * along + side.x * x;
+      const py = p.y + y;
+      const pz = p.z + dir.z * along + side.z * x;
+      const c = heart.clone().lerp(rim, Math.min(1, Math.abs(u) * 0.6 + v * 0.5));
+      B.vert(px, py, pz, 0, 1, 0, 0.5 + u * 0.5, v, c);
+    }
+  }
+  const row = NU + 1;
+  for (let a = 0; a < NV; a++) {
+    for (let b = 0; b < NU; b++) {
+      const i0 = base + a * row + b;
+      B.quad(i0, i0 + 1, i0 + row + 1, i0 + row);
+    }
+  }
+  B.smoothNormals(base, idx0);
+  // make the front face look up (double-sided lighting relies on it)
+  let ny = 0;
+  for (let k = base; k < B.count; k++) ny += B.nor[k * 3 + 1];
+  if (ny < 0) {
+    for (let k = base; k < B.count; k++) for (let c = 0; c < 3; c++) B.nor[k * 3 + c] *= -1;
+    for (let t = idx0; t < B.idx.length; t += 3) {
+      const tmp = B.idx[t + 1];
+      B.idx[t + 1] = B.idx[t + 2];
+      B.idx[t + 2] = tmp;
+    }
+  }
 }

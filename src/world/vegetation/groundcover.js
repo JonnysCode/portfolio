@@ -11,6 +11,11 @@ import { getHeight, getNormal } from '../ground.js';
 import { TAU } from './common.js';
 
 const noise = createNoise2D(31337);
+
+/** Linear mean colour of the bark texture (vertex-coloured bark = neutral at this colour). */
+export const BARK_MEAN = '#6a5845';
+/** Velvety moss tint for vertex-coloured bark & rock (linear-ish sRGB hex). */
+export const MOSS_TINT = '#55702a';
 const UP = new THREE.Vector3(0, 1, 0);
 const _p = new THREE.Vector3();
 const _n = new THREE.Vector3();
@@ -55,8 +60,14 @@ export function mossyRock(B, rng, x, z, size, { flat = 0.6, sink = 0.32, color =
     new THREE.Vector3(size, size, size),
   );
   B.addGeometry(g, m, color);
+  // the true top (after the lumps and the tilt), so snails & co. sit on the stone
+  let top = -Infinity;
+  for (let i = 0; i < p.count; i++) {
+    _p.fromBufferAttribute(p, i).applyMatrix4(m);
+    if (Math.hypot(_p.x - x, _p.z - z) < size * 0.45) top = Math.max(top, _p.y);
+  }
   g.dispose();
-  return { x, z, r: size * Math.max(sx, sz), top: y + size * flat };
+  return { x, z, r: size * Math.max(sx, sz), top: Number.isFinite(top) ? top : y + size * flat };
 }
 
 /** A soft moss mound / cushion (moss material). */
@@ -101,8 +112,9 @@ export function mossMound(B, rng, x, z, w, h, { color = null } = {}) {
 /**
  * A tube along points with radii (bark material, triplanar — no UVs needed).
  * opts.wob(i, θ) → radius multiplier, opts.color(i) → Color, opts.capEnd: close the end.
+ * opts.vcol(i, j, normal, position) → Color per vertex (moss on the upper side …), wins over color.
  */
-export function tube(B, pts, radii, seg, { wob = null, color = null, capStart = false, capEnd = false } = {}) {
+export function tube(B, pts, radii, seg, { wob = null, color = null, vcol = null, capStart = false, capEnd = false } = {}) {
   const n = pts.length;
   const base = B.count;
   const frames = [];
@@ -132,7 +144,7 @@ export function tube(B, pts, radii, seg, { wob = null, color = null, capStart = 
       const cx = Math.cos(th), sz = Math.sin(th);
       _n.set(0, 0, 0).addScaledVector(x, cx).addScaledVector(z, sz);
       _p.copy(pts[i]).addScaledVector(_n, r);
-      B.vert(_p.x, _p.y, _p.z, _n.x, _n.y, _n.z, j / seg, i / (n - 1), c);
+      B.vert(_p.x, _p.y, _p.z, _n.x, _n.y, _n.z, j / seg, i / (n - 1), vcol ? vcol(i, j, _n, _p) : c);
     }
   }
   const row = seg + 1;
@@ -180,7 +192,18 @@ export function fallenLog(B, rng, x, z, len, r, yaw) {
   const pts = groundPath(x - Math.sin(yaw) * len / 2, z - Math.cos(yaw) * len / 2, yaw, len, steps, (t) => r * 0.62 + Math.sin(t * Math.PI) * r * 0.05, rng.jitter(0.25));
   const radii = pts.map((_, i) => r * (1 - 0.18 * (i / steps)) * (1 + 0.06 * Math.sin(i * 1.7)));
   const s = rng.range(0, 10);
+  const bark = new THREE.Color(BARK_MEAN).multiplyScalar(0.85);
+  const moss = new THREE.Color(MOSS_TINT);
+  const mc = new THREE.Color();
+  // moss blankets the upper side, creeping down in tongues; the broken ends stay bare
+  const logMoss = (i, j, nrm, p) => {
+    const tongue = 0.25 * noise(p.x * 1.7 + s, p.z * 1.7) + 0.15 * noise(p.x * 5, p.z * 5 + p.y * 3);
+    const end = i === 0 || i === steps ? 0.35 : 1;
+    const m = THREE.MathUtils.smoothstep(nrm.y + tongue, -0.15, 0.35) * end;
+    return mc.copy(bark).lerp(moss, m * 0.92);
+  };
   tube(B, pts, radii, 14, {
+    vcol: logMoss,
     wob: (i, th) => {
       // broken, splintered ends: radius jags near both tips
       const end = i === 0 || i === steps ? 0.75 + 0.35 * Math.abs(Math.sin(th * 5 + s)) : 1;
@@ -236,3 +259,71 @@ export function twig(B, rng, x, z) {
 
 /** Ground normal convenience (re-export). */
 export { getNormal };
+
+/**
+ * An old, saw-cut tree stump: a flared, mossy bark side (bark builder B) and
+ * a clean cut face with growth rings, heartwood checks and a pale sapwood
+ * band (vertex-coloured, face builder F). Returns { top, r, brackets }.
+ */
+export function stump(B, F, rng, x, z, r, h) {
+  const y0 = getHeight(x, z);
+  const steps = 5;
+  const seg = 16;
+  const tilt = new THREE.Vector3(rng.jitter(0.08), 1, rng.jitter(0.08)).normalize();
+  const pts = [];
+  const radii = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    pts.push(new THREE.Vector3(x + tilt.x * h * t, y0 - 0.25 + (h + 0.25) * t, z + tilt.z * h * t));
+    // root flare at the foot
+    radii.push(r * (1 + 0.45 * Math.pow(1 - t, 3)));
+  }
+  const bark = new THREE.Color(BARK_MEAN).multiplyScalar(0.85);
+  const moss = new THREE.Color(MOSS_TINT);
+  const mc = new THREE.Color();
+  const s = rng.range(0, 10);
+  tube(B, pts, radii, seg, {
+    wob: (i, th) => 1 + 0.06 * Math.sin(th * 5 + s) + (i < 2 ? 0.1 * Math.max(0, Math.sin(th * 4 + s)) : 0),
+    vcol: (i, j, nrm, p) => {
+      const m = THREE.MathUtils.smoothstep(1 - i / steps + 0.35 * noise(p.x * 3 + s, p.y * 2 + p.z * 3), 0.35, 0.8);
+      return mc.copy(bark).lerp(moss, m * 0.9).clone();
+    },
+  });
+  // the cut face: concentric growth rings (narrower towards the bark), a few radial checks
+  const top = pts[steps];
+  const rings = 9;
+  const base = F.count;
+  const early = new THREE.Color('#c9a26a'), late = new THREE.Color('#9c7446'), sap = new THREE.Color('#dcc08a'), heart = new THREE.Color('#8e6438');
+  F.vert(top.x, top.y + 0.004, top.z, tilt.x, tilt.y, tilt.z, 0.5, 0.5, heart);
+  const ref = new THREE.Vector3(1, 0, 0);
+  const u = new THREE.Vector3().crossVectors(tilt, ref).normalize();
+  const v = new THREE.Vector3().crossVectors(u, tilt).normalize();
+  for (let k = 1; k <= rings; k++) {
+    const f = Math.pow(k / rings, 0.8);
+    const c = k === rings ? sap : k % 2 ? late : early;
+    for (let j = 0; j < seg; j++) {
+      const th = (j / seg) * TAU;
+      const rr = r * f * 0.97 * (1 + 0.06 * Math.sin(th * 5 + s));
+      // radial drying checks darken a couple of wedges
+      const check = Math.abs(Math.sin(th * 1.5 + s * 2)) < 0.06 && k < rings - 1 ? 0.55 : 1;
+      const p = top.clone().addScaledVector(u, Math.cos(th) * rr).addScaledVector(v, Math.sin(th) * rr);
+      F.vert(p.x, p.y + 0.004 - f * 0.01, p.z, tilt.x, tilt.y, tilt.z, 0.5 + 0.5 * Math.cos(th) * f, 0.5 + 0.5 * Math.sin(th) * f, c.clone().multiplyScalar(check * (0.92 + 0.08 * rng.next())));
+    }
+  }
+  for (let j = 0; j < seg; j++) F.tri(base, base + 1 + ((j + 1) % seg), base + 1 + j);
+  for (let k = 1; k < rings; k++) {
+    const a0 = base + 1 + (k - 1) * seg, b0 = base + 1 + k * seg;
+    for (let j = 0; j < seg; j++) {
+      const j1 = (j + 1) % seg;
+      F.quad(a0 + j, a0 + j1, b0 + j1, b0 + j);
+    }
+  }
+  const brackets = [];
+  const nb = rng.int(0, 3);
+  for (let i = 0; i < nb; i++) {
+    const a = rng.range(0, TAU);
+    const n = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
+    brackets.push({ p: new THREE.Vector3(x + n.x * r * 1.02, y0 + rng.range(0.1, h * 0.8), z + n.z * r * 1.02), n });
+  }
+  return { top: top.y, r, brackets, x, z };
+}

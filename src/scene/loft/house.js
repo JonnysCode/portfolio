@@ -16,7 +16,7 @@
 // so the whole house leans.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { DEG, TAU, WOOD, IRON, BRASS, TILE, smallBitsRemap, paintBy, board, timber, beamBox, peg, xf, mat4, uvBox, deform, layShingles, ShingleField, shingleGeo, mossGeo, branch, ivyCard, tubeAlong, alongX, noiseA } from './kit.js';
+import { DEG, TAU, WOOD, IRON, BRASS, TILE, addFlowerTuft, smallBitsRemap, paintBy, board, timber, beamBox, peg, xf, mat4, uvBox, deform, layShingles, ShingleField, shingleGeo, mossGeo, branch, ivyCard, tubeAlong, alongX, noiseA } from './kit.js';
 
 // ── dimensions ──────────────────────────────────────────────────────────────
 export const HOUSE = {
@@ -446,6 +446,9 @@ export function buildHouse(ctx, B, mats, env, screens) {
 
   // ── openings: big front window (casements open), side windows, the door ───
   const glass = mats.paint('#9fb8b0');
+  // old glass: the sky's sheen at the top of each pane, the dark room below
+  const gTop = new THREE.Color('#b4cdd0'), gLow = new THREE.Color('#566f74'), gc = new THREE.Color();
+  const pane = (w, h) => paintBy(new THREE.PlaneGeometry(w, h, 1, 2), (x, y) => gc.copy(gLow).lerp(gTop, THREE.MathUtils.clamp(y / h + 0.5, 0, 1) ** 1.6));
   const sash = (F, w, h, color, panesX, panesY) => {
     // a sash frame with glazing bars; glass panes slightly tinted
     const parts = [];
@@ -455,8 +458,8 @@ export function buildHouse(ctx, B, mats, env, screens) {
     F.add(frameMat, xf(beamBox(0.045, h, 0.04), [w / 2 - 0.0225, h / 2, 0]), { color, cast: false });
     for (let i = 1; i < panesX; i++) F.add(frameMat, xf(beamBox(0.018, h, 0.025), [-w / 2 + (w * i) / panesX, h / 2, 0]), { color, cast: false });
     for (let j = 1; j < panesY; j++) F.add(frameMat, xf(beamBox(w, 0.018, 0.025), [0, (h * j) / panesY, 0]), { color, cast: false });
-    F.add(glass, xf(new THREE.PlaneGeometry(w - 0.06, h - 0.06), [0, h / 2, 0]), { color: '#a9c4bc', cast: false });
-    F.add(glass, xf(new THREE.PlaneGeometry(w - 0.06, h - 0.06).rotateY(Math.PI), [0, h / 2, -0.001]), { color: '#a9c4bc', cast: false });
+    F.add(glass, xf(pane(w - 0.06, h - 0.06), [0, h / 2, 0]), { cast: false });
+    F.add(glass, xf(pane(w - 0.06, h - 0.06).rotateY(Math.PI), [0, h / 2, -0.001]), { cast: false });
     return parts;
   };
   // big front window: casing, sill board with a flower box, two casements swung out
@@ -476,7 +479,7 @@ export function buildHouse(ctx, B, mats, env, screens) {
     const tv = v1 - 0.3;
     F.add(frameMat, xf(beamBox(w, 0.05, 0.06), [(u0 + u1) / 2, tv, 0.02]), { color: WOOD.walnut, cast: false });
     for (let i = 1; i < 3; i++) F.add(frameMat, xf(beamBox(0.025, 0.28, 0.04), [u0 + (w * i) / 3, tv + 0.15, 0.02]), { color: WOOD.walnut, cast: false });
-    F.add(glass, xf(new THREE.PlaneGeometry(w, 0.27), [(u0 + u1) / 2, tv + 0.15, 0.0]), { color: '#a9c4bc', cast: false });
+    F.add(glass, xf(pane(w, 0.27), [(u0 + u1) / 2, tv + 0.15, 0.0]), { cast: false });
     // casements: hinged at the outer jambs, opened outwards ~70°
     const cw = w / 2, chh = tv - v0 - 0.03;
     for (const s of [-1, 1]) {
@@ -491,11 +494,16 @@ export function buildHouse(ctx, B, mats, env, screens) {
     const fb = board(w + 0.1, 0.16, 0.2, { along: 'x', rng });
     F.add(mats.wood('#6f5236'), xf(fb, [(u0 + u1) / 2, v0 - 0.15, 0.22]));
     F.add(mats.paint('#3d2b1e'), xf(new THREE.BoxGeometry(w + 0.04, 0.02, 0.15), [(u0 + u1) / 2, v0 - 0.075, 0.22]), { cast: false });
-    for (let i = 0; i < 22; i++) {
+    // low leafy cushions over the soil, then tufts of flowers on stems
+    for (let i = 0; i < 10; i++) {
       const u = u0 + 0.02 + rng.next() * (w - 0.04);
-      const leaf = new THREE.SphereGeometry(rng.range(0.035, 0.06), 6, 4);
-      F.add(mats.paint(), xf(leaf, [u, v0 - 0.05 + rng.range(0, 0.06), 0.22 + rng.jitter(0.06)], null, [1, 0.7, 1]), { color: rng.pick(['#4f7f36', '#5f9440', '#3f6f2e', '#6a9a48']), cast: false });
-      if (i % 2 === 0) F.add(mats.paint(), xf(new THREE.SphereGeometry(rng.range(0.025, 0.04), 6, 4), [u + rng.jitter(0.03), v0 + rng.range(0.0, 0.08), 0.24 + rng.jitter(0.06)]), { color: rng.pick(['#e85d75', '#ffd166', '#f4f1ff', '#c77dff', '#ff8c42', '#e2553f']), cast: false });
+      const leaf = new THREE.SphereGeometry(rng.range(0.035, 0.055), 6, 4);
+      F.add(mats.paint(), xf(leaf, [u, v0 - 0.07 + rng.range(0, 0.03), 0.22 + rng.jitter(0.05)], null, [1.2, 0.55, 1]), { color: rng.pick(['#4f7f36', '#5f9440', '#3f6f2e', '#6a9a48']), cast: false });
+    }
+    const tufts = 7;
+    for (let i = 0; i < tufts; i++) {
+      const u = u0 + 0.06 + ((i + 0.5) / tufts) * (w - 0.12) + rng.jitter(0.03);
+      addFlowerTuft(F, mats, rng, u, v0 - 0.075, 0.22 + rng.jitter(0.03), { r: 0.08, h: rng.range(0.12, 0.2), blooms: rng.int(4, 7) });
     }
     // trailing ivy from the flower box
     for (let i = 0; i < 3; i++) {
@@ -506,6 +514,30 @@ export function buildHouse(ctx, B, mats, env, screens) {
     }
     frontInfo.windowCentre = toWorld(...new THREE.Vector3((u0 + u1) / 2, (v0 + v1) / 2, 0).applyMatrix4(walls.front.m).toArray());
   }
+  // a slate chalkboard hung from a nail on the front wall, left of the big
+  // window: the architecture of this very portfolio, a snail doodle, a TODO list
+  if (env.boards) {
+    const F = walls.front.F;
+    const sw = 0.4, cu = -0.975, cv = 1.12, z = 0.085;
+    const local = mat4([cu, cv, z], [0, 0, -0.035]);
+    const sh = env.boards.addChalkboard(F.matrix.clone().multiply(local).multiply(mat4([0, 0, 0.012])), sw);
+    const B2 = F.at(local);
+    const fw = 0.03;
+    for (const s of [-1, 1]) {
+      B2.add(frameMat, xf(beamBox(sw + 2 * fw, fw, 0.03), [0, s * (sh / 2 + fw / 2), 0.004]), { color: WOOD.walnut, cast: false });
+      B2.add(frameMat, xf(beamBox(fw, sh, 0.03), [s * (sw / 2 + fw / 2), 0, 0.004]), { color: WOOD.walnut, cast: false });
+    }
+    B2.add(mats.paint('#2c3633'), xf(new THREE.PlaneGeometry(sw, sh), [0, 0, 0.0]), { cast: false });
+    // chalk tray with a stub of chalk and a felt sponge
+    B2.add(frameMat, xf(beamBox(sw + 0.02, 0.018, 0.06), [0, -sh / 2 - fw - 0.006, 0.03]), { color: WOOD.walnut, cast: false });
+    B2.add(mats.paint('#f2f0e8'), xf(new THREE.CylinderGeometry(0.007, 0.007, 0.05, 5).rotateZ(Math.PI / 2), [-0.08, -sh / 2 - fw + 0.008, 0.04]), { cast: false });
+    B2.add(mats.paint('#7a5a3e'), xf(new THREE.BoxGeometry(0.07, 0.022, 0.035), [0.1, -sh / 2 - fw + 0.012, 0.035]), { cast: false });
+    // the hanging string to a nail above
+    const top = sh / 2 + fw;
+    const nail = [0, top + 0.12, -0.03];
+    B2.add(mats.rope(), tubeAlong([new THREE.Vector3(-sw * 0.35, top - 0.01, 0.0), new THREE.Vector3(nail[0], nail[1], nail[2] + 0.02), new THREE.Vector3(sw * 0.35, top - 0.01, 0.0)], 0.004, 3, 6), { cast: false });
+    B2.add(ironMat, xf(new THREE.CylinderGeometry(0.008, 0.008, 0.04, 5).rotateX(Math.PI / 2), nail), { cast: false });
+  }
   // smaller side windows: closed casements, warm glowing panes behind (night) — a frame with a cross
   const closedWindow = (w, o, glowing = true) => {
     const F = w.F;
@@ -515,7 +547,7 @@ export function buildHouse(ctx, B, mats, env, screens) {
     F.add(mats.wood(WOOD.oak), xf(board(ww + 0.16, 0.04, 0.14, { along: 'x', rng }), [(u0 + u1) / 2, v0 - 0.02, 0.06]));
     F.add(frameMat, xf(beamBox(0.03, hh, 0.04), [(u0 + u1) / 2, (v0 + v1) / 2, 0.02]), { color: WOOD.walnut, cast: false });
     F.add(frameMat, xf(beamBox(ww, 0.03, 0.04), [(u0 + u1) / 2, (v0 + v1) / 2 + 0.05, 0.02]), { color: WOOD.walnut, cast: false });
-    F.add(glowing ? warm : glass, xf(new THREE.PlaneGeometry(ww, hh), [(u0 + u1) / 2, (v0 + v1) / 2, -0.01]), { cast: false, color: glowing ? undefined : '#a9c4bc' });
+    F.add(glowing ? warm : glass, xf(glowing ? new THREE.PlaneGeometry(ww, hh) : pane(ww, hh), [(u0 + u1) / 2, (v0 + v1) / 2, -0.01]), { cast: false });
     // shutters, folded open against the wall
     for (const s of [-1, 1]) {
       const su = s < 0 ? u0 - 0.06 - ww / 4 : u1 + 0.06 + ww / 4;
@@ -729,6 +761,17 @@ function buildInterior(ctx, B, mats, env, { house, H, toWorldUp, screens }) {
     out.lamp = toWorldUp(j2[0] + 0.05, j2[1] - 0.15, j2[2]);
   }
   SB.build(screenGroup, 'loft-workstation', { mergeShadow: true, remap: smallBitsRemap(mats) });
+  // An invisible click proxy: the room behind the big front window, seen from
+  // INSIDE (BackSide) — a ray through the window hits its far faces (back
+  // wall, floor), so a click anywhere on the glowing window opens
+  // 'this-portfolio', while the rubber duck in front of them still wins.
+  // (material.visible = false → never drawn, still raycast)
+  {
+    const g = new THREE.BoxGeometry(2 * D2 - 0.06, 1.6, 1.45).translate(0.01, 0.82, -0.03);
+    const proxy = new THREE.Mesh(g, ctx.materials.basic('#000000', { visible: false, side: THREE.BackSide }));
+    proxy.name = 'loft-workstation-proxy';
+    screenGroup.add(proxy);
+  }
   // put the hotspot's origin at the monitors (the camera frames the hotspot's
   // origin when its panel opens, and the hover "boing" scales around it)
   const pivot = new THREE.Vector3(deskX + 0.05, deskTop + 0.32, -0.38);

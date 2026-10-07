@@ -96,7 +96,8 @@ async function boot() {
 
   engine.addUpdate(props.tickProps, 25);
   ctx.cameraRig = createCameraRig(ctx);
-  ctx.cameraRig.onSpotChange((id) => id && id !== 'glen' && ctx.ui.showAreaBanner?.(id));
+  // the UI follows the camera (spot bar, labels, banners, keyboard hotspots)
+  ctx.ui.bindWorld?.();
 
   ctx.ui.setProgress(0.95, 'Warming up shaders…');
   // Compile all shaders up front to avoid hitches on first view.

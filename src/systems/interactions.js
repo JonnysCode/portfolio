@@ -1,60 +1,81 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Interactions — clickable hotspots, their affordances, and ground clicks.
+// Interactions — clickable hotspots and their affordances. There is no player
+// any more: the visitor explores by gliding the camera between spots
+// (cameraRig.js) and clicking the little things they discover.
 //
-// • Markers: a gently bobbing golden sparkle floats above every hotspot near
-//   the player (one Points draw call for all of them). Visited exhibits turn
-//   into a little green leaf. Hidden while that hotspot's panel is open.
-// • Hover (mouse): pointer cursor, tooltip, a soft pulsing ring under the
-//   object and a springy "boing" of the hotspot root (scale restored exactly).
-// • Proximity: standing within ~2.5 units shows ui.showPrompt('E · label');
-//   E / Enter / Space activates. Touch: tap the object (or its sparkle).
-// • Ground: tap/click → onGroundClick listeners (the player walks there);
-//   press & hold → the player walks towards the pointer while held.
+// • Markers: gently bobbing golden sparkles (one Points draw call for all)
+//   float above the hotspots of the CURRENT spot; in the 'glen' overview only
+//   the featured pieces get a small one. Visited entries turn into a little
+//   leaf. Markers pop in one by one after the camera lands and hide while
+//   their panel is open.
+// • Secrets (opts.kind === 'secret'): no marker at all — hovering one makes a
+//   pale sparkle appear; activating it the first time counts towards the
+//   "secrets found x/y" discovery counter (chime + toast).
+// • Hover (mouse): pointer cursor, tooltip (label + summary), a soft pulsing
+//   ring under the object and a springy "boing" (scale restored exactly).
+// • Touch: tap the object (or near its sparkle — generous radius).
+// • Keyboard: the UI renders real <button>s for the current spot's hotspots
+//   (forSpot / screenPosition / setFocused) — Tab through them, Enter opens.
 //
-//   const h = ctx.interactions.add(object3d, { entryId, label, onActivate, area, markerHeight, focus, approach })
+//   const h = ctx.interactions.add(object3d, { entryId, label, summary, onActivate, area, kind,
+//                                              markerHeight, focus, enabled, marker })
 //   ctx.interactions.remove(h)          ctx.interactions.activate(h)
-//   ctx.interactions.onGroundClick((point, event) => …)   // point: THREE.Vector3 on the terrain
-//   ctx.interactions.hotspots / hovered / nearest
-//   ctx.interactions.activateNearest()  ctx.interactions.pickGround()  ctx.interactions.pickHotspot()
-//   ctx.interactions.refreshBounds(h)   (call if a hotspot object changes size a lot)
+//   ctx.interactions.hotspots / hovered / focused / nearest (= focused)
+//   ctx.interactions.forSpot(spotId)    ctx.interactions.findByEntry(entryId)
+//   ctx.interactions.screenPosition(h, out?) → { x, y, visible }
+//   ctx.interactions.setFocused(h | null)   (keyboard focus ring + tooltip)
+//   ctx.interactions.setOpen(h | null) / markVisited(entryId) / isVisited(entryId)   (UI bookkeeping)
 //   ctx.interactions.progress() → { visited, total }   ctx.interactions.onVisit(fn(h, progress))
-//   ctx.interactions.gestures           (shared pointer gesture classifier, see gestures.js)
-// Hotspot options: approach=false stops the player from walking over on click;
-// markerHeight = marker height above the object's origin (default: top of its bounds + 0.55).
+//   ctx.interactions.secrets() → { found, total }      ctx.interactions.onSecret(fn(h, secrets, isNew))
+//   ctx.interactions.onGroundClick((point, event) => …)  (tap on empty ground)
+//   ctx.interactions.pickGround() / pickHotspot() / setPointerFromClient(x, y)
+//   ctx.interactions.refreshBounds(h)   (call if a hotspot object changes size a lot)
+//   ctx.interactions.gestures           (shared pointer gesture classifier, pointerGestures.js)
+// Hotspot options: focus = { distance, height, azimuth, polar } for the camera
+// when its entry opens; markerHeight = marker height above the object's origin
+// (default: top of its bounds + 0.45); marker = false hides the sparkle.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { getHeight } from '../world/ground.js';
+import { SPOT_BY_ID } from '../world/layout.js';
 import { palette } from '../core/palette.js';
 import { damp } from '../core/rng.js';
-import { createGestures } from './gestures.js';
+import { createPointerGestures } from './pointerGestures.js';
 
-const MARKER_RANGE = 14; // markers fade in within this distance of the player
-const PROMPT_IN = 2.5; // proximity prompt distance (from the object's bounds)
-const PROMPT_OUT = 3.1;
 const VISITED_KEY = 'woodland:visited';
+const SECRETS_KEY = 'woodland:secrets';
+
+/** Marker kinds (shader). */
+const K_SPARKLE = 0, K_LEAF = 1, K_SECRET = 2;
 
 export function createInteractions(ctx) {
   const { engine, camera } = ctx;
   const canvas = engine.renderer.domElement;
   const isTouch = engine.isTouch;
   const reduced = engine.reducedMotion;
-  const gestures = createGestures(canvas, { isTouch });
+  const gestures = createPointerGestures(canvas);
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   const hotspots = [];
   const groundListeners = new Set();
   const visitListeners = new Set();
+  const secretListeners = new Set();
   let hovered = null;
-  let nearest = null;
+  let focused = null; // keyboard focus
   let openHotspot = null;
   let pointerDirty = false;
   let pointerInside = false;
   let pointerX = 0, pointerY = 0;
-  let steering = false;
   let nextId = 1;
   let lastPop = -1;
+  let lastPick = -99;
+  // markers pop in one by one after the camera lands
+  let settledAt = 0;
+  let wasMoving = false;
+  let lastSpot = null;
 
-  const visited = loadVisited();
+  const visited = loadSet(VISITED_KEY);
+  const secretsFound = loadSet(SECRETS_KEY);
 
   // scratch
   const v = new THREE.Vector3();
@@ -77,7 +98,7 @@ export function createInteractions(ctx) {
   ctx.scene.add(markers);
   function ensureCapacity(n) {
     if (n <= capacity) return;
-    capacity = Math.max(64, Math.ceil(n * 1.5));
+    capacity = Math.max(48, Math.ceil(n * 1.5));
     markerGeo?.dispose();
     markerGeo = new THREE.BufferGeometry();
     const attr = (k, itemSize) => {
@@ -92,9 +113,9 @@ export function createInteractions(ctx) {
     attr('aKind', 1);
     markers.geometry = markerGeo;
   }
-  ensureCapacity(64);
+  ensureCapacity(48);
 
-  // ─── hover / proximity ring ────────────────────────────────────────────────
+  // ─── hover / focus ring ────────────────────────────────────────────────────
   const ringMat = makeRingMaterial();
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 1.0, 56, 1), ringMat);
   ring.rotation.x = -Math.PI / 2;
@@ -138,13 +159,13 @@ export function createInteractions(ctx) {
     return out;
   }
 
-  /** XZ distance from (x, z) to the hotspot's bounds (0 inside). */
-  function boundsDistance(h, x, z) {
+  function markerWorld(h, out) {
     const b = boundsOf(h);
-    h.object.getWorldPosition(wp);
-    const dx = Math.max(Math.abs(x - (wp.x + b.cx)) - b.hx, 0);
-    const dz = Math.max(Math.abs(z - (wp.z + b.cz)) - b.hz, 0);
-    return Math.hypot(dx, dz);
+    h.object.getWorldPosition(out);
+    out.x += b.cx;
+    out.z += b.cz;
+    out.y += h.markerHeight !== undefined ? h.markerHeight : b.top + 0.45;
+    return out;
   }
 
   // ─── picking ───────────────────────────────────────────────────────────────
@@ -193,6 +214,11 @@ export function createInteractions(ctx) {
     return best;
   }
 
+  function markerScale() {
+    engine.renderer.getDrawingBufferSize(bufSize);
+    return bufSize.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5));
+  }
+
   /** Screen-space test against the floating sparkles (and, on touch, a generous radius around objects). */
   function pickMarker(clientX, clientY, generous) {
     const r = canvas.getBoundingClientRect();
@@ -204,8 +230,9 @@ export function createInteractions(ctx) {
       v.project(camera);
       if (v.z > 1) continue;
       const sx = r.left + ((v.x + 1) / 2) * r.width, sy = r.top + ((1 - v.y) / 2) * r.height;
-      const px = (h.__size * markerScale()) / Math.max(dist, 0.1) / (engine.renderer.getPixelRatio() || 1);
-      const reach = px * 0.45 + (generous ? 22 : 8);
+      const pr = engine.renderer.getPixelRatio() || 1;
+      const px = Math.min(60 * pr, Math.max(15 * pr, ((h.__size ?? 1) * markerScale() * 0.42) / Math.max(dist, 0.1))) / pr;
+      const reach = px * 0.5 + (generous ? 22 : 6);
       const d = Math.hypot(sx - clientX, sy - clientY);
       if (d < reach && d < bestD) {
         bestD = d;
@@ -213,15 +240,16 @@ export function createInteractions(ctx) {
       }
     }
     if (best || !generous) return best;
-    // touch: forgive near-misses around small objects
+    // touch: forgive near-misses around small objects (secrets need a closer tap)
     for (const h of hotspots) {
-      if (!h.enabled) continue;
+      if (!isLive(h)) continue;
       centerOf(h, v);
       v.project(camera);
       if (v.z > 1) continue;
       const sx = r.left + ((v.x + 1) / 2) * r.width, sy = r.top + ((1 - v.y) / 2) * r.height;
       const d = Math.hypot(sx - clientX, sy - clientY);
-      if (d < 34 && d < bestD) {
+      const reach = h.kind === 'secret' ? 20 : 34;
+      if (d < reach && d < bestD) {
         bestD = d;
         best = h;
       }
@@ -263,9 +291,9 @@ export function createInteractions(ctx) {
       ctx.ui?.showTooltip?.(h.label ?? '', h);
       ctx.ui?.moveTooltip?.(pointerX, pointerY);
       bounce(h);
-      if (engine.elapsed - lastPop > 0.3) ctx.audio?.play?.('pop');
+      if (engine.elapsed - lastPop > 0.3) ctx.audio?.play?.(h.kind === 'secret' ? 'twinkle' : 'pop');
       lastPop = engine.elapsed;
-    } else ctx.ui?.hideTooltip?.();
+    } else if (!focused) ctx.ui?.hideTooltip?.();
   }
 
   // springy "boing" on the hotspot root; restores the exact original scale
@@ -295,7 +323,7 @@ export function createInteractions(ctx) {
     pointerY = e.clientY;
     pointerDirty = true;
     pointerInside = true;
-    ctx.ui?.moveTooltip?.(e.clientX, e.clientY);
+    if (hovered) ctx.ui?.moveTooltip?.(e.clientX, e.clientY);
   });
   canvas.addEventListener('pointerleave', () => {
     pointerInside = false;
@@ -312,7 +340,7 @@ export function createInteractions(ctx) {
       api.activate(h, { source: 'pointer' });
       return;
     }
-    // tapping the world beside an open panel closes it (instead of wandering off)
+    // tapping the world beside an open panel closes it
     if (ctx.ui?.isPanelOpen) {
       ctx.ui.closePanel?.();
       return;
@@ -320,128 +348,110 @@ export function createInteractions(ctx) {
     const g = pickGround(groundPoint);
     if (g) for (const fn of groundListeners) fn(g.clone(), event);
   });
-  gestures.on('hold', ({ x, y }) => {
-    setNdc(x, y);
-    if (pickHotspot()) return;
-    steering = true;
-    setHovered(null);
-  });
-  gestures.on('holdend', () => {
-    if (!steering) return;
-    steering = false;
-    ctx.player?.steerEnd?.();
-  });
 
-  // ─── keyboard: activate the nearest hotspot ───────────────────────────────
-  window.addEventListener('keydown', (e) => {
-    if (e.code !== 'KeyE' && e.code !== 'Enter' && e.code !== 'Space' && e.code !== 'NumpadEnter') return;
-    const t = e.target;
-    if (t instanceof HTMLElement && t !== document.body && t.closest('button, a, input, textarea, select, [contenteditable], [role="dialog"]')) return;
-    if (!nearest || ctx.ui?.isPanelOpen || ctx.player?.riding || e.repeat) return;
-    e.preventDefault();
-    api.activate(nearest, { source: 'key' });
-  });
+  // ─── which markers show where ─────────────────────────────────────────────
+  const featuredSeen = new Set();
+  function isFeatured(h) {
+    return !!(h.entryId && ctx.content?.getEntry?.(h.entryId)?.featured);
+  }
 
   // ─── per-frame ─────────────────────────────────────────────────────────────
-  let promptShownFor = null;
   engine.addUpdate((dt, t) => {
-    const player = ctx.player;
     const ui = ctx.ui;
     const panelOpen = !!ui?.isPanelOpen;
     if (!panelOpen) openHotspot = null;
-
-    // hold-to-walk: steer towards whatever ground is under the pointer
-    if (steering && player) {
-      setNdc(gestures.x, gestures.y);
-      if (pickGround(groundPoint)) player.steerTowards(groundPoint.x, groundPoint.z);
+    const rig = ctx.cameraRig;
+    const moving = !!rig?.transitioning;
+    const spot = rig?.spot ?? null;
+    if (spot !== lastSpot) {
+      lastSpot = spot;
+      settledAt = Infinity;
     }
+    if (moving) settledAt = Infinity;
+    else if (wasMoving || settledAt === Infinity) settledAt = t;
+    wasMoving = moving;
 
     // hover (mouse only; at most one pick per frame — and now and then while the
     // camera glides things under a resting pointer)
-    if ((pointerDirty || engine.frame % 12 === 0) && pointerInside && !isTouch && gestures.mode === 'none') {
+    const f = engine.frame;
+    if (((pointerDirty && f - lastPick >= 2) || f - lastPick >= 12) && pointerInside && !isTouch && gestures.mode === 'none') {
       pointerDirty = false;
+      lastPick = f;
       setNdc(pointerX, pointerY);
       const hit = pickHotspot();
       setHovered(hit ? hit.hotspot : pickMarker(pointerX, pointerY, false));
     }
     if (hovered && !isLive(hovered)) setHovered(null);
+    if (focused && !isLive(focused)) api.setFocused(null);
 
-    // proximity (nearest hotspot to the player, with hysteresis)
-    let near = null;
-    const riding = !!player?.riding || !!ctx.transport?.busy;
-    if (player && !riding) {
-      let bestD = Infinity;
-      const px = player.position.x, pz = player.position.z;
-      for (const h of hotspots) {
-        if (!h.enabled || h.prompt === false) continue;
-        const d = boundsDistance(h, px, pz);
-        const limit = h === nearest ? PROMPT_OUT : PROMPT_IN;
-        if (d < limit && d < bestD && isLive(h)) {
-          bestD = d;
-          near = h;
-        }
-      }
-    }
-    nearest = near;
-    const promptFor = panelOpen || riding ? null : nearest;
-    if (promptFor !== promptShownFor) {
-      promptShownFor = promptFor;
-      if (promptFor) ui?.showPrompt?.(`${isTouch ? 'Tap' : 'E'} · ${promptFor.label}`, promptFor);
-      else ui?.hidePrompt?.();
-    }
-
-    updateMarkers(dt, t, player, panelOpen, riding);
+    updateMarkers(dt, t, spot, moving, panelOpen);
     updateRing(dt, t, panelOpen);
     updateBounces(dt);
   }, 2);
 
-  function markerWorld(h, out) {
-    const b = boundsOf(h);
-    h.object.getWorldPosition(out);
-    out.x += b.cx;
-    out.z += b.cz;
-    out.y += h.markerHeight !== undefined ? h.markerHeight : b.top + 0.55;
-    return out;
-  }
-
-  function markerScale() {
-    engine.renderer.getDrawingBufferSize(bufSize);
-    return bufSize.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5));
-  }
-
-  function updateMarkers(dt, t, player, panelOpen, riding) {
+  function updateMarkers(dt, t, spot, moving, panelOpen) {
     ensureCapacity(hotspots.length);
     const pos = markerGeo.attributes.position.array;
     const alpha = markerGeo.attributes.aAlpha.array;
     const sizeA = markerGeo.attributes.aSize.array;
     const phase = markerGeo.attributes.aPhase.array;
     const kind = markerGeo.attributes.aKind.array;
-    const k = damp(5, dt);
-    let n = 0;
+    const kUp = damp(6, dt), kDown = damp(10, dt);
+    const sinceLanding = t - settledAt;
+    featuredSeen.clear();
+    let n = 0, order = 0;
     for (const h of hotspots) {
       if (h.marker === false) continue;
       let want = 0;
-      if (player && h.enabled && !riding && !(panelOpen && h === openHotspot)) {
-        h.object.getWorldPosition(wp);
-        const b = boundsOf(h);
-        const d = Math.hypot(wp.x + b.cx - player.position.x, wp.z + b.cz - player.position.z) - Math.max(b.hx, b.hz) * 0.5;
-        want = d < MARKER_RANGE - 3 ? 1 : d < MARKER_RANGE ? (MARKER_RANGE - d) / 3 : 0;
-        if (want > 0 && !isLive(h)) want = 0;
-      }
-      h.__alpha = (h.__alpha ?? 0) + (want - (h.__alpha ?? 0)) * k;
-      if (h.__alpha < 0.01) continue;
+      let targetSize = 1;
+      let k = K_SPARKLE;
+      const isSecret = h.kind === 'secret';
       const isVisited = h.entryId ? visited.has(h.entryId) : false;
-      const hot = h === hovered || h === nearest;
-      const targetSize = (isVisited ? 0.62 : 1.0) * (hot ? 1.25 : 1);
+      if (!h.enabled) want = 0;
+      else if (isSecret) {
+        // secrets never advertise themselves: a pale sparkle only while hovered
+        want = h === hovered || t < (h.__sparkUntil ?? 0) ? 1 : 0;
+        targetSize = 0.8;
+        k = K_SECRET;
+      } else if (panelOpen && h === openHotspot) want = 0;
+      else if (moving) want = 0;
+      else {
+        if (h.area && h.area === spot) {
+          want = panelOpen ? 0.4 : 1;
+          targetSize = isVisited ? 0.66 : 1;
+        } else if (spot === 'glen' && isFeatured(h) && !featuredSeen.has(h.entryId)) {
+          featuredSeen.add(h.entryId);
+          want = 0.85;
+          targetSize = 0.62;
+        } else if (!h.entryId && !isSecret && h.onActivate && h.area !== spot && spot !== 'glen') {
+          // little "action" hotspots (the snail lift) beckon from neighbouring spots
+          want = 0.8;
+          targetSize = 0.7;
+        }
+        if (want > 0) {
+          // pop in one after another once the camera has landed
+          const delay = 0.2 + order * 0.11;
+          order++;
+          if (sinceLanding < delay) want = 0;
+          if (want > 0 && !isLive(h)) want = 0;
+        }
+        k = isVisited ? K_LEAF : K_SPARKLE;
+      }
+      const hot = h === hovered || h === focused;
+      if (hot && !isSecret) targetSize *= 1.25;
+      const a0 = h.__alpha ?? 0;
+      h.__alpha = a0 + (want - a0) * (want > a0 ? kUp : kDown);
+      if (h.__alpha < 0.01) continue;
       h.__size = (h.__size ?? targetSize) + (targetSize - (h.__size ?? targetSize)) * damp(8, dt);
       markerWorld(h, v);
       pos[n * 3] = v.x;
       pos[n * 3 + 1] = v.y;
       pos[n * 3 + 2] = v.z;
-      alpha[n] = h.__alpha * (isVisited ? 0.85 : 1);
-      sizeA[n] = h.__size;
+      alpha[n] = h.__alpha;
+      // a little overshoot as it pops in
+      sizeA[n] = h.__size * (reduced ? 1 : 1 + 0.35 * Math.sin(Math.min(1, h.__alpha) * Math.PI) * (want > a0 ? 1 : 0));
       phase[n] = (h.id * 1.618) % (Math.PI * 2);
-      kind[n] = isVisited ? 1 : 0;
+      kind[n] = k;
       n++;
     }
     markerGeo.setDrawRange(0, n);
@@ -449,17 +459,18 @@ export function createInteractions(ctx) {
     markers.visible = n > 0;
     markerMat.uniforms.uTime.value = reduced ? 0 : t;
     markerMat.uniforms.uScale.value = markerScale();
+    markerMat.uniforms.uPx.value = engine.renderer.getPixelRatio() || 1;
   }
 
   function updateRing(dt, t, panelOpen) {
-    const want = panelOpen ? null : hovered ?? nearest;
+    const want = panelOpen ? null : hovered ?? focused;
     if (want && want !== ringFor) {
       ringFor = want;
       const b = boundsOf(want);
-      ringRadius = Math.max(0.7, Math.max(b.hx, b.hz) * 1.08 + 0.25);
+      ringRadius = Math.max(0.45, Math.min(3.2, Math.max(b.hx, b.hz) * 1.08 + 0.2));
       ringAlpha = Math.min(ringAlpha, 0.2);
     }
-    const target = want ? (want === hovered ? 1 : 0.7) : 0;
+    const target = want ? 1 : 0;
     ringAlpha += (target - ringAlpha) * damp(want ? 9 : 6, dt);
     if (ringAlpha < 0.01 || !ringFor) {
       ring.visible = false;
@@ -469,18 +480,26 @@ export function createInteractions(ctx) {
     const b = boundsOf(ringFor);
     ringFor.object.getWorldPosition(wp);
     const x = wp.x + b.cx, z = wp.z + b.cz;
+    const bottom = wp.y + b.bottom;
     let gy = getHeight(x, z);
-    for (let i = 0; i < 4; i++) {
-      const a = (i / 4) * Math.PI * 2;
-      gy = Math.max(gy, getHeight(x + Math.cos(a) * ringRadius, z + Math.sin(a) * ringRadius));
+    // things standing on the ground get the ring on the moss; things up a tree on their base
+    if (bottom - gy < 1.2) {
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2;
+        gy = Math.max(gy, getHeight(x + Math.cos(a) * ringRadius, z + Math.sin(a) * ringRadius));
+      }
     }
-    const baseY = Math.max(gy, wp.y + b.bottom);
-    ring.position.set(x, baseY + 0.05, z);
+    const baseY = Math.max(gy, bottom);
+    ring.position.set(x, baseY + 0.04, z);
     const pop = 1 + 0.08 * Math.sin(t * 3.2);
     ring.scale.setScalar(ringRadius * (reduced ? 1 : pop));
-    ringMat.uniforms.uAlpha.value = ringAlpha * (1 - 0.35 * (ctx.env?.night ?? 0));
+    ringMat.uniforms.uAlpha.value = ringAlpha * (ringFor.kind === 'secret' ? 0.6 : 1) * (1 - 0.3 * (ctx.env?.night ?? 0));
     ringMat.uniforms.uTime.value = t;
     ring.visible = true;
+  }
+
+  function secretKey(h) {
+    return h.secretId ?? `${h.area ?? 'glen'}:${h.label ?? h.id}`;
   }
 
   const api = {
@@ -489,20 +508,23 @@ export function createInteractions(ctx) {
     get hovered() {
       return hovered;
     },
-    /** The hotspot the player is standing next to (proximity prompt), or null. */
-    get nearest() {
-      return nearest;
+    /** The keyboard-focused hotspot (kept as `nearest` for older callers). */
+    get focused() {
+      return focused;
     },
-    /** True while the visitor is press-and-hold steering the player. */
+    get nearest() {
+      return focused;
+    },
     get steering() {
-      return steering;
+      return false;
     },
     /**
      * Register a clickable object.
      * @param {THREE.Object3D} object
-     * @param {{entryId?:string, label?:string, area?:string, onActivate?:(h:any)=>void,
-     *          markerHeight?:number, focus?:{distance?:number, height?:number}, enabled?:boolean,
-     *          approach?:boolean, marker?:boolean, prompt?:boolean}} opts
+     * @param {{entryId?:string, label?:string, summary?:string, area?:string, kind?:'secret',
+     *          onActivate?:(h:any)=>void, markerHeight?:number,
+     *          focus?:{distance?:number, height?:number, azimuth?:number, polar?:number},
+     *          enabled?:boolean, marker?:boolean, secretId?:string}} opts
      */
     add(object, opts = {}) {
       const entry = opts.entryId ? ctx.content.getEntry(opts.entryId) : null;
@@ -515,7 +537,7 @@ export function createInteractions(ctx) {
         summary: opts.summary ?? entry?.summary ?? '',
         bounds: null,
         get visited() {
-          return h.entryId ? visited.has(h.entryId) : false;
+          return h.entryId ? visited.has(h.entryId) : h.kind === 'secret' ? secretsFound.has(secretKey(h)) : false;
         },
         worldPosition(target = new THREE.Vector3()) {
           return object.getWorldPosition(target);
@@ -539,35 +561,87 @@ export function createInteractions(ctx) {
       }
       delete h.object.userData.__hotspot;
       if (hovered === h) setHovered(null);
-      if (nearest === h) nearest = null;
+      if (focused === h) focused = null;
       if (ringFor === h) ringFor = null;
     },
-    /** opts.source: 'pointer' (walk over), 'key' (turn to look) or undefined (programmatic). */
+    /** Open a hotspot: its entry panel (camera frames it), its own action, or a secret. */
     activate(h, { source } = {}) {
       if (!h?.enabled) return;
+      if (h.kind === 'secret') {
+        bounce(h);
+        h.__sparkUntil = engine.elapsed + 1.6; // a twinkle where it was found (touch has no hover)
+        ctx.audio?.play?.('click');
+        const key = secretKey(h);
+        const isNew = !secretsFound.has(key);
+        if (isNew) {
+          secretsFound.add(key);
+          saveSet(SECRETS_KEY, secretsFound);
+        }
+        const s = api.secrets();
+        for (const fn of secretListeners) fn(h, s, isNew);
+        h.onActivate?.(h);
+        return;
+      }
       ctx.audio?.play?.('click');
       openHotspot = h;
-      const player = ctx.player;
-      if (player && !player.riding && !ctx.transport?.busy) {
-        centerOf(h, v);
-        const b = boundsOf(h);
-        const d = Math.hypot(v.x - player.position.x, v.z - player.position.z);
-        if (source === 'pointer' && h.approach !== false && d > Math.max(b.hx, b.hz) + 3 && d < 45) {
-          player.approach(v.x, v.z, { distance: Math.max(b.hx, b.hz) + 1.1 });
-        } else if (source) player.face(v.x, v.z);
-      }
-      if (h.entryId && !visited.has(h.entryId)) {
-        visited.add(h.entryId);
-        saveVisited(visited);
-        const p = api.progress();
-        for (const fn of visitListeners) fn(h, p);
-      }
-      if (h.onActivate) h.onActivate(h);
+      if (h.entryId) api.markVisited(h.entryId);
+      if (h.onActivate) h.onActivate(h, { source });
       else if (h.entryId) ctx.ui?.openEntry?.(h.entryId, { hotspot: h });
     },
+    /** The UI opened this hotspot's entry by other means (guidebook, prev/next): hide its marker. */
+    setOpen(h) {
+      openHotspot = h ?? null;
+    },
+    /** Remember an entry as read (also when opened from the guidebook). */
+    markVisited(entryId) {
+      if (!entryId || visited.has(entryId)) return;
+      visited.add(entryId);
+      saveSet(VISITED_KEY, visited);
+      const h = api.findByEntry(entryId);
+      const p = api.progress();
+      for (const fn of visitListeners) fn(h, p);
+    },
     activateNearest() {
-      if (nearest) api.activate(nearest, { source: 'key' });
-      return nearest;
+      if (focused) api.activate(focused, { source: 'key' });
+      return focused;
+    },
+    /** The (deduplicated) non-secret hotspots presented at a spot. */
+    forSpot(spotId) {
+      const seen = new Set();
+      const out = [];
+      for (const h of hotspots) {
+        if (h.kind === 'secret' || !h.enabled || h.area !== spotId) continue;
+        if (!h.entryId && !h.onActivate) continue;
+        const key = h.entryId ?? `#${h.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(h);
+      }
+      return out;
+    },
+    /** The first hotspot that opens an entry. */
+    findByEntry(entryId) {
+      return hotspots.find((h) => h.entryId === entryId && h.enabled) ?? null;
+    },
+    /** Screen position (client px) of a hotspot's marker anchor. */
+    screenPosition(h, out = {}) {
+      markerWorld(h, v);
+      v.y -= 0.25;
+      v.project(camera);
+      const r = canvas.getBoundingClientRect();
+      out.x = r.left + ((v.x + 1) / 2) * r.width;
+      out.y = r.top + ((1 - v.y) / 2) * r.height;
+      out.visible = v.z < 1 && Math.abs(v.x) < 1.02 && Math.abs(v.y) < 1.02;
+      return out;
+    },
+    /** Keyboard focus: ring + sparkle highlight (the UI shows the tooltip). */
+    setFocused(h) {
+      if (focused === h) return;
+      focused = h;
+      if (h) {
+        bounce(h);
+        ctx.audio?.play?.('pop');
+      }
     },
     onGroundClick(fn) {
       groundListeners.add(fn);
@@ -578,12 +652,27 @@ export function createInteractions(ctx) {
       visitListeners.add(fn);
       return () => visitListeners.delete(fn);
     },
+    /** fn(hotspot, { found, total }, isNew) whenever a secret is activated. */
+    onSecret(fn) {
+      secretListeners.add(fn);
+      return () => secretListeners.delete(fn);
+    },
     /** How many distinct content entries have been discovered. */
     progress() {
       const all = new Set(hotspots.filter((h) => h.entryId).map((h) => h.entryId));
       let seen = 0;
       for (const id of all) if (visited.has(id)) seen++;
       return { visited: seen, total: all.size };
+    },
+    /** How many of the registered secrets have been found. */
+    secrets() {
+      const all = new Set(hotspots.filter((h) => h.kind === 'secret').map(secretKey));
+      let found = 0;
+      for (const k of all) if (secretsFound.has(k)) found++;
+      return { found, total: all.size };
+    },
+    isVisited(entryId) {
+      return visited.has(entryId);
     },
     refreshBounds(h) {
       return computeBounds(h);
@@ -593,38 +682,44 @@ export function createInteractions(ctx) {
     setPointerFromClient(x, y) {
       setNdc(x, y);
     },
+    /** Spot ids that exist (for hotspot areas). */
+    isSpot(id) {
+      return !!SPOT_BY_ID[id];
+    },
   };
   return api;
 }
 
-function loadVisited() {
+function loadSet(key) {
   try {
-    const raw = localStorage.getItem(VISITED_KEY);
+    const raw = localStorage.getItem(key);
     return new Set(raw ? JSON.parse(raw) : []);
   } catch {
     return new Set();
   }
 }
-function saveVisited(set) {
+function saveSet(key, set) {
   try {
-    localStorage.setItem(VISITED_KEY, JSON.stringify([...set]));
+    localStorage.setItem(key, JSON.stringify([...set]));
   } catch {
-    /* private mode etc. — visited state is only a nicety */
+    /* private mode etc. — discovery state is only a nicety */
   }
 }
 
-/** Golden four-point sparkle (unvisited) / little green leaf (visited) point sprites. */
+/** Golden sparkle (unvisited) / little green leaf (visited) / pale secret twinkle point sprites. */
 function makeMarkerMaterial() {
   const c = (hex) => new THREE.Color(hex);
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
       uScale: { value: 600 },
-      uGold: { value: c(palette.postYellow) },
+      uGold: { value: c(palette.postYellow ?? '#ffcc33') },
       uCore: { value: c(palette.spots) },
       uEdge: { value: c(palette.capBrown) },
       uLeaf: { value: c(palette.leafLight) },
       uLeafDark: { value: c(palette.leafDark) },
+      uMint: { value: c('#c8fff0') },
+      uPx: { value: 1 },
     },
     vertexShader: /* glsl */ `
       attribute float aAlpha;
@@ -633,19 +728,23 @@ function makeMarkerMaterial() {
       attribute float aKind;
       uniform float uTime;
       uniform float uScale;
+      uniform float uPx;
       varying float vAlpha;
       varying float vKind;
       varying float vSpin;
+      varying float vTw;
       void main() {
         vec3 p = position;
-        p.y += sin(uTime * 2.1 + aPhase) * 0.11;
+        p.y += sin(uTime * 2.1 + aPhase) * 0.09;
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
         float pulse = 1.0 + 0.07 * sin(uTime * 3.3 + aPhase * 1.7);
-        gl_PointSize = clamp(aSize * pulse * uScale / max(0.1, -mv.z), 0.0, 160.0);
+        // never smaller than a readable dot, never a blob filling the screen
+        gl_PointSize = clamp(aSize * pulse * uScale * 0.42 / max(0.1, -mv.z), 15.0 * uPx, 60.0 * uPx) * step(0.001, aAlpha);
         vAlpha = aAlpha;
         vKind = aKind;
-        vSpin = aKind > 0.5 ? 0.5 + 0.25 * sin(uTime * 1.6 + aPhase) : sin(uTime * 0.9 + aPhase) * 0.35;
+        vSpin = aKind > 0.5 && aKind < 1.5 ? 0.5 + 0.25 * sin(uTime * 1.6 + aPhase) : sin(uTime * 0.9 + aPhase) * 0.35 + uTime * (aKind > 1.5 ? 0.8 : 0.0);
+        vTw = 0.75 + 0.25 * sin(uTime * 7.0 + aPhase * 3.0);
       }
     `,
     fragmentShader: /* glsl */ `
@@ -654,9 +753,11 @@ function makeMarkerMaterial() {
       uniform vec3 uEdge;
       uniform vec3 uLeaf;
       uniform vec3 uLeafDark;
+      uniform vec3 uMint;
       varying float vAlpha;
       varying float vKind;
       varying float vSpin;
+      varying float vTw;
       void main() {
         vec2 uv = gl_PointCoord * 2.0 - 1.0;
         uv.y = -uv.y;
@@ -664,19 +765,20 @@ function makeMarkerMaterial() {
         vec2 q = mat2(cs, -sn, sn, cs) * uv;
         vec3 col;
         float a;
+        float r = length(uv);
         if (vKind < 0.5) {
           // sparkle: astroid-like four-point star with a cream core and a soft halo
           float s = pow(abs(q.x), 0.55) + pow(abs(q.y), 0.55);
           float star = 1.0 - smoothstep(0.78, 0.84, s);
           float edge = smoothstep(0.62, 0.74, s);
           float core = 1.0 - smoothstep(0.0, 0.5, length(q) * 1.8);
-          col = mix(uGold, uEdge, edge * 0.85);
+          col = mix(uGold, uEdge, edge * 0.7);
           col = mix(col, uCore, core);
-          float r = length(uv);
-          float halo = exp(-r * r * 5.0) * 0.45;
+          float halo = exp(-r * r * 5.0) * 0.5;
           a = max(star, halo);
-          col = mix(uGold * 1.1, col, star);
-        } else {
+          col = mix(uGold * 1.15, col, star);
+          col *= 1.25;
+        } else if (vKind < 1.5) {
           // leaf: a lens shape with a midrib
           vec2 l = q * vec2(1.6, 1.0);
           float d = max(length(l - vec2(0.55, 0.0)), length(l + vec2(0.55, 0.0)));
@@ -684,10 +786,18 @@ function makeMarkerMaterial() {
           float edge = smoothstep(0.86, 0.98, d);
           float rib = (1.0 - smoothstep(0.0, 0.06, abs(q.x))) * step(abs(q.y), 0.75);
           col = mix(uLeaf, uLeafDark, max(edge, rib * 0.7));
-          float r = length(uv);
-          float halo = exp(-r * r * 6.0) * 0.25;
+          float halo = exp(-r * r * 6.0) * 0.3;
           a = max(leaf, halo);
           col = mix(uCore, col, leaf);
+        } else {
+          // secret: a slim twinkling cross of pale mint light with tiny satellites
+          float thin = exp(-abs(q.x) * 26.0) * (1.0 - smoothstep(0.2, 1.0, abs(q.y)))
+                     + exp(-abs(q.y) * 26.0) * (1.0 - smoothstep(0.2, 1.0, abs(q.x)));
+          float core = exp(-r * r * 30.0);
+          vec2 s1 = uv - vec2(0.55, 0.45), s2 = uv + vec2(0.5, 0.35);
+          float sats = exp(-dot(s1, s1) * 140.0) + exp(-dot(s2, s2) * 160.0);
+          a = clamp(thin * vTw + core + sats * vTw + exp(-r * r * 4.0) * 0.25, 0.0, 1.0);
+          col = mix(uMint, uCore, core) * 1.3;
         }
         a *= vAlpha;
         if (a < 0.01) discard;
@@ -697,10 +807,11 @@ function makeMarkerMaterial() {
     `,
     transparent: true,
     depthWrite: false,
+    depthTest: false,
   });
 }
 
-/** Soft glowing ring that pulses under the hovered / nearest hotspot. */
+/** Soft glowing ring that pulses under the hovered / focused hotspot. */
 function makeRingMaterial() {
   return new THREE.ShaderMaterial({
     uniforms: {
@@ -710,10 +821,8 @@ function makeRingMaterial() {
       uCore: { value: new THREE.Color(palette.spots) },
     },
     vertexShader: /* glsl */ `
-      varying vec2 vUv;
       varying vec3 vPos;
       void main() {
-        vUv = uv;
         vPos = position;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }

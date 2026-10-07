@@ -1,29 +1,38 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Vegetation — the forest around and inside the glen.
 //
-//   forest wall   colossal mossy trees (r ≈ 23–38, sides & back; a few step
-//                 inside between the spots), silver birches, buttress roots,
-//                 ivy, a high leaf-card canopy           (vegetation/trees.js)
+//   forest wall   colossal mossy trees (⌀ 3–6, 45–66 tall; r ≈ 23–38 on the
+//                 sides & back, the biggest stepping inside between the spots),
+//                 silver birches, buttress roots, moss creeping up the bark,
+//                 side limbs reaching into the clearing with ivy curtains, a
+//                 high leaf-card canopy                     (vegetation/trees.js)
 //   giants        GIANT fly agarics lining the front of the main path and
-//                 clustered at the glen's edges          (vegetation/mushrooms.js)
+//                 clustered at the glen's edges, plus troops of fly agarics of
+//                 every size along the paths            (vegetation/mushrooms.js)
 //   ground        mossy rocks & boulders, moss mounds, fallen mossy logs with
-//                 shelf fungi, small exposed roots, twigs (vegetation/groundcover.js)
-//   undergrowth   ferns (many, three sizes), grass tussocks, clover, wildflower
+//                 shelf fungi, old saw-cut stumps with growth rings, small
+//                 exposed roots, twigs                (vegetation/groundcover.js)
+//   undergrowth   ferns (three sizes), grass tussocks, clover, wildflower
 //                 communities (bluebells, forget-me-nots, foxgloves, daisies,
-//                 buttercups, meadow mix), toadstools, boletes, bonnet tufts and
-//                 tiny bioluminescent mushrooms that glow at night
-//                 (vegetation/plants.js, instanced, wind sway)
-//   framing       big ferns at the front edge for depth
+//                 buttercups, meadow mix), broad-leaf clumps, bilberry shrubs,
+//                 toadstools, boletes, bonnet tufts and tiny bioluminescent
+//                 mushrooms that glow at night — scattered by biome fields and
+//                 gathered into lush beds   (vegetation/plants.js, instanced, wind)
+//   litter        fallen leaves & pebbles                 (vegetation/litter.js)
+//   framing       big fronds & broad leaves rising into the lower corners of
+//                 every spot shot, a fern fringe at the front edge
+//   secrets       a fairy ring (hotspot), snail stones for the wild snails
 //
 // Placement (vegetation/zones.js): only on free forest floor — never on
 // paths, pads (and the dressed rings around them), the stream & its banks,
 // the pond, the waterfall outcrop or the Great Oak's root zone — and nothing
-// tall may stand in any spot camera's line of sight (plain, -wide, -close).
+// tall may stand in any spot camera's line of sight (plain, -wide, -close;
+// framing plants are tested against the spots' SUBJECTS instead).
 // Counts scale with ctx.quality.density.
 //
-// Result (ctx.modules.vegetation):
-//   { trees, giants, flowerPatches: [{x,y,z,r}], glowSpots: [{x,y,z}],
-//     mossyRocks: [{x,y,z,r}], logs, treesNear(x, z, radius, out), stats }
+// Result (ctx.modules.vegetation; also ctx.forest):
+//   { trees, giants, flowerPatches: [{x,y,z,r,kind}], glowSpots: [{x,y,z}],
+//     mossyRocks: [{x,y,z,r}], snailRocks, logs, stumps, treesNear(x, z, radius, out), stats }
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../core/rng.js';
@@ -31,12 +40,13 @@ import { getHeight, getPathDistance, getStreamDistance, pathPolylines } from './
 import { STREAM, SPOTS } from './layout.js';
 import { glowQuads } from '../props/glow.js';
 import { fieldBroad, fieldMid, fieldFine, fieldAlt, GeoBuilder, instanced, staticMesh, TAU } from './vegetation/common.js';
-import { canGrow, isClearOfViews, blocksView, oakDist, cameraClearance } from './vegetation/zones.js';
+import { canGrow, isClearOfViews, isClearOfSubjects, blocksView, oakDist, cameraClearance } from './vegetation/zones.js';
 import { forestPlan } from './vegetation/plan.js';
+import { buildLitter } from './vegetation/litter.js';
 import { buildTree, clumpTemplate } from './vegetation/trees.js';
 import { MushroomKit, CAP_REDS, CAP_BROWNS } from './vegetation/mushrooms.js';
-import { mossyRock, mossMound, fallenLog, smallRoot, twig } from './vegetation/groundcover.js';
-import { fernTemplate, grassTemplate, cloverTemplate, flowerTemplate, FLOWER_KINDS } from './vegetation/plants.js';
+import { mossyRock, mossMound, fallenLog, smallRoot, twig, stump, BARK_MEAN } from './vegetation/groundcover.js';
+import { fernTemplate, grassTemplate, cloverTemplate, flowerTemplate, broadleafTemplate, FLOWER_KINDS } from './vegetation/plants.js';
 
 /** Spatial hash of solid things (trunks, rocks, logs, giant stems) for spacing. */
 class Occupancy {
@@ -111,14 +121,15 @@ export default async function build(ctx) {
 
   // ── 1. the forest wall ────────────────────────────────────────────────────
   const plan = forestPlan();
-  const builders = { bark: new GeoBuilder(), birch: new GeoBuilder(), ivy: new GeoBuilder() };
+  // (bark is vertex-coloured: moss creeping up the trunks, mossy roots & logs)
+  const builders = { bark: new GeoBuilder(BARK_MEAN), birch: new GeoBuilder(), ivy: new GeoBuilder() };
   const clumps = [];
   for (const t of plan.trees) {
     buildTree(t, builders, clumps, { density });
     occ.add(t.x, t.z, t.radius * 1.6, 'tree');
   }
   // the canopy clump template (also used for the forest-edge bushes below)
-  const clumpGeo = clumpTemplate(rng.fork('clump'), tier === 'low' ? 90 : 130, { size: [0.25, 0.38] });
+  const clumpGeo = clumpTemplate(rng.fork('clump'), tier === 'low' ? 70 : 104, { size: [0.27, 0.4] });
 
   // ── 2. giant fly agarics ──────────────────────────────────────────────────
   const giantKit = new MushroomKit(rng.fork('giants'));
@@ -132,7 +143,7 @@ export default async function build(ctx) {
     const y = getHeight(x, z);
     if (!isClearOfViews(x, y, z, H + R * 0.5, R * 0.95)) return false;
     const brown = opts.brown ?? rng.chance(0.18);
-    const shape = opts.shape ?? (rng.chance(0.12) ? 'cone' : rng.chance(0.3) ? 'flat' : 'dome');
+    const shape = opts.shape ?? (rng.chance(0.04) ? 'cone' : rng.chance(0.3) ? 'flat' : 'dome');
     const glowGills = brown && rng.chance(0.75);
     if (glowGills) glowSpots.push({ x, y: y + H * 0.85, z });
     giantKit.amanita(x, y, z, {
@@ -205,10 +216,65 @@ export default async function build(ctx) {
     }
   }
 
+  // (c) troops of fly agarics of every size (the fly-agaric forest path): a
+  //     tall one or two, a crowd of knee-high ones, buttons at their feet —
+  //     along the path edges and at the glen's edges
+  const troops = [];
+  {
+    const tryTroop = (cx, cz) => {
+      if (!canGrow(cx, cz, { margin: 0.3 })) return false;
+      if (troops.some((t) => Math.hypot(t.x - cx, t.z - cz) < 3.2)) return false;
+      troops.push({ x: cx, z: cz });
+      const n = rng.int(4, 9);
+      const brown = rng.chance(0.15);
+      for (let i = 0; i < n; i++) {
+        const a = rng.range(0, TAU), d = Math.sqrt(rng.next()) * rng.range(0.6, 1.5);
+        const x = cx + Math.sin(a) * d, z = cz + Math.cos(a) * d;
+        if (!canGrow(x, z) || occ.clearance(x, z, 2) < 0.15) continue;
+        // sizes fall off from the troop's heart
+        const H = (i === 0 ? rng.range(0.9, 1.5) : rng.range(0.22, 0.95)) * (1 - d * 0.18);
+        const R = H * rng.range(0.42, 0.62);
+        const y = getHeight(x, z);
+        if (H > 0.6 && !isClearOfViews(x, y, z, H + R * 0.4, R)) continue;
+        const kit = H > 0.8 ? giantKit : smallKit;
+        kit.amanita(x, y, z, {
+          height: H,
+          capR: R,
+          shape: H < 0.35 && rng.chance(0.5) ? 'dome' : rng.chance(0.35) ? 'flat' : 'dome',
+          color: brown ? rng.pick(CAP_BROWNS) : rng.pick(CAP_REDS),
+          lean: rng.range(0.03, 0.2),
+          seg: H > 0.8 ? 20 : undefined,
+        });
+        occ.add(x, z, R * 0.3, 'toadstool');
+      }
+      return true;
+    };
+    // along the paths (outside the pads' dressed rings, in the frames' margins)
+    for (const p of pathPolylines) {
+      for (let i = 0; i < p.pts.length; i += 3) {
+        if (!rng.chance(p.id === 'main' ? 0.4 : 0.22)) continue;
+        const q = p.pts[i], nx = p.pts[Math.min(p.pts.length - 1, i + 1)], pv = p.pts[Math.max(0, i - 1)];
+        let tx = nx.x - pv.x, tz = nx.z - pv.z;
+        const l = Math.hypot(tx, tz) || 1;
+        tx /= l;
+        tz /= l;
+        const side = rng.chance(0.5) ? 1 : -1;
+        const off = p.halfWidth * rng.range(1.7, 2.8);
+        tryTroop(q.x - tz * off * side, q.z + tx * off * side);
+      }
+    }
+    // the glen's edges and the feet of the giants
+    for (let k = 0; k < 160 && troops.length < Math.round(38 * Math.min(1.2, density)); k++) {
+      const az = rng.range(-Math.PI, Math.PI);
+      const r = rng.range(11, 29);
+      tryTroop(Math.sin(az) * r, Math.cos(az) * r);
+    }
+  }
+
   // ── 3. rocks, moss mounds, logs, roots, twigs ─────────────────────────────
   const rockB = new GeoBuilder();
   const moundB = new GeoBuilder();
-  const smallBarkB = new GeoBuilder();
+  const smallBarkB = new GeoBuilder(new THREE.Color(BARK_MEAN).multiplyScalar(0.8));
   const rockTints = ['#9c978c', '#a39d90', '#8f8c86', '#a8a092', '#969a94'];
   // boulders near the forest wall and big trees
   for (let k = 0; k < Math.round(26 * density); k++) {
@@ -223,7 +289,7 @@ export default async function build(ctx) {
     mossyRocks.push({ x, y: res.top, z, r: res.r });
   }
   // fallen logs at the edges
-  for (let k = 0; k < 12 && logs.length < Math.round(6 * density + 1); k++) {
+  for (let k = 0; k < 80 && logs.length < Math.round(6 * density + 1); k++) {
     const az = rng.range(-Math.PI, Math.PI);
     const r = rng.range(15, 30);
     const x = Math.sin(az) * r, z = Math.cos(az) * r;
@@ -247,6 +313,25 @@ export default async function build(ctx) {
       smallKit.bonnets(p.x + rng.jitter(0.1), p.y + lr * 0.85, p.z + rng.jitter(0.1), { height: 0.12, count: rng.int(3, 6), glow: rng.chance(0.35) });
     }
   }
+  // old saw-cut stumps with growth rings (a woodworker's glen: someone felled
+  // a tree here long ago — moss, brackets and toadstools have moved in)
+  const stumpFaceB = new GeoBuilder();
+  const stumps = [];
+  for (let k = 0; k < 60 && stumps.length < Math.max(2, Math.round(6 * density)); k++) {
+    const az = rng.range(-Math.PI, Math.PI);
+    const r = rng.range(12, 27);
+    const x = Math.sin(az) * r, z = Math.cos(az) * r;
+    const sr = rng.range(0.4, 0.85), h = rng.range(0.3, 0.75);
+    if (!canGrow(x, z, { margin: sr + 0.4 }) || !occ.free(x, z, sr + 0.3)) continue;
+    if (!isClearOfViews(x, getHeight(x, z), z, h, sr)) continue;
+    const st = stump(builders.bark, stumpFaceB, rng, x, z, sr, h);
+    occ.add(x, z, sr * 1.2, 'stump');
+    stumps.push(st);
+    for (const b of st.brackets) giantKit.bracket(b.p, b.n, { size: sr * rng.range(0.35, 0.55) });
+    // a toadstool or a bonnet tuft on the cut face now and then
+    if (rng.chance(0.5)) smallKit.bonnets(x + rng.jitter(sr * 0.4), st.top, z + rng.jitter(sr * 0.4), { height: 0.1, count: rng.int(3, 5) });
+    if (rng.chance(0.4)) smallKit.amanita(x + rng.jitter(sr * 0.3), st.top, z + rng.jitter(sr * 0.3), { height: rng.range(0.12, 0.22) });
+  }
   // brackets on some tree trunks
   for (const t of plan.trees) {
     if (t.kind === 'birch' || !rng.chance(0.55)) continue;
@@ -257,6 +342,25 @@ export default async function build(ctx) {
       const r = t.radius * 1.12;
       const nrm = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
       giantKit.bracket(new THREE.Vector3(t.x + nrm.x * r, y, t.z + nrm.z * r), nrm, { size: rng.range(0.25, 0.5), tiers: rng.int(2, 4) });
+    }
+  }
+  // snail stones: mossy rocks placed where a spot camera can discover the wild
+  // snails grazing on them (beside the main path in the Schreinerei's view,
+  // by the bridge path in the Velowerkstatt's view)
+  const snailRocks = [];
+  for (const cands of [
+    [[-2.6, 4.9], [-2.5, 5.4], [-3.0, 5.2], [1.6, 4.0]],
+    [[6.4, 9.6], [5.6, 10.2], [7.0, 9.0], [3.6, 10.6]],
+  ]) {
+    for (const [x, z] of cands) {
+      if (!canGrow(x, z, { margin: 0.3, path: 1.15 }) || !occ.free(x, z, 0.5)) continue;
+      // (a pale, proud little boulder so the snail on it can be spotted)
+      const res = mossyRock(rockB, rng, x, z, 0.55, { flat: 0.72, sink: 0.08, color: new THREE.Color('#c4bcac') });
+      occ.add(x, z, res.r * 0.9, 'rock');
+      const rock = { x, y: res.top, z, r: res.r };
+      snailRocks.push(rock);
+      mossyRocks.push(rock);
+      break;
     }
   }
   // smaller mossy rocks scattered through the glen
@@ -271,13 +375,13 @@ export default async function build(ctx) {
     mossyRocks.push({ x, y: res.top, z, r: res.r });
   }
   // moss mounds
-  for (let k = 0; k < Math.round(55 * density); k++) {
+  for (let k = 0; k < Math.round(110 * density); k++) {
     const az = rng.range(-Math.PI, Math.PI);
-    const r = Math.sqrt(rng.range(10 * 10, 36 * 36));
+    const r = Math.sqrt(rng.range(8 * 8, 36 * 36));
     const x = Math.sin(az) * r, z = Math.cos(az) * r;
-    const w = rng.range(0.6, 1.8);
+    const w = rng.range(0.5, 1.7);
     if (!canGrow(x, z, { margin: w * 0.4 }) || !occ.free(x, z, w * 0.6)) continue;
-    mossMound(moundB, rng, x, z, w, w * rng.range(0.16, 0.34), { color: new THREE.Color().setHSL(0.22 + rng.jitter(0.03), 0.42, 0.34 + rng.jitter(0.06)) });
+    mossMound(moundB, rng, x, z, w, w * rng.range(0.16, 0.34), { color: new THREE.Color('#4e6a2c').lerp(new THREE.Color('#6f8236'), rng.next()).offsetHSL(rng.jitter(0.02), 0, rng.jitter(0.03)) });
     occ.add(x, z, w * 0.5, 'mound');
   }
   // small exposed roots and twigs
@@ -313,11 +417,12 @@ export default async function build(ctx) {
     for (let gx = -LIM; gx < LIM; gx += cell) {
       const x = gx + rng.range(0, cell), z = gz + rng.range(0, cell);
       const r = Math.hypot(x, z);
-      if (r > 41) continue;
-      // spend the detail where the spots look: the front band (z > 20) is
-      // almost never seen up close, and behind the tree wall only big shapes read
+      if (r > 36) continue; // (beyond, only the trees and the misty backdrop read)
+      // spend the detail where the spots look: the front band (z > 20) is the
+      // overview's foreground (seen, but never up close); behind the tree wall
+      // only big shapes read
       let vis = 1;
-      if (z > 20) vis *= 0.3;
+      if (z > 20) vis *= 0.7;
       if (r > 24) vis *= 0.5;
       if (r > 30) vis *= 0.45;
       if (!rng.chance(vis)) continue;
@@ -336,7 +441,7 @@ export default async function build(ctx) {
       const wFlower = (0.1 + (1 - fA) * 0.4 * fM + (edge ? 0.2 : 0) + (r < 21 ? 0.3 : 0)) * (r > 26 ? 0.25 : 1);
       const wClover = (edge ? 0.35 : 0.06) + (fF > 0.75 ? 0.15 : 0);
       const wMush = (shady ? 0.07 : 0.025) + (occClear < 1.5 ? 0.08 : 0);
-      const wNone = (r < 22 ? 0.35 : 0.75) + fB * 0.4;
+      const wNone = (r < 22 ? 0.18 : 0.7) + fB * 0.35;
       const tot = wFern + wGrass + wFlower + wClover + wMush + wNone;
       let roll = rng.next() * tot;
       if ((roll -= wNone) < 0) continue;
@@ -348,11 +453,12 @@ export default async function build(ctx) {
         // tall ferns must not sit in a spot camera's view
         if (s * 0.9 > 0.7 && !isClearOfViews(x, y, z, s * 0.9, s * 0.8)) continue;
         const it = { x, y, z, ry: rng.range(0, TAU), s, sy: rng.range(0.8, 1.15), color: jitterTint(rng.pick(fernTints)) };
-        (big ? fernL : rng.chance(0.55) ? fernM : fernS).push(it);
+        // (small ferns only where they can be seen up close)
+        (big ? fernL : rng.chance(0.55) || r > 24 ? fernM : fernS).push(it);
         continue;
       }
       if ((roll -= wGrass) < 0) {
-        const it = { x, y, z, ry: rng.range(0, TAU), s: rng.range(0.55, 1.25) * (edge ? 0.85 : 1), color: jitterTint(rng.pick(grassTints), 0.025, 0.08) };
+        const it = { x, y, z, ry: rng.range(0, TAU), s: rng.range(0.8, 1.6) * (edge ? 0.85 : 1), color: jitterTint(rng.pick(grassTints), 0.025, 0.08) };
         (rng.chance(0.5) ? grassA : grassB).push(it);
         continue;
       }
@@ -363,7 +469,7 @@ export default async function build(ctx) {
         else if (shady && !inner) kind = rng.pick(['bluebells', 'bluebells', 'foxgloves', 'forgetMeNots']);
         else kind = rng.pick(['daisies', 'buttercups', 'meadow', 'meadow', 'bluebells', 'forgetMeNots', 'foxgloves']);
         // the open glen's flowers are a touch bigger so they read from the spots
-        const s = rng.range(0.85, 1.35) * (inner ? 1.3 : 1);
+        const s = rng.range(0.95, 1.45) * (inner ? 1.55 : 1.1);
         if (kind === 'foxgloves' && !isClearOfViews(x, y, z, 1.1 * s, 0.3)) continue;
         flowers[kind].push({ x, y, z, ry: rng.range(0, TAU), s, color: jitterTint('#ffffff', 0.015, 0.05) });
         if (flowerPatches.length < 400) flowerPatches.push({ x, y: y + 0.3 * s, z, r: 0.3 * s, kind });
@@ -408,7 +514,66 @@ export default async function build(ctx) {
     if (!canGrow(x, z, { margin: s * 0.5 }) || !occ.free(x, z, s * 0.5)) continue;
     const y = getHeight(x, z);
     if (blocksView(x, y + s * 0.6, z, s * 1.1)) continue;
-    bushes.push({ x, y: y + s * 0.45, z, s, sy: rng.range(0.6, 0.85), ry: rng.range(0, TAU), color: new THREE.Color().setHSL(0.25 + rng.jitter(0.03), 0.42, 0.36 + rng.jitter(0.05)) });
+    bushes.push({ x, y: y + s * 0.45, z, s, sy: rng.range(0.6, 0.85), ry: rng.range(0, TAU), color: new THREE.Color('#3d7a47').lerp(new THREE.Color('#5a8c3e'), rng.next()).offsetHSL(rng.jitter(0.02), 0, rng.jitter(0.03)) });
+  }
+
+  // ── 4b. lush beds ─────────────────────────────────────────────────────────
+  // Single little plants vanish at the spots' distance; drifts of big ferns,
+  // broad-leaf clumps (butterbur by the water, wild ginger in the shade) and
+  // low bilberry shrubs give the floor its painterly masses.
+  const broad = [];
+  const shrubs = [];
+  const tryBedPlant = (x, z, kind, s) => {
+    if (!canGrow(x, z, { margin: 0.15 })) return false;
+    if (occ.clearance(x, z, 3) < 0.1) return false;
+    const y = getHeight(x, z);
+    const h = kind === 'shrub' ? s * 0.9 : kind === 'broad' ? s * 0.55 : s * 0.85;
+    if (h > 0.6 && !isClearOfViews(x, y, z, h, s * 0.75)) return false;
+    if (kind === 'fern') fernL.push({ x, y, z, ry: rng.range(0, TAU), s, sy: rng.range(0.85, 1.15), color: jitterTint(rng.pick(fernTints)) });
+    else if (kind === 'broad') broad.push({ x, y, z, ry: rng.range(0, TAU), s, color: jitterTint(rng.pick(['#ffffff', '#f0ffe0', '#e6f5d0']), 0.02, 0.05) });
+    else shrubs.push({ x, y: y + s * 0.32, z, s: s * 0.55, sy: rng.range(0.55, 0.75), ry: rng.range(0, TAU), color: new THREE.Color('#3f7040').lerp(new THREE.Color('#628c3a'), rng.next()).offsetHSL(rng.jitter(0.02), 0, rng.jitter(0.03)) });
+    return true;
+  };
+  {
+    const beds = [];
+    const want = Math.round(52 * Math.min(1.2, density));
+    for (let k = 0; k < 900 && beds.length < want; k++) {
+      const az = rng.range(-Math.PI, Math.PI);
+      const r = Math.sqrt(rng.range(9 * 9, 31 * 31));
+      const x = Math.sin(az) * r, z = Math.cos(az) * r;
+      if (!canGrow(x, z, { margin: 0.6 })) continue;
+      if (beds.some((b) => Math.hypot(b.x - x, b.z - z) < 3.6)) continue;
+      beds.push({ x, z });
+      const damp = getStreamDistance(x, z) < 6.5 || Math.hypot(x - STREAM.pond.x, z - STREAM.pond.z) < 8;
+      const n = rng.int(5, 11);
+      const spread = rng.range(1.3, 2.6);
+      for (let i = 0; i < n; i++) {
+        const a = rng.range(0, TAU), d = Math.sqrt(rng.next()) * spread;
+        const px = x + Math.sin(a) * d, pz = z + Math.cos(a) * d;
+        const roll = rng.next();
+        if (damp ? roll < 0.5 : roll < 0.18) tryBedPlant(px, pz, 'broad', rng.range(1.3, 2.1));
+        else if (roll < 0.82) tryBedPlant(px, pz, 'fern', rng.range(1.05, 1.75) * (1 - d / spread * 0.3));
+        else tryBedPlant(px, pz, 'shrub', rng.range(0.8, 1.3));
+      }
+    }
+  }
+  // ferns, broad leaves and shrubs crowd the giants' feet between the buttresses
+  for (const t of plan.trees) {
+    if (Math.hypot(t.x, t.z) > 33) continue;
+    const n = t.kind === 'birch' ? rng.int(2, 4) : rng.int(5, 9);
+    for (let i = 0; i < n; i++) {
+      const a = rng.range(0, TAU), d = t.radius * rng.range(1.5, 3.4) + rng.range(0, 1.2);
+      const kind = rng.chance(0.65) ? 'fern' : rng.chance(0.5) ? 'broad' : 'shrub';
+      tryBedPlant(t.x + Math.sin(a) * d, t.z + Math.cos(a) * d, kind, rng.range(1.1, 1.8));
+    }
+  }
+  // and the giant fly agarics' feet
+  for (const g of giants) {
+    const n = rng.int(2, 4);
+    for (let i = 0; i < n; i++) {
+      const a = rng.range(0, TAU), d = g.R * rng.range(0.5, 1.1);
+      tryBedPlant(g.x + Math.sin(a) * d, g.z + Math.cos(a) * d, rng.chance(0.7) ? 'fern' : 'broad', rng.range(0.9, 1.4));
+    }
   }
 
   // ── 5. foreground framing: big ferns at the front edge ────────────────────
@@ -418,35 +583,61 @@ export default async function build(ctx) {
     if (cameraClearance(x, z) < 2.5) continue;
     const s = rng.range(1.6, 2.8);
     const y = getHeight(x, z);
-    if (!isClearOfViews(x, y, z, s * 0.85, s * 0.9)) continue;
+    if (!isClearOfSubjects(x, y, z, s * 0.85, s * 0.9) || !isClearOfViews(x, y, z, s * 0.5, s * 0.5)) continue;
     fernL.push({ x, y, z, ry: rng.range(0, TAU), s, sy: rng.range(0.85, 1.1), color: jitterTint(rng.pick(fernTints)) });
   }
 
-  // (b) the bottom corners of every spot shot: a big fern or two close to the
-  //     lens, soft in the depth of field — the painter's foreground framing
+  // (b) the lower corners of every spot shot: big fronds or broad leaves rising
+  //     into the frame close to the lens, soft in the depth of field — the
+  //     painter's foreground framing (ref: the giant tree with the elven house)
+  const framing = [];
   {
-    const f = new THREE.Vector3(), rt = new THREE.Vector3();
+    const cam = new THREE.PerspectiveCamera(40, 16 / 9, 0.1, 200);
+    const dir = new THREE.Vector3();
     for (const spot of SPOTS) {
-      if (spot.id === 'glen') continue;
+      if (spot.id === 'glen' || spot.id === 'code') continue;
       const P = spot.camera.position, T = spot.camera.target;
-      f.set(T[0] - P[0], 0, T[2] - P[2]).normalize();
-      rt.set(-f.z, 0, f.x);
-      const hfov = Math.atan(Math.tan(THREE.MathUtils.degToRad((spot.camera.fov ?? 40) / 2)) * (16 / 9));
-      for (const side of [-1, 1]) {
-        for (const d of [5.5, 7, 8.5, 10]) {
-          const w = d * Math.tan(hfov) * rng.range(0.7, 0.95);
-          const x = P[0] + f.x * d + rt.x * w * side + rng.jitter(0.4);
-          const z = P[2] + f.z * d + rt.z * w * side + rng.jitter(0.4);
-          if (!canGrow(x, z, { margin: 0.2 }) || occ.clearance(x, z, 3) < 0.6) continue;
-          const y = getHeight(x, z);
-          const s = rng.range(1.5, 2.2);
-          if (!isClearOfViews(x, y, z, s * 0.8, s * 0.7)) continue;
-          fernL.push({ x, y, z, ry: rng.range(0, TAU), s, sy: rng.range(0.9, 1.15), color: jitterTint(rng.pick(fernTints)) });
-          break;
+      cam.fov = spot.camera.fov ?? 40;
+      cam.position.set(...P);
+      cam.lookAt(T[0], T[1], T[2]);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      for (const sx of [-1, 1]) {
+        let placed = 0;
+        for (const ndcX of [0.95, 0.8, 0.65, 1.05]) {
+          if (placed >= 2) break;
+          // the ray through the lower corner of the frame
+          dir.set(ndcX * sx, -0.82, 0.5).unproject(cam).sub(cam.position).normalize();
+          const hlen = Math.hypot(dir.x, dir.z);
+          for (let d = 5; d < 17; d += 0.7) {
+            const x = cam.position.x + (dir.x / hlen) * d + rng.jitter(0.25);
+            const z = cam.position.z + (dir.z / hlen) * d + rng.jitter(0.25);
+            const rayY = cam.position.y + (dir.y / hlen) * d;
+            const y = getHeight(x, z);
+            const kind = rng.chance(0.65) ? 'fern' : 'broad';
+            const s = rng.range(1.6, 2.3);
+            const top = y + (kind === 'fern' ? s * 0.8 : s * 0.5);
+            // it must actually rise into the corner — but not swallow the frame
+            if (top < rayY + 0.35 || top > rayY + 2.4) continue;
+            if (!canGrow(x, z, { margin: 0.1 }) || occ.clearance(x, z, 3) < 0.4) continue;
+            if (!isClearOfSubjects(x, y, z, top - y, s * 0.7)) continue;
+            if (framing.some((f) => Math.hypot(f.x - x, f.z - z) < 1.6)) continue;
+            framing.push({ x, z });
+            if (kind === 'fern') fernL.push({ x, y, z, ry: rng.range(0, TAU), s, sy: rng.range(0.95, 1.15), color: jitterTint(rng.pick(fernTints)) });
+            else broad.push({ x, y, z, ry: rng.range(0, TAU), s: s * 1.1, color: jitterTint('#e8f5d8', 0.02, 0.05) });
+            placed++;
+            break;
+          }
         }
       }
     }
+    stats.framing = framing.length;
   }
+
+  // ── litter: fallen leaves & pebbles (close-up detail) ─────────────────────
+  const litter = buildLitter(ctx, rng.fork('litter'), { trees: plan.trees, density });
+  for (const m of litter.meshes) addMesh(m);
+  stats.litter = { leaves: litter.leaves, pebbles: litter.pebbles };
 
   // ── 6. meshes ─────────────────────────────────────────────────────────────
   const fernMat = M.foliage({ variant: 'fern', vertexColors: true, translucency: 0.9, wind: { strength: 0.045, base: 0.08, speed: 1.3 } });
@@ -454,22 +645,24 @@ export default async function build(ctx) {
   const flowerMat = M.surface('leaf', { vertexColors: true, side: THREE.DoubleSide, wind: { strength: 0.14, base: 0.03, speed: 1.5 } });
   const canopyMat = M.foliage({ variant: 'oak', vertexColors: true, translucency: 1.0, wind: { strength: 0.012, base: -0.4, speed: 0.7 } });
   const ivyMat = M.foliage({ variant: 'ivy', vertexColors: true, volume: false });
-  const barkMat = M.surface('bark', { mossy: 0.42, scale: 1.8 });
+  const barkMat = M.surface('bark', { mossy: 0.3, scale: 1.8, vertexColors: true });
   const birchMat = M.surface('bark', { vertexColors: true, mossy: 0.12, scale: 0.6 });
   const rockMat = M.surface('rock', { mossy: 0.62, vertexColors: true });
-  const mossMat = M.surface('moss', { vertexColors: true, scale: 0.55 });
+  const mossMat = M.surface('moss', { vertexColors: true, scale: 1.1, bump: 0.8 });
 
   const fernRng = rng.fork('fern-templates');
-  addMesh(instanced('ferns-large', fernTemplate(fernRng, { fronds: [10, 13], length: [0.85, 1.15], e0: [0.85, 1.25], droop: [1.0, 1.6], young: [1, 2], segs: 5 }), fernMat, fernL));
-  addMesh(instanced('ferns-medium', fernTemplate(fernRng, { fronds: [8, 10], length: [0.6, 0.85], e0: [1.0, 1.35], droop: [1.1, 1.7], segs: 4, young: [1, 1] }), fernMat, fernM));
-  addMesh(instanced('ferns-small', fernTemplate(fernRng, { fronds: [6, 8], length: [0.38, 0.55], e0: [0.9, 1.3], droop: [1.0, 1.6], segs: 4, young: [0, 1] }), fernMat, fernS));
+  // (segment counts keep the arching fronds smooth where it shows: big ferns get 4)
+  addMesh(instanced('ferns-large', fernTemplate(fernRng, { fronds: [10, 12], length: [0.85, 1.15], e0: [0.85, 1.25], droop: [1.0, 1.6], young: [1, 2], segs: 4 }), fernMat, fernL));
+  addMesh(instanced('ferns-medium', fernTemplate(fernRng, { fronds: [7, 9], length: [0.6, 0.85], e0: [1.0, 1.35], droop: [1.1, 1.7], segs: 3, young: [1, 1] }), fernMat, fernM));
+  addMesh(instanced('ferns-small', fernTemplate(fernRng, { fronds: [6, 8], length: [0.38, 0.55], e0: [0.9, 1.3], droop: [1.0, 1.6], segs: 3, young: [0, 1] }), fernMat, fernS));
   const grassRng = rng.fork('grass-templates');
   addMesh(instanced('grass-a', grassTemplate(grassRng, { cards: [4, 5], height: [0.4, 0.6] }), grassMat, grassA));
   addMesh(instanced('grass-b', grassTemplate(grassRng, { cards: [3, 4], height: [0.25, 0.42], spread: 0.12 }), grassMat, grassB));
   addMesh(instanced('clover', cloverTemplate(rng.fork('clover')), flowerMat, clover));
   const flRng = rng.fork('flower-templates');
   for (const kind of FLOWER_KINDS) addMesh(instanced(`flowers-${kind}`, flowerTemplate(kind, flRng), flowerMat, flowers[kind]));
-  addMesh(instanced('canopy', clumpGeo, canopyMat, [...clumps, ...bushes], { cast: true }));
+  addMesh(instanced('canopy', clumpGeo, canopyMat, [...clumps, ...bushes, ...shrubs], { cast: true }));
+  addMesh(instanced('broadleaf', broadleafTemplate(rng.fork('broadleaf')), flowerMat, broad, { cast: false }));
 
   const meshOf = (name, B, mat, opts) => (B.count ? staticMesh(name, B.build(), mat, opts) : null);
   addMesh(meshOf('forest-bark', builders.bark, barkMat, { cast: true }));
@@ -478,6 +671,7 @@ export default async function build(ctx) {
   addMesh(meshOf('forest-rocks', rockB, rockMat, { cast: true }));
   addMesh(meshOf('forest-moss', moundB, mossMat, { cast: false }));
   addMesh(meshOf('forest-twigs', smallBarkB, barkMat, { cast: false }));
+  addMesh(meshOf('forest-stump-faces', stumpFaceB, M.standard('#ffffff', { vertexColors: true, roughness: 0.82 }), { cast: false }));
   for (const m of giantKit.build(ctx, 'giant-mushrooms', { cast: true })) addMesh(m);
   for (const m of smallKit.build(ctx, 'small-mushrooms', { cast: false })) addMesh(m);
   // halos around the glowing caps (night)
@@ -508,6 +702,53 @@ export default async function build(ctx) {
     stats.drawCalls += 3;
   }
 
+  // ── 8. a fairy ring: toadstools dancing in a circle in the moss (a secret) ──
+  let fairyRing = null;
+  {
+    for (const [cx, cz] of [[-4.5, 11.2], [-5.2, 12.4], [-3.6, 12.2], [4.6, 13.2]]) {
+      const R = 1.15;
+      if (!canGrow(cx, cz, { margin: R + 0.2 })) continue;
+      const ringKit = new MushroomKit(rng.fork('fairy-ring'));
+      const n = 15;
+      const glowing = [];
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * TAU + rng.jitter(0.12);
+        const rr = R * rng.range(0.9, 1.08);
+        const x = cx + Math.sin(a) * rr, z = cz + Math.cos(a) * rr;
+        const y = getHeight(x, z);
+        if (i % 4 === 1) {
+          ringKit.bonnets(x, y, z, { height: rng.range(0.1, 0.14), count: rng.int(2, 3), glow: true, spread: 0.6 });
+          glowing.push({ x, y: y + 0.1, z });
+        } else ringKit.amanita(x, y, z, { height: rng.range(0.13, 0.26), capR: rng.range(0.07, 0.12), shape: rng.chance(0.3) ? 'flat' : 'dome', lean: rng.range(0, 0.15) });
+      }
+      fairyRing = new THREE.Group();
+      fairyRing.name = 'fairy-ring';
+      for (const m of ringKit.build(ctx, 'fairy-ring', { cast: false })) {
+        delete m.raycast; // (clickable: restore Mesh.prototype.raycast)
+        m.userData.keepRaycast = true;
+        fairyRing.add(m);
+        stats.drawCalls++;
+      }
+      if (ringKit.glowPoints.length) fairyRing.add(glowQuads(ringKit.glowPoints, '#7ff0d0', { day: 0.0, night: 0.9 }));
+      group.add(fairyRing);
+      // (the merged meshes sit at the world origin: speech bubbles need the ring's centre)
+      const ringCentre = new THREE.Vector3(cx, getHeight(cx, cz) - 1.1, cz);
+      glowSpots.push(...glowing);
+      flowerPatches.push({ x: cx, y: getHeight(cx, cz) + 0.3, z: cz, r: R, kind: 'fairyRing' });
+      // a sunbeam picks out the ring (where the canopy lets it through)
+      ctx.atmosphere?.addShaft?.(cx, cz, { length: 22, width: 2.4, intensity: 0.75 });
+      ctx.interactions?.add(fairyRing, {
+        kind: 'secret',
+        label: 'A fairy ring',
+        area: 'glen',
+        approach: false,
+        focus: { distance: 3.2, height: 0.3 },
+        onActivate: () => ctx.ui?.speech?.('A fairy ring! Step inside and make a wish…', ringCentre),
+      });
+      break;
+    }
+  }
+
   group.traverse((o) => {
     if (o.isMesh && !o.userData.keepRaycast) o.raycast = () => {};
   });
@@ -529,9 +770,15 @@ export default async function build(ctx) {
     for (const t of trees) if (Math.hypot(t.x - x, t.z - z) < radius) out.push(t);
     return out;
   }
+  // walkers (villagers, the player) go around trunks and giant stems
+  if (ctx.colliders?.addCircle) {
+    for (const t of plan.trees) if (Math.hypot(t.x, t.z) < 38) ctx.colliders.addCircle(t.x, t.z, t.radius * 1.15, 'tree');
+    for (const g of giants) ctx.colliders.addCircle(g.x, g.z, g.R * 0.25, 'giant-mushroom');
+  }
+
   stats.ms = Math.round(performance.now() - t0);
   stats.giants = giants.length;
   stats.trees = plan.trees.length;
-  ctx.forest = { trees, giants, glowSpots, flowerPatches, mossyRocks, logs };
-  return { group, trees, giants, glowSpots, flowerPatches, mossyRocks, logs, treesNear, stats };
+  ctx.forest = { trees, giants, glowSpots, flowerPatches, mossyRocks, snailRocks, logs, stumps };
+  return { group, trees, giants, glowSpots, flowerPatches, mossyRocks, snailRocks, logs, stumps, treesNear, stats };
 }
