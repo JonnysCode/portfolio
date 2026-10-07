@@ -142,6 +142,37 @@ function getFinalize() {
   return finalizeMat;
 }
 
+let fillMat = null;
+/**
+ * Fallback when a pattern cannot be baked (shader failed on this GPU): fill
+ * the maps with a flat mean colour (flat normal, matte), leaf cards with
+ * transparency — a plain surface instead of a black one. Rendered (not
+ * cleared) so the mip chain is generated too.
+ */
+function fallbackFill(e) {
+  fillMat ??= new THREE.RawShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    uniforms: { uColor: { value: new THREE.Vector4() } },
+    vertexShader: VERT,
+    fragmentShader: 'precision highp float;\nuniform vec4 uColor;\nout vec4 o;\nvoid main() { o = uColor; }',
+    depthTest: false,
+    depthWrite: false,
+  });
+  const mean = new THREE.Color(e.def.mean ?? '#808080');
+  if (e.def.mode === 'colorize') fillMat.uniforms.uColor.value.set(0.3, 0.5, 0, 0.5);
+  else fillMat.uniforms.uColor.value.set(mean.r, mean.g, mean.b, e.def.alpha ? 0 : 0.5);
+  quad.material = fillMat;
+  renderer.setRenderTarget(e.a);
+  renderer.render(quad, quadCam);
+  if (e.b) {
+    fillMat.uniforms.uColor.value.set(0.5, 0.5, 0.92, 1);
+    renderer.setRenderTarget(e.b);
+    renderer.render(quad, quadCam);
+  }
+  e.baked = true;
+  stats.failed = (stats.failed ?? 0) + 1;
+}
+
 function getScratch(w, h) {
   const key = w + 'x' + h;
   if (scratch.has(key)) return scratch.get(key);
@@ -247,6 +278,11 @@ function bakeNow(list) {
       quad.material = m1;
       r.setRenderTarget(tmp);
       r.render(quad, quadCam);
+      if (r.properties.get(m1).currentProgram?.diagnostics?.runnable === false) {
+        console.warn(`[textures] "${e.key}" pattern failed to compile — using a flat colour`);
+        fallbackFill(e);
+        continue;
+      }
       // pass 2: albedo map, then detail map
       const fin = getFinalize();
       fin.uniforms.tAlbedo.value = tmp.textures[0];
@@ -270,6 +306,14 @@ function bakeNow(list) {
     }
   } catch (err) {
     console.warn('[textures] bake failed — surfaces fall back to flat colour', err);
+    for (const e of list) {
+      if (e.baked) continue;
+      try {
+        fallbackFill(e);
+      } catch {
+        /* nothing more we can do */
+      }
+    }
   } finally {
     stats.ms += performance.now() - t0;
     r.setRenderTarget(prevRT, prevFace, prevMip);

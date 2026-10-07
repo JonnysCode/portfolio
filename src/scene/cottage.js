@@ -1,31 +1,69 @@
-// BLOCKOUT — the cottage builder replaces this with the mushroom cottages.
+// ─────────────────────────────────────────────────────────────────────────────
+// Jonny's Cottage & the Wohnatelier — the mushroom-house corner of the glen
+// (spots 'home' and 'interior'; anchors COTTAGE.home / atelier / shed).
+//
+//   home      a tall red fly-agaric house with a shorter wing mushroom, fairy
+//             lights, a fenced garden with a rose-arch gate, vegetable bed,
+//             bench & sleeping cat, the carved "Jonny's Woodland" sign and the
+//             mailbox (cottage/home.js)
+//   atelier   an ochre mushroom opened up at the front by a big arched loggia,
+//             revealing a designed living room; outside a mood-board easel,
+//             a model table and a villager designer (cottage/atelier.js)
+//   shed      a tiny tan mushroom garden shed with tools and pots (cottage/shed.js)
+//
+// Everything static is merged per material into ONE batch for the whole
+// corner (a few dozen draw calls); hotspot pieces are small separate groups.
+// Hotspots: about-me (front door), contact (mailbox), living-room (interior),
+// moodboards (easel), small-space (model table), a secret cat.
+// ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { COTTAGE } from '../world/layout.js';
-import { anchorGroup } from '../world/index.js';
-
-function mushroom(ctx, h, r) {
-  const { materials } = ctx;
-  const g = new THREE.Group();
-  const stem = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.55, r * 0.68, h * 0.55, 20), materials.surface('mushroomStem'));
-  stem.position.y = h * 0.275;
-  const cap = new THREE.Mesh(new THREE.ConeGeometry(r * 1.15, h * 0.5, 24), materials.surface('mushroomCap'));
-  cap.position.y = h * 0.72;
-  for (const m of [stem, cap]) { m.castShadow = m.receiveShadow = true; g.add(m); }
-  return g;
-}
+import { Batch } from './cottage/kit.js';
+import { buildHome } from './cottage/home.js';
+import { buildAtelier } from './cottage/atelier.js';
+import { buildShed } from './cottage/shed.js';
+import { glowQuads } from '../props/glow.js';
+import { makeSmoke } from './cottage/smoke.js';
+import { scatterPad } from './cottage/scatter.js';
+import { createRng } from '../core/rng.js';
 
 export default async function build(ctx) {
-  const home = anchorGroup(ctx, COTTAGE.home, 'home');
-  home.add(mushroom(ctx, 8.5, 2.6));
-  ctx.interactions.add(home, { entryId: 'about-me', area: 'home' });
-  const atelier = anchorGroup(ctx, COTTAGE.atelier, 'atelier');
-  atelier.add(mushroom(ctx, 6.5, 2.3));
-  ctx.interactions.add(atelier, { entryId: 'living-room', area: 'interior' });
-  const shed = anchorGroup(ctx, COTTAGE.shed, 'shed');
-  shed.add(mushroom(ctx, 3.4, 1.1));
-  const mailbox = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.3, 0.5), ctx.materials.surface('wood', { species: 'cherry' }));
-  mailbox.position.set(COTTAGE.home.x + 3.2, 1.0, COTTAGE.home.z + 2.6);
-  ctx.scene.add(mailbox);
-  ctx.interactions.add(mailbox, { entryId: 'contact', area: 'home' });
-  return {};
+  const root = new THREE.Group();
+  root.name = 'cottage';
+  ctx.scene.add(root);
+  const B = new Batch();
+  const halos = [];
+  const reduced = !!ctx.engine?.reducedMotion;
+
+  const smoke = [];
+  const parts = [buildHome(ctx, B, root, halos, smoke), buildAtelier(ctx, B, root, halos, smoke), buildShed(ctx, B, root, halos)];
+
+  // dress the pads' ground (vegetation keeps off building plots)
+  const keepOut = parts.flatMap((p) => p.keepOut ?? []);
+  const glowHalos = [];
+  const density = ctx.quality?.density ?? 1;
+  const srng = createRng('cottage-ground');
+  for (const p of parts) for (const pad of p.pads ?? []) scatterPad(B.at(new THREE.Matrix4()), srng, { ...pad, keepOut, density, glowClusters: pad.glow, halos: glowHalos });
+
+  B.build(root, 'cottage');
+  if (glowHalos.length) root.add(glowQuads(glowHalos, '#8ff5d6', { day: 0.0, night: 0.32 }));
+
+  // smoke from every chimney in one mesh, night halos (windows, lanterns, fairy lights) in another
+  if (smoke.length) root.add(makeSmoke(smoke, { reducedMotion: reduced }));
+  if (halos.length) root.add(glowQuads(halos, '#ffc477', { day: 0.03, night: 0.38 }));
+
+  const updates = [];
+  for (const p of parts) {
+    for (const [obj, opts] of p.hotspots) ctx.interactions?.add?.(obj, opts);
+    for (const [pos, opts] of p.lights) ctx.lights?.addPoint?.(pos, opts);
+    for (const [x, z, r] of p.colliders ?? []) ctx.colliders?.addCircle?.(x, z, r, 'cottage');
+    updates.push(...p.updates);
+  }
+
+  return {
+    /** Static triangles in the merged cottage batch (debug). */
+    tris: B.tris,
+    update(dt, t) {
+      for (const u of updates) u(dt, t);
+    },
+  };
 }

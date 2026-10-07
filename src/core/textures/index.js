@@ -74,6 +74,7 @@ export function surfaceMaps(kind) {
     bump: def.bump,
     cavity: def.cavity,
     wrapT: def.wrapT,
+    mean: def.mean,
     seed: 0,
   });
 }
@@ -88,6 +89,7 @@ export function foliageMap(variant) {
     mode: 'card',
     size: FOLIAGE_VARIANTS[v].size,
     alpha: true,
+    mean: FOLIAGE_VARIANTS[v].ref,
     bump: 0,
     cavity: 0,
     seed: 0,

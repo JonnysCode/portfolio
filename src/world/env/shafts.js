@@ -68,7 +68,8 @@ const FRAG = /* glsl */ `
     float streak = 0.55 + 0.45 * envNoise(vec2(across * 4.5 + vSeed * 17.0, along * 0.8 + vSeed));
     float drift = 0.65 + 0.35 * envNoise(vec2(along * 3.0 - uTime * 0.07 + vSeed * 9.0, across * 1.5 + uTime * 0.02));
     // four taps across the beam soften the canopy-cut edges into bundles of rays
-    vec3 sideW = normalize(cross(normalize(uAxis), normalize(vW - cameraPosition)));
+    vec3 sideW = cross(normalize(uAxis), normalize(vW - cameraPosition));
+    sideW *= inversesqrt(max(dot(sideW, sideW), 1e-8)); // (never NaN, even end-on)
     float lit = 0.25 * (sunVisibility(vW + sideW * 0.12) + sunVisibility(vW - sideW * 0.12)
               + sunVisibility(vW + sideW * 0.32 + uAxis * 0.4) + sunVisibility(vW - sideW * 0.32 - uAxis * 0.4));
     // no shadow map (low tier): fake the canopy cut with noise bundles
@@ -87,8 +88,9 @@ const FRAG = /* glsl */ `
 `;
 
 /**
- * Build the shafts. Returns { mesh, update(dt, night) }.
- * `spots` — optional extra foot points [{ x, z, length, width, intensity }].
+ * Build the shafts. Returns { mesh, uniforms, update(night, t) }.
+ * Each instance: foot point (on the ground), length along the light, width,
+ * intensity, seed. The shafts always follow the live key-light direction.
  */
 export function buildShafts(ctx) {
   const tier = ctx.quality?.tier ?? 'high';
@@ -118,10 +120,22 @@ export function buildShafts(ctx) {
     [-22.0, -8.0, 30, 5.0, 0.7],
   ];
   for (const [x, z, l, w, i] of heroes) add(x, z, l, w, i);
+  // … big hazy beams standing in the far forest on the sun side (misty depth)
+  const far = [
+    [-62, 52, 8.0, 0.55],
+    [-38, 48, 7.0, 0.5],
+    [-80, 56, 9.0, 0.5],
+    [-16, 46, 6.5, 0.45],
+  ];
+  for (const [azDeg, r, w, i] of far) {
+    const a = THREE.MathUtils.degToRad(azDeg);
+    add(Math.sin(a) * r, -Math.cos(a) * r, r * 1.05, w, i);
+  }
   // … plus a scatter of thinner ones; the shadow map decides which of them shine.
   const extra = tier === 'high' ? 22 : tier === 'medium' ? 10 : 4;
+  const target = bases.length / 3 + extra;
   let tries = 0;
-  while (bases.length / 3 < heroes.length + extra && tries++ < 400) {
+  while (bases.length / 3 < target && tries++ < 400) {
     const a = rng.range(0, Math.PI * 2);
     const r = Math.sqrt(rng.next()) * 26;
     const x = Math.sin(a) * r, z = Math.cos(a) * r * 0.9 + 1;
@@ -134,15 +148,24 @@ export function buildShafts(ctx) {
   const geo = new THREE.InstancedBufferGeometry();
   geo.index = quad.index;
   geo.setAttribute('position', quad.attributes.position);
-  geo.setAttribute('aBase', new THREE.InstancedBufferAttribute(new Float32Array(bases), 3));
-  geo.setAttribute('aShape', new THREE.InstancedBufferAttribute(new Float32Array(shapes), 4));
-  geo.instanceCount = bases.length / 3;
+  // spare capacity so other modules can ask for a hero shaft of their own (addShaft)
+  const SPARE = 16;
+  const builtIn = bases.length / 3;
+  const baseArr = new Float32Array((builtIn + SPARE) * 3);
+  const shapeArr = new Float32Array((builtIn + SPARE) * 4);
+  baseArr.set(bases);
+  shapeArr.set(shapes);
+  const baseAttr = new THREE.InstancedBufferAttribute(baseArr, 3);
+  const shapeAttr = new THREE.InstancedBufferAttribute(shapeArr, 4);
+  geo.setAttribute('aBase', baseAttr);
+  geo.setAttribute('aShape', shapeAttr);
+  geo.instanceCount = builtIn;
 
   const uniforms = {
     ...sunlightUniforms,
     uAxis: { value: keyDir },
     uColor: { value: new THREE.Color('#ffc978') },
-    uTime: envUniforms.uTime,
+    uTime: { value: 0 }, // own clock: slowed down for prefers-reduced-motion
     uStrength: { value: 1 },
   };
   const mat = new THREE.ShaderMaterial({
@@ -169,7 +192,23 @@ export function buildShafts(ctx) {
   return {
     mesh,
     uniforms,
-    update(night) {
+    /**
+     * Add a shaft whose foot is at (x, z) on the ground — e.g. a beam falling
+     * onto a doorstep. It still only shines where the canopy lets light through.
+     * opts: { length = 24, width = 3, intensity = 0.9 }. Returns false when full.
+     */
+    addShaft(x, z, { length = 24, width = 3, intensity = 0.9 } = {}) {
+      const i = geo.instanceCount;
+      if (i >= builtIn + SPARE) return false;
+      baseArr.set([x, getHeight(x, z) - 0.2, z], i * 3);
+      shapeArr.set([length, width, intensity, rng.next()], i * 4);
+      baseAttr.needsUpdate = true;
+      shapeAttr.needsUpdate = true;
+      geo.instanceCount = i + 1;
+      return true;
+    },
+    update(night, t = 0) {
+      uniforms.uTime.value = t * (ctx.engine.reducedMotion ? 0.15 : 1);
       const k = 1 - THREE.MathUtils.smoothstep(night, 0.05, 0.45);
       uniforms.uStrength.value = base * k;
       mesh.visible = k > 0.002;

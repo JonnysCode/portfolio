@@ -1,53 +1,67 @@
-// BLOCKOUT — the riverside builder replaces this (stream, waterfall, stone bridge, bike workshop).
+// ─────────────────────────────────────────────────────────────────────────────
+// The Riverside — work in progress.
+// ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { STREAM, RIVERSIDE } from '../world/layout.js';
-import { streamPolyline } from '../world/ground.js';
-import { anchorGroup } from '../world/index.js';
+import { createRng } from '../core/rng.js';
+import { Batch } from './riverside/kit.js';
+import { buildWater } from './riverside/water.js';
+import { buildBridge } from './riverside/bridge.js';
+import { buildWorkshop } from './riverside/workshop.js';
+import { makeBike } from './riverside/bike.js';
+import { buildFalls } from './riverside/falls.js';
+import { planStreamRocks, buildBanks, buildPond, buildDrifters } from './riverside/banks.js';
 
 export default async function build(ctx) {
-  const { materials } = ctx;
-  // water ribbon
-  const pts = streamPolyline.pts;
-  const pos = [];
-  const idx = [];
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
-    let tx = b.x - a.x, tz = b.z - a.z;
-    const l = Math.hypot(tx, tz) || 1;
-    tx /= l; tz /= l;
-    const w = STREAM.halfWidth * 1.25;
-    pos.push(pts[i].x - tz * w, STREAM.waterLevel, pts[i].z + tx * w, pts[i].x + tz * w, STREAM.waterLevel, pts[i].z - tx * w);
-    if (i > 0) { const k = i * 2; idx.push(k - 2, k - 1, k, k - 1, k + 1, k); }
+  const root = new THREE.Group();
+  root.name = 'riverside';
+  ctx.scene.add(root);
+  const B = new Batch('riverside');
+  const halos = [];
+  const bridge = buildBridge(ctx, B, createRng('riverside-bridge'));
+  const shop = buildWorkshop(ctx, B, createRng('velowerkstatt'), halos);
+
+  // the vintage bike with its flower basket, leaning on the bridge's east parapet
+  const vintage = makeBike({ style: 'vintage', seed: 'vintage', scale: 0.66 });
+  {
+    const bx = 3.05, side = 1;
+    const p = bridge.toWorld(bx, 0, side * (bridge.halfWidth + 0.24));
+    p.y = bridge.ground(bx, side * (bridge.halfWidth + 0.24));
+    vintage.group.position.copy(p);
+    // runs along the bridge towards the east bank, drive side to the camera, leaning back onto the parapet
+    const yaw = Math.atan2(-bridge.X.z, bridge.X.x);
+    vintage.group.rotation.set(0, yaw, 0);
+    vintage.group.rotateX(-0.2);
+    root.add(vintage.group);
   }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
-  const water = new THREE.Mesh(geo, materials.standard('#5fa8b8', { roughness: 0.1, side: THREE.DoubleSide, transparent: true, opacity: 0.85 }));
-  ctx.scene.add(water);
-  const pool = new THREE.Mesh(new THREE.CircleGeometry(STREAM.pool.radius * 1.1, 32), water.material);
-  pool.rotation.x = -Math.PI / 2;
-  pool.position.set(STREAM.pool.x, STREAM.waterLevel, STREAM.pool.z);
-  ctx.scene.add(pool);
-  // falls
-  const fall = new THREE.Mesh(new THREE.PlaneGeometry(1.6, STREAM.falls.top + 0.5), materials.standard('#d8f0f4', { transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
-  fall.position.set(STREAM.falls.lipX, STREAM.falls.top / 2, STREAM.falls.lipZ);
-  fall.lookAt(STREAM.pool.x, STREAM.falls.top / 2, STREAM.pool.z);
-  ctx.scene.add(fall);
-  // bridge
-  const b = RIVERSIDE.bridge;
-  const bridge = anchorGroup(ctx, { x: b.x, z: b.z, y: 0, rotY: b.rotY }, 'bridge');
-  const arch = new THREE.Mesh(new THREE.TorusGeometry(b.span / 2, 0.45, 8, 24, Math.PI), materials.surface('stone'));
-  arch.scale.set(1, 0.42, b.width / 0.9);
-  bridge.add(arch);
-  // bike shed
-  const shed = anchorGroup(ctx, RIVERSIDE.bikeShed, 'bike-shed');
-  const box = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 2, 3, 16), materials.surface('stone'));
-  box.position.y = 1.5;
-  const cap = new THREE.Mesh(new THREE.ConeGeometry(2.8, 2.2, 20), materials.surface('mushroomCap', { color: '#d9792f' }));
-  cap.position.y = 3.9;
-  shed.add(box, cap);
-  ctx.interactions.add(shed, { entryId: 'bike-build', area: 'bikes' });
-  for (const o of [arch, box, cap]) { o.castShadow = o.receiveShadow = true; }
-  return {};
+  const falls = buildFalls(ctx, B, createRng('riverside-falls'));
+  const rocks = planStreamRocks(createRng('riverside-rocks'));
+  buildBanks(ctx, B, createRng('riverside-banks'), rocks);
+  const pond = buildPond(ctx, B, createRng('riverside-pond'));
+  const drifters = buildDrifters(ctx, createRng('riverside-drift'));
+  const water = buildWater(ctx, { rocks, impacts: falls.impacts });
+  B.build(root, 'riverside');
+  for (const p of bridge.anchors.lanterns) halos.push({ x: p.x, y: p.y, z: p.z, size: 1.0 });
+  if (pond.lantern) halos.push({ x: pond.lantern.x, y: pond.lantern.y, z: pond.lantern.z, size: 0.8 });
+  // warm light from the bridge's east lantern (by the workshop)
+  const east = bridge.anchors.lanterns.reduce((a, b) => (b.x > a.x ? b : a), bridge.anchors.lanterns[0]);
+  if (east) ctx.lights?.addPoint?.(east.clone().add(new THREE.Vector3(0, -0.1, 0)), { color: '#ffbf70', day: 0, night: 3.5, distance: 6 });
+  if (halos.length) root.add(ctx.props.glowQuads(halos, '#ffc46e', { day: 0.05, night: 0.5 }));
+  if (falls.halos.length) root.add(ctx.props.glowQuads(falls.halos, '#86e6d6', { day: 0.02, night: 0.45 }));
+
+  // ── hotspots ──
+  const area = 'bikes';
+  ctx.interactions.add(shop.hero.group, { entryId: 'bike-build', area, focus: { distance: 3.2, height: 0.4 } });
+  ctx.interactions.add(vintage.group, { entryId: 'bike-restoration', area, focus: { distance: 3.0, height: 0.4 } });
+  ctx.interactions.add(shop.truing, { entryId: 'wheel-building', area, focus: { distance: 2.6, height: 0.7 } });
+
+  console.info('[riverside] tris', Math.round(B.tris));
+  return {
+    update(dt, t) {
+      water.update(dt, t);
+      falls.update(dt, t);
+      pond.update(dt, t);
+      drifters.update(dt, t);
+      shop.update(dt, t);
+    },
+  };
 }

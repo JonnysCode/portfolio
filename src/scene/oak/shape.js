@@ -362,7 +362,7 @@ export const BURLS = [
 ];
 /** Knots: a ring of swollen bark around a dimple (old branch scars). */
 export const KNOTS = [
-  { a: -34, y: 5.6, r: 0.32 },
+  { a: -47, y: 5.9, r: 0.32 },
   { a: -8, y: 9.0, r: 0.28 },
   { a: 186, y: 9.4, r: 0.36 },
   { a: 238, y: 3.6, r: 0.3 },
@@ -394,8 +394,8 @@ export function baseRadius(y) {
  */
 export function attachMask(a, y) {
   const deg = a / DEG;
-  const front = (1 - smoothstep(38, 55, Math.abs(deg))) * (1 - smoothstep(5.5, 7, y));
-  const right = smoothstep(18, 32, deg) * (1 - smoothstep(165, 182, deg)) * (1 - smoothstep(17.5, 19, y));
+  const front = (1 - smoothstep(38, 55, Math.abs(deg))) * (1 - smoothstep(6.5, 8, y));
+  const right = smoothstep(4, 16, deg) * (1 - smoothstep(165, 182, deg)) * (1 - smoothstep(17.5, 19, y));
   return Math.max(front, right);
 }
 
@@ -449,7 +449,7 @@ export function trunkSample(a, y) {
     const ac = root.a0 * DEG + TWIST * yc * 0.85;
     const d = angDiff(a, ac) * R0;
     const w = 0.55 + 0.5 * Math.exp(-yc / 1.2);
-    const amp = root.flare * (0.18 + 1.15 * Math.exp(-yc / 1.05)) * (1 - smoothstep(4.5, 11, yc)) * (yc > 2.5 ? 1 - 0.45 * att : 1);
+    const amp = root.flare * (0.18 + 1.15 * Math.exp(-yc / 1.05)) * (1 - smoothstep(4.5, 11, yc)) * (1 - 0.8 * att * smoothstep(1.6, 2.6, yc));
     r += amp * smoothBump(d * d, w * w);
   }
   for (let i = 0; i < LIMBS.length; i++) {
@@ -465,12 +465,12 @@ export function trunkSample(a, y) {
   const ca = Math.cos(at), sa = Math.sin(at);
   const f1 = Math.abs(nFur(ca * 4.4, sa * 4.4, yc * 0.42));
   const f2 = Math.abs(nFur2(ca * 9.5 + 3, sa * 9.5, yc * 1.1));
-  r += (Math.min(f1, 0.55) * 2 - 0.55) * (0.13 + 0.08 * free) + (Math.min(f2, 0.5) * 2 - 0.5) * 0.05;
+  r += (Math.min(f1, 0.55) * 2 - 0.55) * (0.11 + 0.1 * free) + (Math.min(f2, 0.5) * 2 - 0.5) * 0.05;
 
   // 3. Slow bulges that make the trunk lumpy and gnarled (bigger where free).
   const big = nBig(Math.cos(a) * 1.15 + 11, Math.sin(a) * 1.15, yc * 0.17);
   const mid = nBig(Math.cos(a) * 2.6 - 5, Math.sin(a) * 2.6, yc * 0.38 + 9);
-  r += big * (0.1 + 0.36 * free) + mid * (0.04 + 0.12 * free);
+  r += big * (0.06 + 0.4 * free) + mid * (0.03 + 0.13 * free);
 
   // 4. Burls, knots and hollows (free zones only).
   for (let i = 0; i < BURLS.length; i++) {

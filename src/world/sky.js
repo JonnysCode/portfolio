@@ -55,9 +55,9 @@ const domeFragment = /* glsl */ `
     // ── thin painterly wisps (barely seen through the canopy) ──
     vec2 cp = d.xz / max(y + 0.35, 0.05);
     float w = envFbm(cp * vec2(0.55, 1.1) + vec2(uTime * 0.004, 0.0));
-    float wisp = smoothstep(0.5, 0.9, w) * smoothstep(0.04, 0.3, y) * (1.0 - smoothstep(0.6, 0.95, y));
+    float wisp = smoothstep(0.55, 0.95, w) * smoothstep(0.12, 0.4, y) * (1.0 - smoothstep(0.6, 0.95, y));
     vec3 wispCol = mix(vec3(1.0, 0.96, 0.9), uSkyHorizon * 0.7, uNight);
-    col = mix(col, wispCol, wisp * mix(0.35, 0.15, uNight));
+    col = mix(col, wispCol, wisp * mix(0.22, 0.1, uNight));
 
     // ── the low sun: a broad luminous golden haze (the disc itself hides behind the crowns) ──
     float sd = max(dot(d, uSunDir), 0.0);
@@ -187,7 +187,7 @@ export default async function build(ctx) {
     fogParams.sun[0] = glowDir.x;
     fogParams.sun[1] = glowDir.y;
     fogParams.sun[2] = glowDir.z;
-    fogParams.sun[3] = 0.62 - 0.35 * n;
+    fogParams.sun[3] = 0.75 - 0.45 * n;
     warm.copy(warmDay).lerp(warmNight, n);
     fogParams.warm[0] = warm.r;
     fogParams.warm[1] = warm.g;

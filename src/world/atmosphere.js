@@ -11,8 +11,13 @@
 //   low mist            drifting veils over the stream, the pool and the glen's
 //                       rim, thicker & moonlit at night (env/groundMist.js)
 //
-// ctx.atmosphere = { fogParams, shafts, motes, mist, settings }
+// ctx.atmosphere = { fogParams, shafts, motes, mist, settings, addShaft(x, z, opts) }
 //   settings.shafts / .motes / .mist — live multipliers (debug & tuning)
+//   addShaft(x, z, { length, width, intensity }) — ask for a god ray falling on
+//     (x, z) (e.g. onto a doorstep); returns false when the budget is used up.
+//   Custom shaders can light things only where the sun gets through the
+//     canopy with env/sunlight.js (sunVisibility(worldPos)), and get the same
+//     aerial perspective with env/fog.js (fogUniforms() + the fog chunks).
 // ─────────────────────────────────────────────────────────────────────────────
 import { installFog, fogParams } from './env/fog.js';
 import { updateSunlight } from './env/sunlight.js';
@@ -49,17 +54,24 @@ export default async function build(ctx) {
   if (mist) scene.add(mist.mesh);
 
   updateSunlight(ctx); // bind a valid (dummy) shadow texture before the first frame
-  ctx.atmosphere = { fogParams, shafts, motes, mist, settings };
+  ctx.atmosphere = {
+    fogParams,
+    shafts,
+    motes,
+    mist,
+    settings,
+    addShaft: (x, z, opts) => shafts?.addShaft(x, z, opts) ?? false,
+  };
 
   return {
-    update() {
+    update(dt, t) {
       updateSunlight(ctx);
       const n = ctx.env?.night ?? 0;
-      shafts?.update(n);
+      shafts?.update(n, t);
       if (shafts) shafts.uniforms.uStrength.value *= settings.shafts;
       motes?.update(n);
       if (motes) motes.uniforms.uStrength.value *= settings.motes;
-      mist?.update(n);
+      mist?.update(n, t);
       if (mist) mist.uniforms.uStrength.value *= settings.mist;
     },
   };

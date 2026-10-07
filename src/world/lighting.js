@@ -5,7 +5,7 @@
 //   sun  DirectionalLight  warm, low from the back-left (WNW) so it rakes
 //                          through the canopy, rims every silhouette and casts
 //                          long dappled shadows. Soft PCF shadows with a FIXED
-//                          frustum tightly covering the glen (±32 units) at the
+//                          frustum tightly covering the glen (±35 units) at the
 //                          largest map the tier allows — no swimming, no
 //                          re-fitting while the camera glides. By night it
 //                          becomes the moonlight (blue-lavender, back-right).
@@ -33,14 +33,14 @@ import { buildEnvMaps } from './env/envmap.js';
 installFog();
 
 const DAY = {
-  key: new THREE.Color('#ffd9a6'),
-  keyI: 3.6,
-  hemiSky: new THREE.Color('#9fc4c4'),
-  hemiGround: new THREE.Color('#6b5b3c'),
-  hemiI: 0.85,
+  key: new THREE.Color('#ffd7a0'),
+  keyI: 3.9,
+  hemiSky: new THREE.Color('#94c0c4'),
+  hemiGround: new THREE.Color('#5f5536'),
+  hemiI: 0.72,
   rim: new THREE.Color('#a9d2e6'),
   rimI: 0.45,
-  envI: 0.55,
+  envI: 0.46,
 };
 const NIGHT = {
   key: new THREE.Color('#a9b6ff'),
@@ -56,9 +56,9 @@ const NIGHT = {
 const RIM_DAY_DIR = dirFromAngles(24, 70);
 const RIM_NIGHT_DIR = dirFromAngles(30, 250);
 /** Centre of the fixed shadow frustum (the middle of the glen). */
-const SHADOW_CENTER = new THREE.Vector3(0, 3, 1);
+const SHADOW_CENTER = new THREE.Vector3(0, 3, -1);
 /** Half size of the fixed shadow frustum (light-space units). */
-const SHADOW_EXTENT = 32;
+const SHADOW_EXTENT = 35;
 /** How far the shadow camera sits from the centre along the light direction. */
 const LIGHT_DISTANCE = 95;
 

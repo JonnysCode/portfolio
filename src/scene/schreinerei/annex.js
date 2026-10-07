@@ -19,7 +19,7 @@ import { SCHREINEREI } from '../../world/layout.js';
 import { createRng } from '../../core/rng.js';
 import {
   Batch, board, timber, peg, uvBox, xf, deform, mat4, stoneGeo, mossGeo, tube, rbox,
-  ShingleField, layShingles, shingleGeo, addIvy, addToadstool, addFern, pushHalo, noiseA, noiseB,
+  ShingleField, layShingles, shingleGeo, addIvy, addToadstool, pushHalo, noiseA,
 } from './kit.js';
 import { makeSmoke } from './fx.js';
 
@@ -40,7 +40,7 @@ export const ANNEX = {
   overhangBack: 0.3,
   floor: 0.06, // interior floor
   door: { s0: 1.62, s1: 3.42, top: 2.12 }, // front double door (wall coords s = x + hx)
-  porchRoof: { x0: 0.92, x1: 2.75, depth: 2.15, hi: 2.34, lo: 1.72 },
+  porchRoof: { x0: 0.92, x1: 2.75, depth: 1.62, hi: 2.36, lo: 1.98 },
 };
 ANNEX.ridge = ANNEX.eave + ANNEX.hx * ANNEX.pitch; // underside of the rafters at the ridge
 
@@ -633,20 +633,36 @@ export function buildAnnex(ctx, B, mats) {
       });
     }
   }
-  const shingleMesh = field.build(group, mats.shingles(), shingleGeo(0.2, 0.34, 0.022));
-  if (shingleMesh) shingleMesh.applyMatrix4(annexMatrix);
+  // built by the main module once the porch has added its shingles too
+  const shingles = {
+    field,
+    build(parent, material) {
+      const mesh = field.build(parent, material, shingleGeo(0.2, 0.34, 0.022));
+      if (mesh) mesh.applyMatrix4(annexMatrix);
+      return mesh;
+    },
+  };
 
   // moss cushions along the eaves, the ridge and on the bargeboards
   for (const s of [-1, 1]) {
-    for (let z = zB + 0.2; z < zF; z += rng.range(0.25, 0.6)) {
-      const x = s * (eaveX - rng.range(0.05, 0.4));
-      const y = roofSurf(Math.abs(x)) + 0.06;
-      const m = mossGeo(rng, { r: rng.range(0.12, 0.26), h: rng.range(0.05, 0.1) });
-      F.add(mats.moss(), xf(m, [x, y, z], [0, 0, s * -Math.atan(T) * 0.9]), { cast: false });
+    // cushions lying on the slope (rotated into the roof plane), longer along the eave
+    const lay = (x, z, r, h, sx = 1, sz = 1) => {
+      const m = mossGeo(rng, { r, h, sx, sz });
+      const y = roofSurf(Math.abs(x)) + 0.035;
+      F.add(mats.moss(), xf(m, [x, y, z], [0, 0, -s * Math.atan(T)]), { cast: false });
+    };
+    for (let z = zB + 0.1; z < zF; z += rng.range(0.18, 0.4)) {
+      if (rng.next() < 0.25) continue;
+      lay(s * (eaveX - rng.range(0.08, 0.3)), z, rng.range(0.08, 0.17), rng.range(0.02, 0.04), 0.8, 2.2);
     }
-    for (let z = zB; z < zF; z += rng.range(0.4, 1.0)) {
-      const m = mossGeo(rng, { r: rng.range(0.1, 0.2), h: 0.06 });
-      F.add(mats.moss(), xf(m, [s * 0.1, roofSurf(0) + 0.08, z], [0, 0, s * -0.6]), { cast: false });
+    // patches creeping up the slope in the shade (more on the left/north side)
+    for (let i = 0; i < (s < 0 ? 26 : 12); i++) {
+      const x = s * rng.range(0.6, eaveX - 0.4);
+      lay(x, rng.range(zB + 0.2, zF - 0.2), rng.range(0.07, 0.15), rng.range(0.015, 0.03), 1.2, 1.6);
+    }
+    for (let z = zB; z < zF; z += rng.range(0.25, 0.6)) {
+      const m = mossGeo(rng, { r: rng.range(0.07, 0.14), h: 0.035, sz: 2 });
+      F.add(mats.moss(), xf(m, [s * 0.08, roofSurf(0) + 0.07, z], [0, 0, s * -0.55]), { cast: false });
     }
   }
 
@@ -740,11 +756,11 @@ export function buildAnnex(ctx, B, mats) {
       const leaf = new Batch();
       for (let k = 0; k < 5; k++) {
         const pw = dw / 5;
-        leaf.add(mats.wood('oak'), xf(board(pw - 0.008, door.top - 0.03, 0.05, { along: 'y', rng }), [dir * pw * (k + 0.5), (door.top + 0.03) / 2, 0]));
+        leaf.add(tim, xf(board(pw - 0.008, door.top - 0.03, 0.05, { along: 'y', rng, scale: 1 / 1.6 }), [dir * pw * (k + 0.5), (door.top + 0.03) / 2, 0]));
       }
-      for (const y of [0.3, door.top - 0.3]) leaf.add(mats.wood('oak'), xf(board(dw - 0.06, 0.12, 0.035, { along: 'x', rng }), [dir * dw / 2, y, -0.04]));
+      for (const y of [0.3, door.top - 0.3]) leaf.add(tim, xf(board(dw - 0.06, 0.12, 0.035, { along: 'x', rng, scale: 1 / 1.6 }), [dir * dw / 2, y, -0.04]));
       const bl = Math.hypot(dw - 0.12, door.top - 0.72);
-      leaf.add(mats.wood('oak'), xf(board(bl, 0.11, 0.03, { along: 'x', rng }), [dir * dw / 2, door.top / 2, -0.04], [0, 0, dir * Math.atan2(door.top - 0.72, dw - 0.12)]));
+      leaf.add(tim, xf(board(bl, 0.11, 0.03, { along: 'x', rng }), [dir * dw / 2, door.top / 2, -0.04], [0, 0, dir * Math.atan2(door.top - 0.72, dw - 0.12)]));
       for (const y of [0.3, door.top - 0.3]) {
         leaf.add(mats.metal('#2f2b28'), xf(new THREE.BoxGeometry(dw * 0.75, 0.045, 0.012), [dir * dw * 0.375, y, 0.032]), { cast: false });
         leaf.add(mats.metal('#2f2b28'), xf(new THREE.CylinderGeometry(0.02, 0.02, 0.1, 6), [0, y, 0.0]), { cast: false });
@@ -769,12 +785,13 @@ export function buildAnnex(ctx, B, mats) {
   const light = ctx.lights?.addPoint?.(annexToWorld(-0.6, 1.6, 0.8), { color: '#ffb866', day: 1.2, night: 7, distance: 7 });
 
   // a glow halo in each window at night
-  for (const [x, y, z, sz] of [[W1[0] + 0.65 - hx, 1.65, hz + 0.25, 1.4], [W2[0] + 0.5 - hx, 1.5, hz + 0.25, 1.0], [-0.85, 3.5, gz + 0.2, 0.9], [0.85, 3.5, gz + 0.2, 0.9], [dorm.x + 0.2, dorm.y0 + 0.4, dorm.z, 0.7]]) {
+  for (const [x, y, z, sz] of [[W1[0] + 0.65 - hx, 1.65, hz + 0.25, 0.95], [W2[0] + 0.5 - hx, 1.5, hz + 0.25, 0.7], [-0.85, 3.5, gz + 0.2, 0.6], [0.85, 3.5, gz + 0.2, 0.6], [dorm.x + 0.2, dorm.y0 + 0.4, dorm.z, 0.5]]) {
     pushHalo(annexToWorld(x, y, z), sz);
   }
 
   return {
     group,
+    shingles,
     smoke,
     interior,
     light,
@@ -793,7 +810,7 @@ function buildInterior(ctx, F, mats, rng) {
   // floor planks
   for (let x = ix0; x < ix1; x += 0.2) {
     const w = Math.min(0.2, ix1 - x) - 0.008;
-    F.add(mats.wood('spruce'), xf(board(w, 0.05, hz - z0, { along: 'z', rng }), [x + w / 2, floor - 0.025, (hz + z0) / 2]), { cast: false });
+    F.add(mats.wood('oak'), xf(board(w, 0.05, hz - z0, { along: 'z', rng }), [x + w / 2, floor - 0.025, (hz + z0) / 2]), { cast: false });
   }
   // back partition: vertical boards (dark), the shadow board on it
   for (let x = ix0; x < ix1; x += 0.24) {

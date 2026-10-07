@@ -9,14 +9,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../../core/rng.js';
-import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, ShingleField, layShingles, shingleGeo, uvBox, doubleFace, noiseA } from './kit.js';
+import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, ShingleField, layShingles, shingleGeo, uvBox, doubleFace, addLantern, addIvy, noiseA } from './kit.js';
 import { ANNEX, annexFrame, annexMatrix, crook, annexToWorld } from './annex.js';
 import { makeShavings, shavingGeo } from './fx.js';
 
-/** Bench placement in annex-local space (centre on the floor, rotation about Y). */
-export const BENCH = { x: 1.8, z: 3.15, rotY: 0.72, length: 1.3, depth: 0.44, top: 0.48 };
+/**
+ * Bench placement in annex-local space (centre on the floor, rotation about Y).
+ * Its vise side faces the wall: Jonny works between the bench and the wall and
+ * faces the visitor across the bench, planing towards the oak.
+ */
+export const BENCH = { x: 1.72, z: 3.38, rotY: Math.PI - 0.62, length: 1.3, depth: 0.44, top: 0.48 };
 
-export function buildPorch(ctx, B, mats) {
+export function buildPorch(ctx, B, mats, annexShingles = null) {
   const rng = createRng('porch');
   const F = annexFrame(B);
   const group = new THREE.Group();
@@ -63,7 +67,7 @@ export function buildPorch(ctx, B, mats) {
     xf(deck, [(P.x0 + P.x1) / 2, (yAt(z0) + yAt(z1 + 0.32)) / 2 + 0.11, (z0 + z1 + 0.32) / 2], [slope, 0, 0]);
     F.add(mats.timber(), deck);
   }
-  const field = new ShingleField();
+  const field = annexShingles?.field ?? new ShingleField();
   const up = new THREE.Vector3(0, Math.sin(slope), -Math.cos(slope));
   const normal = new THREE.Vector3(0, Math.cos(slope), Math.sin(slope));
   layShingles(field, {
@@ -81,8 +85,36 @@ export function buildPorch(ctx, B, mats) {
     },
     transform: (p) => crook(p),
   });
-  const sh = field.build(group, mats.shingles(), shingleGeo(0.2, 0.34, 0.022));
-  if (sh) sh.applyMatrix4(annexMatrix);
+  if (!annexShingles) {
+    const sh = field.build(group, mats.shingles(), shingleGeo(0.2, 0.34, 0.022));
+    if (sh) sh.applyMatrix4(annexMatrix);
+  }
+  // a lantern hanging from the front beam, over Jonny's bench
+  {
+    const lx = (P.x0 + P.x1) / 2 + 0.15;
+    const hook = annexToWorld(lx, fbY - 0.08, postZ);
+    F.add(mats.metal('#2f2b28'), xf(new THREE.CylinderGeometry(0.006, 0.006, 0.12, 4), [lx, fbY - 0.1, postZ]), { cast: false });
+    addLantern(F, mats, [lx, fbY - 0.15, postZ], hook.setY(hook.y - 0.07), { scale: 0.7 });
+  }
+  // a bow saw hanging on a peg on the right post, a coil of rope below it
+  {
+    const px = postXs[1], pz = postZ + 0.1;
+    const beech = mats.wood('beech');
+    const sx = px, sy = 1.2;
+    F.add(mats.wood('walnut'), xf(new THREE.CylinderGeometry(0.012, 0.012, 0.08, 6), [sx, sy + 0.22, pz - 0.02], [Math.PI / 2, 0, 0]), { cast: false });
+    for (const s of [-1, 1]) F.add(beech, xf(board(0.025, 0.42, 0.02, { along: 'y', rng }), [sx + s * 0.16, sy, pz]), { cast: false });
+    F.add(beech, xf(board(0.32, 0.025, 0.02, { along: 'x', rng }), [sx, sy + 0.02, pz]), { cast: false });
+    F.add(mats.metal('#a8afb5'), xf(new THREE.BoxGeometry(0.33, 0.02, 0.003), [sx, sy - 0.19, pz]), { cast: false });
+    F.add(mats.rope(), xf(new THREE.CylinderGeometry(0.004, 0.004, 0.33, 4), [sx, sy + 0.19, pz], [0, 0, Math.PI / 2]), { cast: false });
+    F.add(mats.rope(), xf(new THREE.TorusGeometry(0.09, 0.016, 5, 16), [px, 0.75, pz + 0.01]), { cast: false });
+    F.add(mats.rope(), xf(new THREE.TorusGeometry(0.08, 0.016, 5, 16), [px + 0.01, 0.73, pz + 0.03], [0, 0, 0.3]), { cast: false });
+  }
+  // ivy trailing down from the porch eave and up the left post
+  for (let i = 0; i < 6; i++) {
+    const x = P.x0 - 0.1 + rng.next() * (P.x1 - P.x0 + 0.2);
+    addIvy(F, mats, rng, [x, fbY + 0.02, postZ + 0.09], [rng.jitter(0.3), -1, 0], { length: rng.range(0.35, 0.8), droop: 1, size: 0.06, normal: [0, 0, 1] });
+  }
+  addIvy(F, mats, rng, [postXs[0] + 0.08, 0.1, postZ + 0.02], [0.1, 1, 0], { length: 1.5, droop: -0.6, size: 0.065, normal: [0, 0, 1] });
   // a fascia board and moss along the porch eave
   F.add(mats.wood('oak'), xf(board(P.x1 - P.x0 + 0.46, 0.12, 0.035, { along: 'x', rng }), [(P.x0 + P.x1) / 2, yAt(z1 + 0.32) + 0.08, z1 + 0.34], [slope, 0, 0]));
   for (let x = P.x0 - 0.15; x < P.x1 + 0.2; x += rng.range(0.25, 0.45)) {
@@ -106,31 +138,30 @@ export function buildPorch(ctx, B, mats) {
 
   // shavings on the floor around the bench and a little pile against the leg
   {
-    const sg = shavingGeo(0.035, 0.022, 1.3);
-    const count = Math.round(70 * (ctx.quality?.density ?? 1));
-    const im = new THREE.InstancedMesh(sg, mats.woodMat('maple', { side: THREE.DoubleSide }), count);
+    // merged into the shared batch (curly maple ribbons, visible from both sides)
+    const sg = doubleFace(shavingGeo(0.035, 0.022, 1.3));
+    const count = Math.round(60 * (ctx.quality?.density ?? 1));
     const m = new THREE.Matrix4();
     const p = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const sv = new THREE.Vector3();
     for (let i = 0; i < count; i++) {
-      // scatter in bench-local space, denser near the front-right (where Jonny planes)
+      // scatter in bench-local space, mostly on Jonny's side and towards the tail vise
       const lx = rng.range(-0.8, 0.9) + rng.jitter(0.2);
       const lz = rng.range(-0.1, 0.9) * (rng.next() < 0.5 ? 1 : 0.6);
       p.set(lx, 0.02 + rng.next() * 0.02, lz).applyEuler(bench.rotation).add(bench.position);
       const sc = rng.range(0.8, 1.5);
-      m.compose(p, new THREE.Quaternion().setFromEuler(new THREE.Euler(rng.next() * 6, rng.next() * 6, rng.next() * 6)), new THREE.Vector3(sc, sc, sc));
-      im.setMatrixAt(i, m);
+      m.compose(p, q.setFromEuler(e.set(rng.next() * 6, rng.next() * 6, rng.next() * 6)), sv.set(sc, sc, sc));
+      B.add(mats.wood('maple'), sg.clone().applyMatrix4(m), { cast: false });
     }
-    im.castShadow = false;
-    im.receiveShadow = true;
-    im.name = 'floor-shavings';
-    group.add(im);
   }
 
   // ── Jonny, planing ─────────────────────────────────────────────────────────
-  const jonny = ctx.props.makePerson({ seed: 'jonny', name: 'Jonny', apron: true, hat: 'beanie', holding: 'plane', action: 'work', hairColor: '#6b4430' });
+  const jonny = ctx.props.makePerson({ seed: 'jonny', name: 'Jonny', apron: true, hat: 'beanie', hatColor: '#c4532e', holding: 'plane', action: 'work', skin: '#efc19c', hairColor: '#6b4430', shirt: '#4f7a5a' });
   {
     // stands at the bench front, facing along the bench towards the front vise (−x bench-local)
-    const local = new THREE.Vector3(0.12, 0, BENCH.depth / 2 + 0.3);
+    const local = new THREE.Vector3(0.36, 0, BENCH.depth / 2 + 0.3);
     local.applyEuler(bench.rotation).add(bench.position);
     jonny.group.position.copy(local);
     jonny.group.rotation.y = bench.rotation.y - Math.PI / 2;
@@ -179,8 +210,8 @@ function buildHobelbank(ctx, mats, rng) {
   g.name = 'hobelbank';
   const Bb = new Batch();
   const L = BENCH.length, D = BENCH.depth, H = BENCH.top;
-  const beech = mats.wood('ash');
-  const beechDark = mats.wood('oak');
+  const beech = mats.wood('beech');
+  const beechDark = mats.wood('#a27c58');
   const steel = mats.metal('#8f969b');
   const tt = 0.075; // top thickness
   // the top: a thick front plank, a tool tray (Beilade) behind, a back rail
@@ -233,7 +264,7 @@ function buildHobelbank(ctx, mats, rng) {
   }
   // lower shelf with a spare plane and a box of offcuts
   Bb.add(mats.wood('spruce'), xf(board(L - 0.42, 0.02, D - 0.2, { along: 'x', rng }), [0, 0.2, 0]));
-  addPlane(Bb, mats, rng, [-0.2, 0.21 + 0.03, 0], 0.3, 0.1);
+  addPlane(Bb, mats, rng, [-0.2, 0.21 + 0.025, 0], 0.26, 0.07);
   Bb.add(mats.wood('cherry'), xf(board(0.16, 0.05, 0.06, { along: 'x', rng }), [0.25, 0.235, 0.04], [0, 0.6, 0]));
   Bb.add(mats.wood('walnut'), xf(board(0.12, 0.04, 0.05, { along: 'x', rng }), [0.3, 0.27, -0.02], [0, -0.3, 0]));
 
@@ -251,8 +282,8 @@ function buildHobelbank(ctx, mats, rng) {
     Bb.add(steel, xf(new THREE.BoxGeometry(0.02, 0.045, 0.028), [bx1 + 0.015, H + 0.02, bz + 0.0]), { cast: false });
   }
   // a jointer (Rauhbank) and a smoother lying on their sides behind the board
-  addPlane(Bb, mats, rng, [-0.38, H + 0.04, -0.02], 0.42, 0.12, Math.PI / 2 - 0.15);
-  addPlane(Bb, mats, rng, [-0.05, H + 0.035, -0.08], 0.22, 0.09, Math.PI / 2 + 0.2);
+  addPlane(Bb, mats, rng, [-0.4, H + 0.03, -0.1], 0.36, 0.072, Math.PI / 2 - 0.15);
+  addPlane(Bb, mats, rng, [-0.02, H + 0.026, -0.12], 0.18, 0.06, Math.PI / 2 + 0.2);
   // chisels laid out in a row on a cloth roll
   Bb.add(mats.fabric('#7a5a3a'), xf(new THREE.BoxGeometry(0.3, 0.006, 0.17), [-0.45, H + 0.003, 0.11], [0, 0.1, 0]), { cast: false });
   for (let i = 0; i < 4; i++) {
@@ -306,7 +337,7 @@ function addPlane(Bb, mats, rng, pos, len, h, rotX = 0) {
   wedge.translate(-len * 0.08, h * 0.32, 0);
   const tr = mat4(pos, [rotX ? rotX : 0, rng.jitter(0.4), 0]);
   // lying on its side when rotX is given (sole facing the viewer)
-  const parts = [[mats.wood('maple'), body], [mats.wood('maple'), horn], [mats.metal('#9aa1a6'), iron], [mats.wood('walnut'), wedge]];
+  const parts = [[mats.wood('beech'), body], [mats.wood('beech'), horn], [mats.metal('#9aa1a6'), iron], [mats.wood('walnut'), wedge]];
   for (const [mat, geo] of parts) {
     geo.applyMatrix4(tr);
     Bb.add(mat, geo, { cast: mat !== parts[2][0] });

@@ -8,19 +8,23 @@
 //              lanterns, fireflies and sun glints glow; stronger at night.
 //              (Only the blur chain is used — the result is added in the
 //              finish pass, so the HDR scene is never re-resolved.)
+//   AO         ('high') half-res depth-only ambient occlusion (normals rebuilt
+//              from depth, 12 spiral taps, depth-aware blur) — contact shadows
+//              in the nooks of shingles, stones and timber; never dims glows.
 //   DOF        ('high') depth of field around ctx.cameraRig.focusDistance:
 //              half-resolution prefilter (colour + signed circle of
 //              confusion) → 28-tap golden-angle gather with scatter-as-gather
 //              weights (foreground bleeds over sharp things, background never
 //              bleeds onto them) → mixed back at full resolution by CoC.
-//   finish     ONE pass: DOF composite + bloom + the renderer's tone mapping &
+//   finish     ONE pass: AO + DOF composite + bloom + the renderer's tone mapping &
 //              exposure + colour grade (warm highlights, teal-green shadows,
 //              softly lifted blacks, a touch of saturation) + warm vignette +
 //              fine animated grain + sRGB output.
 //
-// Tiers: high = everything; medium = bloom + grade (no depth/DOF); low = plain
-// renderer (tone mapping only). If anything throws — setup or a frame — we
-// fall back to plain rendering for good.
+// Tiers: high = everything; medium = bloom + grade (no depth → no AO/DOF);
+// low = plain renderer (tone mapping only). NaN/Inf pixels from any material
+// are dropped before they can be smeared by the blurs. If anything throws —
+// setup or a frame — we fall back to plain rendering for good.
 //
 // ctx.post = { composer (null — custom chain), bloom, settings, enabled, setEnabled(on) }
 //   settings are live-tunable (see SETTINGS).
@@ -32,7 +36,7 @@ import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 /** Live-tunable settings (also exposed as ctx.post.settings). */
 const SETTINGS = {
   bloomDay: { strength: 0.32, radius: 0.55, threshold: 1.0, knee: 0.6 },
-  bloomNight: { strength: 0.9, radius: 0.7, threshold: 0.42, knee: 0.5 },
+  bloomNight: { strength: 0.62, radius: 0.62, threshold: 0.55, knee: 0.55 },
   dof: true,
   /** Contact shadows in nooks ('high'): strength 0..1 and world radius. */
   ao: 0.7,
@@ -42,11 +46,14 @@ const SETTINGS = {
   /** In-focus dead zone (px) so the subject stays pin sharp. */
   focusBand: 0.9,
   maxBlur: 11, // px at 720p
+  /** Extra exposure of the HDR path: additive light (shafts, halos, mist) is
+   *  compressed by the tone curve here but not in the plain path — keep parity. */
+  exposure: 1.06,
   saturation: 1.12,
   warmth: 0.05,
-  shadowTint: [-0.012, 0.006, 0.012], // added in the shadows (teal-green)
+  shadowTint: [-0.02, 0.008, 0.018], // added in the shadows (teal-green)
   lift: 0.018,
-  vignette: 0.26,
+  vignette: 0.3,
   grain: 0.022,
 };
 
@@ -102,6 +109,7 @@ const PrefilterShader = {
       vec3 c = texture2D(tColor, vUv + vec2(-o.x, -o.y)).rgb + texture2D(tColor, vUv + vec2(o.x, -o.y)).rgb
              + texture2D(tColor, vUv + vec2(-o.x, o.y)).rgb + texture2D(tColor, vUv + vec2(o.x, o.y)).rgb;
       c *= 0.25;
+      if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
       if (uAO > 0.0) c *= mix(1.0, texture2D(tAO, vUv).r, uAO * (1.0 - smoothstep(1.0, 3.0, max(max(c.r, c.g), c.b))));
       // tame fireflies so single hot pixels do not become big discs
       c = c / (1.0 + max(max(c.r, c.g), c.b) * 0.12);
@@ -268,6 +276,7 @@ class FinishMaterial extends THREE.ShaderMaterial {
         uAperture: { value: 10 },
         uBand: { value: 1 },
         uMaxBlur: { value: 10 },
+        uExposure: { value: SETTINGS.exposure },
         uSaturation: { value: SETTINGS.saturation },
         uWarmth: { value: SETTINGS.warmth },
         uShadowTint: { value: new THREE.Vector3(...SETTINGS.shadowTint) },
@@ -284,7 +293,7 @@ class FinishMaterial extends THREE.ShaderMaterial {
       fragmentShader: /* glsl */ `
         uniform sampler2D tColor, tBloom, tBokeh, tAO;
         uniform float uUseBloom, uUseDof, uAO;
-        uniform float uSaturation, uWarmth, uLift, uVignette, uGrain, uAspect, uNight, uTime;
+        uniform float uExposure, uSaturation, uWarmth, uLift, uVignette, uGrain, uAspect, uNight, uTime;
         uniform vec3 uShadowTint, uLiftColor, uVignetteColor;
         varying vec2 vUv;
         ${COC_GLSL}
@@ -295,6 +304,7 @@ class FinishMaterial extends THREE.ShaderMaterial {
         }
         void main() {
           vec3 col = texture2D(tColor, vUv).rgb;
+          if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
           if (uAO > 0.0) {
             // contact shadows — but never dim things that glow
             float glow = smoothstep(1.0, 3.0, max(max(col.r, col.g), col.b));
@@ -309,7 +319,7 @@ class FinishMaterial extends THREE.ShaderMaterial {
           if (uUseBloom > 0.5) col += texture2D(tBloom, vUv).rgb;
 
           // the renderer's tone mapping (exposure included)
-          col = toneMapping(col);
+          col = toneMapping(col * uExposure);
           col = clamp(col, 0.0, 1.0);
 
           // grade (display-referred linear)
@@ -346,6 +356,20 @@ class FinishMaterial extends THREE.ShaderMaterial {
 
 /** UnrealBloomPass, but we only want its blurred mip composite (added in the finish pass). */
 class WoodlandBloom extends UnrealBloomPass {
+  constructor(...args) {
+    super(...args);
+    // A single NaN/Inf pixel from any material would be smeared over the whole
+    // screen by the blur chain — drop those, and cap hot spots.
+    const m = this.materialHighPassFilter;
+    m.fragmentShader = m.fragmentShader.replace(
+      'vec4 texel = texture2D( tDiffuse, vUv );',
+      `vec4 texel = texture2D( tDiffuse, vUv );
+      if ( any( isnan( texel ) ) || any( isinf( texel ) ) ) texel = vec4( 0.0 );
+      texel.rgb = min( texel.rgb, vec3( 24.0 ) );`
+    );
+    m.needsUpdate = true;
+  }
+
   renderBloom(renderer, input) {
     const oldAutoClear = renderer.autoClear;
     renderer.autoClear = false;
@@ -583,8 +607,10 @@ export default async function build(ctx) {
       }
       fu.uVignette.value = SETTINGS.vignette * (1 + 0.3 * n);
       fu.uSaturation.value = SETTINGS.saturation;
+      fu.uExposure.value = SETTINGS.exposure;
       fu.uWarmth.value = SETTINGS.warmth * (1 - n);
-      fu.uShadowTint.value.set(...SETTINGS.shadowTint);
+      const st = SETTINGS.shadowTint;
+      fu.uShadowTint.value.set(st[0], st[1], st[2]);
       fu.uLift.value = SETTINGS.lift;
       fu.uGrain.value = SETTINGS.grain;
     },

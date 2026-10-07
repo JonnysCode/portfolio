@@ -1,16 +1,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The little things on the Great Oak that reward a closer look:
-//   bracket fungi on the bark and limbs, fly agarics on the roots, hanging
-//   lanterns that sway on the low limb, fairy lights draped over the trunk,
-//   along the low limb and down the roots, a rope swing, a bird house with
-//   its tenant, an owl blinking in its hollow (eyes glow at night) and — the
-//   secret — a tiny mouse door in the front-right root.
+//   bracket fungi on the bark and limbs, fly agarics on the roots, glowing
+//   glow-caps between the roots, two little round windows (someone lives up
+//   there), lanterns hanging on chains from the low limbs, fairy lights draped
+//   over the trunk, along the low limb and down the roots, a rope swing, a
+//   bird house with its tenant, an owl blinking in its hollow (eyes glow at
+//   night) and — the secret — a tiny mouse door in the front-right root
+//   (its door swings open and the resident peeks out when clicked).
 // Static bits are merged per material (see Batch) to keep draw calls low.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { DEG, TAU, CX, CZ, polar, trunkRadius } from './shape.js';
-import { rootSurfacePoint } from './roots.js';
+import { DEG, TAU, polar, trunkRadius } from './shape.js';
+import { rootSurfacePoint, mouseDoorFrame, MOUSE_DOOR } from './roots.js';
 import { getHeight } from '../../world/ground.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -18,6 +20,8 @@ const UP = new THREE.Vector3(0, 1, 0);
 // ─── batching ────────────────────────────────────────────────────────────────
 /** Normalise a geometry to indexed position/normal/uv (+ color when asked). */
 function prep(geo, color = null) {
+  const keepColor = color === 'keep';
+  if (keepColor) color = null;
   if (!geo.index) {
     const n = geo.attributes.position.count;
     const idx = new Uint32Array(n);
@@ -33,7 +37,7 @@ function prep(geo, color = null) {
     const arr = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) arr.set([c.r, c.g, c.b], i * 3);
     geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-  } else if (geo.attributes.color) geo.deleteAttribute('color');
+  } else if (geo.attributes.color && !keepColor) geo.deleteAttribute('color');
   geo.morphAttributes = {};
   geo.clearGroups();
   return geo;
@@ -45,9 +49,18 @@ class Batch {
     this.parts = new Map();
   }
   add(material, geo, { cast = false, color = null } = {}) {
-    const key = material.uuid + (cast ? '|c' : '');
+    const g = prep(geo, color);
+    const key = material.uuid + (cast ? '|c' : '') + (g.attributes.color ? '|vc' : '');
     if (!this.parts.has(key)) this.parts.set(key, { material, cast, list: [] });
-    this.parts.get(key).list.push(prep(geo, color));
+    this.parts.get(key).list.push(g);
+  }
+  /** Bake every mesh of a (static) prop object into the batch, keeping its vertex colours. */
+  absorb(object) {
+    object.updateMatrixWorld(true);
+    object.traverse((o) => {
+      if (!o.isMesh || o.material?.isShaderMaterial) return;
+      this.add(o.material, o.geometry.clone().applyMatrix4(o.matrixWorld), { color: 'keep' });
+    });
   }
   build(parent, name) {
     for (const { material, cast, list } of this.parts.values()) {
@@ -102,7 +115,7 @@ function shelfGeos(r, rng) {
   const n = 6;
   for (let i = 0; i <= n; i++) {
     const t = i / n; // rim → apex
-    prof.push([r * Math.cos(t * Math.PI * 0.5) ** 0.8, r * 0.28 * Math.sin(t * Math.PI * 0.5) + r * 0.04]);
+    prof.push([r * Math.cos(t * Math.PI * 0.5) ** 0.7, r * 0.42 * Math.sin(t * Math.PI * 0.5) ** 0.8 + r * 0.05]);
   }
   const top = lathe(prof, 14, -Math.PI / 2, Math.PI);
   // wavy, slightly drooping rim
@@ -119,8 +132,13 @@ function shelfGeos(r, rng) {
   const under = new THREE.CircleGeometry(r * 0.98, 14, 0, Math.PI);
   under.rotateX(Math.PI / 2);
   under.scale(1, 1, 0.72);
-  under.translate(0, r * 0.02 - 0.06 * r, 0);
-  return { top, under };
+  under.translate(0, r * 0.05 - 0.06 * r, 0);
+  // a thick, rounded growing edge (the pale rim of a bracket fungus)
+  const rim = new THREE.TorusGeometry(r * 0.97, r * 0.075, 5, 16, Math.PI);
+  rim.rotateX(Math.PI / 2);
+  rim.scale(1, 1, 0.72);
+  rim.translate(0, r * 0.03, 0);
+  return { top, under, rim };
 }
 
 /** A fly agaric (stem + cap + spots) standing at the origin, height h. */
@@ -176,13 +194,17 @@ function blob(r, sx = 1, sy = 1, sz = 1, w = 12, h = 9) {
  * @param skeleton { limbs: [{ id, curve, radiusAt }] }
  * @param roots    [{ id, curve, size }]
  * @param hollows  [{ id, a, y, floor, position, normal }]
+ * @param hollowLinings  dark lining geometries for the hollows (merged here)
  * @returns {{ update(dt, t) }}
  */
-export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
+export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLinings }) {
   const { materials, props } = ctx;
   const reduced = !!ctx.engine?.reducedMotion;
   const B = new Batch();
   const updates = [];
+  /** Every warm glow halo (lanterns, windows, the mouse lantern) → one draw call. */
+  const warmHalos = [];
+  const lanternSpots = [];
   const limb = (id) => limbs.find((l) => l.id === id);
   const root = (id) => roots.find((r) => r.id === id);
 
@@ -198,7 +220,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
     rope: materials.surface('rope'),
     iron: materials.surface('metal', { color: '#3b3431' }),
     stone: materials.surface('stone'),
-    dark: materials.standard('#140d09', { roughness: 1 }),
+    dark: materials.standard('#1a120c', { roughness: 1 }),
     critter: materials.standard('#ffffff', { vertexColors: true, roughness: 0.78 }),
     eyeGlow: materials.glow('#ffb43c', { day: 0.25, night: 2.6 }),
     warmGlow: materials.glow('#ffc46b', { day: 0.5, night: 2.4 }),
@@ -217,15 +239,16 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
   for (const [deg, y, n] of FUNGI) {
     const a = deg * DEG;
     for (let i = 0; i < n; i++) {
-      const yy = y + i * 0.17 + rng.range(-0.04, 0.04);
-      const aa = a + rng.range(-0.09, 0.09) + (i % 2 ? 0.05 : -0.05);
-      const r = rng.range(0.18, 0.32) * (1 - i * 0.12);
+      const yy = y + i * 0.24 + rng.range(-0.05, 0.05);
+      const aa = a + rng.range(-0.1, 0.1) + (i % 2 ? 0.06 : -0.06);
+      const r = rng.range(0.28, 0.46) * (1 - i * 0.1);
       const p = polar(aa, trunkRadius(aa, yy) - 0.07, yy);
       const m = facing(p, new THREE.Vector3(Math.sin(aa), 0, Math.cos(aa)));
       m.multiply(new THREE.Matrix4().makeRotationX(rng.range(-0.08, 0.12)));
-      const { top, under } = shelfGeos(r, rng);
+      const { top, under, rim } = shelfGeos(r, rng);
       B.add(mats.fungusTop, top.applyMatrix4(m));
       B.add(mats.fungusUnder, under.applyMatrix4(m));
+      B.add(mats.fungusUnder, rim.applyMatrix4(m));
     }
   }
   // …and on two limbs, near the fork
@@ -235,7 +258,6 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
   ]) {
     const L = limb(id);
     if (!L) continue;
-    const P = L.curve.getPointAt(u);
     const T = L.curve.getTangentAt(u);
     const side = new THREE.Vector3().crossVectors(T, UP).normalize();
     for (let i = 0; i < n; i++) {
@@ -243,10 +265,10 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
       const Q = L.curve.getPointAt(uu).addScaledVector(side, L.radiusAt(uu) - 0.06);
       Q.y -= 0.1 + i * 0.05;
       const m = facing(Q, side);
-      const { top, under } = shelfGeos(rng.range(0.2, 0.3), rng);
+      const { top, under, rim } = shelfGeos(rng.range(0.24, 0.36), rng);
       B.add(mats.fungusTop, top.applyMatrix4(m));
       B.add(mats.fungusUnder, under.applyMatrix4(m));
-      void P;
+      B.add(mats.fungusUnder, rim.applyMatrix4(m));
     }
   }
 
@@ -272,8 +294,80 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
     }
   }
 
-  // ── hanging lanterns (sway gently) ────────────────────────────────────────
-  const lanterns = [];
+  // ── glow-caps: tiny bioluminescent mushrooms in the crevices between roots ─
+  {
+    const capGlow = materials.glow('#7fe8ff', { day: 0.12, night: 2.2 });
+    const halos = [];
+    for (const [id, u, phi] of [
+      ['back', 0.3, 1.45],
+      ['left-back', 0.42, -1.45],
+      ['back-left', 0.35, 1.5],
+      ['right-long', 0.38, -1.5],
+      ['front-right', 0.72, -1.4],
+      ['left', 0.5, -1.45],
+      ['back-right', 0.45, 1.45],
+    ]) {
+      const R = root(id);
+      if (!R) continue;
+      const n = rng.int(4, 7);
+      for (let i = 0; i < n; i++) {
+        const s = rootSurfacePoint(R, Math.min(0.95, u + rng.range(-0.06, 0.06)), phi + rng.range(-0.15, 0.15), 0);
+        const p = s.position.clone().addScaledVector(s.normal, rng.range(0.02, 0.12));
+        p.y = Math.max(p.y, getHeight(p.x, p.z));
+        const h = rng.range(0.06, 0.15);
+        const cr = h * rng.range(0.4, 0.6);
+        const m = new THREE.Matrix4().compose(p, new THREE.Quaternion().setFromEuler(new THREE.Euler(rng.range(-0.25, 0.25), 0, rng.range(-0.25, 0.25))), new THREE.Vector3(1, 1, 1));
+        B.add(capGlow, new THREE.CylinderGeometry(cr * 0.22, cr * 0.3, h, 6).translate(0, h / 2, 0).applyMatrix4(m));
+        const cap = new THREE.SphereGeometry(cr, 10, 5, 0, TAU, 0, Math.PI / 2);
+        cap.scale(1, 0.7, 1);
+        B.add(capGlow, cap.translate(0, h * 0.95, 0).applyMatrix4(m));
+        if (i % 2 === 0) {
+          const hp = new THREE.Vector3(0, h, 0).applyMatrix4(m);
+          halos.push({ x: hp.x, y: hp.y, z: hp.z, size: 0.35 });
+        }
+      }
+    }
+    if (halos.length && props.glowQuads) parent.add(props.glowQuads(halos, '#7fe8ff', { day: 0.0, night: 0.75 }));
+  }
+
+  // ── little round windows: someone lives up there ───────────────────────────
+  {
+    const glass = materials.glow('#ffc979', { day: 0.35, night: 2.0 });
+    for (const [deg, y, rad] of [
+      [21, 6.7, 0.32],
+      [-60, 12.9, 0.27],
+    ]) {
+      const a = deg * DEG;
+      // sit the window on the bark (use the outermost bark around its rim)
+      let r = 0;
+      for (let k = 0; k < 8; k++) {
+        const aa = a + (Math.cos((k / 8) * TAU) * rad) / 3;
+        const yy = y + Math.sin((k / 8) * TAU) * rad;
+        r = Math.max(r, trunkRadius(aa, yy));
+      }
+      const p = polar(a, r - 0.02, y);
+      const m = facing(p, new THREE.Vector3(Math.sin(a), 0, Math.cos(a)));
+      B.add(glass, new THREE.CircleGeometry(rad, 20).translate(0, 0, 0.0).applyMatrix4(m));
+      // round frame, mullions, sill and a flower box
+      B.add(mats.wood, xf(new THREE.TorusGeometry(rad + 0.04, 0.06, 6, 22), [0, 0, 0.02]).applyMatrix4(m), { cast: true });
+      B.add(mats.wood, xf(new THREE.BoxGeometry(rad * 2, 0.035, 0.04), [0, 0, 0.03]).applyMatrix4(m));
+      B.add(mats.wood, xf(new THREE.BoxGeometry(0.035, rad * 2, 0.04), [0, 0, 0.03]).applyMatrix4(m));
+      const box = new THREE.BoxGeometry(rad * 2.3, 0.14, 0.18);
+      materials.boxUV?.(box, 'wood', { grain: 'x' });
+      B.add(mats.wood, xf(box, [0, -rad - 0.1, 0.1]).applyMatrix4(m), { cast: true });
+      const flowerCols = ['#e85d75', '#ffd166', '#f4f1ff', '#c77dff', '#ff8c42'];
+      for (let i = 0; i < 9; i++) {
+        const fx = (i / 8 - 0.5) * rad * 2.1;
+        const leaf = blob(0.06, 1, 0.7, 1);
+        B.add(mats.critter, xf(leaf, [fx, -rad - 0.01 + rng.range(-0.02, 0.03), 0.1 + rng.range(-0.04, 0.04)]).applyMatrix4(m), { color: rng.pick(['#4f7f36', '#5f9440', '#3f6f2e']) });
+        if (i % 2 === 0) B.add(mats.critter, xf(blob(0.035), [fx + rng.range(-0.03, 0.03), -rad + 0.04 + rng.range(0, 0.04), 0.12]).applyMatrix4(m), { color: rng.pick(flowerCols) });
+      }
+      const hp = new THREE.Vector3(0, 0, 0.15).applyMatrix4(m);
+      warmHalos.push({ x: hp.x, y: hp.y, z: hp.z, size: rad * 1.5 });
+    }
+  }
+
+  // ── hanging lanterns on iron chains (static, merged into the batch) ───────
   const LANTERNS = [
     ['front-left-low', 0.3, 1.5, true],
     ['front-left-low', 0.62, 2.2, true],
@@ -284,34 +378,23 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
     if (!L) continue;
     const P = L.curve.getPointAt(u);
     P.y -= L.radiusAt(u) * 0.92;
-    const pivot = new THREE.Group();
-    pivot.position.copy(P);
-    const chain = new THREE.Mesh(xf(new THREE.CylinderGeometry(0.014, 0.014, len, 5), [0, -len / 2, 0]), mats.iron);
+    B.add(mats.iron, xf(new THREE.CylinderGeometry(0.016, 0.016, len, 5), [P.x, P.y - len / 2, P.z]));
     // a small iron hook clamped around the limb
-    const hook = new THREE.Mesh(xf(new THREE.TorusGeometry(0.06, 0.012, 5, 10), [0, 0.02, 0], [0, 0, 0]), mats.iron);
-    const lantern = props.makeLantern({ hanging: true, color: '#ffc46b', haloSize: 1.0 });
-    lantern.position.y = -len;
+    B.add(mats.iron, xf(new THREE.TorusGeometry(0.07, 0.014, 5, 10), [P.x, P.y + 0.02, P.z], [0, rng.range(0, 3), 0]));
+    const lantern = props.makeLantern({ hanging: true, color: '#ffc46b', halo: false });
+    lantern.position.set(P.x, P.y - len, P.z);
+    lantern.rotation.y = rng.range(0, TAU);
     lantern.scale.setScalar(1.9);
-    pivot.add(chain, hook, lantern);
-    parent.add(pivot);
-    lanterns.push({ pivot, ph: rng.range(0, TAU), sp: rng.range(0.7, 1.1) });
-    if (light) {
-      const lp = P.clone();
-      lp.y -= len + 0.6;
-      ctx.lights?.addPoint?.(lp, { color: '#ffb35c', day: 0.0, night: 4.5, distance: 9 });
-    }
-  }
-  if (!reduced) {
-    updates.push((dt, t) => {
-      for (const l of lanterns) {
-        l.pivot.rotation.x = Math.sin(t * 0.9 * l.sp + l.ph) * 0.045;
-        l.pivot.rotation.z = Math.sin(t * 0.7 * l.sp + l.ph * 1.7) * 0.035;
-      }
-    });
+    B.absorb(lantern);
+    const glassY = P.y - len - 0.6;
+    warmHalos.push({ x: P.x, y: glassY, z: P.z, size: 1.6 });
+    lanternSpots.push(new THREE.Vector3(P.x, glassY, P.z));
+    if (light) ctx.lights?.addPoint?.(new THREE.Vector3(P.x, glassY, P.z), { color: '#ffb35c', day: 0.0, night: 4.5, distance: 9 });
   }
 
   // ── fairy lights ──────────────────────────────────────────────────────────
   const strands = [];
+  const FAIRY = ['#ffd27a', '#fff1c4'];
   const bark = (deg, y, lift = 0.14) => {
     const a = deg * DEG;
     return polar(a, trunkRadius(a, y) + lift, y);
@@ -320,13 +403,19 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
   {
     const pts = [];
     for (let d = -78, i = 0; d <= 42; d += 20, i++) pts.push(bark(d, 4.65 + (i % 2) * 0.25 + Math.sin(d * 0.1) * 0.1));
-    strands.push(props.makeStringLights(pts, { sag: 0.1, spacing: 0.3 }));
+    strands.push(props.makeStringLights(pts, { sag: 0.1, spacing: 0.3, colors: FAIRY }));
+  }
+  // a higher garland on the front-left, under the owl's hollow (the glen view's sparkle)
+  {
+    const pts = [];
+    for (let d = -100, i = 0; d <= -6; d += 16, i++) pts.push(bark(d, 8.15 + (i % 2) * 0.3 - (d > -40 ? 0.25 : 0)));
+    strands.push(props.makeStringLights(pts, { sag: 0.12, spacing: 0.3, colors: FAIRY }));
   }
   // a second, lower loop at the back-left, between the roots
   {
     const pts = [];
     for (let d = 196, i = 0; d <= 268; d += 18, i++) pts.push(bark(d, 3.3 + (i % 2) * 0.35));
-    strands.push(props.makeStringLights(pts, { sag: 0.12, spacing: 0.3 }));
+    strands.push(props.makeStringLights(pts, { sag: 0.12, spacing: 0.3, colors: FAIRY }));
   }
   // along the underside of the low limb, out towards the swing
   {
@@ -338,7 +427,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
         P.y -= L.radiusAt(u) + 0.04;
         pts.push(P);
       }
-      strands.push(props.makeStringLights(pts, { sag: 0.16, spacing: 0.32 }));
+      strands.push(props.makeStringLights(pts, { sag: 0.16, spacing: 0.32, colors: FAIRY }));
     }
   }
   // down the front-right root (seen from the Schreinerei)
@@ -347,7 +436,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
     if (R) {
       const pts = [bark(34, 2.9, 0.12)];
       for (const u of [0.26, 0.46, 0.66, 0.84]) pts.push(rootSurfacePoint(R, u, -0.2, 0.06).position);
-      strands.push(props.makeStringLights(pts, { sag: 0.08, spacing: 0.28 }));
+      strands.push(props.makeStringLights(pts, { sag: 0.08, spacing: 0.28, colors: FAIRY }));
     }
   }
   // over the left roots
@@ -356,9 +445,9 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
     const R8 = root('left');
     if (R7 && R8) {
       const pts = [bark(-104, 3.0, 0.12), rootSurfacePoint(R8, 0.42, 0, 0.06).position, rootSurfacePoint(R8, 0.66, 0, 0.06).position];
-      strands.push(props.makeStringLights(pts, { sag: 0.1, spacing: 0.3 }));
+      strands.push(props.makeStringLights(pts, { sag: 0.1, spacing: 0.3, colors: FAIRY }));
       const pts2 = [bark(-122, 2.6, 0.12), rootSurfacePoint(R7, 0.36, 0, 0.06).position, rootSurfacePoint(R7, 0.58, 0, 0.06).position];
-      strands.push(props.makeStringLights(pts2, { sag: 0.1, spacing: 0.3 }));
+      strands.push(props.makeStringLights(pts2, { sag: 0.1, spacing: 0.3, colors: FAIRY }));
     }
   }
   const lightsGroup = new THREE.Group();
@@ -370,11 +459,11 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
   {
     const L = limb('front-left-low');
     if (L) {
-      // the spot on the limb above the clearing between the annex and the cottage path
+      // the spot on the limb above the clearing between the Schreinerei yard and the cottage path
       let best = 0.5, bd = Infinity;
       for (let u = 0.3; u < 0.85; u += 0.005) {
         const P = L.curve.getPointAt(u);
-        const d = Math.hypot(P.x + 8, P.z - 3.2);
+        const d = Math.hypot(P.x + 9.2, P.z - 4.4);
         if (d < bd) {
           bd = d;
           best = u;
@@ -488,13 +577,9 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
     // eyes (glow at night) — a group so they can blink
     const eyes = new THREE.Group();
     eyes.position.set(0, 0.455 * S, 0.165 * S);
-    for (const sx of [-1, 1]) {
-      const eye = new THREE.Mesh(blob(0.042 * S, 1, 1, 0.6), mats.eyeGlow);
-      eye.position.x = sx * 0.07 * S;
-      const pupil = new THREE.Mesh(blob(0.022 * S, 1, 1, 0.5), mats.dark);
-      pupil.position.set(sx * 0.07 * S, 0, 0.022 * S);
-      eyes.add(eye, pupil);
-    }
+    const eyeGeo = mergeGeometries([-1, 1].map((sx) => xf(blob(0.042 * S, 1, 1, 0.6), [sx * 0.07 * S, 0, 0])));
+    const pupilGeo = mergeGeometries([-1, 1].map((sx) => xf(blob(0.022 * S, 1, 1, 0.5), [sx * 0.07 * S, 0, 0.022 * S])));
+    eyes.add(new THREE.Mesh(eyeGeo, mats.eyeGlow), new THREE.Mesh(pupilGeo, mats.dark));
     owl.add(eyes);
     parent.add(owl);
     ctx.interactions?.add?.(owl, {
@@ -503,6 +588,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
       label: 'Someone in the hollow…',
       onActivate: () => ctx.ui?.speech?.('Hoo! Who goes there?', owl),
     });
+    const baseYaw = owl.rotation.y;
     if (!reduced) {
       let next = 2.5;
       let blinkT = -1;
@@ -514,7 +600,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
         const k = blinkT >= 0 ? (t - blinkT) / 0.18 : 1;
         eyes.scale.y = k < 1 ? Math.max(0.08, Math.abs(1 - 2 * k)) : 1;
         // the owl slowly turns its head… well, its whole self
-        owl.rotation.y = Math.sin(t * 0.21) * 0.25;
+        owl.rotation.y = baseYaw + Math.sin(t * 0.21) * 0.25;
       });
     }
   }
@@ -523,25 +609,13 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
   {
     const R = root('front-right');
     if (R) {
-      // the first spot along the root's front flank that is well clear of the trunk's flare
-      let flank = null;
-      for (let u = 0.36; u < 0.8 && !flank; u += 0.02) {
-        const f = rootSurfacePoint(R, u, Math.PI / 2 + 0.25, -0.05);
-        const a = Math.atan2(f.position.x - CX, f.position.z - CZ);
-        const rr = Math.hypot(f.position.x - CX, f.position.z - CZ);
-        if (rr - trunkRadius(a, 0.25) > 0.35) flank = f;
-      }
-      flank ??= rootSurfacePoint(R, 0.6, Math.PI / 2 + 0.25, -0.05);
-      const gy = getHeight(flank.position.x, flank.position.z);
-      const p = new THREE.Vector3(flank.position.x, gy, flank.position.z);
-      const out = new THREE.Vector3(flank.normal.x, 0, flank.normal.z).normalize();
       const door = new THREE.Group();
       door.name = 'oak-mouse-door';
-      door.applyMatrix4(facing(p, out));
+      door.applyMatrix4(R.door?.matrix ?? mouseDoorFrame(R).matrix);
       const DB = new Batch();
-      const dw = 0.24, dh = 0.34, ar = dw / 2;
+      const dw = MOUSE_DOOR.width, dh = MOUSE_DOOR.height, ar = dw / 2;
       // stone arch: little stones around the opening
-      const nSt = 9;
+      const nSt = 11;
       for (let i = 0; i < nSt; i++) {
         const t = i / (nSt - 1);
         let x, y;
@@ -556,7 +630,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
           x = Math.cos(ang) * (ar + 0.04);
           y = dh - ar + Math.sin(ang) * (ar + 0.04);
         }
-        const st = new THREE.DodecahedronGeometry(rng.range(0.035, 0.05), 0);
+        const st = new THREE.DodecahedronGeometry(rng.range(0.045, 0.062), 0);
         DB.add(mats.stone, xf(st, [x, y + 0.03, 0.03], [rng.next(), rng.next(), rng.next()], [1, 1, 0.7]));
       }
       // dark doorway behind the leaf
@@ -570,7 +644,17 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
       // threshold stone + a tiny glowing window of warm light inside
       DB.add(mats.stone, xf(new THREE.BoxGeometry(dw + 0.12, 0.04, 0.12), [0, 0.0, 0.07]));
       DB.add(mats.warmGlow, xf(new THREE.CircleGeometry(0.035, 10), [0.0, dh * 0.62, 0.004]));
-      DB.build(door, 'oak-mouse-door');
+      // a tiny lantern on a twig post beside the door, so the secret glows at night
+      DB.add(mats.wood, xf(new THREE.CylinderGeometry(0.012, 0.016, 0.42, 5), [ar + 0.16, 0.21, 0.12], [0, 0, 0.06]));
+      DB.add(mats.wood, xf(new THREE.CylinderGeometry(0.008, 0.008, 0.1, 4), [ar + 0.13, 0.41, 0.12], [0, 0, Math.PI / 2]));
+      DB.add(mats.iron, xf(new THREE.ConeGeometry(0.045, 0.04, 4), [ar + 0.09, 0.36, 0.12], [0, Math.PI / 4, 0]));
+      DB.add(mats.warmGlow, xf(new THREE.CylinderGeometry(0.026, 0.024, 0.06, 6), [ar + 0.09, 0.31, 0.12]));
+      // the frame is static: bake it (in world space) into the shared batch
+      door.updateMatrixWorld(true);
+      for (const { material, list } of DB.parts.values()) for (const g of list) B.add(material, g.applyMatrix4(door.matrixWorld));
+      DB.parts.clear();
+      const lh = new THREE.Vector3(ar + 0.09, 0.31, 0.12).applyMatrix4(door.matrixWorld);
+      warmHalos.push({ x: lh.x, y: lh.y, z: lh.z, size: 0.3 });
       // the door leaf (hinged on the left) — planks, iron strap, knob
       const leafPivot = new THREE.Group();
       leafPivot.position.set(-ar, 0.01, 0.02);
@@ -624,8 +708,12 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows }) {
     }
   }
 
+  for (const g of hollowLinings ?? []) B.add(mats.dark, g);
+  if (warmHalos.length) parent.add(props.glowQuads(warmHalos, '#ffc46b', { day: 0.06, night: 0.9 }));
   B.build(parent, 'oak-details');
   return {
+    /** world positions of the lantern glasses (for others' light/sound cues) */
+    lanterns: lanternSpots,
     update(dt, t) {
       for (const u of updates) u(dt, t);
     },

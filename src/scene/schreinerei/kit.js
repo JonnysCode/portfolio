@@ -39,7 +39,7 @@ export function makeMats(ctx) {
     timber: (extra = {}) => m.surface('timber', extra),
     /** Individual instanced shakes: weathered timber, world-mapped so every shake differs. */
     shingles: () => m.surface('timber', { triplanar: true, color: '#7a5a42' }),
-    plaster: () => m.surface('plaster'),
+    plaster: () => m.surface('plaster', { color: '#e8dbc0' }),
     stone: (extra = {}) => m.surface('stone', extra),
     mortar: () => m.surface('stone', { color: '#8d867a' }),
     cobble: () => m.surface('cobble'),
@@ -59,7 +59,7 @@ export function makeMats(ctx) {
     vc: () => m.standard('#ffffff', { vertexColors: true, roughness: 0.78 }),
     /** Warm window/lamp glows: two shared intensities keep the material count low. */
     glow: (color, day = 0.35, night = 2.2) =>
-      day >= 0.5 ? m.glow('#ffd79a', { day: 0.9, night: 3.2 }) : day >= 0.3 ? m.glow('#ffc46e', { day: 0.4, night: 2.4 }) : m.glow('#ffa850', { day: 0.26, night: 1.9 }),
+      day >= 0.5 ? m.glow('#ffd79a', { day: 0.85, night: 2.4 }) : day >= 0.3 ? m.glow('#ffc46e', { day: 0.4, night: 1.7 }) : m.glow('#ffa850', { day: 0.26, night: 1.35 }),
   };
   /**
    * For small hotspot pieces: painted bits, fabric and glass ride on the shared
@@ -78,12 +78,13 @@ export function makeMats(ctx) {
 
 /** Average (sRGB) colour of each wood species — the vertex colour on the shared wood material. */
 export const SPECIES = {
-  oak: '#b8874f',
-  walnut: '#6a4630',
-  spruce: '#dcb880',
-  ash: '#d4b78a',
-  cherry: '#aa603c',
-  maple: '#e8d2a6',
+  oak: '#a28462',
+  walnut: '#5c4537',
+  spruce: '#c5b08e',
+  ash: '#bfae90',
+  cherry: '#905e45',
+  maple: '#d0c2a4',
+  beech: '#ad9882',
 };
 
 // ─── batching ────────────────────────────────────────────────────────────────
@@ -107,6 +108,21 @@ export function prepare(geo, withColor = false) {
   if (withColor && !geo.attributes.color) paint(geo, '#ffffff');
   geo.morphAttributes = {};
   geo.clearGroups();
+  return geo;
+}
+
+/** Per-vertex colour from the vertex normal (and position): fn(nx, ny, nz, x, y, z) → sRGB hex. */
+export function paintBy(geo, fn) {
+  if (!geo.attributes.normal) geo.computeVertexNormals();
+  const pos = geo.attributes.position, nor = geo.attributes.normal;
+  const arr = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    _c.set(fn(nor.getX(i), nor.getY(i), nor.getZ(i), pos.getX(i), pos.getY(i), pos.getZ(i)));
+    arr[i * 3] = _c.r;
+    arr[i * 3 + 1] = _c.g;
+    arr[i * 3 + 2] = _c.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
   return geo;
 }
 
@@ -135,7 +151,8 @@ export class Batch {
    */
   add(material, geo, opts = {}) {
     if (material.isProxy) {
-      if (opts.color === undefined) opts = { ...opts, color: material.color };
+      // a geometry painted beforehand (paintBy) keeps its own colours
+      if (opts.color === undefined && !geo.attributes.color) opts = { ...opts, color: material.color };
       material = material.material;
     }
     const cast = opts.cast ?? true;
@@ -174,12 +191,13 @@ export class Batch {
    * opts.mergeShadow: put a material's casting and non-casting parts into ONE
    * casting mesh (fewer draw calls for small hotspot pieces).
    */
-  build(parent, name = 'batch', { mergeShadow = false } = {}) {
+  build(parent, name = 'batch', { mergeShadow = false, keepSplit = [] } = {}) {
     const out = [];
     if (mergeShadow) {
       const merged = new Map();
+      const split = new Set(keepSplit.map((m) => (m.isProxy ? m.material : m).uuid));
       for (const e of this.lists.values()) {
-        const k = e.material.uuid;
+        const k = split.has(e.material.uuid) ? `${e.material.uuid}|${e.cast}` : e.material.uuid;
         const t = merged.get(k);
         if (t) {
           t.geos.push(...e.geos);
@@ -786,7 +804,7 @@ export function addLantern(F, mats, pos, world, { scale = 1, color = '#2f2b28' }
   parts.push([iron, new THREE.CylinderGeometry(0.13, 0.11, 0.025, 6).translate(0, -0.455, 0)]);
   parts.push([iron, new THREE.SphereGeometry(0.025, 6, 4).translate(0, -0.48, 0)]);
   for (const [mat, g] of parts) F.add(mat, g.applyMatrix4(m), { cast: false });
-  if (world) pushHalo(new THREE.Vector3(world.x, world.y - 0.32 * scale, world.z), 0.95 * scale);
+  if (world) pushHalo(new THREE.Vector3(world.x, world.y - 0.32 * scale, world.z), 0.7 * scale);
 }
 
 /**
@@ -812,7 +830,7 @@ export function addFairyLights(F, mats, points, toWorld, { sag = 0.08, spacing =
       bulb.scale(1, 1.3, 1);
       F.add(bulbMat, bulb.translate(p.x, p.y - 0.045, p.z), { cast: false, receive: false });
       tmp.set(p.x, p.y - 0.045, p.z);
-      pushHalo(toWorld(tmp.clone()), 0.26);
+      pushHalo(toWorld(tmp.clone()), 0.17);
       count++;
     }
   }

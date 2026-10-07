@@ -17,7 +17,7 @@ import { SCHREINEREI } from '../../world/layout.js';
 import { createRng } from '../../core/rng.js';
 import { Batch, board, xf, mat4, stoneGeo, mossGeo, uvBox, peg, addToadstool, addFern, addLantern, addFairyLights } from './kit.js';
 import { makeNotes } from './fx.js';
-import { barkZAt } from './door.js';
+import { barkMount } from './door.js';
 
 const D = SCHREINEREI.deck;
 export const DECK = { hw: 2.0, hd: 1.42, h: 0.3, matrix: mat4([D.x, 0, D.z], [0, D.rotY, 0]) };
@@ -114,24 +114,31 @@ export function buildDeck(ctx, B, mats) {
   table.position.set(-0.6, h, -0.08);
   table.scale.setScalar(FS);
   group.add(table);
+  const cabX = 0.55;
   const cabinet = buildRecordCabinet(ctx, pm, rng);
-  cabinet.position.set(0.95, h, -hd + 0.3);
+  cabinet.position.set(cabX, h, -hd + 0.3);
   cabinet.scale.setScalar(FS);
   group.add(cabinet);
   const player = buildRecordPlayer(ctx, pm, rng);
-  player.group.position.set(0.95, h + cabinet.userData.topY * FS, -hd + 0.3);
+  player.group.position.set(cabX, h + cabinet.userData.topY * FS, -hd + 0.3);
   player.group.scale.setScalar(FS);
   group.add(player.group);
   const coffee = buildCoffeeTable(ctx, pm, rng);
-  coffee.position.set(1.2, h, 0.62);
-  coffee.rotation.y = -0.12;
+  coffee.position.set(0.82, h, 0.78);
+  coffee.rotation.y = -0.2;
   coffee.scale.setScalar(FS);
   group.add(coffee);
   const chair = buildArmchair(ctx, pm, rng);
-  chair.position.set(1.68, h, -0.12);
-  chair.rotation.y = -2.2;
+  chair.position.set(1.62, h, -0.88);
+  chair.rotation.y = -0.75;
   chair.scale.setScalar(FS);
   group.add(chair);
+
+  // ── a ginger cat asleep on the armchair cushion (breathes slowly) ────────
+  const cat = makeSleepingCat(ctx);
+  cat.group.position.set(0.02, 0.33, 0.04);
+  cat.group.rotation.y = 0.6;
+  chair.add(cat.group);
 
   // ── the tea party: two villagers on the chairs at the back of the table ───
   const guests = [];
@@ -160,7 +167,7 @@ export function buildDeck(ctx, B, mats) {
   // ── fairy lights on poles and into the oak ────────────────────────────────
   {
     const poleH = 2.35;
-    const poles = [[-hw + 0.04, -hd + 0.04], [hw - 0.04, -hd + 0.04], [hw - 0.04, hd - 0.04]];
+    const poles = [[-hw + 0.04, -hd + 0.04], [hw - 0.04, -hd + 0.04]];
     for (const [x, z] of poles) {
       F.add(tim, xf(board(0.07, poleH - railH, 0.07, { along: 'y', rng }), [x, h + railH + (poleH - railH) / 2, z]));
       F.add(mats.metal('#2f2b28'), xf(new THREE.TorusGeometry(0.03, 0.008, 4, 8), [x, h + poleH + 0.02, z], [Math.PI / 2, 0, 0]), { cast: false });
@@ -168,27 +175,38 @@ export function buildDeck(ctx, B, mats) {
     // anchor in the bark: the trunk near the door, right side
     const ya = 2.7;
     const ax = 2.05;
-    const barkW = new THREE.Vector3(ax, ya, barkZAt(ax, ya) + 0.05);
+    const barkW = barkMount(ctx, ax, ya, { spreadA: 0.02, spreadY: 0.05 }).point;
     const barkLocal = barkW.clone().applyMatrix4(DECK.matrix.clone().invert());
     const pts = [
       { x: barkLocal.x, y: barkLocal.y, z: barkLocal.z },
       { x: poles[0][0], y: h + poleH, z: poles[0][1] },
       { x: poles[1][0], y: h + poleH, z: poles[1][1] },
-      { x: poles[2][0], y: h + poleH, z: poles[2][1] },
       { x: -hw + 0.2, y: h + poleH - 0.25, z: hd + 0.4 },
     ];
     addFairyLights(F, mats, pts.map((p) => [p.x, p.y, p.z]), (v) => v.applyMatrix4(DECK.matrix), { sag: 0.09, spacing: 0.27 });
     // a lantern hanging from the front-right pole
-    const lp = [hw - 0.04 - 0.16, h + poleH - 0.3, hd - 0.04];
+    const lp = [hw - 0.04 - 0.16, h + poleH - 0.3, -hd + 0.04];
     addLantern(F, mats, lp, toWorld(...lp), { scale: 0.85 });
-    F.add(mats.metal('#2f2b28'), xf(new THREE.CylinderGeometry(0.008, 0.008, 0.2, 4), [hw - 0.13, h + poleH - 0.28, hd - 0.04], [0, 0, Math.PI / 2]), { cast: false });
-    // the pole on the front-left stands in a planter
-    F.add(tim, xf(board(0.07, poleH - 0.2, 0.07, { along: 'y', rng }), [-hw + 0.2, h + (poleH - 0.2) / 2, hd + 0.4]), { cast: false });
+    F.add(mats.metal('#2f2b28'), xf(new THREE.CylinderGeometry(0.008, 0.008, 0.2, 4), [hw - 0.13, h + poleH - 0.28, -hd + 0.04], [0, 0, Math.PI / 2]), { cast: false });
+    // the pole on the front-left stands in a planter box full of flowers
+    {
+      const px = -hw + 0.2, pz = hd + 0.4;
+      F.add(tim, xf(board(0.07, poleH + h - 0.1, 0.07, { along: 'y', rng }), [px, (poleH + h - 0.1) / 2 + 0.1, pz]), { cast: false });
+      F.add(mats.wood('oak'), xf(board(0.46, 0.3, 0.34, { along: 'x', rng }), [px, 0.15, pz]));
+      F.add(mats.soil(), xf(new THREE.BoxGeometry(0.4, 0.02, 0.28), [px, 0.3, pz]), { cast: false });
+      const vc = mats.vc();
+      for (let i = 0; i < 14; i++) {
+        const x = px + rng.jitter(0.18), z = pz + rng.jitter(0.12), hh = rng.range(0.08, 0.22);
+        F.add(vc, xf(new THREE.CylinderGeometry(0.004, 0.005, hh, 3), [x, 0.3 + hh / 2, z]), { color: '#4f7f36', cast: false });
+        F.add(vc, xf(new THREE.SphereGeometry(rng.range(0.02, 0.035), 6, 4), [x, 0.3 + hh, z], null, [1, 0.6, 1]), { color: rng.pick(['#d6332a', '#f2ead8', '#e8c22a', '#b39ddb', '#ef7a5a']), cast: false });
+      }
+      addFern(F, ctx, rng, px + 0.12, 0.3, pz - 0.05, { size: 0.3, fronds: 5 });
+    }
   }
   const light = ctx.lights?.addPoint?.(toWorld(0, h + 1.9, 0), { color: '#ffc477', day: 0.3, night: 3.2, distance: 6 });
 
   // ── record player behaviour ────────────────────────────────────────────────
-  const notes = makeNotes(ctx, { origin: toWorld(0.95, h + cabinet.userData.topY * FS + 0.15, -hd + 0.3) });
+  const notes = makeNotes(ctx, { origin: toWorld(cabX, h + cabinet.userData.topY * FS + 0.15, -hd + 0.3) });
   ctx.scene.add(notes.object);
   let playing = false;
   function togglePlaying() {
@@ -213,6 +231,7 @@ export function buildDeck(ctx, B, mats) {
     update(dt, t) {
       player.update(dt, t);
       notes.update(dt, t);
+      cat.update(dt, t);
     },
   };
 }
@@ -273,8 +292,9 @@ function buildDiningTable(ctx, mats, rng) {
   // the tea set (teapot, cups on saucers, cookies, flowers, a candle)
   addTeaSet(Bt, mats, rng, H);
   Bt.build(g, 'dining-table', { mergeShadow: true });
-  // first two seats: guests (the one behind, and the one at the right end)
-  g.userData.seats = [seats[0], seats[1]];
+  // guests: the one behind the table and the one at the left end (the right
+  // end stays free so nothing hides the record player from the visitor)
+  g.userData.seats = [seats[0], seats[3]];
   g.userData.topY = H;
   return g;
 }
@@ -348,7 +368,7 @@ function addTeaSet(Bt, mats, rng, H) {
     }
   }
   // a candle in a brass holder (glows at night)
-  Bt.add(mats.metal('#b8893a'), xf(new THREE.CylinderGeometry(0.03, 0.035, 0.01, 10), [0.2, top + 0.005, 0.02]), { cast: false });
+  Bt.add(mats.wood('#b8893a'), xf(new THREE.CylinderGeometry(0.03, 0.035, 0.01, 10), [0.2, top + 0.005, 0.02]), { cast: false });
   Bt.add(china, xf(new THREE.CylinderGeometry(0.012, 0.012, 0.07, 8), [0.2, top + 0.045, 0.02]), { color: '#f7efdf', cast: false });
   Bt.add(mats.glow('#ffcf7a', 0.6, 3), xf(new THREE.SphereGeometry(0.008, 6, 4), [0.2, top + 0.088, 0.02], null, [1, 1.8, 1]), { cast: false, receive: false });
 }
@@ -538,8 +558,9 @@ function buildCoffeeTable(ctx, mats, rng) {
   }
   Bk.add(mats.wood('walnut'), xf(board(L - 0.12, 0.02, W - 0.12, { along: 'x', rng }), [0, 0.07, 0]));
   // a rug underneath
-  Bk.add(mats.fabric('#a8583a'), xf(new THREE.CylinderGeometry(0.62, 0.62, 0.008, 28), [0, 0.004, 0.0], null, [1.25, 1, 0.9]), { cast: false });
-  Bk.add(mats.fabric('#e8c27a'), xf(new THREE.TorusGeometry(0.56, 0.012, 3, 28), [0, 0.009, 0.0], [Math.PI / 2, 0, 0], [1.25, 0.9, 1]), { cast: false });
+  Bk.add(mats.fabric('#8e5a42'), xf(new THREE.CylinderGeometry(0.62, 0.62, 0.008, 28), [0, 0.004, 0.0], null, [1.25, 1, 0.9]), { cast: false });
+  Bk.add(mats.fabric('#b89a62'), xf(new THREE.TorusGeometry(0.56, 0.012, 3, 28), [0, 0.009, 0.0], [Math.PI / 2, 0, 0], [1.25, 0.9, 1]), { cast: false });
+  Bk.add(mats.fabric('#6f7a5a'), xf(new THREE.TorusGeometry(0.45, 0.01, 3, 28), [0, 0.009, 0.0], [Math.PI / 2, 0, 0], [1.25, 0.9, 1]), { cast: false });
   // an open book
   const vc = mats.vc();
   for (const s of [-1, 1]) {
@@ -553,7 +574,7 @@ function buildCoffeeTable(ctx, mats, rng) {
   {
     const px = 0.17, pz = 0.07;
     Bk.add(mats.clay('#b8653f'), xf(uvBox(new THREE.CylinderGeometry(0.045, 0.035, 0.07, 12), 'y'), [px, H + 0.035, pz]), { cast: false });
-    Bk.add(mats.soil(), xf(new THREE.CircleGeometry(0.042, 10), [px, H + 0.068, pz], [-Math.PI / 2, 0, 0]), { cast: false });
+    Bk.add(mats.wood('#3a2a1e'), xf(new THREE.CircleGeometry(0.042, 10), [px, H + 0.068, pz], [-Math.PI / 2, 0, 0]), { cast: false });
     for (let i = 0; i < 9; i++) {
       const a = (i / 9) * Math.PI * 2 + rng.jitter(0.3);
       const leaf = new THREE.SphereGeometry(0.035, 6, 4);
@@ -587,4 +608,55 @@ function buildArmchair(ctx, mats, rng) {
   Ba.add(mats.fabric('#e8c27a'), xf(board(0.18, 0.14, 0.06, { along: 'x', r: 0.03 }), [0.08, seat + 0.13, -0.1], [-0.3, 0.3, 0.2]));
   Ba.build(g, 'armchair', { mergeShadow: true });
   return g;
+}
+
+/**
+ * A ginger tabby curled up asleep (cute stylised, like the villagers): body,
+ * tucked head with ears, tail wrapped round, stripes. Breathes slowly.
+ */
+function makeSleepingCat(ctx) {
+  const g = new THREE.Group();
+  g.name = 'sleeping-cat';
+  const Bc = new Batch();
+  const mat = ctx.materials.toon('#ffffff', { vertexColors: true, name: 'props-vc' });
+  const ginger = '#e08a3c', light = '#f6d3a4', dark = '#b5602a';
+  const body = new THREE.SphereGeometry(0.1, 14, 10);
+  body.scale(1.15, 0.62, 0.95);
+  // tabby stripes across the back
+  const pos = body.attributes.position;
+  const col = new Float32Array(pos.count * 3);
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i);
+    c.set(y < -0.02 ? light : Math.sin(x * 70) > 0.45 ? dark : ginger);
+    col.set([c.r, c.g, c.b], i * 3);
+  }
+  body.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  Bc.add(mat, body.translate(0, 0.055, 0));
+  // head tucked against the body, nose down, eyes shut
+  const head = new THREE.SphereGeometry(0.06, 12, 8);
+  head.scale(1.1, 0.9, 1);
+  Bc.add(mat, head.translate(0.1, 0.06, 0.035), { color: ginger });
+  Bc.add(mat, new THREE.SphereGeometry(0.035, 8, 6).scale(1, 0.7, 1).translate(0.135, 0.045, 0.06), { color: light });
+  for (const s of [-1, 1]) {
+    Bc.add(mat, xf(new THREE.ConeGeometry(0.022, 0.04, 4), [0.1 + s * 0.028, 0.115, 0.02], [0, 0, -s * 0.35]), { color: dark });
+    // closed eyes: little dark arcs
+    Bc.add(mat, xf(new THREE.TorusGeometry(0.009, 0.0025, 3, 6, Math.PI), [0.118 + s * 0.022, 0.07, 0.088], [0, 0, Math.PI]), { color: '#3b2a1e' });
+  }
+  Bc.add(mat, new THREE.SphereGeometry(0.006, 5, 4).translate(0.14, 0.055, 0.094), { color: '#d87a7a' });
+  // tail wrapped around the front
+  const tail = new THREE.TorusGeometry(0.1, 0.022, 6, 14, Math.PI * 1.1);
+  Bc.add(mat, xf(tail, [0.0, 0.02, 0.0], [Math.PI / 2, 0, 0.6], [1.1, 0.95, 1]), { color: ginger });
+  Bc.add(mat, new THREE.SphereGeometry(0.024, 8, 6).translate(0.11, 0.022, 0.08), { color: light });
+  Bc.build(g, 'cat', { mergeShadow: true });
+  const breath = g.children[0];
+  return {
+    group: g,
+    update(dt, t) {
+      // a slow sleepy breath
+      const k = 1 + Math.sin(t * 1.4) * 0.03;
+      breath.scale.set(1, k, 1 + (k - 1) * 0.5);
+      breath.updateMatrix();
+    },
+  };
 }

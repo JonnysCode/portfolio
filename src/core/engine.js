@@ -44,7 +44,7 @@ export function createEngine(canvas) {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   const TONE_MAPPINGS = { aces: THREE.ACESFilmicToneMapping, agx: THREE.AgXToneMapping, neutral: THREE.NeutralToneMapping };
   renderer.toneMapping = TONE_MAPPINGS[params.get('tm')] ?? THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = Number(params.get('exposure')) || 1.0;
+  renderer.toneMappingExposure = Number(params.get('exposure')) || 1.12;
   renderer.shadowMap.enabled = quality.shadows;
   // PCF with a Vogel-disk kernel (shadow.radius) — soft, dappled canopy shadows.
   renderer.shadowMap.type = THREE.PCFShadowMap;

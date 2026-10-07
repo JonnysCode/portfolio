@@ -9,9 +9,12 @@
 // carved "Schreinerei" sign swinging above and the framed EFZ certificate
 // under its own little roof (hotspot 'efz-certificate').
 //
-// The door does NOT rely on the oak builder carving a hole: the doorway is a
-// shallow lit niche standing proud of the bark (bark relief ±0.2), and the
-// collar reaches ~1 unit into the trunk so it blends whatever the bark does.
+// The frame stands DOOR.z proud of the bark; the oak builder carves a niche
+// behind it (scene/oak/shape.js DOOR_NICHE) and rolls its own bark lip around
+// it. Our burl collar reaches ~1 unit into the trunk so the two always blend,
+// and the lit doorway is a shallow niche in front of the bark, never inside it.
+// Things on the bark (lantern bracket, sign brackets, certificate) are placed
+// with barkMount(), which follows the sculpted bark when ctx.oak provides it.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { OAK, oakRadiusAt } from '../../world/layout.js';
@@ -69,8 +72,8 @@ export function buildDoor(ctx, B, mats) {
   }
   const nSeg = 5;
   for (let i = 0; i < nSeg; i++) {
-    const a0 = (i / nSeg) * Math.PI + 0.004, a1 = ((i + 1) / nSeg) * Math.PI - 0.004;
-    const seg = arcSegment(R, R + F, a0, a1, 0.9, 4);
+    const a0 = (i / nSeg) * Math.PI + 0.002, a1 = ((i + 1) / nSeg) * Math.PI - 0.002;
+    const seg = arcSegment(R, R + F, a0, a1, 0.9, 8);
     uvBox(seg, 'x', undefined, [rng.next() * 5, rng.next() * 5]);
     D.add(oak, xf(seg, [0, archY, -0.43]));
     // joint pegs
@@ -171,7 +174,7 @@ export function buildDoor(ctx, B, mats) {
       v.z += wob * Math.sin(((v.y - y0) / (Hs + R)) * Math.PI);
     });
     uvBox(g, 'y', undefined, [rng.next() * 9, rng.next() * 9]);
-    leaf.add(oak, g, { color: i % 2 ? '#b8874f' : '#a97a45' });
+    leaf.add(oak, g, { color: i % 2 ? '#9a7352' : '#8c6846' });
   }
   // inside ledges + a diagonal brace (Z), hidden mostly but honest
   for (const ly of [leafBottom + 0.22, archY - 0.05]) leaf.add(oak, xf(board(LW - 0.12, 0.12, 0.035, { along: 'x', rng }), [0, ly, -0.02]));
@@ -229,15 +232,13 @@ export function buildDoor(ctx, B, mats) {
     leaf.add(oakDark, xf(new THREE.BoxGeometry(wr * 2, 0.02, 0.02), [0, wy, LT]), { cast: false });
     leaf.add(oakDark, xf(new THREE.BoxGeometry(0.02, wr * 2, 0.02), [0, wy, LT]), { cast: false });
   }
-  const leafGroup = new THREE.Group();
-  leafGroup.name = 'door-leaf';
-  const hinge = new THREE.Group();
-  hinge.position.set(OAK.door.x - LR - 0.012, 0, DOOR.z + 0.04);
-  hinge.rotation.y = -DOOR.ajar;
-  leafGroup.position.set(LR + 0.012, 0, 0);
-  hinge.add(leafGroup);
-  group.add(hinge);
-  leaf.build(leafGroup, 'door-leaf', { mergeShadow: true });
+  // the leaf stands still (ajar): bake its hinge transform and merge it into
+  // the shared batch
+  {
+    const hingeM = mat4([OAK.door.x - LR - 0.012, 0, DOOR.z + 0.04], [0, -DOOR.ajar, 0]).multiply(mat4([LR + 0.012, 0, 0]));
+    for (const e of leaf.lists.values()) for (const g of e.geos) B.add(e.material, g.applyMatrix4(hingeM), { cast: e.cast });
+    leaf.lists.clear();
+  }
 
   // ── bark collar: the trunk has grown around the frame ──────────────────────
   {
@@ -323,6 +324,39 @@ export function buildDoor(ctx, B, mats) {
     }
   }
 
+  // ── glowing toadstools at the roots' feet (they wake up at night) ─────────
+  {
+    const glowCap = ctx.materials.glow('#8af0d8', { day: 0.12, night: 1.5 });
+    const stem = mats.vc();
+    const clusters = [[-(R + F + 1.05), 0.95], [R + F + 1.15, 0.75], [-(R + F + 0.35), 1.15], [R + F + 0.62, -0.05]];
+    for (const [cx, cz] of clusters) {
+      const n = rng.int(3, 6);
+      for (let i = 0; i < n; i++) {
+        const x = cx + rng.jitter(0.16), z = cz + rng.jitter(0.12);
+        const hgt = rng.range(0.05, 0.13), cr = hgt * rng.range(0.32, 0.5);
+        const tilt = [rng.jitter(0.25), 0, rng.jitter(0.25)];
+        D.add(stem, xf(new THREE.CylinderGeometry(cr * 0.18, cr * 0.25, hgt, 5), [x, hgt / 2, z], tilt), { color: '#e9f2e6', cast: false });
+        const cap = new THREE.SphereGeometry(cr, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2);
+        cap.scale(1, 0.75, 1);
+        D.add(glowCap, xf(cap, [x + tilt[2] * -hgt, hgt, z + tilt[0] * hgt], tilt), { cast: false, receive: false });
+      }
+    }
+  }
+
+  // ── a broom leaning by the door ───────────────────────────────────────────
+  {
+    // foot on the ground beside the steps, handle resting against the collar
+    const foot = new THREE.Vector3(-(R + F + 0.62), 0.0, 0.62);
+    const top = new THREE.Vector3(-(R + F + 0.42), 1.25, 0.12);
+    const dir = top.clone().sub(foot).normalize();
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    const at = (t) => foot.clone().addScaledVector(dir, t);
+    const place = (g, t) => g.applyQuaternion(q).translate(at(t).x, at(t).y, at(t).z);
+    D.add(mats.wood('ash'), place(new THREE.CylinderGeometry(0.014, 0.016, 1.0, 6), 0.72));
+    D.add(mats.wood('#b8964e'), place(new THREE.CylinderGeometry(0.035, 0.1, 0.3, 9, 1), 0.15));
+    D.add(mats.metal('#6a4a2a'), place(new THREE.CylinderGeometry(0.037, 0.037, 0.03, 8), 0.27), { cast: false });
+  }
+
   // ── worn stone steps up to the threshold ──────────────────────────────────
   {
     const stepH = y0 / 2;
@@ -350,7 +384,7 @@ export function buildDoor(ctx, B, mats) {
   const lanternPos = new THREE.Vector3();
   {
     const by = 2.05, bx = -(R + F + 0.62);
-    const barkZ = barkZAt(bx, by);
+    const barkZ = barkMount(ctx, bx, by, { spreadA: 0.02, spreadY: 0.05 }).point.z;
     const arm = [[bx, by, barkZ - 0.1], [bx, by + 0.02, DOOR.z + 0.15], [bx, by - 0.02, DOOR.z + 0.42]];
     B.add(iron, tube(arm, 0.018, 5, 10), { cast: false });
     // scroll under the arm
@@ -373,7 +407,7 @@ export function buildDoor(ctx, B, mats) {
     const rodZ = DOOR.z + 0.12;
     for (const s of [-1, 1]) {
       const bx = s * 0.72;
-      const bz = barkZAt(bx, rodY);
+      const bz = barkMount(ctx, bx, rodY, { spreadA: 0.02, spreadY: 0.05 }).point.z;
       B.add(iron, tube([[bx, rodY + 0.04, bz - 0.12], [bx, rodY + 0.05, (bz + rodZ) / 2], [bx, rodY, rodZ]], 0.016, 5, 8), { cast: false });
       const sc = [];
       for (let i = 0; i <= 12; i++) {
@@ -393,9 +427,9 @@ export function buildDoor(ctx, B, mats) {
   const cert = makeCertificate(ctx, mats.piece, rng);
   {
     const cx = R + F + 1.03, cy = 1.32;
-    const bz = barkZAt(cx, cy);
-    const yaw = Math.atan2(cx - OAK.x, bz - OAK.z);
-    cert.position.set(cx + Math.sin(yaw) * 0.2, cy, bz + Math.cos(yaw) * 0.2);
+    const mount = barkMount(ctx, cx, cy, { spreadA: 0.09, spreadY: 0.32 });
+    const yaw = mount.a;
+    cert.position.copy(mount.point).addScaledVector(mount.normal, 0.09);
     cert.rotation.y = yaw;
     group.add(cert);
     // two little brackets into the bark
@@ -446,6 +480,23 @@ export function barkZAt(x, y) {
   const r = oakRadiusAt(y);
   const dx = x - OAK.x;
   return OAK.z + Math.sqrt(Math.max(0.01, r * r - dx * dx));
+}
+
+/**
+ * Where to mount something on the front of the oak at world x, height y:
+ * uses the sculpted bark (ctx.oak.barkRadius) when the oak builder provides
+ * it, taking the outermost bark within ±spread so a board never sinks into a
+ * bulge. Returns { a (azimuth), r, point (Vector3 on the bark), normal }.
+ */
+export function barkMount(ctx, x, y, { spreadA = 0.05, spreadY = 0.25 } = {}) {
+  const rad = (a, yy) => ctx.oak?.barkRadius?.(a, yy) ?? oakRadiusAt(yy);
+  let a = Math.asin(THREE.MathUtils.clamp((x - OAK.x) / oakRadiusAt(y), -1, 1));
+  for (let i = 0; i < 3; i++) a = Math.asin(THREE.MathUtils.clamp((x - OAK.x) / rad(a, y), -1, 1));
+  let r = 0;
+  for (const da of [-spreadA, 0, spreadA]) for (const dy of [-spreadY, 0, spreadY]) r = Math.max(r, rad(a + da, y + dy));
+  const normal = new THREE.Vector3(Math.sin(a), 0, Math.cos(a));
+  const point = new THREE.Vector3(OAK.x + normal.x * r, y, OAK.z + normal.z * r);
+  return { a, r, point, normal };
 }
 
 /** A thick worn stone slab (rounded, lumpy edges, dished top). */
@@ -597,18 +648,21 @@ function makeCertificate(ctx, mats, rng) {
   const W = 0.46, H = 0.34;
   // backing board + roof
   B.add(mats.wood('spruce'), board(W + 0.16, H + 0.22, 0.04, { along: 'y', rng }).translate(0, 0.0, -0.04));
+  // a little gable roof: two boards, each covered with three rows of tiny shingles
+  const apex = new THREE.Vector3(0, H / 2 + 0.3, 0.03);
   for (const s of [-1, 1]) {
-    const roof = board(0.36, 0.025, 0.2, { along: 'x', rng });
-    B.add(mats.wood('walnut'), xf(roof, [s * 0.15, H / 2 + 0.2, 0.03], [0, 0, -s * 0.55]));
-  }
-  // tiny shingles on the roof (3 rows)
-  for (const s of [-1, 1]) {
+    // roof-board frame: x down the slope, y = board normal, z along the ridge
+    const M = new THREE.Matrix4().makeRotationZ(-s * 0.55);
+    if (s < 0) M.multiply(new THREE.Matrix4().makeScale(-1, 1, 1));
+    M.setPosition(apex);
+    const roof = board(0.36, 0.022, 0.2, { along: 'x', rng });
+    B.add(mats.wood('walnut'), roof.translate(0.17, 0, 0).applyMatrix4(M));
     for (let row = 0; row < 3; row++) {
       for (let k = 0; k < 5; k++) {
-        const sh = board(0.06, 0.008, 0.07, { along: 'z', rng });
-        const u = 0.03 + row * 0.055;
-        xf(sh, [s * (0.3 - u - 0.02) , H / 2 + 0.2 + 0.03 + (0.15 - u) * 0.55 * 1.12 - 0.02, -0.05 + k * 0.045 + (row % 2) * 0.02], [0, 0, -s * 0.55]);
-        B.add(mats.wood('oak'), sh, { cast: false });
+        const sh = board(0.075, 0.008, 0.045, { along: 'x', rng, r: 0.002 });
+        sh.translate(0.34 - row * 0.1 - 0.035, 0.016 + (2 - row) * 0.004, -0.09 + k * 0.045 + (row % 2) * 0.022);
+        sh.rotateZ(0.0);
+        B.add(mats.wood('oak'), sh.applyMatrix4(M), { cast: false, color: k % 2 ? '#8a6a4a' : '#9a7a55' });
       }
     }
   }

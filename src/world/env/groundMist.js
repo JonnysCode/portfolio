@@ -62,16 +62,18 @@ const FRAG = /* glsl */ `
     float stream = g.g;
     float above = vW.y - ground;
     // soft contact with the ground, thinning out with height above it
-    float contact = smoothstep(0.0, 0.55, above) * (1.0 - smoothstep(0.8, 3.2, above));
+    float contact = smoothstep(0.0, 0.45, above) * (1.0 - smoothstep(0.6, 2.4, above));
     // where mist belongs: over the water, round the pool, the rim of the glen, by night everywhere low
     float r = length(vW.xz - vec2(0.0, 1.5));
-    float water = 1.0 - smoothstep(1.2, 5.5, stream);
-    float pool = 1.0 - smoothstep(2.0, 7.5, length(vW.xz - uPool.xz));
+    float water = 1.0 - smoothstep(0.8, 3.8, stream);
+    float pool = 1.0 - smoothstep(2.0, 6.0, length(vW.xz - uPool.xz));
     float rim = smoothstep(18.0, 30.0, r);
-    float hollow = smoothstep(0.4, -0.6, ground) * 0.6;
-    float mask = max(max(water, pool), max(rim * 0.45, hollow));
+    float hollow = smoothstep(-0.15, -0.8, ground) * 0.5; // real dips only (pads sit at 0)
+    float mask = max(max(water, pool), max(rim * 0.3, hollow));
     float keepOut = smoothstep(4.5, 8.0, length(vW.xz - uOak.xz)); // not inside the workshop
     mask = max(mask * keepOut, uNight * 0.22 * smoothstep(10.0, 20.0, r));
+    // cheap early-out before the noise (most of the plane is empty)
+    if (contact * mask < 0.004) discard;
     // drifting wisps
     vec2 p = vW.xz * 0.11 + vec2(uTime * 0.018, -uTime * 0.011) + vLayer * 5.3;
     float n = envFbm(p) * 0.65 + envFbm(p * 2.7 - vec2(uTime * 0.03, 0.0)) * 0.35;
@@ -92,7 +94,7 @@ const FRAG = /* glsl */ `
 
 export function buildGroundMist(ctx) {
   const tier = ctx.quality?.tier ?? 'high';
-  const layers = tier === 'high' ? [0.35, 0.95, 1.7] : [0.6, 1.4];
+  const layers = tier === 'high' ? [0.3, 0.7, 1.15] : [0.45, 0.95];
   const size = TERRAIN_HALF_SIZE * 1.2;
   const parts = [];
   layers.forEach((h, i) => {
@@ -125,12 +127,12 @@ export function buildGroundMist(ctx) {
     uGround: { value: groundTexture() },
     uHalf: { value: TERRAIN_HALF_SIZE },
     uCells: { value: GRID_RES },
-    uTime: envUniforms.uTime,
+    uTime: { value: 0 }, // own clock: slowed down for prefers-reduced-motion
     uNight: envUniforms.uNight,
     uStrength: { value: 1 },
     uPool: { value: poolPos },
     uOak: { value: new THREE.Vector3(OAK.x, 0, OAK.z) },
-    uLit: { value: new THREE.Color('#fff0d0') },
+    uLit: { value: new THREE.Color('#f3e2bf') },
     uShade: { value: new THREE.Color('#b9d2d0') },
     uMoon: { value: new THREE.Color('#6f8fc0') },
   };
@@ -153,7 +155,8 @@ export function buildGroundMist(ctx) {
   return {
     mesh,
     uniforms,
-    update(night) {
+    update(night, t = 0) {
+      uniforms.uTime.value = t * (ctx.engine.reducedMotion ? 0.15 : 1);
       uniforms.uStrength.value = 0.42 + 0.45 * night;
     },
   };

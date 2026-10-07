@@ -25,7 +25,7 @@ import { fogUniforms } from './fog.js';
 import { envUniforms, GLSL_NOISE } from './celestial.js';
 
 /** Azimuth range (radians, 0 = −Z / north, + = east) the backdrop covers. */
-const ARC = THREE.MathUtils.degToRad(128);
+const ARC = THREE.MathUtils.degToRad(116);
 const noise = createNoise2D(4711);
 
 /** Ground height that keeps going beyond the terrain mesh (rising, misty hills). */
@@ -93,16 +93,18 @@ function limbGeometry(a, b, r0, r1) {
   return g;
 }
 
-const blobBase = (() => {
-  const ico = new THREE.IcosahedronGeometry(1, 2);
+const icoBase = (detail) => {
+  const ico = new THREE.IcosahedronGeometry(1, detail);
   ico.deleteAttribute('normal');
   ico.deleteAttribute('uv');
   return mergeVertices(ico); // indexed → smooth normals after displacement
-})();
+};
+const blobFine = icoBase(2); // 320 triangles — nearer rows
+const blobCoarse = icoBase(1); // 80 triangles — deep in the mist
 
 /** A lumpy canopy mass (displaced, flattened icosphere). */
-function blobGeometry(rng, cx, cy, cz, sx, sy, sz) {
-  const g = blobBase.clone();
+function blobGeometry(rng, cx, cy, cz, sx, sy, sz, coarse = false) {
+  const g = (coarse ? blobCoarse : blobFine).clone();
   const p = g.attributes.position;
   const s = rng.range(0, 100);
   for (let i = 0; i < p.count; i++) {
@@ -199,6 +201,17 @@ const FOREST_FRAG = /* glsl */ `
     // moss on the up-facing root flares and in streaks down the windward side
     float mossAmt = isBark * (smoothstep(0.25, 0.85, n.y) * 0.75 + smoothstep(0.2, 0.9, -n.x) * 0.35) * smoothstep(0.35, 0.65, envNoise(vW.xz * 0.6 + vW.y * 0.2));
     base = mix(base, uMoss * mix(0.7, 1.1, patchN), clamp(mossAmt, 0.0, 0.85));
+    // never let a far-forest crown loom in front of the lens: when the camera
+    // is high above the glen (the intro descends from above the canopy) the
+    // backdrop near it dissolves (screen-door), as does anything very close
+    float camD = length(vW - cameraPosition);
+    float horiz = length(vW.xz - cameraPosition.xz);
+    float high = smoothstep(38.0, 70.0, cameraPosition.y);
+    float keep = smoothstep(22.0, 36.0, camD);
+    // (only crowns: they are the big shapes that would block the view down into the glen)
+    if (vTint.g > vTint.r + 0.02) keep *= 1.0 - high * (1.0 - smoothstep(42.0, 54.0, horiz));
+    float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    if (keep < ign) discard;
     // foliage: ragged, leafy silhouettes — break the edges of each mass up with noise
     if (isBark < 0.5) {
       float rim = 1.0 - abs(dot(n, v));
@@ -345,12 +358,17 @@ export function buildBackdrop(ctx) {
         }
       }
       // crown: a cluster of lumpy masses
-      const masses = row.under ? rng.int(3, 4) : rng.int(3, 5);
+      // (dense enough that, seen from above during the intro, the glen reads as
+      // a clearing in a closed canopy)
+      // towards the open front (the arc's ends) crowns thin out, so the intro's
+      // descent from above the south-east never looks through a blob
+      const side = 1 - 0.45 * THREE.MathUtils.smoothstep(Math.abs(az), THREE.MathUtils.degToRad(85), ARC);
+      const masses = Math.round((row.under ? rng.int(3, 4) : row.far ? rng.int(3, 5) : rng.int(5, 7)) * side);
       for (let m = 0; m < masses; m++) {
         const ma = rng.range(0, Math.PI * 2);
-        const md = radius * rng.range(1.2, 4.5) * (row.under ? 1.8 : 1);
-        const s = radius * rng.range(2.6, 4.2) * (row.under ? 1.7 : 1);
-        parts.push(tint(blobGeometry(rng, tx + Math.cos(ma) * md, topY + rng.range(1, 9) * (row.under ? 0.4 : 1), tz + Math.sin(ma) * md, s * 1.25, s * 0.75, s * 1.25), leaf()));
+        const md = radius * rng.range(1.2, 4.8) * (row.under ? 1.8 : 1);
+        const s = radius * rng.range(2.8, 4.6) * (row.under ? 1.7 : 1) * side;
+        parts.push(tint(blobGeometry(rng, tx + Math.cos(ma) * md, topY + rng.range(1, 9) * (row.under ? 0.4 : 1), tz + Math.sin(ma) * md, s * 1.25, s * 0.75, s * 1.25, row.r[0] >= 72), leaf()));
       }
       // undergrowth at the foot
       if (tier !== 'low' && !row.far) {
@@ -360,19 +378,19 @@ export function buildBackdrop(ctx) {
           const bd = radius * rng.range(1.6, 3.5) + 1;
           const s = rng.range(1.6, 3.4);
           const bx = x + Math.cos(ba) * bd, bz = z + Math.sin(ba) * bd;
-          parts.push(tint(blobGeometry(rng, bx, farHeight(bx, bz) + s * 0.2, bz, s * 1.4, s * 0.8, s * 1.4), BUSH));
+          parts.push(tint(blobGeometry(rng, bx, farHeight(bx, bz) + s * 0.2, bz, s * 1.4, s * 0.8, s * 1.4, row.r[0] >= 72), BUSH));
         }
       }
     }
   }
   // fill the gaps of the canopy ceiling between the crowns
-  const fill = tier === 'low' ? 10 : 22;
+  const fill = tier === 'low' ? 10 : 34;
   for (let k = 0; k < fill; k++) {
-    const az = rng.range(-ARC, ARC);
+    const az = rng.range(-ARC * 0.85, ARC * 0.85);
     const r = rng.range(46, 95);
     const { x, z } = polar(r, az);
     const s = rng.range(7, 13);
-    parts.push(tint(blobGeometry(rng, x, farHeight(x, z) + rng.range(36, 52), z, s * 1.4, s * 0.7, s * 1.4), leaf()));
+    parts.push(tint(blobGeometry(rng, x, farHeight(x, z) + rng.range(36, 52), z, s * 1.4, s * 0.7, s * 1.4, r > 70), leaf()));
   }
   const skirt = skirtGeometry();
   parts.push(tint(skirt, [0.11, 0.15, 0.09]));

@@ -2,12 +2,18 @@
 // Celestial constants + shared environment uniforms.
 //
 // One place that knows where the sun and moon are and what colour the sky is,
-// so lighting, sky, clouds, water and terrain always agree. sky.js writes the
-// colour uniforms every frame; lighting.js writes uKeyDir. Any custom shader
-// may reference these uniform objects directly (they are shared, never cloned):
+// so lighting, sky, mist, water and terrain always agree. sky.js writes the
+// colour uniforms when the time of day changes; lighting.js writes uKeyDir /
+// uKeyColor. Any custom shader may reference these uniform objects directly
+// (they are shared, never cloned):
 //
 //   import { envUniforms } from './env/celestial.js';
 //   material.uniforms.uSkyHorizon = envUniforms.uSkyHorizon;
+//
+// uFogColor is the cool blue-green mist; the full aerial perspective (warm
+// in-scatter, ground mist) lives in env/fog.js. The legacy keys uMountainFar /
+// uMountainNear / uSnowLit / uSnowShade now hold the far-forest silhouette and
+// backdrop rim colours (no more Alps — the glen is enclosed by deep forest).
 //
 // Directions point FROM the world TOWARDS the light (normalised, world space).
 // Azimuth convention: 0° = north (−Z), 90° = east (+X), 180° = south (+Z).
@@ -27,7 +33,7 @@ export function dirFromAngles(elevationDeg, azimuthDeg, target = new THREE.Vecto
  * so it rakes through the canopy, rims silhouettes and sends its shafts slanting
  * towards the camera side (the camera looks north, from +Z).
  */
-export const SUN_LIGHT_DIR = dirFromAngles(36, 290);
+export const SUN_LIGHT_DIR = dirFromAngles(44, 292);
 /** Where the sun's luminous haze sits in the sky — low, just above the far treetops. */
 export const SUN_SKY_DIR = dirFromAngles(16, 292);
 /** Moonlight: from the back-right, high enough to silver roofs & caps. */
@@ -41,7 +47,7 @@ export const SKY_COLORS = {
     zenith: '#7eaecb',
     mid: '#a6cdcf',
     horizon: '#cfe0d2',
-    fog: '#84aba8', // cool blue-green mist
+    fog: '#7ea6a5', // cool blue-green mist
     sunGlow: '#ffd596', // warm luminous haze around the sun
     cloudLit: '#fff6e6',
     cloudShade: '#b7cbd0',

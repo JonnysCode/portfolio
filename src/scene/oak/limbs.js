@@ -41,10 +41,11 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
   const branches = [];
   const clumps = [];
 
+  let currentLimb = 0;
   function addClump(p, s, tier) {
     if (p.y < 12.2) return;
     if (crownBlocked(p, s * 0.85)) return;
-    clumps.push({ p: p.clone(), s, tier });
+    clumps.push({ p: p.clone(), s, tier, limb: currentLimb });
   }
 
   /** Grow `count` children from a parent branch. depth 1 = secondary, 2 = twig. */
@@ -149,6 +150,7 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
   }
 
   LIMBS.forEach((L, li) => {
+    currentLimb = li;
     const { curve, radiusAt, radiusAtParam } = limbCurve(L);
     const len = curve.getLength();
     tubes.push(

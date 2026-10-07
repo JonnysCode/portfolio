@@ -76,7 +76,7 @@ Surf kind_moss(vec2 uv) {
   float fz2 = gnoise(q * 64.0 + vec2(5.0), vec2(64.0));
   // star-shaped shoots: tiny radial streaks
   float h = (0.42 * dome1 + 0.3 * dome2) * (0.55 + 0.45 * crease) + 0.13 * fz2 + 0.09 * fz + 0.12;
-  vec3 deep = C(0x1b2c12), dark = C(0x33501d), mid = C(0x587a28), lite = C(0x86a034), tip = C(0xbcc457);
+  vec3 deep = C(0x1c2c13), dark = C(0x35501f), mid = C(0x587829), lite = C(0x809a36), tip = C(0xb2b95a);
   vec3 col = mix(deep, dark, smoothstep(0.1, 0.32, h));
   col = mix(col, mid, smoothstep(0.32, 0.5, h));
   col = mix(col, lite, smoothstep(0.5, 0.68, h));
@@ -482,11 +482,11 @@ Surf kind_thatch(vec2 uv) {
 Surf kind_mushroomCap(vec2 uv) {
   float fib = gnoise(vec2(uv.x * 180.0, uv.y * 3.0), vec2(180.0, 3.0));
   float fib2 = gnoise(vec2(uv.x * 64.0, uv.y * 6.0), vec2(64.0, 6.0));
-  float mot = fbm(uv * vec2(12.0, 5.0), vec2(12.0, 5.0), 5);
+  float mot = fbm(uv * vec2(20.0, 7.0), vec2(20.0, 7.0), 4);
   float mot2 = fbm(uv * vec2(30.0, 10.0) + vec2(3.0), vec2(30.0, 10.0), 3);
   float rim = 1.0 - smoothstep(0.0, 0.25, uv.y);
   float apex = smoothstep(0.65, 1.0, uv.y);
-  float R = sat(0.32 + 0.35 * mot + 0.5 * rim * rim - 0.35 * apex + 0.12 * fib2 + 0.08 * mot2);
+  float R = sat(0.3 + 0.2 * mot + 0.55 * rim * rim - 0.3 * apex + 0.1 * fib2 + 0.08 * mot2);
   float G = 0.5 + 0.05 * fib + 0.04 * mot2 + 0.03 * gnoise(uv * vec2(300.0, 60.0), vec2(300.0, 60.0));
   // pale, flaky remnants of the veil (sparse) + a pale rim edge
   vec4 fv = voronoi(uv * vec2(48.0, 16.0), vec2(48.0, 16.0), 0.9);

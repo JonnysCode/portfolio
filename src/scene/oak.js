@@ -14,14 +14,20 @@
 //     crownBounds: THREE.Box3,     // leaf masses
 //     barkRadius(a, y),            // sculpted bark radius at azimuth a (rad, 0 = +Z, +π/2 = +X) & height y
 //     barkPoint(a, y, lift = 0),   // world point on the bark (lifted along the radial direction)
-//     roots: [{ id, a0, curve, size(t, out, tp), length }],
-//     hollows: [{ id, a, y, floor, position, normal }],
+//     roots: [{ id, a0, curve, size(t, out, tp), length }],  // buttress roots (curve is flat; add getHeight)
+//     hollows: [{ id, a, y, floor, position, normal }],         // 'owl' (front-left, y≈9.7) and 'den' (back)
+//     doorNiche: { halfWidth, spring, top, backZ },             // niche carved behind the Schreinerei door
+//     forkY, lanterns: [Vector3],                                // fork height, hanging lantern glass positions
 //   }
+//
+// Secrets: a tiny mouse door in the front-right root and an owl in its hollow
+// are kind:'secret' hotspots (area 'woodworking'). Debug: ?oak=nomoss,noleaves
+// hides moss / leaves; ?oakcards=N overrides the leaf-card budget.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { OAK } from '../world/layout.js';
-import { trunkRadius, polar } from './oak/shape.js';
+import { trunkRadius, polar, DOOR_NICHE, FORK_Y } from './oak/shape.js';
 import { buildTrunkGeometry, buildTrunkMossGeometry, buildHollowCavities } from './oak/trunk.js';
 import { buildRoots } from './oak/roots.js';
 import { buildLimbs } from './oak/limbs.js';
@@ -65,6 +71,8 @@ export default async function build(ctx) {
   const density = ctx.quality?.density ?? 1;
   const hi = density >= 0.9;
   const rng = ctx.rng('great-oak');
+  const debug = ctx.engine?.params?.get('oak') ?? ''; // ?oak=nomoss,noleaves
+  // yield between heavy steps so the loader can paint
   const tick = () => new Promise((r) => setTimeout(r, 0));
 
   const group = new THREE.Group();
@@ -86,21 +94,17 @@ export default async function build(ctx) {
   group.add(staticMesh(barkHigh, materials.surface('bark', { mossy: 0.3, scale: 1.25 }), { name: 'oak-limbs' }));
 
   // ── moss: the trunk's foot, the shady back, the fork, the root tops ─────
-  const debug = ctx.engine?.params?.get('oak') ?? '';
   const mossGeo = merge([buildTrunkMossGeometry({ cols: hi ? 176 : 120 }), ...roots.moss], 'moss');
   const mossMesh = staticMesh(mossGeo, materials.surface('moss'), { cast: false, name: 'oak-moss' });
   mossMesh.visible = !debug.includes('nomoss');
   group.add(mossMesh);
 
-  // ── hollows: dark cavities so they read as deep holes ────────────────────
-  const hollows = buildHollowCavities();
-  group.add(
-    staticMesh(merge(hollows.parts, 'hollows'), materials.standard('#1a120c', { roughness: 1 }), { cast: false, name: 'oak-hollows' })
-  );
-  await tick();
+  // ── ivy leaf cards (climbing the bark, running along the low limb, hanging) ─
+  group.add(staticMesh(ivy.leaves, materials.foliage({ variant: 'ivy', color: '#3d6b2c' }), { cast: false, name: 'oak-ivy' }));
 
-  const ivyMesh = staticMesh(ivy.leaves, materials.foliage({ variant: 'ivy', color: '#3d6b2c' }), { cast: false, name: 'oak-ivy' });
-  group.add(ivyMesh);
+  // ── hollows: dark linings so they read as deep holes (merged with the details)
+  const hollows = buildHollowCavities();
+  await tick();
 
   // ── crown ────────────────────────────────────────────────────────────────
   const crown = buildCrown(ctx, rng.fork('crown'), skeleton.clumps, { density });
@@ -109,7 +113,12 @@ export default async function build(ctx) {
   // ── the little things: fungi, toadstools, lanterns, fairy lights, swing,
   //    bird house, the owl and the secret mouse door ─────────────────────────
   await tick();
-  const details = buildDetails(ctx, rng.fork('details'), group, { limbs: skeleton.limbs, roots: roots.roots, hollows: hollows.mouths });
+  const details = buildDetails(ctx, rng.fork('details'), group, {
+    limbs: skeleton.limbs,
+    roots: roots.roots,
+    hollows: hollows.mouths,
+    hollowLinings: hollows.parts,
+  });
 
   ctx.colliders?.addCircle?.(OAK.x, OAK.z, OAK.baseRadius + 0.3, 'oak');
 
@@ -122,6 +131,10 @@ export default async function build(ctx) {
     barkPoint: (a, y, lift = 0) => polar(a, trunkRadius(a, y) + lift, y),
     roots: roots.roots,
     hollows: hollows.mouths,
+    /** the carved niche behind the Schreinerei door (world units) */
+    doorNiche: DOOR_NICHE,
+    forkY: FORK_Y,
+    lanterns: details.lanterns,
   };
   group.userData.stats = { leafCards: crown.cards, clumps: skeleton.clumps.length, ivyCards: ivy.cards };
   return { update: details.update };

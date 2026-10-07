@@ -1,800 +1,1306 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// The mushroom house — the village's signature building.
+// The fantasy mushroom house — the glen's signature building (refs: the red
+// conical "Fairy Garden" houses, the stone mushroom cottage, the fly agaric
+// between the roots).
 //
-//   const house = makeMushroomHouse({ seed: 'baker', capShape: 'droopy', capColor: palette.capCoral });
-//   house.userData → { radius, height, door: Vector3, plaque: Object3D, capRadius }
+//   const house = makeMushroomHouse({ seed: 'home', height: 9.5, capShape: 'cone', capColor: '#c4301f' });
+//   group.add(house);
+//   house.userData → { radius, height, door (ground point in front of the door), doorTarget (Object3D
+//                      at the door leaf), plaque, capRadius, stemTop, rimY, chimneyTop, windows,
+//                      wallPoint(φ, y), capPoint(φ, s), rimPoint(φ), interior? }
+//   (all house-local; φ = 0 is the front, s = 0 apex … 1 rim)
 //
-// Bulbous plaster stem (seamless revolve with seeded wobble), a generous cap
-// (dome | tall | flat | droopy) with a rolled rim, striped gills underneath and
-// raised spots that follow the cap surface; a round-topped plank door with
-// frame, hinges & knob; round or arched windows with frames, mullions, sills
-// and flower boxes (they glow at night); stone steps & footing stones; an
-// optional chimney with animated smoke, a hanging lantern on a bracket, an
-// eyebrow dormer on bigger houses and a plaque above the door.
+// Anatomy (every part hand-made from seeded jitter, nothing ruler-straight):
+//   • a bulging stem — fibrous mushroom flesh, lime plaster or fieldstone —
+//     on a ring of footing stones, darkened under the cap and mossy at the foot
+//   • a tall cone / bell / dome / parasol cap with a soft tip, a rolled rim,
+//     real radial GILLS underneath (lamella fins over a gill texture), and
+//     irregular raised white warts that follow the cap surface
+//   • a ledged-and-braced plank door with strap hinges and a ring handle in an
+//     arch of individual voussoirs on quoined jambs, a threshold and worn steps
+//   • small framed windows (arched, square or round) with mullions, sills,
+//     painted shutters and flower boxes; panes glow warm (brighter at night)
+//   • a barrel-roofed dormer in the cap, a crooked chimney (stone stack,
+//     stove pipe or a tiny mushroom) with curling smoke
+//   • ivy climbing the walls and hanging from the rim, moss, ferns and toadstools
+//   • optional `open` front: a big arched opening (with folded-back glazed
+//     doors) revealing a hollow, plastered interior — the Wohnatelier
 //
-// Geometry is cached per resolved option set, so identical houses share GPU
-// buffers. ~5–8k triangles, ~10 draw calls (2 shadow casters).
+// Static parts are merged per material. Pass `batch` (+ `frame`) to merge
+// several houses and their surroundings into the SAME draw calls (the cottage
+// does); without it the house builds its own meshes (~16–19 draw calls,
+// 35–55k triangles at full detail).
+// Only smoke and night halos stay separate (returned in the group).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { materials } from '../core/materials.js';
-import { palette } from '../core/palette.js';
 import { createRng } from '../core/rng.js';
-import { Parts, cached, xf, revolve, paintFn, groupFor, shade, mix, opt, strut, grainUV, invert, noRaycast } from './util.js';
-import { glowGeometry, glowMesh } from './glow.js';
-import { makeLantern } from './lantern.js';
-import { addFlowerBox, addTuft, addTinyMushroom } from './bits.js';
-import { registerAnimated, propsSettings } from './ticker.js';
+import {
+  Batch, mats, paramSurface, profile, paintFn, xf, mat4, board, boardBetween, rod, stoneGeo, blockStone, mossGeo,
+  arcSegment, archShape, tube, Cards, addIvy, addFlower, addGrass, addFern, addToadstool, uvBox, uvPlanar, chordDisc,
+  TAU, noiseA, noiseB, WOOD, IRON, IDENTITY, smooth01, lerp,
+} from '../scene/cottage/kit.js';
+import { makeSmoke } from '../scene/cottage/smoke.js';
+import { glowQuads } from './glow.js';
+import { propsSettings } from './ticker.js';
 import { makeTextTexture } from './text.js';
 
-const CAP_COLORS = [palette.capRed, palette.capCoral, palette.capOchre, palette.capBrown, palette.capLavender, palette.capTeal];
-const DOOR_COLORS = [palette.door, palette.door, '#5f8f3f', '#4f6d9a', palette.swissRed, palette.walnut, '#3f8ea6'];
+/** Cap shape names of the first (low-poly) version, still accepted. */
+const LEGACY_SHAPES = { tall: 'cone', flat: 'parasol', droopy: 'bell' };
 
 /**
- * Cap profiles as (u = r / capRadius, v = y / capHeight) control points from the
- * top centre over the rim and back in under the cap. `top` = number of points on
- * the upper surface (spots live there). `stem` = stem height / total height.
+ * Cap profiles: [ρ / capRadius, y / capHeight] from the apex to the rim edge.
+ * stem: collar height / total height. skirt: how far the rim hangs below the collar (× cap height).
  */
-const SHAPES = {
-  dome: {
+const CAP_SHAPES = {
+  cone: {
+    // steep near the soft tip, flaring into a wide skirt at the rim (concave flank)
+    pts: [[0, 1], [0.04, 0.993], [0.09, 0.968], [0.15, 0.918], [0.23, 0.835], [0.33, 0.715], [0.44, 0.585], [0.55, 0.455], [0.66, 0.335], [0.76, 0.225], [0.85, 0.135], [0.92, 0.065], [0.97, 0.022], [1, 0]],
     stem: 0.5,
-    capH: 1,
-    top: [[0, 1], [0.3, 0.965], [0.56, 0.86], [0.77, 0.67], [0.91, 0.44], [0.985, 0.2], [1.0, 0.05]],
-    rim: [[0.985, -0.045], [0.945, -0.07], [0.905, -0.045]],
-    under: [[0.78, 0.0], [0.6, 0.045]],
+    skirt: 0.16,
   },
-  tall: {
-    stem: 0.42,
-    capH: 1,
-    top: [[0, 1], [0.16, 0.975], [0.33, 0.89], [0.5, 0.73], [0.66, 0.53], [0.8, 0.33], [0.92, 0.15], [0.995, 0.03]],
-    rim: [[0.99, -0.04], [0.955, -0.06], [0.92, -0.04]],
-    under: [[0.8, -0.005], [0.6, 0.035]],
+  bell: {
+    pts: [[0, 1], [0.1, 0.993], [0.25, 0.955], [0.41, 0.875], [0.56, 0.755], [0.69, 0.59], [0.8, 0.4], [0.89, 0.215], [0.96, 0.075], [1, 0]],
+    stem: 0.5,
+    skirt: 0.13,
   },
-  flat: {
+  dome: {
+    pts: [[0, 1], [0.18, 0.988], [0.36, 0.94], [0.53, 0.85], [0.68, 0.72], [0.8, 0.55], [0.89, 0.36], [0.95, 0.18], [0.985, 0.06], [1, 0]],
+    stem: 0.55,
+    skirt: 0.17,
+  },
+  parasol: {
+    pts: [[0, 1], [0.14, 0.985], [0.32, 0.92], [0.5, 0.8], [0.66, 0.63], [0.79, 0.44], [0.89, 0.25], [0.96, 0.09], [1, 0]],
     stem: 0.6,
-    capH: 1,
-    top: [[0, 0.9], [0.24, 0.97], [0.48, 0.96], [0.7, 0.85], [0.87, 0.63], [0.97, 0.36], [1.0, 0.13]],
-    rim: [[0.99, 0.0], [0.955, -0.05], [0.915, -0.03]],
-    under: [[0.8, 0.03], [0.6, 0.08]],
-  },
-  droopy: {
-    stem: 0.56,
-    capH: 1,
-    top: [[0, 1], [0.3, 0.96], [0.56, 0.84], [0.76, 0.64], [0.89, 0.4], [0.955, 0.14], [0.965, -0.06], [0.945, -0.18]],
-    rim: [[0.92, -0.22], [0.89, -0.21], [0.88, -0.16]],
-    under: [[0.8, -0.07], [0.6, 0.02]],
+    skirt: 0.06,
   },
 };
 
-let instanceCount = 0;
+const STONE_TINTS = ['#c2ab86', '#b3a58c', '#a49c8c', '#bfa57a', '#9c8f7c', '#cbb995', '#9a978c', '#ad9a7c'];
+const SHUTTER_COLORS = ['#6f8a5a', '#4f7a86', '#9b3b2c', '#c99a45', '#5d6f8f'];
+
+let houseCount = 0;
 
 /**
- * A cute mushroom house. Origin at ground under the stem centre, door facing +Z.
+ * A fantasy mushroom house. Origin on the ground under the stem centre, front door facing +Z.
  * @param {object} [opts]
- * @param {string|number} [opts.seed]          drives every unspecified choice
- * @param {'dome'|'tall'|'flat'|'droopy'} [opts.capShape]
- * @param {string} [opts.capColor]            cap colour (palette.capRed …)
- * @param {string} [opts.spotColor]
+ * @param {string|number} [opts.seed]
+ * @param {number} [opts.height=7]              ground → cap tip
+ * @param {'cone'|'bell'|'dome'|'parasol'} [opts.capShape='cone']  (legacy 'tall' | 'flat' | 'droopy' still accepted)
+ * @param {string} [opts.capColor='#c4301f']    fly agaric red (try '#d7832e' ochre, '#a77c52' tan, '#9d86b8' lavender)
+ * @param {number} [opts.capRadius]             default ≈ 0.31 × height
+ * @param {number} [opts.stemRadius]            default ≈ 0.2 × height
+ * @param {number} [opts.stemHeight]            collar height (default by cap shape)
+ * @param {'stem'|'plaster'|'stone'} [opts.stem='stem']  wall material
  * @param {string} [opts.stemColor]
- * @param {string} [opts.doorColor]
- * @param {number} [opts.height=5]            total height to the top of the cap
- * @param {number} [opts.capRadius=3]
- * @param {number} [opts.stemRadius=1.6]
- * @param {number} [opts.windows]             number of windows (2–5)
- * @param {'round'|'arched'|'mixed'} [opts.windowShape]
- * @param {boolean} [opts.chimney]            chimney with smoke puffs
+ * @param {boolean|number} [opts.warts=true]    number of warts (true = auto)
+ * @param {string} [opts.wartColor='#f3e5c6']
+ * @param {string} [opts.gillColor]             tint of the gills (warm tan by default)
+ * @param {false|object} [opts.door]            { phi = 0, width = 1, height = 1.7, color } (false = no door)
+ * @param {Array|number} [opts.windows]         [{ phi, y, w, h, shape: 'arch'|'rect'|'round', shutters, box, color }] or a count
+ * @param {boolean} [opts.dormer]               barrel-roofed dormer window in the cap
+ * @param {false|'stone'|'pipe'|'mushroom'} [opts.chimney='stone']
  * @param {boolean} [opts.smoke=true]
- * @param {boolean} [opts.lantern]            hanging lantern next to the door
- * @param {boolean} [opts.flowerBoxes]
- * @param {boolean} [opts.dormer]             eyebrow window in the cap (default on big houses)
- * @param {boolean} [opts.balcony]            little balcony on the upper floor (tall stems)
- * @param {number} [opts.spots]               number of cap spots (0 = none)
- * @param {boolean|string} [opts.plaque]      true = blank plaque above the door, string = painted text
- * @returns {THREE.Group} userData: { radius (stem collider radius), height, door: THREE.Vector3 (local, at ground
- *   in front of the door), plaque: Object3D (centre of the plaque, facing +Z), capRadius, chimneyTop: Vector3|null }
+ * @param {number} [opts.ivy=0.6]               0..1 amount of ivy
+ * @param {boolean} [opts.lantern=true]         wall lantern beside the door
+ * @param {number} [opts.lean=0.25]             how far the tip leans (units)
+ * @param {object} [opts.open]                  { phi = 0, width = 2.6, height = 2.5, depth = 0.55 } big arched opening (interior)
+ * @param {number} [opts.detail=1]              0.4..1 scales the small-detail counts
+ * @param {Batch} [opts.batch]                  merge static parts into this batch …
+ * @param {THREE.Matrix4} [opts.frame]          … placed by this matrix (batch space)
+ * @param {Array} [opts.halos]                  collect night halos here ({x,y,z,size} in batch space) instead of a mesh
+ * @param {Array} [opts.smokeSources]           collect chimney smoke sources here instead of a smoke mesh
+ * @param {boolean|string} [opts.plaque]        legacy: a painted board above the door (string = its text)
+ * @returns {THREE.Group}
  */
 export function makeMushroomHouse(opts = {}) {
-  const seed = String(opts.seed ?? `house-${instanceCount}`);
-  instanceCount++;
+  const seed = String(opts.seed ?? `mushroom-house-${houseCount}`);
+  houseCount++;
   const rng = createRng(seed);
-  const height = opt(opts, 'height', 5);
-  const capShape = opts.capShape && SHAPES[opts.capShape] ? opts.capShape : rng.pick(['dome', 'dome', 'tall', 'flat', 'droopy']);
+  const H = opts.height ?? 7;
+  const capShape = CAP_SHAPES[opts.capShape] ? opts.capShape : LEGACY_SHAPES[opts.capShape] ?? 'cone';
+  const detail = THREE.MathUtils.clamp(opts.detail ?? propsSettings.quality?.density ?? 1, 0.35, 1);
   const o = {
     seed,
+    H,
     capShape,
-    height,
-    capRadius: opt(opts, 'capRadius', 3),
-    stemRadius: opt(opts, 'stemRadius', 1.6),
-    capColor: opts.capColor ?? rng.pick(CAP_COLORS),
-    spotColor: opts.spotColor ?? palette.spots,
-    stemColor: opts.stemColor ?? palette.stem,
-    doorColor: opts.doorColor ?? rng.pick(DOOR_COLORS),
-    windows: opts.windows ?? rng.int(2, 3) + (height >= 5.5 ? 1 : 0),
-    windowShape: opts.windowShape ?? rng.pick(['round', 'round', 'arched', 'mixed']),
-    chimney: opts.chimney ?? rng.chance(0.75),
-    lantern: opts.lantern ?? rng.chance(0.85),
-    flowerBoxes: opts.flowerBoxes ?? rng.chance(0.75),
-    dormer: opts.dormer ?? (height >= 5.5 && rng.chance(0.7)),
-    balcony: opts.balcony ?? false,
-    spots: opts.spots ?? rng.int(9, 15),
-    plaque: !!opts.plaque,
-    lanternSide: rng.chance(0.5) ? -1 : 1,
+    shape: CAP_SHAPES[capShape],
+    Rc: opts.capRadius ?? H * 0.31,
+    R: opts.stemRadius ?? H * 0.2,
+    stemTop: opts.stemHeight ?? null,
+    stemKind: opts.stem ?? 'stem',
+    stemColor: opts.stemColor ?? (opts.stem === 'plaster' ? '#f1e4c8' : opts.stem === 'stone' ? '#b3aa98' : '#f2e2c2'),
+    capColor: opts.capColor ?? '#c4301f',
+    warts: opts.warts ?? true,
+    wartColor: opts.wartColor ?? '#f3e5c6',
+    door: opts.door === false ? null : { phi: 0, width: 1.0, height: 1.72, color: WOOD.door, ...(opts.door || {}) },
+    windows: opts.windows,
+    dormer: opts.dormer ?? H >= 7.5,
+    chimney: opts.chimney === undefined || opts.chimney === true ? 'stone' : opts.chimney,
+    smoke: opts.smoke ?? true,
+    ivy: opts.ivy ?? 0.6,
+    lantern: opts.lantern ?? true,
+    lean: opts.lean ?? 0.25,
+    leanDir: opts.leanDir ?? rng.range(0, TAU),
+    open: opts.open ? { phi: 0, width: 2.6, height: 2.5, depth: 0.55, ...opts.open } : null,
+    flowers: opts.flowers ?? true,
+    base: opts.base ?? true,
+    detail,
   };
-  const key = 'house|' + JSON.stringify(o);
-  const built = cached(key, () => buildHouse(o));
+  const own = !opts.batch;
+  const batch = opts.batch ?? new Batch();
+  const frame = opts.frame ?? IDENTITY;
+  const F = batch.at(frame);
+  const info = buildHouse(F, o, rng);
 
   const g = new THREE.Group();
   g.name = 'mushroomHouse';
-  g.add(groupFor(built.geos, { name: 'house' }));
-  if (built.glowGeo) g.add(glowMesh(built.glowGeo, palette.windowGlow, { day: 0.12, night: 0.95 }));
+  if (own) batch.build(g, 'mushroomHouse');
+  else g.applyMatrix4(frame);
 
-  // plaque anchor (+ painted text)
+  // night halos around windows & the lantern (or hand them to the caller's shared halo mesh)
+  if (Array.isArray(opts.halos)) {
+    const v = new THREE.Vector3();
+    for (const h of info.halos) {
+      v.set(h.x, h.y, h.z).applyMatrix4(frame);
+      opts.halos.push({ x: v.x, y: v.y, z: v.z, size: h.size });
+    }
+  } else if (info.halos.length) g.add(glowQuads(info.halos, '#ffc477', { day: 0.03, night: 0.38 }));
+  // chimney smoke (or a source for the caller's shared smoke mesh)
+  if (info.chimneyTop && o.smoke) {
+    const src = { x: info.chimneyTop.x, y: info.chimneyTop.y, z: info.chimneyTop.z, scale: Math.max(0.7, H / 9), rise: 2.2 + H * 0.12 };
+    if (Array.isArray(opts.smokeSources)) {
+      const v = new THREE.Vector3(src.x, src.y, src.z).applyMatrix4(frame);
+      opts.smokeSources.push({ ...src, x: v.x, y: v.y, z: v.z });
+    } else g.add(makeSmoke([src], { reducedMotion: propsSettings.reducedMotion }));
+  }
+  const doorTarget = new THREE.Object3D();
+  doorTarget.name = 'door';
+  if (info.doorCenter) doorTarget.position.copy(info.doorCenter);
+  g.add(doorTarget);
+
+  // plaque above the door (legacy option): an anchor, plus a painted board when given text
   const plaque = new THREE.Object3D();
   plaque.name = 'plaque';
-  plaque.position.copy(built.plaque.pos);
+  if (info.doorCenter && o.door) {
+    const r = info.collider + 0.2;
+    plaque.position.set(Math.sin(o.door.phi) * r, o.door.height + 0.75, Math.cos(o.door.phi) * r);
+    plaque.rotation.y = o.door.phi;
+  }
   g.add(plaque);
-  if (typeof opts.plaque === 'string') {
-    const tex = makeTextTexture(opts.plaque, {
-      width: 512,
-      height: 160,
-      color: '#fff3dc',
-      background: null,
-      style: 'paint',
-      padding: 0.16,
-    });
-    const face = new THREE.Mesh(new THREE.PlaneGeometry(built.plaque.w * 0.92, built.plaque.h * 0.86), materials.toon('#ffffff', { map: tex, transparent: true }));
-    face.position.z = 0.032;
-    plaque.add(face);
-  }
-
-  // hanging lantern (separate so it can swing)
-  let lanternPivot = null;
-  if (built.lantern) {
-    lanternPivot = new THREE.Group();
-    lanternPivot.position.copy(built.lantern.pos);
-    lanternPivot.rotation.y = built.lantern.rotY;
-    const lantern = makeLantern({ hanging: true, haloSize: 1.0 });
-    lantern.position.y = -0.02;
-    lanternPivot.add(lantern);
-    g.add(lanternPivot);
-  }
-
-  // chimney smoke: a few instanced puffs rising, drifting and fading by scale
-  let smoke = null;
-  if (built.chimneyTop && opt(opts, 'smoke', true)) {
-    const N = 6;
-    smoke = new THREE.InstancedMesh(smokeGeo(), materials.toon(palette.paper), N);
-    smoke.name = 'smoke';
-    smoke.castShadow = false;
-    smoke.receiveShadow = false;
-    smoke.position.copy(built.chimneyTop);
-    smoke.boundingSphere = new THREE.Sphere(new THREE.Vector3(0.6, 1.4, 0), 2.4);
-    smoke.frustumCulled = true;
-    noRaycast(smoke);
-    g.add(smoke);
-  }
-
-  const ph = rng.next() * 10;
-  const m4 = new THREE.Matrix4();
-  const q = new THREE.Quaternion();
-  const e = new THREE.Euler();
-  const p = new THREE.Vector3();
-  const s = new THREE.Vector3();
-  const driftX = 0.75, driftZ = 0.25;
-  function updateSmoke(t) {
-    const N = smoke.count;
-    for (let i = 0; i < N; i++) {
-      const life = ((t * 0.16 + ph) + i / N) % 1;
-      const k = Math.sin(Math.PI * Math.min(1, life * 1.15));
-      const sc = (0.14 + life * 0.34) * Math.pow(Math.max(k, 0), 0.6);
-      p.set(driftX * life * life + Math.sin(life * 6 + i) * 0.06, life * 2.1, driftZ * life + Math.cos(life * 5 + i * 2) * 0.05);
-      e.set(life * 2 + i, life * 3, 0);
-      q.setFromEuler(e);
-      s.set(sc, sc * 0.9, sc);
-      m4.compose(p, q, s);
-      smoke.setMatrixAt(i, m4);
-    }
-    smoke.instanceMatrix.needsUpdate = true;
-  }
-  if (smoke) updateSmoke(0);
-
-  if (smoke || lanternPivot) {
-    registerAnimated(g, (dt, t) => {
-      if (propsSettings.reducedMotion) return;
-      if (smoke) updateSmoke(t);
-      if (lanternPivot) {
-        lanternPivot.rotation.x = Math.sin(t * 1.4 + ph) * 0.06;
-        lanternPivot.rotation.z = Math.sin(t * 1.0 + ph * 2) * 0.04;
-      }
-    });
+  if (typeof opts.plaque === 'string' && info.doorCenter) {
+    const tex = makeTextTexture(opts.plaque, { width: 512, height: 160, color: '#3b2a1e', background: 'wood', padding: 0.14 });
+    // (own material: a texture in the materials cache key would be serialised)
+    const board = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.3, 0.05), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 }));
+    board.castShadow = true;
+    plaque.add(board);
   }
 
   g.userData = {
-    radius: built.collider,
-    height: o.height,
-    capRadius: o.capRadius,
-    door: built.door.clone(),
+    radius: info.collider,
+    height: H,
+    capRadius: o.Rc,
+    stemTop: info.stemTop,
+    rimY: info.rimY,
+    door: info.doorGround ? info.doorGround.clone() : null,
+    doorTarget,
     plaque,
-    chimneyTop: built.chimneyTop ? built.chimneyTop.clone() : null,
+    chimneyTop: info.chimneyTop ? info.chimneyTop.clone() : null,
+    windows: info.windows,
+    wallPoint: info.wallPoint,
+    capPoint: info.capPoint,
+    rimPoint: info.rimPoint,
+    interior: info.interior,
     options: o,
-    triangles: built.tris,
   };
   return g;
 }
 
-function smokeGeo() {
-  return cached('smoke-geo', () => new THREE.IcosahedronGeometry(1, 1));
-}
-
 // ─── builder ─────────────────────────────────────────────────────────────────
 
-function buildHouse(o) {
-  const rng = createRng(o.seed + '|geo');
-  const P = new Parts();
-  const shape = SHAPES[o.capShape];
-  const H = o.height;
-  const R = o.stemRadius;
-  const Rc = o.capRadius;
-  const stemTop = Math.max(2.35, H * shape.stem); // where the cap sits
-  const capH = H - stemTop;
+function buildHouse(F, o, rng) {
+  const M = mats();
+  const { H, Rc, R, shape } = o;
+  const stemTop = o.stemTop ?? H * shape.stem;
+  const rimY = stemTop - shape.skirt * (H - stemTop);
+  const capH = H - rimY;
+  const det = o.detail;
+  const halos = [];
+  const reserved = []; // wall areas taken: { phi, half (rad), y0, y1 }
+  const capReserved = []; // cap areas taken: { phi, s, r }
 
-  // ── stem: bulbous profile, wider at the base ──
-  const sw = [rng.range(0, 6), rng.range(0, 6), rng.range(0.015, 0.03), rng.range(0.008, 0.016)];
-  const stemProfile = (y) => {
-    const t = THREE.MathUtils.clamp(y / stemTop, 0, 1.2);
-    let r = 1.12 - 0.22 * t + 0.1 * Math.sin(Math.PI * Math.min(t, 1) * 0.9);
-    if (t < 0.1) r += 0.07 * (1 - t / 0.1) ** 2; // base flare
+  // ── lean: the whole house bends a little towards leanDir ──
+  const lx = Math.sin(o.leanDir) * o.lean, lz = Math.cos(o.leanDir) * o.lean;
+  const bendV = (v) => {
+    if (v.y <= 0) return v;
+    const k = (v.y / H) ** 2;
+    v.x += lx * k;
+    v.z += lz * k;
+    return v;
+  };
+  const bendGeo = (geo) => {
+    const p = geo.attributes.position;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i);
+      bendV(v);
+      p.setXYZ(i, v.x, v.y, v.z);
+    }
+    return geo;
+  };
+  const put = (mat, geo, opts) => F.add(mat, bendGeo(geo), opts);
+
+  // ── stem ──
+  const ox = rng.next() * 40, oy = rng.next() * 40;
+  const prof = (y) => {
+    const t = Math.min(Math.max(y / stemTop, 0), 1.3);
+    let r = 1 + 0.085 * Math.sin(Math.PI * Math.min(t, 1) * 0.95) - 0.16 * Math.min(t, 1);
+    if (t < 0.08) r += 0.07 * (1 - t / 0.08) ** 2;
+    if (t > 1) r -= (t - 1) * 0.55;
     return r * R;
   };
-  const wob = (phi) => 1 + sw[2] * Math.sin(3 * phi + sw[0]) + sw[3] * Math.sin(5 * phi + sw[1]);
-  const wallR = (y, phi = 0) => stemProfile(y) * wob(phi);
+  // the open front: the wall is cut by a vertical plane at distance zf from the axis
+  const open = o.open;
+  const zf = open ? prof(stemTop * 0.5) * open.depth : 0;
+  const cutA = (y) => (open ? Math.acos(Math.min(0.999, zf / prof(y))) : 0);
+  const wobAmt = o.stemKind === 'stone' ? 0.02 : 0.032;
+  const wob = (phi, y) => {
+    const c = Math.cos(phi), s = Math.sin(phi);
+    let w = 1 + wobAmt * noiseA(c * 1.2 + ox, s * 1.2 + y * 0.33) + 0.012 * noiseB(c * 3 + oy, s * 3 + y * 0.9);
+    if (open) {
+      // no wobble at the cut edges so they meet the facade plane exactly
+      const d = Math.abs(Math.atan2(Math.sin(phi - open.phi), Math.cos(phi - open.phi))) - cutA(y);
+      w = 1 + (w - 1) * smooth01(d / 0.35);
+    }
+    return w;
+  };
+  const wallR = (phi, y) => prof(y) * wob(phi, y);
+  const wallP = (phi, y, out = new THREE.Vector3()) => {
+    const r = wallR(phi, y);
+    return out.set(Math.sin(phi) * r, y, Math.cos(phi) * r);
+  };
 
-  const stemRows = [];
-  stemRows.push([0, stemTop + capH * 0.25]);
-  const ys = [stemTop + capH * 0.18, stemTop, stemTop * 0.9, stemTop * 0.78, stemTop * 0.64, stemTop * 0.5, stemTop * 0.36, stemTop * 0.24, stemTop * 0.14, stemTop * 0.07, stemTop * 0.025, 0, -0.12];
-  for (const y of ys) stemRows.push([stemProfile(Math.max(y, 0)) * (y < 0 ? 1.02 : 1), y]);
-  const stem = revolve(stemRows, 24, (v, row, phi) => {
-    const k = wob(phi);
-    v.x *= k;
-    v.z *= k;
-  });
-  const plaster = o.stemColor;
-  const plasterShade = mix(plaster, palette.stemShade, 0.85);
-  paintFn(stem, (x, y, z, nx, ny, nz, i, c) => {
+  const yTopStem = stemTop + 0.4, yBot = -0.2;
+  const circ = TAU * R;
+  const nu = Math.round(56 + 24 * det), nv = Math.round(22 + 10 * det);
+  const phi0 = open ? open.phi : 0;
+  const stemGeo = paramSurface(
+    (u, v, p) => {
+      const y = yTopStem - v * (yTopStem - yBot);
+      const a = open ? cutA(Math.max(y, 0)) : 0;
+      const phi = phi0 + a + u * (TAU - 2 * a);
+      wallP(phi, Math.max(y, 0), p);
+      p.y = y;
+    },
+    nu,
+    nv,
+    {
+      closedU: !open,
+      uv: (u, v, p) => {
+        const phi = Math.atan2(p.x, p.z);
+        if (o.stemKind === 'plaster') return [(u * circ) / 2.2, p.y / 2.2];
+        void phi;
+        return [u * Math.max(2, Math.round(circ / 3.4)), p.y / 2.6];
+      },
+    }
+  );
+  const stemBase = new THREE.Color(o.stemColor);
+  const shadeC = new THREE.Color('#8d7f68');
+  const mossC = new THREE.Color('#6d7a3c');
+  const dirtC = new THREE.Color('#7a6648');
+  paintFn(stemGeo, o.stemColor, (x, y, z, i, c) => {
     const phi = Math.atan2(x, z);
-    const blotch = Math.sin(phi * 7 + y * 2.3) * Math.sin(phi * 3 - y * 1.7) * 0.5 + 0.5;
-    c.set(plaster).lerp(new THREE.Color(plasterShade), 0.22 * blotch);
-    if (y > stemTop - 0.55) c.lerp(new THREE.Color(palette.stemShade), THREE.MathUtils.smoothstep(y, stemTop - 0.55, stemTop) * 0.7);
-    if (y < 0.3) c.lerp(new THREE.Color(mix(palette.stemShade, palette.dirt, 0.4)), (1 - y / 0.3) * 0.55);
+    c.copy(stemBase);
+    // hand-painted blotches & vertical streaks
+    const b = noiseA(Math.cos(phi) * 2 + ox, Math.sin(phi) * 2 + y * 0.6) * 0.5 + noiseB(Math.cos(phi) * 9, y * 0.25 + Math.sin(phi) * 9) * 0.5;
+    c.multiplyScalar(0.95 + 0.07 * b);
+    // occlusion under the cap
+    c.lerp(shadeC, 0.55 * smooth01((y - (stemTop - 1.4)) / 1.6));
+    // damp, mossy foot
+    const foot = 1 - smooth01(y / 0.55);
+    c.lerp(dirtC, foot * 0.35);
+    c.lerp(mossC, foot * 0.35 * (0.5 + 0.5 * noiseA(phi * 3 + ox, 0.5)));
   });
-  P.add('paint', stem);
+  const stemMat = o.stemKind === 'plaster' ? M.plaster : o.stemKind === 'stone' ? M.wallStone : M.stem;
+  put(stemMat, stemGeo, { cast: true });
+
+  // the open front: facade wall with a big arched opening, interior shell, floor & ceiling
+  let interior = null;
+  if (open) interior = buildOpenFront(put, o, rng, { prof, zf, stemTop, cutA, wallR, stemMat, halos });
 
   // ── cap ──
-  const ST = (stemProfile(stemTop) / Rc) * 1.02;
-  const ctrl = [...shape.top, ...shape.rim, ...shape.under, [ST, shape.under[1][1] + 0.05], [ST * 0.55, 0.28], [0, 0.32]];
-  const curve = new THREE.SplineCurve(ctrl.map(([u, v]) => new THREE.Vector2(u, v)));
-  const nCtrl = ctrl.length;
-  const tTopEnd = (shape.top.length - 1) / (nCtrl - 1);
-  const tRimEnd = (shape.top.length - 1 + shape.rim.length) / (nCtrl - 1);
-  const cw = [rng.range(0, 6), rng.range(0, 6), rng.range(0, 6), rng.range(0.025, 0.05), rng.range(0.015, 0.035), rng.range(0.006, 0.014)];
+  const topProf = profile(shape.pts.map(([u, v]) => [u * Rc, rimY + v * capH]), 90);
+  const rt = 0.08 + 0.035 * Rc; // rim thickness
+  const curlPts = [[0, 0], [0.22, -0.3], [0.22, -0.72], [-0.05, -1.02], [-0.45, -1.06], [-0.85, -0.85]].map(([a, b]) => [Rc + a * rt, rimY + b * rt]);
+  const curlProf = profile(curlPts, 16);
+  const VTOP = 0.9;
+  const cw = [rng.range(0, 6), rng.range(0, 6), rng.range(0.025, 0.045), rng.range(0.015, 0.03)];
   const tilt = [rng.jitter(0.05), rng.jitter(0.05)];
-  const capWob = (phi) => 1 + cw[3] * Math.sin(2 * phi + cw[0]) + cw[4] * Math.sin(3 * phi + cw[1]) + cw[5] * Math.sin(7 * phi + cw[2]);
-  const v2 = new THREE.Vector2();
-  /** Cap surface point for (phi, t) where t runs along the profile curve. */
-  const capPoint = (phi, t, out = new THREE.Vector3()) => {
-    curve.getPoint(THREE.MathUtils.clamp(t, 0, 1), v2);
-    const u = v2.x, v = v2.y;
-    const r = u * Rc * (1 + (capWob(phi) - 1) * Math.min(1, u * 1.6));
+  const droopA = rng.range(0.04, 0.1) * capH * 0.12, droopP = rng.range(0, TAU);
+  const capWob = (phi) => 1 + cw[2] * Math.sin(2 * phi + cw[0]) + cw[3] * Math.sin(3 * phi + cw[1]) + 0.018 * noiseA(Math.cos(phi) * 1.5 + ox, Math.sin(phi) * 1.5);
+  const tmp = { r: 0, y: 0 };
+  /** Deform a profile point (ρ, y) at azimuth φ into the hand-made cap. */
+  const capDeform = (phi, rho, y, out) => {
+    const k = Math.min(1, rho / Rc);
+    const r = rho * (1 + (capWob(phi) - 1) * k ** 1.2);
     const x = Math.sin(phi) * r, z = Math.cos(phi) * r;
-    let y = stemTop + v * capH + (x * tilt[0] + z * tilt[1]) * Math.min(1, u * 2);
-    if (o.capShape === 'droopy') y -= capH * 0.06 * u ** 3 * (0.5 + 0.5 * Math.sin(phi * 3 + cw[0]));
-    return out.set(x, y, z);
+    let yy = y + (x * tilt[0] + z * tilt[1]) * k;
+    yy -= droopA * k ** 3 * (0.5 + 0.5 * Math.sin(phi * 2 + droopP));
+    yy += 0.035 * Rc * noiseB(x * 0.7 + oy, z * 0.7) * k * (1 - k * 0.6);
+    return out.set(x, yy, z);
   };
-  const capRows = [];
-  const tVals = [];
-  const nFine = shape.top.length - 1 + shape.rim.length;
-  for (let k = 0; k < nCtrl - 1; k++) {
-    const sub = k < nFine ? 2 : 1;
-    for (let j = 0; j < sub; j++) tVals.push((k + j / sub) / (nCtrl - 1));
-  }
-  tVals.push(1);
-  for (const t of tVals) {
-    curve.getPoint(t, v2);
-    capRows.push([v2.x * Rc, t]); // y is replaced in deform via capPoint
-  }
-  const capCols = 28;
-  const cap = revolve(capRows.map(([r, t]) => [r < 1e-3 ? 0 : r, t]), capCols, (v, row, phi) => {
-    capPoint(phi, tVals[row], v);
-  });
-  cap.computeVertexNormals();
-  const capC = new THREE.Color(o.capColor);
-  const capLight = new THREE.Color(shade(o.capColor, 0.06));
-  const capDark = new THREE.Color(shade(o.capColor, -0.08));
-  const gill = new THREE.Color(mix(palette.stemShade, o.capColor, 0.12));
-  const gillDark = new THREE.Color(shade(mix(palette.stemShade, o.capColor, 0.2), -0.1));
-  // which row each vertex belongs to → colour by profile section
-  const rowOf = [];
-  capRows.forEach(([r], ri) => {
-    const n = r < 1e-3 ? 1 : capCols;
-    for (let k = 0; k < n; k++) rowOf.push(ri);
-  });
-  paintFn(cap, (x, y, z, nx, ny, nz, i, c) => {
-    const t = tVals[rowOf[i]];
+  /** Point on the cap (before the lean): s = 0 apex … 1 rim edge (top surface), s > 1 runs over the curl. */
+  const capRaw = (phi, s, out = new THREE.Vector3()) => {
+    if (s <= 1) topProf.at(s, tmp);
+    else curlProf.at(Math.min(1, s - 1), tmp);
+    return capDeform(phi, tmp.r, tmp.y, out);
+  };
+  const capGeo = paramSurface(
+    (u, v, p) => {
+      const phi = u * TAU;
+      if (v <= VTOP) capRaw(phi, v / VTOP, p);
+      else capRaw(phi, 1 + (v - VTOP) / (1 - VTOP), p);
+    },
+    Math.round(64 + 32 * det),
+    Math.round(36 + 14 * det),
+    { closedU: true, uv: (u, v) => [u * 2, v <= VTOP ? 1 - v / VTOP : 0] }
+  );
+  const capBase = new THREE.Color(o.capColor);
+  const capHSL = { h: 0, s: 0, l: 0 };
+  capBase.getHSL(capHSL);
+  const capLight = new THREE.Color().setHSL(capHSL.h + 0.012, Math.min(1, capHSL.s * 1.05), Math.min(0.9, capHSL.l * 1.18));
+  const capDark = new THREE.Color().setHSL(capHSL.h - 0.008, capHSL.s, capHSL.l * 0.62);
+  paintFn(capGeo, o.capColor, (x, y, z, i, c) => {
+    const k = (y - rimY) / capH; // 0 rim … 1 apex
+    c.copy(capBase);
+    c.lerp(capLight, smooth01((k - 0.45) / 0.5) * 0.55);
+    c.lerp(capDark, (1 - smooth01(k / 0.25)) * 0.45);
+    const b = noiseA(x * 0.9 + ox, z * 0.9 + y * 0.7) * 0.6 + noiseB(x * 2.6, z * 2.6 - y) * 0.4;
+    c.multiplyScalar(0.9 + 0.16 * b);
+    // darker streaks running down the cap
     const phi = Math.atan2(x, z);
-    if (t <= tTopEnd + 1e-4) {
-      // upper surface: lighter crown, darker towards the rim, hand-painted blotches
-      const k = t / tTopEnd;
-      c.copy(capLight).lerp(capC, Math.min(1, k * 1.6)).lerp(capDark, Math.max(0, k - 0.75) * 1.6);
-      const b = Math.sin(phi * 5 + t * 9) * Math.sin(phi * 2 - t * 13) * 0.5 + 0.5;
-      c.lerp(capDark, b * 0.12);
-    } else if (t <= tRimEnd + 1e-4) {
-      c.copy(capDark).lerp(capC, 0.4);
-    } else {
-      // gills: soft radial stripes
-      const st = Math.sin(phi * capCols * 0.5) * 0.5 + 0.5;
-      c.copy(gill).lerp(gillDark, st * 0.6);
-    }
+    const st = noiseB(Math.cos(phi) * 6 + oy, Math.sin(phi) * 6 + y * 0.15);
+    c.lerp(capDark, Math.max(0, st) * 0.25 * (1 - k * 0.5));
   });
-  P.add('paint', cap);
+  put(M.cap, capGeo, { cast: true });
 
-  // ── features on the wall ──
-  /**
-   * A placement frame for a flat feature spanning [y0, y1] at angle phi: tilted
-   * to the wall's slope and pushed out so the feature's local z=0 plane sits
-   * just in front of the (curved, tapering) plaster everywhere along x=0.
-   * Features are built facing +Z with local y=0 at the frame centre.
-   */
-  const wallFrame = (phi, y0, y1, margin = 0.012) => {
-    const yc = (y0 + y1) / 2;
-    const slope = (wallR(y1, phi) - wallR(y0, phi)) / (y1 - y0);
-    let dev = 0;
-    for (let i = 0; i <= 8; i++) {
-      const y = y0 + ((y1 - y0) * i) / 8;
-      dev = Math.max(dev, wallR(y, phi) - (wallR(yc, phi) + (y - yc) * slope));
-    }
-    const r = wallR(yc, phi) + dev + margin;
-    return { pos: [Math.sin(phi) * r, yc, Math.cos(phi) * r], rot: [Math.atan(slope), phi, 0, 'YXZ'], r, yc };
+  // underside: gill surface from the curl's inner end up to the collar
+  const rCollar = prof(stemTop) * 1.02;
+  const uStart = curlPts[curlPts.length - 1];
+  const gRep = Math.max(1, Math.round((TAU * Rc) / 15)); // ~0.12 between lamellae
+  const underRaw = (phi, v, out = new THREE.Vector3()) => {
+    // v: 0 at the rim (curl end) → 1 at the collar; slightly concave
+    const rho = lerp(uStart[0], rCollar, v);
+    const y = lerp(uStart[1], stemTop - 0.02, v) - Math.sin(Math.PI * v) * 0.05 * (stemTop - rimY + 0.4);
+    return capDeform(phi, rho, y, out);
   };
-  const onFrame = (geo, f) => xf(geo, f.pos, f.rot);
-  const onWall = (geo, phi, y, out = 0) => {
-    const r = wallR(y, phi) + out;
-    return xf(geo, [Math.sin(phi) * r, y, Math.cos(phi) * r], [0, phi, 0]);
-  };
-  const frameWood = palette.walnut;
-  const reserved = []; // [phi, yMin, yMax] wall areas taken
-
-  // door
-  const doorW = THREE.MathUtils.clamp(R * 0.58, 0.82, 1.02);
-  const doorH = 1.52;
-  const doorY = 0.16;
-  const doorF = wallFrame(0, doorY, doorY + doorH);
-  const doorZ = doorF.r;
-  buildDoor(P, rng, { w: doorW, h: doorH, frame: doorF, onFrame, color: o.doorColor, frameColor: frameWood, porthole: rng.chance(0.45) });
-  reserved.push([0, 0, doorY + doorH + 0.5, 0.55]);
-
-  // steps
-  const stepC = [palette.stone, shade(palette.stone, 0.05), palette.stoneDark];
-  P.add('paint', xf(new THREE.CylinderGeometry(0.55, 0.6, 0.16, 14), [0, 0.08, doorZ + 0.18], [0, 0, 0], [1.25, 1, 0.75]), stepC[0]);
-  P.add('paint', xf(new THREE.CylinderGeometry(0.58, 0.63, 0.1, 14), [rng.jitter(0.05), 0.04, doorZ + 0.62], [0, rng.jitter(0.2), 0], [1.3, 1, 0.75]), stepC[1]);
-
-  // footing stones around the base
-  const nStones = 12;
-  for (let i = 0; i < nStones; i++) {
-    const phi = (i / nStones) * Math.PI * 2 + rng.jitter(0.12);
-    const wrapped = Math.atan2(Math.sin(phi), Math.cos(phi));
-    if (Math.abs(wrapped) < 0.5) continue;
-    const r = wallR(0.05, phi) + 0.04;
-    const sz = rng.range(0.16, 0.24);
-    const st = new THREE.IcosahedronGeometry(sz, 0);
-    xf(st, [Math.sin(phi) * r, 0.06, Math.cos(phi) * r], [rng.next() * 3, phi, rng.next() * 3], [1.3, 0.6, 0.9]);
-    P.add('detail', st, rng.pick(stepC));
-  }
-
-  // windows
-  const glowPts = [];
-  const twoFloors = stemTop > 3.2;
-  const winSpecs = [];
-  const lowerY = 1.25;
-  const upperY = Math.min(stemTop - 0.7, lowerY + 1.55);
-  const sideA = rng.range(0.82, 0.98);
-  const candidates = [
-    { phi: -sideA - (o.lanternSide < 0 ? 0.14 : 0), y: lowerY },
-    { phi: sideA + (o.lanternSide > 0 ? 0.14 : 0), y: lowerY },
-    { phi: Math.PI + rng.jitter(0.5), y: lowerY },
-  ];
-  if (twoFloors) {
-    candidates.splice(2, 0, { phi: rng.chance(0.5) ? 0 : rng.jitter(0.7), y: upperY, upper: true });
-    candidates.push({ phi: Math.PI * 0.7 * (rng.chance(0.5) ? 1 : -1), y: upperY, upper: true });
-  } else {
-    candidates.push({ phi: -2.1, y: lowerY });
-  }
-  for (let i = 0; i < Math.min(o.windows, candidates.length); i++) winSpecs.push(candidates[i]);
-  winSpecs.forEach((w, i) => {
-    const shapeName = o.windowShape === 'mixed' ? (i % 2 ? 'arched' : 'round') : o.windowShape;
-    const upper = !!w.upper;
-    const r = upper ? 0.26 : 0.3;
-    buildWindow(P, rng, {
-      shape: shapeName,
-      r,
-      phi: w.phi,
-      y: w.y,
-      wallR,
-      frame: frameWood,
-      box: o.flowerBoxes && !upper && Math.abs(Math.atan2(Math.sin(w.phi), Math.cos(w.phi))) < 2.4,
-      glowPts,
-      wallFrame,
-      onFrame,
-    });
-    reserved.push([w.phi, w.y - 0.6, w.y + 0.6, 0.35]);
+  const underGeo = paramSurface((u, v, p) => underRaw(u * TAU, v, p), Math.round(64 + 32 * det), 10, {
+    closedU: true,
+    uv: (u, v) => [u * gRep, v],
   });
+  const gillC = new THREE.Color(o.gillColor ?? '#efc184');
+  const gillDeep = new THREE.Color('#a6764a');
+  paintFn(underGeo, gillC, (x, y, z, i, c) => {
+    const rho = Math.hypot(x, z);
+    c.lerp(gillDeep, 0.55 * (1 - smooth01((rho - rCollar) / (Rc * 0.45))));
+    // the underside only sees cool sky & ground fill: paint in the warm bounce light (as the references do)
+    c.multiplyScalar(1.4);
+  });
+  put(M.gills, underGeo, { cast: false, color: null });
 
-  // plaque above the door
-  const plaqueY = doorY + doorH + 0.24;
-  const plaqueW = 0.82, plaqueH = 0.26;
-  let plaquePos = new THREE.Vector3(0, plaqueY, wallR(plaqueY, 0) + 0.06);
-  if (o.plaque) {
-    const board = new THREE.BoxGeometry(plaqueW, plaqueH, 0.05);
-    grainUV(board, 'x');
-    P.add('wood', onWall(board, 0, plaqueY, 0.0), palette.oak);
-    for (const s of [-1, 1]) P.add('detail', onWall(new THREE.SphereGeometry(0.018, 6, 4), 0, plaqueY, 0.03).translate(s * (plaqueW / 2 - 0.06), 0, 0), palette.metalDark);
-    plaquePos = new THREE.Vector3(0, plaqueY, wallR(plaqueY, 0) + 0.0);
-  }
-
-  // hanging lantern on a wall bracket beside the door
-  let lantern = null;
-  if (o.lantern) {
-    const phi = o.lanternSide * 0.5;
-    const y = doorY + doorH + 0.15;
-    const r0 = wallR(y, phi);
-    const arm = 0.42;
-    const base = [Math.sin(phi) * (r0 - 0.05), y, Math.cos(phi) * (r0 - 0.05)];
-    const tip = [Math.sin(phi) * (r0 + arm), y, Math.cos(phi) * (r0 + arm)];
-    P.add('detail', strut(base, tip, 0.028, 0.022, 5), palette.metalDark);
-    const brace = [Math.sin(phi) * (r0 - 0.03), y - 0.28, Math.cos(phi) * (r0 - 0.03)];
-    const mid = [Math.sin(phi) * (r0 + arm * 0.6), y, Math.cos(phi) * (r0 + arm * 0.6)];
-    P.add('detail', strut(brace, mid, 0.016, 0.016, 4), palette.metalDark);
-    P.add('detail', xf(new THREE.CylinderGeometry(0.07, 0.07, 0.03, 6), [base[0], y, base[2]], [Math.PI / 2, phi, 0, 'YXZ']), palette.metalDark);
-    lantern = { pos: new THREE.Vector3(tip[0], y - 0.02, tip[2]), rotY: phi };
-  }
-
-  // chimney: stacked irregular stones poking out of the cap
-  let chimneyTop = null;
-  if (o.chimney) {
-    const phi = rng.pick([-1, 1]) * rng.range(1.25, 1.9);
-    const t = tTopEnd * rng.range(0.42, 0.55);
-    const basePt = capPoint(phi, t);
-    const top = basePt.y + rng.range(0.75, 1.0);
-    const lean = rng.jitter(0.04);
-    let y = basePt.y - 0.45;
-    let i = 0;
-    while (y < top) {
-      const r = 0.24 + rng.jitter(0.025);
-      const ring = new THREE.CylinderGeometry(r, r * 1.03, 0.2, 7, 1, true);
-      xf(ring, [basePt.x * 0.98 + lean * (y - basePt.y), y + 0.1, basePt.z * 0.98], [0, rng.next(), 0]);
-      P.add('paint', ring, i % 2 ? palette.stone : shade(palette.stoneDark, 0.04 * rng.next()));
-      y += 0.19;
-      i++;
-    }
-    P.add('paint', xf(new THREE.CylinderGeometry(0.3, 0.28, 0.1, 8), [basePt.x * 0.98 + lean * (y - basePt.y), y + 0.05, basePt.z * 0.98]), palette.stoneDark);
-    P.add('detail', xf(new THREE.CylinderGeometry(0.17, 0.17, 0.02, 8), [basePt.x * 0.98 + lean * (y - basePt.y), y + 0.105, basePt.z * 0.98]), '#3b2a1e');
-    chimneyTop = new THREE.Vector3(basePt.x * 0.98 + lean * (y - basePt.y), y + 0.2, basePt.z * 0.98);
-    reserved.push(['cap', phi, t, 0.7]);
-  }
-
-  // attic window in the cap: a little bulge with a round window and an eyebrow
-  if (o.dormer) {
-    const phi = (o.lanternSide > 0 ? -1 : 1) * rng.range(0.45, 0.8);
-    const t = tTopEnd * 0.6;
-    const p = capPoint(phi, t);
-    const a = capPoint(phi + 1e-3, t), b = capPoint(phi - 1e-3, t), c = capPoint(phi, t + 1e-3), d = capPoint(phi, t - 1e-3);
-    const n = new THREE.Vector3().crossVectors(a.sub(b), c.sub(d)).normalize();
-    if (n.x * p.x + n.z * p.z < 0) n.negate();
-    // lean the window a bit more upright than the cap so it reads as a window
-    n.y *= 0.6;
-    n.normalize();
-    const zA = n.clone();
-    const xA = new THREE.Vector3(0, 1, 0).cross(zA).normalize();
-    const yA = zA.clone().cross(xA);
-    const basis = new THREE.Matrix4().makeBasis(xA, yA, zA);
-    const at = (geo, off) => {
-      geo.applyMatrix4(basis);
-      return geo.translate(p.x + n.x * off, p.y + n.y * off, p.z + n.z * off);
-    };
-    const wr = 0.3;
-    const bump = new THREE.SphereGeometry(0.62, 12, 8);
-    bump.scale(1, 0.9, 0.5);
-    P.add('paint', at(bump, -0.02), shade(o.capColor, 0.02));
-    const ring = new THREE.Shape();
-    ring.absarc(0, 0, wr + 0.09, 0, Math.PI * 2, false);
-    const hole = new THREE.Path();
-    hole.absarc(0, 0, wr, 0, Math.PI * 2, true);
-    ring.holes.push(hole);
-    const fr = new THREE.ExtrudeGeometry(ring, { depth: 0.22, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 1, curveSegments: 7 });
-    fr.translate(0, 0, -0.12);
-    grainUV(fr, 'y');
-    P.add('wood', at(fr, 0.26), frameWood);
-    P.add(`glow:${palette.windowGlow}`, at(new THREE.CircleGeometry(wr + 0.01, 14), 0.25), palette.windowGlow);
-    P.add('wood', at(new THREE.BoxGeometry(wr * 2, 0.035, 0.03), 0.27), frameWood);
-    P.add('wood', at(new THREE.BoxGeometry(0.035, wr * 2, 0.03), 0.27), frameWood);
-    const brow = new THREE.TorusGeometry(wr + 0.2, 0.075, 5, 9, Math.PI);
-    brow.scale(1, 0.8, 1);
-    P.add('paint', at(brow, 0.2), shade(o.capColor, -0.06));
-    const gp = p.clone().addScaledVector(n, 0.42);
-    glowPts.push({ x: gp.x, y: gp.y, z: gp.z, size: 0.75 });
-    reserved.push(['cap', phi, t, 0.85]);
-  }
-
-  // balcony on the upper floor
-  if (o.balcony && twoFloors) buildBalcony(P, rng, { y: upperY - 0.45, phi: -o.lanternSide * 1.25, wallR, frame: frameWood });
-
-  // spots that follow the cap surface
-  buildSpots(P, rng, { count: o.spots, capPoint, tTopEnd, Rc, color: o.spotColor, reserved, mid: stemTop - capH * 0.2 });
-
-  // grass tufts & tiny shrooms around the base
-  for (let i = 0; i < 9; i++) {
-    const phi = rng.range(0.6, Math.PI * 2 - 0.6);
-    const r = wallR(0.05, phi) + rng.range(0.1, 0.35);
-    addTuft(P, Math.sin(phi) * r, 0, Math.cos(phi) * r, { rng, height: rng.range(0.22, 0.38) });
-  }
-  for (let i = 0; i < 2; i++) {
-    const phi = rng.range(0.9, Math.PI * 2 - 0.9);
-    const r = wallR(0.05, phi) + rng.range(0.2, 0.4);
-    addTinyMushroom(P, Math.sin(phi) * r, 0, Math.cos(phi) * r, { rng, size: rng.range(0.09, 0.15), color: rng.pick([palette.capRed, palette.capOchre, palette.capBrown]) });
-  }
-
-  const geos = P.finish();
-  let tris = 0;
-  for (const g of Object.values(geos)) tris += g.index.count / 3;
-  const glowGeo = glowPts.length ? glowGeometry(glowPts) : null;
-  return {
-    geos,
-    glowGeo,
-    tris,
-    collider: wallR(0.05, 0) * 0.98,
-    door: new THREE.Vector3(0, 0, doorZ + 1.05),
-    plaque: { pos: plaquePos, w: plaqueW, h: plaqueH },
-    lantern,
-    chimneyTop,
-  };
-}
-
-/** Arch outline (flat bottom, semicircular top) as a THREE.Shape / Path. */
-function archPath(w, h, path = new THREE.Shape(), reverse = false) {
-  const r = w / 2;
-  const straight = h - r;
-  if (!reverse) {
-    path.moveTo(-r, 0);
-    path.lineTo(r, 0);
-    path.lineTo(r, straight);
-    path.absarc(0, straight, r, 0, Math.PI, false);
-    path.lineTo(-r, 0);
-  } else {
-    path.moveTo(-r, 0);
-    path.lineTo(-r, straight);
-    path.absarc(0, straight, r, Math.PI, 0, true);
-    path.lineTo(r, 0);
-    path.lineTo(-r, 0);
-  }
-  return path;
-}
-
-function buildDoor(P, rng, { w, h, frame: F, onFrame, color, frameColor, porthole }) {
-  // built facing +Z with the bottom at y = -h/2 (frame centre at y = 0)
-  const place = (geo) => onFrame(geo.translate(0, -h / 2, 0), F);
-  // frame: arch ring, deep enough to bury itself in the curved wall
-  const fw = 0.13;
-  const outer = archPath(w + fw * 2, h + fw);
-  outer.holes.push(archPath(w, h, new THREE.Path(), true));
-  const frameGeo = new THREE.ExtrudeGeometry(outer, { depth: 0.4, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.025, bevelSegments: 1, curveSegments: 6 });
-  frameGeo.translate(0, 0, -0.34);
-  grainUV(frameGeo, 'y');
-  P.add('wood', place(frameGeo), frameColor);
-  // threshold
-  P.add('wood', place(grainUV(new THREE.BoxGeometry(w + 0.1, 0.05, 0.3), 'x').translate(0, 0.0, -0.02)), shade(frameColor, 0.04));
-  // the door leaf: planks in front of the plaster, slightly recessed in the frame
-  const leaf = new THREE.ExtrudeGeometry(archPath(w + 0.01, h + 0.005), { depth: 0.04, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 1, curveSegments: 6 });
-  leaf.translate(0, 0, -0.02);
-  grainUV(leaf, 'y', 0.8);
-  P.add('wood', place(leaf), color);
-  const front = 0.032;
-  // plank grooves
-  const r = (w - 0.01) / 2;
-  const straight = h - r;
-  const grooveC = shade(color, -0.14);
-  for (const fx of [-0.5, 0, 0.5]) {
-    const x = fx * r * 0.98;
-    const top = straight + Math.sqrt(Math.max(0, r * r - x * x)) - 0.05;
-    P.add('detail', place(new THREE.BoxGeometry(0.02, top - 0.04, 0.012).translate(x, (top + 0.04) / 2, front)), grooveC);
-  }
-  // iron hinge straps with round ends and nails
-  const iron = '#4a4038';
-  for (const hy of [0.32, h - r - 0.12]) {
-    P.add('detail', place(new THREE.BoxGeometry(w * 0.56, 0.06, 0.016).translate(-w / 2 + w * 0.28, hy, front + 0.004)), iron);
-    P.add('detail', place(new THREE.CylinderGeometry(0.045, 0.045, 0.018, 10).rotateX(Math.PI / 2).translate(-w / 2 + w * 0.56, hy, front + 0.004)), iron);
-    for (const nx of [0.12, 0.42]) P.add('detail', place(new THREE.SphereGeometry(0.014, 4, 2).translate(-w / 2 + w * nx, hy, front + 0.014)), '#2e2620');
-  }
-  // knob + back plate
-  P.add('detail', place(new THREE.CylinderGeometry(0.05, 0.05, 0.012, 10).rotateX(Math.PI / 2).translate(w * 0.32, 0.74, front + 0.004)), iron);
-  P.add('detail', place(new THREE.SphereGeometry(0.045, 8, 5).translate(w * 0.32, 0.74, front + 0.05)), palette.autumnYellow);
-  // porthole window in the door
-  if (porthole) {
-    const py = straight + 0.02;
-    P.add(`glow:${palette.windowGlow}`, place(new THREE.CircleGeometry(0.13, 10).translate(0, py, front + 0.003)), palette.windowGlow);
-    P.add('wood', place(new THREE.TorusGeometry(0.14, 0.03, 4, 12).translate(0, py, front + 0.01)), shade(color, -0.1));
-    P.add('detail', place(new THREE.BoxGeometry(0.26, 0.02, 0.012).translate(0, py, front + 0.01)), shade(color, -0.1));
-  }
-}
-
-function buildWindow(P, rng, { shape, r, phi, y, wallR, wallFrame, onFrame, frame, box, glowPts }) {
-  const parts = [];
-  const add = (layer, geo, color) => parts.push([layer, geo, color]);
-  const glass = palette.windowGlow;
-  let F;
-  if (shape === 'round') {
-    F = wallFrame(phi, y - r - 0.1, y + r + 0.1);
-    // frame: a thick ring that buries itself in the wall + a rounded lip
-    const ring = new THREE.Shape();
-    ring.absarc(0, 0, r + 0.1, 0, Math.PI * 2, false);
-    const hole = new THREE.Path();
-    hole.absarc(0, 0, r, 0, Math.PI * 2, true);
-    ring.holes.push(hole);
-    const fr = new THREE.ExtrudeGeometry(ring, { depth: 0.3, bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.022, bevelSegments: 1, curveSegments: 7 });
-    fr.translate(0, 0, -0.25);
-    grainUV(fr, 'y');
-    add('wood', fr, frame);
-    add(`glow:${glass}`, new THREE.CircleGeometry(r + 0.01, 12).translate(0, 0, 0.0), glass);
-    add('wood', new THREE.BoxGeometry(r * 2 + 0.02, 0.04, 0.035).translate(0, 0, 0.02), frame);
-    add('wood', new THREE.BoxGeometry(0.04, r * 2 + 0.02, 0.035).translate(0, 0, 0.02), frame);
-    add('wood', grainUV(new THREE.BoxGeometry(r * 2.3, 0.07, 0.22), 'x').translate(0, -r - 0.1, 0.03), shade(frame, 0.08));
-  } else {
-    const w = r * 1.75, h = r * 2.5;
-    F = wallFrame(phi, y - h / 2 - 0.1, y + h / 2 + 0.08);
-    const outer = archPath(w + 0.16, h + 0.08);
-    outer.holes.push(archPath(w, h, new THREE.Path(), true));
-    const fr = new THREE.ExtrudeGeometry(outer, { depth: 0.3, bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.02, bevelSegments: 1, curveSegments: 5 });
-    fr.translate(0, -h / 2, -0.25);
-    grainUV(fr, 'y');
-    add('wood', fr, frame);
-    const pane = new THREE.ShapeGeometry(archPath(w + 0.01, h + 0.005), 5);
-    pane.translate(0, -h / 2, 0.0);
-    add(`glow:${glass}`, pane, glass);
-    add('wood', new THREE.BoxGeometry(0.04, h, 0.035).translate(0, 0, 0.02), frame);
-    add('wood', new THREE.BoxGeometry(w, 0.04, 0.035).translate(0, -h * 0.08, 0.02), frame);
-    add('wood', grainUV(new THREE.BoxGeometry(w + 0.28, 0.07, 0.22), 'x').translate(0, -h / 2 - 0.06, 0.03), shade(frame, 0.08));
-    // shutters, painted, with Z-braces
-    const sc = rng.pick([palette.capTeal, '#5f8f3f', palette.capCoral, palette.door]);
-    for (const s of [-1, 1]) {
-      const sx = s * (w / 2 + 0.1 + w * 0.24);
-      const sh = grainUV(new THREE.BoxGeometry(w * 0.48, h * 0.86, 0.04), 'y');
-      sh.translate(sx, -h * 0.04, -0.01);
-      add('wood', sh, sc);
-      for (const by of [h * 0.22, -h * 0.3]) add('detail', new THREE.BoxGeometry(w * 0.4, 0.035, 0.012).translate(sx, by, 0.015), shade(sc, -0.15));
-    }
-  }
-  for (const [layer, geo, color] of parts) P.add(layer, onFrame(geo.translate(0, y - F.yc, 0), F), color);
-  if (box) {
-    const bw = shape === 'round' ? r * 2.5 : r * 2.4;
-    const by = y - (shape === 'round' ? r + 0.14 : r * 1.25 + 0.1) - 0.2;
-    const rr = wallR(by, phi) + 0.1;
-    addFlowerBox(P, Math.sin(phi) * rr, by, Math.cos(phi) * rr, phi, { width: bw, rng, plantLayer: 'detail', flowers: 5 });
-  }
-  const rr = F.r + 0.16;
-  glowPts.push({ x: Math.sin(phi) * rr, y, z: Math.cos(phi) * rr, size: r * 2.6 });
-}
-
-function buildBalcony(P, rng, { y, phi, wallR, frame }) {
-  const r0 = wallR(y, phi);
-  const depth = 0.75;
-  const deck = new THREE.CylinderGeometry(r0 + depth, r0 + depth, 0.1, 20, 1, false, phi - 0.55, 1.1);
-  deck.translate(0, y, 0);
-  grainUV(deck, 'x');
-  P.add('wood', deck, palette.oak);
-  // spindles + rail along the outer arc
-  const n = 9;
-  for (let i = 0; i <= n; i++) {
-    const a = phi - 0.52 + (i / n) * 1.04;
-    const rr = r0 + depth - 0.06;
-    P.add('wood', xf(new THREE.CylinderGeometry(0.025, 0.025, 0.42, 5), [Math.sin(a) * rr, y + 0.26, Math.cos(a) * rr]), shade(palette.oak, 0.05));
-  }
-  const rail = new THREE.TorusGeometry(r0 + depth - 0.06, 0.035, 4, 16, 1.06);
-  rail.rotateX(Math.PI / 2);
-  rail.rotateY(phi + 0.53 - Math.PI / 2);
-  // torus arc lies in XY after creation → rotated into XZ; align start angle
-  rail.translate(0, y + 0.48, 0);
-  P.add('wood', rail, palette.oak);
-  // brackets
-  for (const s of [-0.35, 0.35]) {
-    const a = phi + s;
-    P.add('wood', strut([Math.sin(a) * (r0 - 0.05), y - 0.5, Math.cos(a) * (r0 - 0.05)], [Math.sin(a) * (r0 + depth * 0.7), y - 0.04, Math.cos(a) * (r0 + depth * 0.7)], 0.035, 0.035, 4), palette.walnut);
-  }
-}
-
-function buildSpots(P, rng, { count, capPoint, tTopEnd, Rc, color, reserved, mid }) {
-  const placed = [];
-  const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), tmpC = new THREE.Vector3(), tmpD = new THREE.Vector3();
-  const nrm = new THREE.Vector3(), dphi = new THREE.Vector3(), dt = new THREE.Vector3();
-  const eps = 1e-3;
-  const frame = (phi, t) => {
-    capPoint(phi + eps, t, tmpA);
-    capPoint(phi - eps, t, tmpB);
-    dphi.subVectors(tmpA, tmpB).divideScalar(2 * eps);
-    capPoint(phi, t + eps, tmpC);
-    capPoint(phi, t - eps, tmpD);
-    dt.subVectors(tmpC, tmpD).divideScalar(2 * eps);
-    nrm.crossVectors(dphi, dt).normalize();
-    // outwards = away from a point inside the cap
-    if (nrm.x * tmpA.x + nrm.y * (tmpA.y - mid) + nrm.z * tmpA.z < 0) nrm.negate();
-    return nrm;
-  };
-  const edgeC = shade(color, -0.06);
-  let tries = 0;
-  while (placed.length < count && tries < count * 30) {
-    tries++;
-    const t = rng.range(0.03, tTopEnd * 0.86);
-    const phi = rng.range(0, Math.PI * 2);
-    const rad = Rc * rng.range(0.07, 0.15) * (t < tTopEnd * 0.2 ? 1.2 : 1);
-    const c = capPoint(phi, t);
-    let ok = true;
-    for (const p of placed) if (p.c.distanceTo(c) < (p.r + rad) * 1.25) ok = false;
-    for (const res of reserved) {
-      if (res[0] !== 'cap') continue;
-      const rc = capPoint(res[1], res[2]);
-      if (rc.distanceTo(c) < rad + res[3]) ok = false;
-    }
-    if (!ok) continue;
-    placed.push({ c, r: rad, t, phi });
-  }
-  const rings = 3;
-  for (const s of placed) {
-    const segs = s.r > 0.32 ? 11 : 8;
-    // param-space scale: how far (phi, t) move per unit of surface distance
-    frame(s.phi, s.t);
-    const kPhi = 1 / Math.max(dphi.length(), 1e-3);
-    const kT = 1 / Math.max(dt.length(), 1e-3);
-    const thick = s.r * 0.22;
-    const ax = rng.range(0.85, 1.15), ay = 1 / ax;
-    const rot = rng.next() * Math.PI;
+  // real lamella fins hanging under the gill surface
+  {
+    const nF = Math.round(Rc * (40 + 30 * det));
     const pos = [];
-    const col = [];
-    const cA = new THREE.Color(color), cE = new THREE.Color(edgeC);
-    const pushV = (u, v, h, c) => {
-      const ru = u * Math.cos(rot) - v * Math.sin(rot);
-      const rv = u * Math.sin(rot) + v * Math.cos(rot);
-      const ph = s.phi + ru * kPhi;
-      const tt = s.t + rv * kT;
-      const p = capPoint(ph, tt, new THREE.Vector3());
-      const n = frame(ph, tt);
-      p.addScaledVector(n, h);
-      pos.push(p.x, p.y, p.z);
-      col.push(c.r, c.g, c.b);
-    };
-    pushV(0, 0, thick + 0.012, cA);
-    for (let k = 1; k <= rings; k++) {
-      const f = k / rings;
-      const h = thick * Math.sqrt(Math.max(0, 1 - f * f * 0.92)) + 0.012;
-      for (let j = 0; j < segs; j++) {
-        const a = (j / segs) * Math.PI * 2;
-        const wobble = 1 + 0.08 * Math.sin(a * 3 + s.phi * 5);
-        pushV(Math.cos(a) * s.r * f * ax * wobble, Math.sin(a) * s.r * f * ay * wobble, k === rings ? 0.004 : h, k === rings ? cE : cA);
-      }
-    }
+    const uv = [];
     const idx = [];
-    for (let j = 0; j < segs; j++) idx.push(0, 1 + j, 1 + ((j + 1) % segs));
-    for (let k = 1; k < rings; k++) {
-      const a0 = 1 + (k - 1) * segs, b0 = 1 + k * segs;
-      for (let j = 0; j < segs; j++) {
-        const j1 = (j + 1) % segs;
-        idx.push(a0 + j, b0 + j, b0 + j1, a0 + j, b0 + j1, a0 + j1);
+    const depth = 0.03 + 0.012 * Rc;
+    const a = new THREE.Vector3();
+    const segs = 6;
+    for (let f = 0; f < nF; f++) {
+      const u = (f + rng.jitter(0.25)) / nF;
+      const phi = u * TAU;
+      const half = f % 2 === 1; // every other fin is a short one near the rim
+      const v0 = half ? 0.45 : 0.02;
+      const uT = Math.round(u * gRep * 120) / 120;
+      const base = pos.length / 3;
+      for (let k = 0; k <= segs; k++) {
+        const v = lerp(v0, 0.97, k / segs);
+        underRaw(phi, v, a);
+        const t = (v - v0) / (0.97 - v0);
+        const d = depth * Math.max(0, Math.sin(Math.PI * Math.min(1, t * 1.05))) ** 0.6 * (half ? 0.7 : 1);
+        pos.push(a.x, a.y + 0.01, a.z, a.x, a.y - d, a.z);
+        uv.push(uT, v, uT + 0.001, v);
+      }
+      for (let k = 0; k < segs; k++) {
+        const i0 = base + k * 2;
+        idx.push(i0, i0 + 1, i0 + 2, i0 + 1, i0 + 3, i0 + 2);
       }
     }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    g.setIndex(idx);
-    g.computeVertexNormals();
-    // make sure the winding faces outwards
-    const n0 = g.attributes.normal;
-    frame(s.phi, s.t);
-    if (n0.getX(0) * nrm.x + n0.getY(0) * nrm.y + n0.getZ(0) * nrm.z < 0) invert(g);
-    P.add('detail', g);
+    const fg = new THREE.BufferGeometry();
+    fg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    fg.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    fg.setIndex(idx);
+    fg.computeVertexNormals();
+    paintFn(fg, o.gillColor ?? '#efcf9c', (x, y, z, i, c) => c.multiplyScalar(1.35));
+    put(M.gills, fg, { cast: false, color: null });
+  }
+
+  // cap helpers (with the lean)
+  const capPoint = (phi, s, out = new THREE.Vector3()) => bendV(capRaw(phi, s, out));
+  const rimPoint = (phi, out = new THREE.Vector3()) => bendV(capRaw(phi, 1.02, out));
+  const wallPoint = (phi, y, out = new THREE.Vector3()) => bendV(wallP(phi, y, out));
+
+  /** Local tangent frame on the cap (un-bent) at (φ, s): { p, n, tPhi, tS, lPhi, lS }. */
+  const capFrame = (phi, s) => {
+    const e = 1e-3;
+    const p = capRaw(phi, s);
+    const a = capRaw(phi + e, s), b = capRaw(phi - e, s);
+    const c = capRaw(phi, Math.min(1, s + e)), d = capRaw(phi, Math.max(0, s - e));
+    const tPhi = a.sub(b).divideScalar(2 * e);
+    const tS = c.sub(d).divideScalar(Math.min(1, s + e) - Math.max(0, s - e));
+    const lPhi = Math.max(tPhi.length(), 1e-4), lS = Math.max(tS.length(), 1e-4);
+    const n = new THREE.Vector3().crossVectors(tS, tPhi).normalize();
+    if (n.x * p.x + n.y * (p.y - rimY) + n.z * p.z < 0) n.negate();
+    return { p, n, tPhi: tPhi.normalize(), tS: tS.normalize(), lPhi, lS };
+  };
+
+  // ── door ──
+  let doorCenter = null, doorGround = null;
+  const floorY = 0.24;
+  if (o.door) {
+    const d = buildDoor(put, o, rng, { wallR, floorY, halos, lantern: o.lantern });
+    doorCenter = d.center;
+    doorGround = d.ground;
+    reserved.push({ phi: o.door.phi, half: (o.door.width * 0.5 + 0.55) / prof(1), y0: -1, y1: floorY + o.door.height + 0.6 });
+  }
+  if (open) reserved.push({ phi: open.phi, half: cutA(1) + 0.35, y0: -1, y1: stemTop + 1 });
+
+  // ── windows ──
+  const windows = [];
+  let winSpecs = o.windows;
+  if (!Array.isArray(winSpecs)) {
+    const count = typeof winSpecs === 'number' ? winSpecs : stemTop > 3.6 ? 4 : stemTop > 2.6 ? 3 : 2;
+    const two = stemTop > 3.6;
+    const dp = o.door ? o.door.phi : 0;
+    const cands = [
+      { phi: dp + rng.range(0.95, 1.2), y: 1.25 },
+      { phi: dp - rng.range(0.95, 1.2), y: 1.25, shape: 'round' },
+      two ? { phi: dp + rng.jitter(0.25), y: Math.min(stemTop - 0.75, 3.05), w: 0.55, h: 0.7 } : { phi: dp + Math.PI + rng.jitter(0.4), y: 1.25 },
+      two ? { phi: dp + Math.PI * 0.75, y: Math.min(stemTop - 0.75, 3.0), w: 0.5, h: 0.62 } : { phi: dp - 2.2, y: 1.2 },
+      { phi: dp + Math.PI + rng.jitter(0.3), y: 1.25 },
+    ];
+    winSpecs = cands.slice(0, count);
+  }
+  winSpecs.forEach((w, i) => {
+    const spec = {
+      phi: w.phi,
+      y: w.y ?? 1.25,
+      w: w.w ?? 0.62,
+      h: w.h ?? (w.shape === 'round' ? w.w ?? 0.62 : 0.82),
+      shape: w.shape ?? (i % 3 === 2 ? 'rect' : 'arch'),
+      shutters: w.shutters ?? (w.shape !== 'round' && rng.chance(0.6)),
+      box: w.box ?? (o.flowers && (w.y ?? 1.25) < 2 && w.shape !== 'round' && rng.chance(0.8)),
+      color: w.color ?? rng.pick(SHUTTER_COLORS),
+    };
+    if (spec.shape === 'round') spec.h = spec.w;
+    if (open) {
+      const dd = Math.abs(Math.atan2(Math.sin(spec.phi - open.phi), Math.cos(spec.phi - open.phi)));
+      if (dd < cutA(spec.y) + 0.45) return;
+    }
+    windows.push(buildWindow(put, o, rng, spec, { wallR, halos }));
+    reserved.push({ phi: spec.phi, half: (spec.w * 0.5 + (spec.shutters ? spec.w * 0.6 : 0.2)) / prof(spec.y), y0: spec.y - spec.h / 2 - 0.5, y1: spec.y + spec.h / 2 + 0.3 });
+  });
+
+  // ── footing stones ──
+  if (o.base) {
+    const n = Math.round(TAU * R / 0.3);
+    for (let i = 0; i < n; i++) {
+      const phi = (i / n) * TAU + rng.jitter(0.05);
+      if (o.door && Math.abs(Math.atan2(Math.sin(phi - o.door.phi), Math.cos(phi - o.door.phi))) < 0.42) continue;
+      if (open && Math.abs(Math.atan2(Math.sin(phi - open.phi), Math.cos(phi - open.phi))) < cutA(0.1)) continue;
+      const r = wallR(phi, 0.08) + 0.02;
+      const sz = rng.range(0.15, 0.24);
+      const st = stoneGeo(rng, { r: sz, sx: rng.range(1.1, 1.5), sy: rng.range(0.7, 0.95), sz: 0.8, lump: 0.2 });
+      xf(st, [Math.sin(phi) * r, sz * 0.35, Math.cos(phi) * r], [0, phi + rng.jitter(0.2), 0]);
+      put(M.stone, st, { cast: false, color: rng.pick(STONE_TINTS) });
+      if (rng.chance(0.3)) {
+        const r2 = r + 0.12;
+        const s2 = stoneGeo(rng, { r: sz * 0.7, sx: 1.2, sy: 0.7, sz: 0.9 });
+        xf(s2, [Math.sin(phi + 0.07) * r2, sz * 0.2, Math.cos(phi + 0.07) * r2], [0, rng.next() * 3, 0]);
+        put(M.stone, s2, { cast: false, color: rng.pick(STONE_TINTS) });
+      }
+    }
+  }
+
+  // ── warts ──
+  const dorm = o.dormer ? { phi: (o.door ? o.door.phi : 0) + rng.pick([-1, 1]) * rng.range(0.35, 0.7), s: shape === CAP_SHAPES.cone ? 0.56 : 0.5 } : null;
+  const chim = o.chimney ? { phi: (dorm ? dorm.phi : 0) + rng.pick([-1, 1]) * rng.range(1.4, 2.2), s: o.chimney === 'mushroom' ? 0.42 : 0.38 } : null;
+  if (dorm) capReserved.push({ phi: dorm.phi, s: dorm.s, r: 0.95 });
+  if (chim) capReserved.push({ phi: chim.phi, s: chim.s, r: 0.55 });
+  if (o.warts) buildWarts(put, o, rng, { capRaw, capFrame, capReserved, count: typeof o.warts === 'number' ? o.warts : Math.round(Rc * Rc * (8 + 5 * det)) });
+
+  // ── dormer ──
+  if (dorm) buildDormer(put, o, rng, { capFrame, capRaw, dorm, halos });
+
+  // ── chimney ──
+  let chimneyTop = null;
+  if (chim) chimneyTop = buildChimney(put, o, rng, { capFrame, chim, bendV });
+
+  // ── ivy ──
+  if (o.ivy > 0) buildIvy(put, o, rng, { wallR, stemTop, reserved, capRaw, capFrame, open });
+
+  // ── around the base: moss, ferns, grass, toadstools ──
+  if (o.base) {
+    const nB = Math.round((8 + R * 5) * det);
+    for (let i = 0; i < nB; i++) {
+      const phi = rng.next() * TAU;
+      if (o.door && Math.abs(Math.atan2(Math.sin(phi - o.door.phi), Math.cos(phi - o.door.phi))) < 0.5) continue;
+      if (open && Math.abs(Math.atan2(Math.sin(phi - open.phi), Math.cos(phi - open.phi))) < cutA(0.1) + 0.3) continue;
+      const r = wallR(phi, 0.05) + rng.range(0.15, 0.55);
+      const x = Math.sin(phi) * r, z = Math.cos(phi) * r;
+      const roll = rng.next();
+      if (roll < 0.3) put(M.moss, xf(mossGeo(rng, { r: rng.range(0.18, 0.34), h: rng.range(0.06, 0.12) }), [x, 0, z], [0, rng.next() * 3, 0]), { cast: false });
+      else if (roll < 0.55) addGrass(F, rng, x, 0, z, { size: rng.range(0.25, 0.42), blades: 3 });
+      else if (roll < 0.75) addFern(F, rng, x, 0, z, { size: rng.range(0.35, 0.6), fronds: rng.int(5, 8) });
+      else addToadstool(F, rng, x, 0, z, { size: rng.range(0.07, 0.14), color: rng.pick(['#c4301f', '#c4301f', '#b8562a', '#a77c52']) });
+    }
+  }
+
+  const collider = prof(0.1) * 0.98;
+  return {
+    halos,
+    collider,
+    stemTop,
+    rimY,
+    doorCenter: doorCenter ? bendV(doorCenter) : null,
+    doorGround,
+    chimneyTop,
+    windows: windows.map((w) => ({ ...w, pos: bendV(w.pos), sill: bendV(w.sill) })),
+    wallPoint,
+    capPoint,
+    rimPoint,
+    interior,
+  };
+}
+
+// ─── wall frames ─────────────────────────────────────────────────────────────
+/**
+ * A placement frame for a flat feature on the curved wall spanning [y0, y1] at φ:
+ * tilted to the wall's slope and pushed out so its z = 0 plane sits just in
+ * front of the plaster. Returns { m (Matrix4), r, yc }.
+ */
+function wallFrame(wallR, phi, y0, y1, margin = 0.01, halfW = 0.45) {
+  const yc = (y0 + y1) / 2;
+  const slope = (wallR(phi, y1) - wallR(phi, y0)) / (y1 - y0);
+  // the plane must clear the (wobbly, curved) wall across the feature's whole width
+  let dev = 0;
+  const r0 = wallR(phi, yc);
+  for (let i = 0; i <= 8; i++) {
+    const y = y0 + ((y1 - y0) * i) / 8;
+    const plane = r0 + (y - yc) * slope;
+    for (let k = -3; k <= 3; k++) {
+      const x = (halfW * k) / 3;
+      const da = Math.asin(Math.max(-0.95, Math.min(0.95, x / Math.max(r0, 0.3))));
+      const along = wallR(phi + da, y) * Math.cos(da);
+      dev = Math.max(dev, along - plane);
+    }
+  }
+  const r = r0 + dev + margin;
+  const m = mat4([Math.sin(phi) * r, yc, Math.cos(phi) * r], [Math.atan(slope), phi, 0, 'YXZ']);
+  return { m, r, yc };
+}
+
+// ─── door ────────────────────────────────────────────────────────────────────
+function buildDoor(put, o, rng, { wallR, floorY, halos, lantern }) {
+  const M = mats();
+  const { phi, width: w, height: h, color } = o.door;
+  const r = w / 2;
+  const hs = h - r; // straight part
+  const y0 = floorY;
+  const fr = wallFrame(wallR, phi, y0, y0 + h + 0.25, -0.03, w * 0.5);
+  const T = new THREE.Matrix4().makeTranslation(0, y0 - fr.yc, 0);
+  const at = (geo) => geo.applyMatrix4(T).applyMatrix4(fr.m);
+  const atP = (v) => v.applyMatrix4(T).applyMatrix4(fr.m);
+  // an untilted frame at the foot of the door for the threshold & steps
+  const flat = mat4([Math.sin(phi) * fr.r, y0, Math.cos(phi) * fr.r], [0, phi, 0]);
+  const atFlat = (geo) => geo.applyMatrix4(flat);
+  const leafZ = -0.02;
+
+  // dark reveal behind the door (reads as depth)
+  const rev = new THREE.ShapeGeometry(archShape(w + 0.08, hs, { y: -0.02 }), 8);
+  put(M.vc, at(rev.translate(0, 0, leafZ - 0.03)), { color: '#24190f', cast: false });
+
+  // plank leaf
+  const nP = Math.max(4, Math.round(w / 0.19));
+  const pw = w / nP;
+  const yTop = (x) => hs + Math.sqrt(Math.max(0, r * r - x * x));
+  for (let i = 0; i < nP; i++) {
+    const x0 = -r + i * pw + 0.006, x1 = -r + (i + 1) * pw - 0.006;
+    const s = new THREE.Shape();
+    s.moveTo(x0, 0);
+    s.lineTo(x1, 0);
+    const steps = 4;
+    for (let k = 0; k <= steps; k++) {
+      const x = x1 + ((x0 - x1) * k) / steps;
+      s.lineTo(x, yTop(x) - 0.004);
+    }
+    s.lineTo(x0, 0);
+    const pg = new THREE.ExtrudeGeometry(s, { depth: 0.05, bevelEnabled: true, bevelThickness: 0.006, bevelSize: 0.006, bevelSegments: 1, curveSegments: 4 });
+    uvBox(pg, 'y', 1 / 1.4, [rng.next() * 7, rng.next() * 7]);
+    const tone = new THREE.Color(color).multiplyScalar(rng.range(0.86, 1.1));
+    put(M.wood, at(pg.translate(0, 0, leafZ)), { color: '#' + tone.getHexString(), cast: false });
+  }
+  const front = leafZ + 0.056;
+  // ledges + a diagonal brace
+  const ledgeC = new THREE.Color(color).multiplyScalar(0.82).getHexString();
+  const ly = [0.3, Math.min(hs - 0.05, h * 0.62)];
+  for (const yy of ly) put(M.wood, at(board(w - 0.06, 0.11, 0.035, { along: 'x', rng }).translate(0, yy, front + 0.017)), { color: '#' + ledgeC, cast: false });
+  put(M.wood, at(boardBetween([-r + 0.12, ly[0] + 0.05, front + 0.012], [r - 0.12, ly[1] - 0.05, front + 0.012], 0.09, 0.03, { up: [0, 0, 1] })), { color: '#' + ledgeC, cast: false });
+  // strap hinges with nails (hinge side −x)
+  for (const yy of ly) {
+    const strap = new THREE.BoxGeometry(w * 0.62, 0.045, 0.012).translate(-r + w * 0.31, yy, front + 0.04);
+    put(M.metal, at(strap), { color: IRON, cast: false });
+    put(M.metal, at(new THREE.CylinderGeometry(0.035, 0.035, 0.012, 8).rotateX(Math.PI / 2).translate(-r + w * 0.62, yy, front + 0.04)), { color: IRON, cast: false });
+    for (const k of [0.1, 0.3, 0.5]) put(M.metal, at(new THREE.SphereGeometry(0.011, 5, 3).translate(-r + w * k, yy, front + 0.048)), { color: '#2a2622', cast: false });
+    put(M.metal, at(new THREE.CylinderGeometry(0.022, 0.022, 0.09, 6).translate(-r - 0.01, yy, front + 0.01)), { color: IRON, cast: false });
+  }
+  // ring handle, keyhole plate
+  const hy = 0.92;
+  put(M.metal, at(new THREE.CylinderGeometry(0.05, 0.05, 0.012, 10).rotateX(Math.PI / 2).translate(r * 0.62, hy, front + 0.008)), { color: IRON, cast: false });
+  put(M.metal, at(new THREE.TorusGeometry(0.06, 0.011, 5, 12).translate(r * 0.62, hy - 0.065, front + 0.025)), { color: '#4a4038', cast: false });
+  put(M.metal, at(new THREE.BoxGeometry(0.05, 0.1, 0.01).translate(r * 0.62, hy - 0.2, front + 0.006)), { color: IRON, cast: false });
+  // a little round peep window with bars
+  const py = hs + r * 0.25;
+  put(M.glow, at(new THREE.CircleGeometry(0.1, 12).translate(0, py, front + 0.004)), { cast: false });
+  put(M.metal, at(new THREE.TorusGeometry(0.105, 0.016, 5, 14).translate(0, py, front + 0.012)), { color: IRON, cast: false });
+  for (const dx of [-0.035, 0.035]) put(M.metal, at(new THREE.BoxGeometry(0.012, 0.2, 0.012).translate(dx, py, front + 0.016)), { color: IRON, cast: false });
+
+  // stone arch: voussoirs + keystone
+  const rin = r + 0.015;
+  const nV = 9;
+  for (let i = 0; i < nV; i++) {
+    const a0 = (i / nV) * Math.PI, a1 = ((i + 1) / nV) * Math.PI;
+    const key = i === (nV - 1) / 2;
+    const t = (key ? 0.3 : rng.range(0.2, 0.27));
+    const dep = rng.range(0.26, 0.32) + (key ? 0.03 : 0);
+    const seg = arcSegment(rin, rin + t, a0 + 0.012, a1 - 0.012, dep, 2, 0.012);
+    seg.rotateZ(rng.jitter(0.015));
+    seg.translate(rng.jitter(0.008), hs + rng.jitter(0.008), rng.jitter(0.015) + (key ? 0.03 : 0));
+    put(M.stone, at(seg), { color: rng.pick(STONE_TINTS), cast: false });
+  }
+  // jambs (quoins): alternating long and short blocks
+  for (const side of [-1, 1]) {
+    let y = -0.02;
+    let k = side > 0 ? 1 : 0;
+    while (y < hs - 0.05) {
+      const bh = Math.min(rng.range(0.25, 0.34), hs - y + 0.02);
+      const bw = k % 2 ? rng.range(0.3, 0.36) : rng.range(0.2, 0.25);
+      const bd = rng.range(0.26, 0.32);
+      const st = blockStone(rng, bw, bh - 0.02, bd, 0.08);
+      st.translate(side * (rin + bw / 2), y + bh / 2, rng.jitter(0.012));
+      put(M.stone, at(st), { color: rng.pick(STONE_TINTS), cast: false });
+      y += bh;
+      k++;
+    }
+  }
+  // threshold & steps
+  put(M.stone, atFlat(blockStone(rng, w + 0.5, 0.12, 0.5, 0.06).translate(0, -0.06, 0.14)), { color: '#a39d90', cast: true });
+  const steps = [
+    { w: w + 0.75, d: 0.55, y: -y0 / 2 - 0.02, z: 0.55 },
+    { w: w + 1.1, d: 0.6, y: -y0 + 0.02, z: 1.0 },
+  ];
+  for (const s of steps) {
+    const st = stoneGeo(rng, { r: 1, sx: s.w / 2, sy: 0.09, sz: s.d / 2, lump: 0.12, flatTop: 0.4 });
+    put(M.stone, atFlat(st.translate(rng.jitter(0.05), s.y, s.z)), { color: rng.pick(STONE_TINTS), cast: true });
+  }
+
+  // wall lantern on an iron bracket beside the door
+  if (lantern) {
+    const side = rng.chance(0.5) ? 1 : -1;
+    const lx = side * (rin + 0.55), ly = hs + 0.25;
+    put(M.metal, at(new THREE.BoxGeometry(0.08, 0.22, 0.03).translate(lx, ly, -0.05)), { color: IRON, cast: false });
+    const arm = [[lx, ly + 0.05, -0.05], [lx, ly + 0.12, 0.15], [lx, ly + 0.1, 0.3], [lx, ly + 0.02, 0.36]];
+    put(M.metal, at(tube(arm, 0.014, 4, 10)), { color: IRON, cast: false });
+    put(M.metal, at(tube([[lx, ly - 0.08, -0.05], [lx, ly - 0.02, 0.1], [lx, ly + 0.08, 0.2]], 0.01, 4, 8)), { color: IRON, cast: false });
+    addLantern(put, at, lx, ly - 0.08, 0.36, 1, halos, atP);
+  }
+
+  const center = atP(new THREE.Vector3(0, hs * 0.75, 0.08));
+  const ground = new THREE.Vector3(Math.sin(phi) * (fr.r + 1.3), 0, Math.cos(phi) * (fr.r + 1.3));
+  return { center, ground };
+}
+
+/** A little iron lantern hanging at (x, top y, z) in a frame (via `at`; atP maps points for the halo), glass glows. */
+export function addLantern(put, at, x, y, z, s = 1, halos = null, atP = null) {
+  const M = mats();
+  const w = 0.17 * s, h = 0.24 * s;
+  const yb = y - 0.06 * s - h;
+  put(M.metal, at(new THREE.TorusGeometry(0.03 * s, 0.007 * s, 4, 8).translate(x, y, z)), { color: IRON, cast: false });
+  // pyramid roof
+  const roof = new THREE.ConeGeometry(w * 0.85, 0.11 * s, 4, 1).rotateY(Math.PI / 4).translate(x, yb + h + 0.055 * s, z);
+  put(M.metal, at(roof), { color: '#2f2a26', cast: false });
+  put(M.metal, at(new THREE.BoxGeometry(w * 1.1, 0.025 * s, w * 1.1).translate(x, yb + h, z)), { color: IRON, cast: false });
+  put(M.metal, at(new THREE.BoxGeometry(w * 1.05, 0.03 * s, w * 1.05).translate(x, yb, z)), { color: IRON, cast: false });
+  for (const [dx, dz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) put(M.metal, at(new THREE.BoxGeometry(0.014 * s, h, 0.014 * s).translate(x + (dx * w) / 2, yb + h / 2, z + (dz * w) / 2)), { color: IRON, cast: false });
+  put(M.lamp, at(new THREE.BoxGeometry(w * 0.9, h * 0.92, w * 0.9).translate(x, yb + h / 2, z)), { cast: false });
+  if (halos && atP) {
+    const p = atP(new THREE.Vector3(x, yb + h / 2, z));
+    halos.push({ x: p.x, y: p.y, z: p.z, size: 0.8 * s });
   }
 }
+
+// ─── windows ─────────────────────────────────────────────────────────────────
+function buildWindow(put, o, rng, spec, { wallR, halos }) {
+  const M = mats();
+  const { phi, y, w, h, shape } = spec;
+  const fr = wallFrame(wallR, phi, y - h / 2 - 0.12, y + h / 2 + 0.1, 0.012, w * 0.5 + 0.05);
+  const T = new THREE.Matrix4().makeTranslation(0, y - fr.yc, 0);
+  const at = (geo) => geo.applyMatrix4(T).applyMatrix4(fr.m);
+  const frameC = rng.pick([WOOD.walnut, WOOD.oak, '#6b4a33', '#7d5a3c']);
+  const fd = 0.12; // frame depth (sticks out of the wall)
+  const r = w / 2;
+  if (shape === 'round') {
+    put(M.vc, at(new THREE.CircleGeometry(r + 0.03, 16).translate(0, 0, -0.02)), { color: '#22180f', cast: false });
+    put(M.glow, at(new THREE.CircleGeometry(r, 16).translate(0, 0, 0.0)), { cast: false });
+    const ring = arcSegment(r, r + 0.09, 0, TAU, fd, 18, 0.01);
+    put(M.wood, at(uvBox(ring, 'x').translate(0, 0, fd / 2 - 0.03)), { color: frameC, cast: false });
+    put(M.wood, at(board(w, 0.035, 0.03, { along: 'x' }).translate(0, 0, 0.02)), { color: frameC, cast: false });
+    put(M.wood, at(board(0.035, w, 0.03, { along: 'y' }).translate(0, 0, 0.02)), { color: frameC, cast: false });
+  } else {
+    const hs = shape === 'arch' ? h - r : h;
+    const y0 = -h / 2;
+    // dark reveal, then the pane
+    const outline = shape === 'arch' ? archShape(w + 0.04, hs, { y: y0 - 0.02 }) : new THREE.Shape().moveTo(-r - 0.02, y0 - 0.02).lineTo(r + 0.02, y0 - 0.02).lineTo(r + 0.02, y0 + h + 0.02).lineTo(-r - 0.02, y0 + h + 0.02).lineTo(-r - 0.02, y0 - 0.02);
+    put(M.vc, at(new THREE.ShapeGeometry(outline, 8).translate(0, 0, -0.03)), { color: '#22180f', cast: false });
+    const pane = shape === 'arch' ? new THREE.ShapeGeometry(archShape(w, hs, { y: y0 }), 8) : new THREE.PlaneGeometry(w, h).translate(0, 0, 0);
+    put(M.glow, at(pane.translate(0, 0, -0.005)), { cast: false });
+    // frame: sides, head, sill
+    const fw = 0.075;
+    for (const s of [-1, 1]) put(M.wood, at(board(fw, hs + 0.02, fd, { along: 'y', rng }).translate(s * (r + fw / 2), y0 + hs / 2, fd / 2 - 0.03)), { color: frameC, cast: false });
+    if (shape === 'arch') {
+      const head = arcSegment(r, r + fw, 0, Math.PI, fd, 8, 0.008);
+      put(M.wood, at(uvBox(head, 'x').translate(0, y0 + hs, fd / 2 - 0.03)), { color: frameC, cast: false });
+    } else {
+      put(M.wood, at(board(w + fw * 2 + 0.06, fw * 1.2, fd + 0.02, { along: 'x', rng }).translate(0, y0 + h + fw * 0.6, fd / 2 - 0.02)), { color: frameC, cast: false });
+    }
+    put(M.wood, at(board(w + 0.26, 0.065, fd + 0.13, { along: 'x', rng }).translate(0, y0 - 0.035, fd / 2 + 0.03)), { color: frameC, cast: true });
+    // mullions: cross (+ an extra bar in tall windows)
+    put(M.wood, at(board(0.032, hs + (shape === 'arch' ? r * 0.9 : 0), 0.035, { along: 'y' }).translate(0, y0 + (hs + (shape === 'arch' ? r * 0.9 : 0)) / 2, 0.012)), { color: frameC, cast: false });
+    put(M.wood, at(board(w, 0.032, 0.035, { along: 'x' }).translate(0, y0 + hs * 0.55, 0.012)), { color: frameC, cast: false });
+    // shutters, opened out
+    if (spec.shutters) {
+      for (const s of [-1, 1]) {
+        const sw = w * 0.5 + 0.03;
+        const sh = Math.min(hs + r * 0.55, h);
+        const hinge = new THREE.Matrix4().makeTranslation(s * (r + fw), y0 + sh / 2 - 0.01, 0.02);
+        const open = new THREE.Matrix4().makeRotationY(s * 2.45);
+        const nB = 3;
+        for (let k = 0; k < nB; k++) {
+          const bw = sw / nB;
+          const pl = board(bw - 0.008, sh, 0.03, { along: 'y', rng });
+          pl.translate(-s * (bw * (k + 0.5)), 0, 0);
+          pl.applyMatrix4(open).applyMatrix4(hinge);
+          put(M.wood, at(pl), { color: '#' + new THREE.Color(spec.color).multiplyScalar(rng.range(0.9, 1.08)).getHexString(), cast: false });
+        }
+        for (const by of [-sh * 0.32, sh * 0.32]) {
+          const ledge = board(sw - 0.04, 0.06, 0.02, { along: 'x' }).translate(-s * (sw / 2), by, -0.022);
+          ledge.applyMatrix4(open).applyMatrix4(hinge);
+          put(M.wood, at(ledge), { color: '#' + new THREE.Color(spec.color).multiplyScalar(0.8).getHexString(), cast: false });
+        }
+      }
+    }
+  }
+  // flower box under the sill
+  const sillY = shape === 'round' ? -r - 0.1 : -h / 2 - 0.07;
+  if (spec.box) {
+    const bw = w + 0.3, bh = 0.17, bd = 0.2;
+    const by = sillY - 0.03 - bh / 2;
+    const bz = 0.14;
+    for (const [sx, sy, sz, px, py, pz] of [
+      [bw, bh, 0.025, 0, by, bz + bd / 2],
+      [bw, bh, 0.025, 0, by, bz - bd / 2],
+      [0.025, bh, bd, -bw / 2, by, bz],
+      [0.025, bh, bd, bw / 2, by, bz],
+      [bw, 0.025, bd, 0, by - bh / 2, bz],
+    ]) put(M.wood, at(board(sx, sy, sz, { along: sx > sz ? 'x' : 'z', rng }).translate(px, py, pz)), { color: WOOD.weathered, cast: false });
+    put(M.soil, at(new THREE.BoxGeometry(bw - 0.04, 0.02, bd - 0.03).translate(0, by + bh / 2 - 0.03, bz)), { cast: false });
+    // brackets
+    for (const s of [-1, 1]) put(M.metal, at(new THREE.BoxGeometry(0.02, 0.16, 0.02).rotateX(0.7).translate(s * bw * 0.35, by - bh / 2 - 0.05, bz - 0.05)), { color: IRON, cast: false });
+    // flowers & leaves (into the frame's coordinates through a tiny adapter)
+    const FF = { add: (mat, geo, opts) => put(mat, at(geo), opts) };
+    const nF = Math.round(5 + w * 6);
+    for (let i = 0; i < nF; i++) {
+      const fx = rng.range(-bw / 2 + 0.06, bw / 2 - 0.06);
+      addFlower(FF, rng, fx, by + bh / 2 - 0.03, bz + rng.jitter(0.06), { size: rng.range(0.045, 0.07), stem: rng.range(0.1, 0.2) });
+    }
+    for (let i = 0; i < 5; i++) {
+      const lf = new THREE.SphereGeometry(rng.range(0.06, 0.09), 6, 4).scale(1.2, 0.7, 1);
+      put(M.leafy, at(lf.translate(rng.range(-bw / 2, bw / 2), by + bh / 2, bz + rng.jitter(0.05))), { color: rng.pick(['#4e7a34', '#5f8a3a', '#3f6a2c']), cast: false });
+    }
+    // trailing strands over the front
+    for (let i = 0; i < 3; i++) {
+      const sx = rng.range(-bw / 2 + 0.05, bw / 2 - 0.05);
+      const pts = [];
+      let px = sx, py = by + bh / 2, pz = bz + bd / 2 + 0.01;
+      const L = rng.range(0.2, 0.42);
+      for (let k = 0; k < 6; k++) {
+        pts.push([px, py, pz]);
+        py -= L / 5;
+        px += rng.jitter(0.03);
+        pz += 0.008;
+      }
+      put(M.vc, at(tube(pts, 0.006, 3, 8)), { color: '#4e6b2e', cast: false });
+      for (let k = 1; k < 6; k++) {
+        const lf = new THREE.SphereGeometry(0.03, 5, 3).scale(1.3, 0.5, 1);
+        put(M.leafy, at(lf.translate(pts[k][0] + rng.jitter(0.02), pts[k][1], pts[k][2] + 0.01)), { color: '#4f7a34', cast: false });
+      }
+    }
+  }
+  const c = new THREE.Vector3(0, 0, 0.2).applyMatrix4(T).applyMatrix4(fr.m);
+  halos.push({ x: c.x, y: c.y, z: c.z, size: Math.max(w, h) * 1.1 });
+  const sill = new THREE.Vector3(0, sillY + 0.04, fd / 2 + 0.05).applyMatrix4(T).applyMatrix4(fr.m);
+  return { phi, y, w, h, shape, pos: c, sill, normal: new THREE.Vector3(Math.sin(phi), 0, Math.cos(phi)), box: spec.box };
+}
+
+// ─── warts ───────────────────────────────────────────────────────────────────
+function buildWarts(put, o, rng, { capRaw, capFrame, capReserved, count }) {
+  const M = mats();
+  const { Rc } = o;
+  const placed = [];
+  const pos = [];
+  const col = [];
+  const uv = [];
+  const idx = [];
+  const cBase = new THREE.Color(o.wartColor);
+  const cEdge = new THREE.Color(o.wartColor).lerp(new THREE.Color('#c9b186'), 0.55);
+  const tmp = new THREE.Vector3();
+  let tries = 0;
+  while (placed.length < count && tries < count * 40) {
+    tries++;
+    const s = Math.sqrt(rng.range(0.0006, 0.84)); // area-weighted towards the rim
+    const phi = rng.next() * TAU;
+    const size = Rc * 0.042 * rng.range(0.4, 1.5) * (1.3 - 0.65 * s) * (s < 0.1 ? 0.8 : 1);
+    const c = capRaw(phi, s);
+    let ok = true;
+    for (const p of placed) if (p.c.distanceTo(c) < (p.size + size) * 1.08) ok = false;
+    for (const r of capReserved) if (capRaw(r.phi, r.s, tmp).distanceTo(c) < r.r + size) ok = false;
+    if (!ok) continue;
+    placed.push({ c, size, s, phi });
+  }
+  for (const w of placed) {
+    const f = capFrame(w.phi, w.s);
+    const k = rng.int(7, 10);
+    const ang = [];
+    const rad = [];
+    const rot = rng.next() * TAU;
+    const ax = rng.range(0.8, 1.25);
+    const flaky = rng.chance(0.35); // some are torn veil flakes, most are soft round warts
+    for (let i = 0; i < k; i++) {
+      ang.push(rot + ((i + rng.jitter(0.25)) / k) * TAU);
+      rad.push(flaky ? rng.range(0.6, 1.0) : rng.range(0.82, 1.0));
+    }
+    const h = w.size * rng.range(0.28, 0.45);
+    const rings = [
+      [0.0, h, 0],
+      [0.45, h * 0.95, 0],
+      [0.75, h * 0.78, 0],
+      [0.93, h * 0.45, 1],
+      [1.05, h * 0.08, 1],
+      [1.14, -0.015, 1],
+    ];
+    const base = pos.length / 3;
+    const pushV = (a, b, hh, edge) => {
+      const ph = w.phi + a / f.lPhi;
+      const ss = Math.min(1, Math.max(0.0005, w.s + b / f.lS));
+      const p = capRaw(ph, ss, tmp).addScaledVector(f.n, hh);
+      pos.push(p.x, p.y, p.z);
+      const cc = edge ? cEdge : cBase;
+      col.push(cc.r, cc.g, cc.b);
+      uv.push(a * 3 + w.phi, 0.6 + b * 0.8);
+    };
+    pushV(0, 0, h, 0);
+    for (let ri = 1; ri < rings.length; ri++) {
+      const [rf, hh, edge] = rings[ri];
+      for (let i = 0; i < k; i++) {
+        const rr = rad[i] * rf * w.size;
+        const a = Math.cos(ang[i]) * rr * ax, b = Math.sin(ang[i]) * rr / ax;
+        pushV(a, b, hh, edge);
+      }
+    }
+    for (let i = 0; i < k; i++) idx.push(base, base + 1 + i, base + 1 + ((i + 1) % k));
+    for (let ri = 1; ri < rings.length - 1; ri++) {
+      const a0 = base + 1 + (ri - 1) * k, b0 = base + 1 + ri * k;
+      for (let i = 0; i < k; i++) {
+        const i1 = (i + 1) % k;
+        idx.push(a0 + i, b0 + i, b0 + i1, a0 + i, b0 + i1, a0 + i1);
+      }
+    }
+  }
+  if (!idx.length) return;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  // make sure the winding faces outwards (check the first wart's apex)
+  const n = g.attributes.normal;
+  const f0 = capFrame(placed[0].phi, placed[0].s);
+  if (n.getX(0) * f0.n.x + n.getY(0) * f0.n.y + n.getZ(0) * f0.n.z < 0) {
+    const a = g.index.array;
+    for (let i = 0; i < a.length; i += 3) [a[i + 1], a[i + 2]] = [a[i + 2], a[i + 1]];
+    g.computeVertexNormals();
+  }
+  put(M.cap, g, { cast: false, color: null });
+}
+
+// ─── dormer ──────────────────────────────────────────────────────────────────
+function buildDormer(put, o, rng, { capFrame, capRaw, dorm, halos }) {
+  const M = mats();
+  const f = capFrame(dorm.phi, dorm.s);
+  const d = new THREE.Vector3(Math.sin(dorm.phi), 0, Math.cos(dorm.phi));
+  const scale = THREE.MathUtils.clamp(o.Rc / 3, 0.65, 1.2);
+  const bw = 0.95 * scale, bh = 0.85 * scale, depth = 1.5 * scale;
+  // the front face sits a little proud of the cap surface
+  const front = f.p.clone().addScaledVector(d, 0.22 * scale);
+  front.y -= bh * 0.18;
+  const m = new THREE.Matrix4().makeBasis(new THREE.Vector3(d.z, 0, -d.x), new THREE.Vector3(0, 1, 0), d).setPosition(front);
+  const at = (geo) => geo.applyMatrix4(m);
+  // body: cream walls (cheeks), back buried in the cap
+  const body = new THREE.BoxGeometry(bw, bh, depth, 2, 2, 2).translate(0, 0, -depth / 2);
+  uvPlanar(body, 'x', 'y', 0.6);
+  put(M.cap, at(body), { color: o.capColor, cast: true });
+  // barrel roof in cap colour (half cylinder along −z) with a little ridge lift
+  const roofR = bw / 2 + 0.1 * scale;
+  const roof = new THREE.CylinderGeometry(roofR, roofR, depth + 0.18, 14, 1, true, Math.PI / 2, Math.PI);
+  roof.rotateX(Math.PI / 2);
+  roof.scale(1, 0.75, 1);
+  roof.translate(0, bh / 2 - 0.02, -depth / 2 + 0.09);
+  const ru = roof.attributes.uv;
+  for (let i = 0; i < ru.count; i++) ru.setXY(i, ru.getX(i) * 0.3, 0.12 + ru.getY(i) * 0.1);
+  put(M.cap, at(roof), { color: o.capColor, cast: true });
+  // gable end: the roof's front cap (a half disc) in timber
+  const gable = new THREE.CircleGeometry(roofR, 12, 0, Math.PI).scale(1, 0.75, 1).translate(0, bh / 2 - 0.02, 0.0);
+  uvBox(gable, 'x');
+  put(M.wood, at(gable.translate(0, 0, 0.005)), { color: WOOD.weathered, cast: false });
+  // the window: arched, framed, glowing
+  const w = 0.42 * scale, wh = 0.55 * scale, r = w / 2;
+  const wy = -bh * 0.08;
+  put(M.vc, at(new THREE.ShapeGeometry(archShape(w + 0.05, wh - r, { y: wy - wh / 2 - 0.02 }), 8).translate(0, 0, 0.01)), { color: '#22180f', cast: false });
+  put(M.glow, at(new THREE.ShapeGeometry(archShape(w, wh - r, { y: wy - wh / 2 }), 8).translate(0, 0, 0.016)), { cast: false });
+  const fw = 0.06 * scale;
+  for (const s of [-1, 1]) put(M.wood, at(board(fw, wh - r, 0.08, { along: 'y' }).translate(s * (r + fw / 2), wy - wh / 2 + (wh - r) / 2, 0.04)), { color: WOOD.oak, cast: false });
+  put(M.wood, at(uvBox(arcSegment(r, r + fw, 0, Math.PI, 0.08, 8, 0.006), 'x').translate(0, wy - wh / 2 + wh - r, 0.04)), { color: WOOD.oak, cast: false });
+  put(M.wood, at(board(w + 0.2, 0.05, 0.14, { along: 'x' }).translate(0, wy - wh / 2 - 0.03, 0.06)), { color: WOOD.oak, cast: false });
+  put(M.wood, at(board(0.028, wh * 0.85, 0.03, { along: 'y' }).translate(0, wy - wh * 0.05, 0.03)), { color: WOOD.oak, cast: false });
+  put(M.wood, at(board(w, 0.028, 0.03, { along: 'x' }).translate(0, wy - wh * 0.08, 0.03)), { color: WOOD.oak, cast: false });
+  const c = new THREE.Vector3(0, wy, 0.3).applyMatrix4(m);
+  halos.push({ x: c.x, y: c.y, z: c.z, size: 0.75 * scale });
+  void capRaw;
+}
+
+// ─── chimney ─────────────────────────────────────────────────────────────────
+function buildChimney(put, o, rng, { capFrame, chim, bendV }) {
+  const M = mats();
+  const f = capFrame(chim.phi, chim.s);
+  const scale = THREE.MathUtils.clamp(o.Rc / 3, 0.6, 1.2);
+  const p = f.p.clone();
+  if (o.chimney === 'pipe') {
+    const d = new THREE.Vector3(f.n.x, 0, f.n.z).normalize();
+    const pts = [
+      p.clone().addScaledVector(f.n, -0.3),
+      p.clone().addScaledVector(f.n, 0.12),
+      p.clone().addScaledVector(d, 0.32 * scale).add(new THREE.Vector3(0, 0.22 * scale, 0)),
+      p.clone().addScaledVector(d, 0.42 * scale).add(new THREE.Vector3(0.04, 0.75 * scale, 0)),
+      p.clone().addScaledVector(d, 0.38 * scale).add(new THREE.Vector3(-0.03, 1.15 * scale, 0.02)),
+    ];
+    put(M.metal, tube(pts, 0.085 * scale, 10, 24), { color: '#6e4a32', cast: true });
+    const top = pts[pts.length - 1];
+    for (const t of [0.35, 0.7]) {
+      const q = new THREE.CatmullRomCurve3(pts).getPointAt(t);
+      put(M.metal, new THREE.TorusGeometry(0.095 * scale, 0.018 * scale, 5, 12).rotateX(Math.PI / 2).translate(q.x, q.y, q.z), { color: '#3e3a35', cast: false });
+    }
+    put(M.metal, new THREE.ConeGeometry(0.2 * scale, 0.14 * scale, 10, 1, true).translate(top.x, top.y + 0.2 * scale, top.z), { color: '#3e3a35', cast: true });
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * TAU;
+      put(M.metal, rod([top.x + Math.cos(a) * 0.07, top.y, top.z + Math.sin(a) * 0.07], [top.x + Math.cos(a) * 0.12, top.y + 0.14 * scale, top.z + Math.sin(a) * 0.12], 0.008, 0.008, 3), { color: '#3e3a35', cast: false });
+    }
+    return bendV(top.clone().add(new THREE.Vector3(0, 0.12 * scale, 0)));
+  }
+  if (o.chimney === 'mushroom') {
+    // a tiny mushroom growing out of the cap: its hollow stem is the flue
+    const h = 0.95 * scale;
+    const pts = [p.clone().addScaledVector(f.n, -0.25), p.clone().add(new THREE.Vector3(0, h * 0.4, 0)), p.clone().add(new THREE.Vector3(0.05, h, -0.03))];
+    put(M.stem, tube(pts, 0.13 * scale, 10, 10), { color: '#ece2cc', cast: true });
+    const top = pts[2];
+    const mc = new THREE.SphereGeometry(0.34 * scale, 14, 7, 0, TAU, 0, Math.PI / 2).scale(1, 0.62, 1);
+    const mu = mc.attributes.uv;
+    for (let i = 0; i < mu.count; i++) mu.setXY(i, mu.getX(i), 1 - mu.getY(i) * 0.9);
+    put(M.cap, mc.translate(top.x, top.y + 0.12, top.z), { color: o.capColor, cast: true });
+    put(M.gills, new THREE.CircleGeometry(0.33 * scale, 14).rotateX(Math.PI / 2).translate(top.x, top.y + 0.125, top.z), { cast: false });
+    for (let i = 0; i < 5; i++) {
+      const a = rng.next() * TAU, el = rng.range(0.5, 1.2);
+      const rr = 0.34 * scale;
+      const sp = new THREE.SphereGeometry(0.03 * scale, 5, 3).scale(1, 0.5, 1);
+      sp.translate(Math.cos(a) * Math.cos(el) * rr, top.y + 0.12 + Math.sin(el) * rr * 0.62, Math.sin(a) * Math.cos(el) * rr);
+      sp.translate(top.x, 0, top.z);
+      put(M.stem, sp, { color: o.wartColor, cast: false });
+    }
+    return bendV(top.clone().add(new THREE.Vector3(0.18 * scale, 0.05, 0)));
+  }
+  // stone stack: courses of rough stones around a square flue
+  const side = 0.46 * scale;
+  const y0 = p.y - 0.55 * scale;
+  const y1 = p.y + 1.05 * scale;
+  const course = 0.14 * scale;
+  const lean = rng.jitter(0.035);
+  let k = 0;
+  for (let y = y0; y < y1; y += course) {
+    const off = (y - y0) * lean;
+    const sh = (k % 2) * 0.5;
+    for (let face = 0; face < 4; face++) {
+      const a = (face * Math.PI) / 2;
+      const nS = 2;
+      for (let s = 0; s < nS; s++) {
+        const t = (s + 0.5) / nS - 0.5 + (sh ? 0.1 : -0.1);
+        const sw = side / nS + rng.range(0.04, 0.08);
+        const st = blockStone(rng, sw, course * rng.range(0.85, 0.98), 0.13 * scale, 0.14);
+        st.translate(t * side, 0, side / 2 - 0.05);
+        st.rotateY(a);
+        st.translate(p.x + off, y + course / 2, p.z);
+        put(M.stone, st, { color: rng.pick(STONE_TINTS), cast: face === 0 });
+      }
+    }
+    k++;
+  }
+  const off = (y1 - y0) * lean;
+  put(M.stone, blockStone(rng, side + 0.12, 0.08, side + 0.12, 0.08).translate(p.x + off, y1 + 0.04, p.z), { color: '#8f8a80', cast: true });
+  put(M.clay, new THREE.CylinderGeometry(0.1 * scale, 0.12 * scale, 0.22 * scale, 10, 1, true).translate(p.x + off, y1 + 0.18 * scale, p.z), { color: '#9a5a3a', cast: false });
+  put(M.vc, new THREE.CircleGeometry(0.095 * scale, 10).rotateX(-Math.PI / 2).translate(p.x + off, y1 + 0.26 * scale, p.z), { color: '#1a120c', cast: false });
+  return bendV(new THREE.Vector3(p.x + off, y1 + 0.32 * scale, p.z));
+}
+
+// ─── ivy ─────────────────────────────────────────────────────────────────────
+function buildIvy(put, o, rng, { wallR, stemTop, reserved, capRaw, capFrame, open }) {
+  const M = mats();
+  const amount = o.ivy * o.detail;
+  const cards = new Cards();
+  // put through the lean, then into the batch
+  const PF = { add: (mat, geo, opts) => put(mat, geo, opts) };
+  const blocked = (phi, y) =>
+    reserved.some((r) => Math.abs(Math.atan2(Math.sin(phi - r.phi), Math.cos(phi - r.phi))) < r.half && y > r.y0 && y < r.y1);
+  const wallSurf = (p, n) => {
+    const phi = Math.atan2(p.x, p.z);
+    const y = Math.max(0.02, p.y);
+    const r = wallR(phi, y) + 0.025;
+    p.set(Math.sin(phi) * r, p.y, Math.cos(phi) * r);
+    n.set(Math.sin(phi), 0, Math.cos(phi));
+  };
+  // climbing vines from the foot of the wall
+  const nClimb = Math.round(2 + amount * 4);
+  for (let i = 0; i < nClimb; i++) {
+    let phi = 0;
+    for (let t = 0; t < 12; t++) {
+      phi = rng.next() * TAU;
+      if (!blocked(phi, 0.3) && !blocked(phi, 1.2)) break;
+    }
+    const r = wallR(phi, 0.05) + 0.03;
+    const len = rng.range(1.2, Math.min(stemTop * 0.9, 3.6)) * (0.6 + amount * 0.5);
+    addIvy(PF, rng, [Math.sin(phi) * r, 0.02, Math.cos(phi) * r], [rng.jitter(0.4), 1, rng.jitter(0.4)], {
+      length: len,
+      droop: -0.35,
+      size: 0.3,
+      density: 1.5,
+      normal: [Math.sin(phi), 0, Math.cos(phi)],
+      surface: wallSurf,
+      cards,
+    });
+  }
+  // curtains hanging from the rim
+  const nHang = Math.round(1 + amount * 4);
+  for (let i = 0; i < nHang; i++) {
+    let phi = 0;
+    for (let t = 0; t < 12; t++) {
+      phi = rng.next() * TAU;
+      if (!blocked(phi, stemTop - 0.6) && !(open && Math.abs(Math.atan2(Math.sin(phi - open.phi), Math.cos(phi - open.phi))) < 1.1)) break;
+    }
+    const strands = rng.int(2, 4);
+    for (let k = 0; k < strands; k++) {
+      const ph = phi + (k - strands / 2) * 0.08 + rng.jitter(0.03);
+      const p = capRaw(ph, 1.02);
+      const len = rng.range(0.4, 1.6) * (0.6 + amount * 0.6);
+      addIvy(PF, rng, [p.x, p.y, p.z], [0, -1, 0], { length: len, droop: 1.2, size: 0.27, density: 1.6, normal: [Math.sin(ph), 0, Math.cos(ph)], cards });
+    }
+    // and creeping up over the cap from the rim
+    const creep = [];
+    const frames = [];
+    let ph = phi + rng.jitter(0.1), s = 0.99;
+    const steps = Math.round(rng.range(10, 26) * (0.5 + amount));
+    for (let k = 0; k < steps; k++) {
+      const fr = capFrame(ph, s);
+      creep.push(fr.p.clone().addScaledVector(fr.n, 0.025));
+      frames.push(fr);
+      s -= 0.035 + rng.next() * 0.02;
+      ph += rng.jitter(0.06);
+      if (s < 0.25) break;
+    }
+    if (creep.length > 2) {
+      put(M.vc, tube(creep, 0.009, 3, creep.length * 2), { color: '#5a4a32', cast: false });
+      for (let k = 0; k < creep.length * 1.6; k++) {
+        const j = Math.floor(rng.next() * creep.length);
+        const q = creep[j];
+        const fr = frames[j];
+        const up = new THREE.Vector3(rng.jitter(1), rng.jitter(1), rng.jitter(1)).normalize();
+        up.addScaledVector(fr.n, -up.dot(fr.n)).normalize();
+        cards.add(q.clone().addScaledVector(fr.n, 0.01), up, fr.n.clone(), 0.28 * rng.range(0.7, 1.2), { aspect: 0.9, flip: rng.chance(0.5) });
+      }
+    }
+  }
+  if (cards.count) put(M.ivy, cards.geometry(), { cast: false });
+}
+
+// ─── the open front (Wohnatelier) ────────────────────────────────────────────
+function buildOpenFront(put, o, rng, { prof, zf, stemTop, cutA, wallR, stemMat, halos }) {
+  const M = mats();
+  const { open } = o;
+  const thick = 0.17;
+  const d = new THREE.Vector3(Math.sin(open.phi), 0, Math.cos(open.phi));
+  const right = new THREE.Vector3(d.z, 0, -d.x);
+  // facade frame: x along `right`, y up, z along d; origin on the axis at z = zf
+  const m = new THREE.Matrix4().makeBasis(right, new THREE.Vector3(0, 1, 0), d).setPosition(d.clone().multiplyScalar(zf));
+  const at = (geo) => geo.applyMatrix4(m);
+  const yTop = stemTop + 0.35;
+  const halfW = (y) => Math.sqrt(Math.max(0, prof(Math.min(y, stemTop + 0.3)) ** 2 - zf * zf)) + 0.01;
+  // outline of the facade (follows the stem's cut edge), with the arched opening as a hole
+  const s = new THREE.Shape();
+  const N = 16;
+  s.moveTo(-halfW(-0.05), -0.05);
+  s.lineTo(halfW(-0.05), -0.05);
+  for (let i = 1; i <= N; i++) {
+    const y = -0.05 + ((yTop + 0.05) * i) / N;
+    s.lineTo(halfW(y), y);
+  }
+  for (let i = N; i >= 0; i--) {
+    const y = -0.05 + ((yTop + 0.05) * i) / N;
+    s.lineTo(-halfW(y), y);
+  }
+  const aw = open.width, ah = open.height;
+  const ar = aw / 2;
+  const floorY = 0.24;
+  const hole = archShape(aw, ah - ar, { y: floorY - 0.02, path: new THREE.Path(), reverse: true });
+  s.holes.push(hole);
+  const fac = new THREE.ExtrudeGeometry(s, { depth: thick, bevelEnabled: false, curveSegments: 14 });
+  fac.translate(0, 0, -thick);
+  uvPlanar(fac, 'x', 'y', 1 / 2.6);
+  // darken the top under the cap like the stem
+  paintFn(fac, o.stemColor, (x, y, z, i, c) => {
+    c.lerp(new THREE.Color('#8d7f68'), 0.55 * smooth01((y - (stemTop - 1.4)) / 1.6));
+    if (z < -thick + 0.01) c.set('#efe6d6'); // inner face: whitewashed plaster
+  });
+  put(stemMat, at(fac), { cast: true });
+
+  // stone arch around the opening
+  const rin = ar + 0.01;
+  const nV = 13;
+  const hs = ah - ar;
+  for (let i = 0; i < nV; i++) {
+    const a0 = (i / nV) * Math.PI, a1 = ((i + 1) / nV) * Math.PI;
+    const key = i === (nV - 1) / 2;
+    const t = key ? 0.3 : rng.range(0.2, 0.26);
+    const seg = arcSegment(rin, rin + t, a0 + 0.01, a1 - 0.01, thick + 0.16, 2, 0.012);
+    seg.translate(rng.jitter(0.006), floorY - 0.02 + hs + rng.jitter(0.006), -thick / 2 + 0.06 + rng.jitter(0.012) + (key ? 0.03 : 0));
+    put(M.stone, at(seg), { color: rng.pick(STONE_TINTS), cast: false });
+  }
+  for (const side of [-1, 1]) {
+    let y = floorY - 0.04;
+    let k = side > 0 ? 1 : 0;
+    while (y < floorY + hs - 0.05) {
+      const bh = Math.min(rng.range(0.25, 0.33), floorY + hs - y);
+      const bw = k % 2 ? rng.range(0.3, 0.36) : rng.range(0.2, 0.25);
+      const st = blockStone(rng, bw, bh - 0.02, thick + 0.16, 0.08);
+      st.translate(side * (rin + bw / 2), y + bh / 2, -thick / 2 + 0.06);
+      put(M.stone, at(st), { color: rng.pick(STONE_TINTS), cast: false });
+      y += bh;
+      k++;
+    }
+  }
+  // threshold beam & a worn stone sill
+  put(M.stone, at(blockStone(rng, aw + 0.4, 0.14, thick + 0.5, 0.05).translate(0, floorY - 0.09, 0.08)), { color: '#a39d90', cast: true });
+
+  // folding glazed doors, opened out against the facade (3 leaves per side)
+  const leafW = aw / 6;
+  for (const side of [-1, 1]) {
+    for (let k = 0; k < 3; k++) {
+      const lh = hs - 0.06;
+      // folded concertina: leaves zig-zag just outside the jamb
+      const ang = side * (Math.PI / 2 + (k % 2 ? -0.35 : 0.35));
+      const base = new THREE.Vector3(side * (rin + 0.08 + k * 0.05), floorY, 0.12 + k * leafW * 0.92);
+      const L = new THREE.Matrix4().makeRotationY(ang).setPosition(base);
+      const parts = [];
+      const fw = 0.04;
+      const fc = '#4e3a2a';
+      for (const sx of [-1, 1]) parts.push([board(fw, lh, 0.045, { along: 'y', rng }).translate(sx * (leafW / 2 - fw / 2), lh / 2, 0), M.wood, fc]);
+      for (const yy of [fw / 2, lh * 0.33, lh * 0.66, lh - fw / 2]) parts.push([board(leafW, fw * 0.8, 0.045, { along: 'x', rng }).translate(0, yy, 0), M.wood, fc]);
+      parts.push([board(0.018, lh, 0.03, { along: 'y' }).translate(0, lh / 2, 0), M.wood, fc]);
+      parts.push([new THREE.PlaneGeometry(leafW - fw * 2, lh - fw * 2).translate(0, lh / 2, 0), M.glass, null]);
+      for (const [g, mat, c] of parts) {
+        g.applyMatrix4(L);
+        put(mat, at(g), { color: c, cast: false });
+      }
+    }
+  }
+
+  // interior shell: plastered inner wall, floor and a beamed ceiling
+  const ceilY = Math.min(stemTop - 0.05, floorY + ah + 0.55);
+  const inner = paramSurface(
+    (u, v, p) => {
+      const y = floorY - 0.05 + v * (ceilY + 0.1 - floorY);
+      const a = cutA(Math.max(y, 0));
+      const phi = open.phi + a + u * (TAU - 2 * a);
+      const r = wallR(phi, Math.max(y, 0)) - thick;
+      p.set(Math.sin(phi) * r, y, Math.cos(phi) * r);
+    },
+    48,
+    10,
+    { uv: (u, v, p) => [(u * TAU * prof(1)) / 2.2, p.y / 2.2] }
+  );
+  paintFn(inner, '#efe5d2', (x, y, z, i, c) => {
+    c.multiplyScalar(0.94 + 0.06 * noiseA(x * 2, z * 2 + y));
+    c.lerp(new THREE.Color('#c9b08a'), 0.25 * (1 - smooth01((y - floorY) / 0.35))); // skirting shadow
+  });
+  put(M.plaster, inner, { cast: false });
+  // floor disc (oak boards)
+  const fr = prof(floorY) - thick + 0.03;
+  const zCut = zf - thick * 0.5;
+  const floorGeo = chordDisc(fr, zCut, floorY, open.phi, true);
+  uvPlanar(floorGeo, 'x', 'z', 1 / 1.6);
+  put(M.floor, floorGeo, { cast: false });
+  // ceiling: boards + radial beams (clipped at the facade)
+  const cr = prof(ceilY) - thick + 0.04;
+  const ceil = chordDisc(cr, zCut, ceilY, open.phi, false);
+  uvPlanar(ceil, 'x', 'z', 1 / 1.4);
+  put(M.wood, ceil, { color: WOOD.oakLight, cast: true });
+  for (let i = 0; i < 7; i++) {
+    const a = open.phi + Math.PI + ((i - 3) / 7) * TAU;
+    const c = Math.cos(a - open.phi);
+    const L = c > 0.05 ? Math.min(cr, (zCut - 0.08) / c) : cr;
+    put(M.wood, boardBetween([0, ceilY - 0.06, 0], [Math.sin(a) * L, ceilY - 0.06, Math.cos(a) * L], 0.11, 0.12, { rng }), { color: WOOD.walnut, cast: false });
+  }
+  put(M.wood, new THREE.CylinderGeometry(0.16, 0.16, 0.16, 10).translate(0, ceilY - 0.08, 0), { color: WOOD.walnut, cast: false });
+
+  return {
+    floorY,
+    ceilY,
+    facadeZ: zf,
+    phi: open.phi,
+    width: aw,
+    height: ah,
+    thick,
+    /** Inner wall radius at height y (towards azimuth φ). */
+    radiusAt: (phi, y) => wallR(phi, y) - thick,
+    frame: m.clone(),
+    cutA,
+  };
+}
+
+export { CAP_SHAPES };

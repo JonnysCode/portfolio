@@ -111,9 +111,9 @@ function makeSmokeMaterial() {
       THREE.UniformsLib.fog,
       {
         uTime: { value: 0 },
-        uDay: { value: new THREE.Color('#e9e2d6') },
+        uDay: { value: new THREE.Color('#d9d4cc') },
         uNightC: { value: new THREE.Color('#5d6178') },
-        uOpacity: { value: 0.55 },
+        uOpacity: { value: 0.72 },
       },
     ]),
     vertexShader: BILLBOARD_VERT,
@@ -271,7 +271,7 @@ export function makeNotes(ctx, { origin = new THREE.Vector3(), count = 7 } = {})
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   const mat = new THREE.ShaderMaterial({
-    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTime: { value: 0 }, uMap: { value: null }, uColor: { value: new THREE.Color('#ffe2a0') } }]),
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTime: { value: 0 }, uMap: { value: null }, uColor: { value: new THREE.Color('#ffd27a') } }]),
     vertexShader: BILLBOARD_VERT,
     fragmentShader: NOTES_FRAG,
     transparent: true,
@@ -320,7 +320,7 @@ export function makeNotes(ctx, { origin = new THREE.Vector3(), count = 7 } = {})
       m.makeTranslation(x, y, z);
       mesh.setMatrixAt(i, m);
       data[i * 4 + 1] = life;
-      data[i * 4 + 2] = 0.13 + 0.05 * Math.sin(seed * 30);
+      data[i * 4 + 2] = 0.2 + 0.06 * Math.sin(seed * 30);
     }
     let alive = false;
     for (let i = 0; i < count; i++) if (lives[i] >= 0) alive = true;

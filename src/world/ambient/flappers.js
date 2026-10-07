@@ -1,18 +1,20 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Things with wings: butterflies fluttering between the flower patches (and
-// resting on blossoms now and then) and a few birds circling high overhead.
+// Things with wings: butterflies fluttering between the glen's wildflower
+// patches (and resting on blossoms now and then), dragonflies darting over
+// the lily pond, and (optionally) a few birds gliding high overhead.
 // Each kind is one InstancedMesh; the wing flap runs in the vertex shader from
 // a per-instance (phase, amplitude) attribute the CPU advances every frame.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { getHeight } from '../ground.js';
-import { WORLD_RADIUS } from '../layout.js';
+import { GLEN_RADIUS as WORLD_RADIUS } from '../layout.js';
 import { materials } from '../../core/materials.js';
 import { palette } from '../../core/palette.js';
 
 /** Toon material with a wing hinge along the local Z axis (aWing = 0 body … 1 wing tip). */
 function flapMaterial() {
-  const m = materials.toon('#ffffff', { vertexColors: true, side: THREE.DoubleSide }).clone();
+  // (a clone: this material gets its own wing-hinge vertex patch)
+  const m = materials.standard('#ffffff', { vertexColors: true, side: THREE.DoubleSide, roughness: 0.55 }).clone();
   m.onBeforeCompile = (shader) => {
     shader.vertexShader = 'attribute vec2 aFlap;\nattribute float aWing;\n' + shader.vertexShader
       .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
@@ -160,7 +162,7 @@ export function createFlappers(ctx, { flowerPatches = [], butterflies = 18, bird
 
   const B = Array.from({ length: butterflies }, () => ({
     x: 0, y: 0, z: 0, tx: 0, ty: 0, tz: 0, vx: 0, vy: 0, vz: 0,
-    yaw: 0, phase: rng.range(0, 10), rest: 0, home: null, size: rng.range(1.7, 2.3), seed: rng.range(0, 100), active: false,
+    yaw: 0, phase: rng.range(0, 10), rest: 0, home: null, size: rng.range(1.05, 1.45), seed: rng.range(0, 100), active: false,
   }));
   const candidates = [];
   function pickPatch(fx, fz, minD, maxD) {
@@ -200,12 +202,13 @@ export function createFlappers(ctx, { flowerPatches = [], butterflies = 18, bird
   const wFlap = new THREE.InstancedBufferAttribute(new Float32Array(birds * 2), 2);
   wFlap.setUsage(THREE.DynamicDrawUsage);
   wGeo.setAttribute('aFlap', wFlap);
-  const wMesh = new THREE.InstancedMesh(wGeo, mat, birds);
+  const wMesh = new THREE.InstancedMesh(wGeo, mat, Math.max(1, birds));
+  wMesh.count = birds;
   wMesh.name = 'ambient:birds';
   wMesh.frustumCulled = false;
   wMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   const birdC = new THREE.Color(palette.ink).lerp(new THREE.Color(palette.skyTop), 0.25);
-  for (let i = 0; i < birds; i++) wMesh.setColorAt(i, c.copy(birdC).offsetHSL(0, 0, rng.jitter(0.04)));
+  for (let i = 0; i < Math.max(1, birds); i++) wMesh.setColorAt(i, c.copy(birdC).offsetHSL(0, 0, rng.jitter(0.04)));
   ctx.scene.add(wMesh);
   const flocks = [{ x: 0, z: 0 }, { x: 0, z: 0 }];
   const W = Array.from({ length: birds }, (_, i) => ({
@@ -251,7 +254,8 @@ export function createFlappers(ctx, { flowerPatches = [], butterflies = 18, bird
     update(dt, focus, night) {
       t += dt;
       const day = 1 - night;
-      bMesh.visible = wMesh.visible = day > 0.03;
+      bMesh.visible = day > 0.03;
+      wMesh.visible = bMesh.visible && birds > 0;
       dMesh.visible = bMesh.visible && dCount > 0 && (focus.x - pond.center.x) ** 2 + (focus.z - pond.center.z) ** 2 < 45 * 45;
       if (!bMesh.visible) return;
       const fx = focus.x, fz = focus.z;
@@ -380,7 +384,7 @@ export function createFlappers(ctx, { flowerPatches = [], butterflies = 18, bird
           dFlap.setXY(i, d.phase, 0.45);
           p.set(d.x + jx, d.y + jy, d.z);
           q.setFromEuler(e.set(-0.08, d.yaw, 0));
-          s.setScalar(2 * Math.min(1, day * 1.5));
+          s.setScalar(1.5 * Math.min(1, day * 1.5));
           m.compose(p, q, s);
           dMesh.setMatrixAt(i, m);
         }

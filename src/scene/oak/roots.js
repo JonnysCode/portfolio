@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { getHeight } from '../../world/ground.js';
-import { ROOTS, DEG, polar } from './shape.js';
+import { ROOTS, DEG, CX, CZ, polar, trunkRadius } from './shape.js';
 import { organicTube, smoothTable } from './tubes.js';
 import { createNoise3D } from './noise3.js';
 import { smoothstep, clamp } from '../../core/rng.js';
@@ -46,6 +46,54 @@ export function rootSurfacePoint(info, u, phi, lift = 0) {
   return { position, normal, tangent: T };
 }
 
+/** Size of the tiny mouse door in the front-right root (local units, see mouseDoorFrame). */
+export const MOUSE_DOOR = { width: 0.32, height: 0.46 };
+
+/**
+ * Where the mouse door sits: the first spot along the front-right root's
+ * front flank that is well clear of the trunk's flare. Returns a frame with
+ * its origin on the ground, +Z out of the root, +Y up: { matrix, inverse }.
+ */
+export function mouseDoorFrame(info) {
+  let flank = null;
+  for (let u = 0.36; u < 0.8 && !flank; u += 0.02) {
+    const f = rootSurfacePoint(info, u, Math.PI / 2 + 0.2, 0);
+    const a = Math.atan2(f.position.x - CX, f.position.z - CZ);
+    const rr = Math.hypot(f.position.x - CX, f.position.z - CZ);
+    if (rr - trunkRadius(a, 0.25) > 0.45) flank = f;
+  }
+  flank ??= rootSurfacePoint(info, 0.6, Math.PI / 2 + 0.2, 0);
+  const z = new THREE.Vector3(flank.normal.x, 0, flank.normal.z).normalize();
+  const x = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), z).normalize();
+  const p = flank.position.clone();
+  p.y = getHeight(p.x, p.z);
+  const matrix = new THREE.Matrix4().makeBasis(x, new THREE.Vector3(0, 1, 0), z).setPosition(p);
+  return { matrix, inverse: matrix.clone().invert() };
+}
+
+/**
+ * Press the root's surface flat (just behind the door plane) where the door
+ * goes, easing out over a soft margin, so the door sits IN the root.
+ */
+function carveDoorNiche(geo, frame, depth) {
+  const pos = geo.attributes.position;
+  const v = new THREE.Vector3();
+  const hw = MOUSE_DOOR.width / 2 + 0.1, top = MOUSE_DOOR.height + 0.1, margin = 0.22;
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i).applyMatrix4(frame.inverse);
+    if (v.z < -0.6 || v.z <= depth) continue;
+    const ex = Math.max(0, Math.abs(v.x) - hw), ey = Math.max(0, v.y - top, -0.1 - v.y);
+    const d = Math.hypot(ex, ey);
+    if (d >= margin) continue;
+    const k = 1 - smoothstep(0, margin, d);
+    v.z = v.z + (depth - v.z) * k;
+    v.applyMatrix4(frame.matrix);
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+}
+
 export function buildRoots() {
   const bark = [];
   const moss = [];
@@ -71,10 +119,13 @@ export function buildRoots() {
       ground,
       uvScale: 0.62,
     };
-    bark.push(organicTube(tubeOpts));
+    const barkGeo = organicTube(tubeOpts);
+    const door = root.id === 'front-right' ? mouseDoorFrame(info) : null;
+    if (door) carveDoorNiche(barkGeo, door, -0.03);
+    bark.push(barkGeo);
     // moss on the top of the root, thicker where the root is big
     const sz = { w: 1, h: 1 };
-    moss.push(
+    const mossGeo = (
       organicTube({
         ...tubeOpts,
         radial: root.thin ? 7 : 14,
@@ -94,7 +145,9 @@ export function buildRoots() {
         },
       })
     );
-    roots.push({ id: root.id, a0: root.a0 * DEG, curve, size, length: len });
+    if (door) carveDoorNiche(mossGeo, door, -0.12);
+    moss.push(mossGeo);
+    roots.push({ id: root.id, a0: root.a0 * DEG, curve, size, length: len, door });
   });
   return { bark, moss, roots };
 }

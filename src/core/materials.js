@@ -317,7 +317,10 @@ export const materials = {
    * quality.tier 'low' halves the texture resolution.
    */
   setRenderer(renderer, quality = null) {
-    if (quality?.tier === 'low') setBakeScale(0.5);
+    if (quality?.tier === 'low') {
+      setBakeScale(0.5);
+      lite = true;
+    }
     setBakeRenderer(renderer);
   },
 
@@ -400,7 +403,14 @@ const WHITE = new THREE.Color(1, 1, 1);
 
 /** First surface/foliage material drawn hands its renderer to the bakery (unless setRenderer was called). */
 function captureRenderer(renderer) {
-  if (!hasBakeRenderer()) setBakeRenderer(renderer);
+  if (hasBakeRenderer()) return;
+  // the engine only turns antialiasing off on the 'low' tier → half-res maps there
+  try {
+    if (renderer.getContext().getContextAttributes()?.antialias === false) setBakeScale(0.5);
+  } catch {
+    /* keep full resolution */
+  }
+  setBakeRenderer(renderer);
 }
 
 /** Per-material uniform sets (kept out of userData so materials stay JSON/clone friendly). */
@@ -425,6 +435,7 @@ function installPatch(m, patch, u, progKey, wind) {
   m.customProgramCacheKey = () => progKey + windKey;
   m.clone = function () {
     const c = new this.constructor().copy(this);
+    c.defines = { ...this.defines }; // MeshStandardMaterial.copy resets defines
     installPatch(c, patch, cloneUniforms(u), progKey, wind);
     return c;
   };
@@ -474,6 +485,8 @@ function colorizeColors(kind, opts) {
 }
 
 let _mossMaps = null;
+/** Low tier: cheaper surface shader (no painterly breakup noise). Set by setRenderer(r, { tier: 'low' }). */
+let lite = false;
 
 function makeSurface(kindIn, opts) {
   let kind = KINDS[kindIn] && kindIn !== 'woodPlanks' ? kindIn : 'stone';
@@ -538,9 +551,10 @@ function makeSurface(kindIn, opts) {
   else defines.USE_UV = '';
   if (colorize) defines.SF_COLORIZE = '';
   if (moss) defines.SF_MOSS = '';
-  m.defines = defines;
+  if (lite) defines.SF_LITE = '';
+  m.defines = { ...m.defines, ...defines }; // keep STANDARD
   m.userData.surface = { kind };
-  installPatch(m, patchSurface, u, `sf|${triplanar ? 't' : 'u'}${colorize ? 'c' : ''}${moss ? 'm' : ''}`, opts.wind);
+  installPatch(m, patchSurface, u, `sf|${triplanar ? 't' : 'u'}${colorize ? 'c' : ''}${moss ? 'm' : ''}${lite ? 'l' : ''}`, opts.wind);
   return m;
 }
 

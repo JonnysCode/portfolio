@@ -10,7 +10,7 @@
 // woody stems are returned as tubes to merge with the limb bark.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { DEG, TAU, CX, CZ, polar, trunkRadius, trunkSample, angDiff, FORK_Y, HOLLOWS } from './shape.js';
+import { DEG, TAU, CX, CZ, polar, trunkRadius, trunkSample, angDiff, FORK_Y, HOLLOWS, crownBlocked } from './shape.js';
 import { organicTube } from './tubes.js';
 import { clamp } from '../../core/rng.js';
 
@@ -209,8 +209,11 @@ export function buildIvy(rng, limbs, { density = 1 } = {}) {
       const r = limb.radiusAt(u);
       P.y -= r * 0.85;
       const len = rng.range(1.2, limb.id === 'front-left-low' ? 4.2 : 3.2) * (P.y > 18 ? 0.8 : 1);
-      // keep curtains out of the way of things below
+      // keep curtains out of the way of things below and out of the spot views
       if (P.y - len < 6) continue;
+      const mid = P.clone();
+      mid.y -= len * 0.5;
+      if (crownBlocked(mid, len * 0.5 + 0.3)) continue;
       const pts = [];
       const swayDir = new THREE.Vector3(rng.range(-1, 1), 0, rng.range(-1, 1)).normalize();
       const nSeg = Math.max(3, Math.ceil(len / 0.3));

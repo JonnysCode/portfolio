@@ -8,7 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../../core/rng.js';
-import { envUniforms } from './celestial.js';
+import { envUniforms, GLSL_NOISE } from './celestial.js';
 import { sunlightUniforms, SUNLIGHT_GLSL } from './sunlight.js';
 
 /** The volume the motes live in (centre & half extents, world units). */
@@ -21,6 +21,7 @@ const VERT = /* glsl */ `
   uniform vec3 uCenter, uHalf, uAxis;
   varying float vA;
   varying float vTw;
+  ${GLSL_NOISE}
   ${SUNLIGHT_GLSL}
   void main() {
     float t = uTime * uMotion;
@@ -43,7 +44,9 @@ const VERT = /* glsl */ `
     vec3 e = abs(rel - uHalf) / uHalf;
     float edge = 1.0 - smoothstep(0.75, 1.0, max(max(e.x, e.y), e.z));
     float near = smoothstep(0.8, 3.0, dist) * (1.0 - smoothstep(38.0, 60.0, dist));
-    vA = lit * edge * near * (0.35 + 1.4 * fwd) * uStrength;
+    // drifting swirls of dust rather than an even sprinkle
+    float swirl = smoothstep(0.42, 0.72, envNoise(p.xz * 0.16 + p.y * 0.1 + vec2(t * 0.015, -t * 0.01)));
+    vA = lit * edge * near * swirl * (0.18 + 1.5 * fwd) * uStrength;
     gl_PointSize = clamp(aSeed.y * uScale / dist, 1.0, 9.0);
     if (vA < 0.01) gl_PointSize = 0.0;
   }

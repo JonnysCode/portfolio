@@ -202,14 +202,15 @@ const SURFACE_MAIN = /* glsl */ `
 #endif
 
   // painterly breakup: value + temperature drift in world space
+#ifndef SF_LITE
   {
     float b1 = sfNoise3(sfWPos * 0.32);
-    float b2 = sfNoise3(sfWPos * 1.6 + 13.1);
-    float b3 = sfNoise3(sfWPos * 0.19 + 5.7);
+    float b3 = sfNoise3(sfWPos * vec3(0.19, 0.27, 0.19) + 5.7);
     float k = sfP.w;
-    sfCol *= 1.0 + ((b1 - 0.5) * 0.3 + (b2 - 0.5) * 0.12) * k;
+    sfCol *= 1.0 + ((b1 - 0.5) * 0.34 + (b3 - 0.5) * 0.1) * k;
     sfCol = mix(sfCol, sfCol * vec3(1.08, 1.0, 0.86), (b3 - 0.5) * 1.3 * k);
   }
+#endif
   diffuseColor.rgb *= sfCol;
   roughnessFactor = clamp(sfRough * sfP.z, 0.04, 1.0);
   metalnessFactor = sfMet;
