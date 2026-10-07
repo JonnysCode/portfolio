@@ -164,33 +164,41 @@ export function shavingGeo(r = 0.035, width = 0.022, turns = 1.4) {
 
 /**
  * Shavings springing off a plane: particles spawn at source() (world point),
- * fly up/back, tumble and drop onto the bench (floorY), then fade.
- * opts: { count = 14, source: () => Vector3, dir: Vector3 (backwards, away from the stroke), floorY }
+ * fly up/back (and a little sideways), tumble and drop onto the floor under
+ * them, then fade. Warm-started so a few are always in flight.
+ * opts: { count = 14, size = 1, rate = 3.2 (per second), material, geometry (optional overrides),
+ *   source: (out) => Vector3,
+ *   dir: Vector3 (backwards, away from the stroke), side: Vector3 (optional sideways throw),
+ *   floorAt: (p) => y  (or floorY) }
  */
 export function makeShavings(ctx, opts = {}) {
-  const count = Math.max(4, Math.round((opts.count ?? 14) * (ctx.quality?.density ?? 1)));
-  const mat = ctx.materials.surface('wood', { species: 'maple', side: THREE.DoubleSide });
-  const mesh = new THREE.InstancedMesh(shavingGeo(), mat, count);
+  const count = Math.max(6, Math.round((opts.count ?? 14) * (ctx.quality?.density ?? 1)));
+  const size = opts.size ?? 1;
+  const mat = opts.material ?? ctx.materials.surface('wood', { species: 'maple', side: THREE.DoubleSide });
+  const mesh = new THREE.InstancedMesh(opts.geometry ?? shavingGeo(0.035 * size, 0.022 * size, 1.4), mat, count);
   mesh.castShadow = false;
   mesh.receiveShadow = true;
   mesh.frustumCulled = false;
   mesh.name = 'shavings';
   mesh.raycast = () => {};
   const P = [];
-  for (let i = 0; i < count; i++) P.push({ p: new THREE.Vector3(), v: new THREE.Vector3(), r: new THREE.Euler(), w: new THREE.Vector3(), life: -1 - i * 0.12, ttl: 1 });
+  for (let i = 0; i < count; i++) P.push({ p: new THREE.Vector3(), v: new THREE.Vector3(), r: new THREE.Euler(), w: new THREE.Vector3(), life: -1 - i * 0.12, ttl: 1, floor: 0 });
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const s = new THREE.Vector3();
   const tmp = new THREE.Vector3();
   const dir = opts.dir ?? new THREE.Vector3(0, 0, 1);
+  const side = opts.side ?? null;
   const floorY = opts.floorY ?? 0;
+  const floorAt = opts.floorAt ?? (() => floorY);
   const reduced = ctx.engine?.reducedMotion;
+  const rate = reduced ? 0.8 : opts.rate ?? 3.2;
   let acc = 0;
   let rnd = 12345;
   const rand = () => ((rnd = (rnd * 16807) % 2147483647) / 2147483647);
   function update(dt) {
     dt = Math.min(dt, 0.1);
-    acc += dt * (reduced ? 0.8 : 3.2);
+    acc += dt * rate;
     for (let i = 0; i < count; i++) {
       const a = P[i];
       if (a.life < 0) {
@@ -199,22 +207,27 @@ export function makeShavings(ctx, opts = {}) {
           acc -= 1;
           opts.source(tmp);
           a.p.copy(tmp);
-          a.v.set(dir.x * 0.5 + (rand() - 0.5) * 0.4, 0.9 + rand() * 0.6, dir.z * 0.5 + (rand() - 0.5) * 0.4);
+          const sk = side ? 0.15 + rand() * 0.45 : 0;
+          a.v.set(dir.x * 0.5 + (rand() - 0.5) * 0.35, 0.95 + rand() * 0.6, dir.z * 0.5 + (rand() - 0.5) * 0.35);
+          if (side) a.v.addScaledVector(side, sk);
           a.w.set((rand() - 0.5) * 9, (rand() - 0.5) * 9, (rand() - 0.5) * 9);
           a.r.set(rand() * 6, rand() * 6, rand() * 6);
-          a.ttl = 1.6 + rand() * 1.2;
+          a.ttl = 1.8 + rand() * 1.4;
           a.life = 0;
+          a.floor = floorAt(a.p);
         } else if (a.life >= 0) a.life = -0.05;
       } else {
         a.life += dt;
-        if (a.p.y > floorY) {
+        if (a.p.y > a.floor) {
           a.v.y -= 3.2 * dt;
           a.v.multiplyScalar(1 - 1.6 * dt);
           a.p.addScaledVector(a.v, dt);
           a.r.x += a.w.x * dt;
           a.r.y += a.w.y * dt;
           a.r.z += a.w.z * dt;
-          if (a.p.y < floorY) a.p.y = floorY;
+          // the floor under the shaving (bench top, or the porch floor once it tumbles off)
+          a.floor = floorAt(a.p);
+          if (a.p.y < a.floor) a.p.y = a.floor;
         }
         if (a.life > a.ttl) a.life = -0.2 - rand() * 0.4;
       }
@@ -226,6 +239,8 @@ export function makeShavings(ctx, opts = {}) {
     }
     mesh.instanceMatrix.needsUpdate = true;
   }
+  // warm start: a couple of seconds of planing already happened
+  for (let i = 0; i < 75; i++) update(1 / 30);
   return { object: mesh, update };
 }
 

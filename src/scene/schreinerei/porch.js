@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../../core/rng.js';
-import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, ShingleField, layShingles, shingleGeo, uvBox, doubleFace, addLantern, addIvy, noiseA } from './kit.js';
+import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, ShingleField, layShingles, shingleGeo, uvBox, doubleFace, addLantern, addIvy, paint, SPECIES, noiseA } from './kit.js';
 import { ANNEX, annexFrame, annexMatrix, crook, annexToWorld } from './annex.js';
 import { makeShavings, shavingGeo } from './fx.js';
 
@@ -18,7 +18,7 @@ import { makeShavings, shavingGeo } from './fx.js';
  * Its vise side faces the wall: Jonny works between the bench and the wall and
  * faces the visitor across the bench, planing towards the oak.
  */
-export const BENCH = { x: 1.72, z: 3.38, rotY: Math.PI - 0.62, length: 1.3, depth: 0.44, top: 0.48 };
+export const BENCH = { x: 1.72, z: 3.38, rotY: Math.PI - 0.3, length: 1.3, depth: 0.44, top: 0.31 }; // top just above a (chibi) villager's hip: his plane rides on the board
 
 export function buildPorch(ctx, B, mats, annexShingles = null) {
   const rng = createRng('porch');
@@ -89,12 +89,13 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
     const sh = field.build(group, mats.shingles(), shingleGeo(0.2, 0.34, 0.022));
     if (sh) sh.applyMatrix4(annexMatrix);
   }
-  // a lantern hanging from the front beam, over Jonny's bench
+  // a lantern hanging from the front beam, over Jonny's bench (no point light
+  // of its own: the glen's light budget is full — its halo does the glowing)
   {
     const lx = (P.x0 + P.x1) / 2 + 0.15;
     const hook = annexToWorld(lx, fbY - 0.08, postZ);
     F.add(mats.metal('#2f2b28'), xf(new THREE.CylinderGeometry(0.006, 0.006, 0.12, 4), [lx, fbY - 0.1, postZ]), { cast: false });
-    addLantern(F, mats, [lx, fbY - 0.15, postZ], hook.setY(hook.y - 0.07), { scale: 0.7 });
+    addLantern(F, mats, [lx, fbY - 0.15, postZ], hook.clone().setY(hook.y - 0.07), { scale: 0.7 });
   }
   // a bow saw hanging on a peg on the right post, a coil of rope below it
   {
@@ -125,7 +126,7 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
   for (let i = 0; i < 26; i++) {
     const x = P.x0 - 0.2 + rng.next() * (P.x1 - P.x0 + 0.5);
     const z = z0 + 0.12 + rng.next() * (P.depth + 0.25);
-    const g = stoneGeo(rng, { r: 1, sx: rng.range(0.18, 0.32), sy: 0.035, sz: rng.range(0.15, 0.28), lump: 0.1 });
+    const g = stoneGeo(rng, { r: 1, sx: rng.range(0.18, 0.32), sy: 0.035, sz: rng.range(0.15, 0.28), lump: 0.1, detail: 0 });
     F.add(mats.stone(), xf(g, [x, 0.01, z], [0, rng.next() * 3, 0]), { cast: false });
   }
 
@@ -158,29 +159,74 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
   }
 
   // ── Jonny, planing ─────────────────────────────────────────────────────────
-  const jonny = ctx.props.makePerson({ seed: 'jonny', name: 'Jonny', apron: true, hat: 'beanie', hatColor: '#c4532e', holding: 'plane', action: 'work', skin: '#efc19c', hairColor: '#6b4430', shirt: '#4f7a5a' });
+  // A light linen shirt under a dark canvas apron and a petrol beanie: three
+  // clear colour blocks that read from the woodworking camera (a red cap
+  // with a white bobble would read as one more toadstool in this glen).
+  const jonny = ctx.props.makePerson({
+    seed: 'jonny', name: 'Jonny', apron: true, apronColor: '#b07a48', hat: 'beanie', hatColor: '#2f6f86',
+    holding: 'plane', action: 'work', skin: '#efc19c', hairColor: '#6b4430', shirt: '#e8dfcc', pants: '#4a5468',
+  });
+  const benchInv = new THREE.Matrix4();
   {
-    // stands at the bench front, facing along the bench towards the front vise (−x bench-local)
-    const local = new THREE.Vector3(0.36, 0, BENCH.depth / 2 + 0.3);
-    local.applyEuler(bench.rotation).add(bench.position);
-    jonny.group.position.copy(local);
-    jonny.group.rotation.y = bench.rotation.y - Math.PI / 2;
+    // on the worker's side, body turned a little towards the bench (a real
+    // planing stance) — which also turns his front to the visitor
+    jonny.group.rotation.y = bench.rotation.y - Math.PI / 2 - 0.35;
+    jonny.group.position.copy(new THREE.Vector3(0.55, 0, BENCH.depth / 2 + 0.24).applyEuler(bench.rotation).add(bench.position));
     jonny.group.name = 'jonny';
     group.add(jonny.group);
+    // slide him (on the floor) until the plane in his hands sits on the board
+    // mid-stroke: pose the arm like the 'plane' work pose for the measurement
+    const armR = jonny.hand.parent, torso = armR?.parent;
+    if (armR && torso) {
+      const ra = armR.rotation.clone(), rt = torso.rotation.clone();
+      armR.rotation.set(-1.22, 0, 0.25);
+      torso.rotation.set(0.24, 0, 0);
+      bench.updateMatrixWorld(true);
+      jonny.group.updateMatrixWorld(true);
+      benchInv.copy(bench.matrixWorld).invert();
+      const h = jonny.hand.getWorldPosition(new THREE.Vector3()).applyMatrix4(benchInv);
+      const want = new THREE.Vector3(BOARD.x, h.y, BOARD.z); // bench-local
+      const d = want.sub(h).setY(0).applyEuler(new THREE.Euler(0, bench.rotation.y, 0));
+      // never into the bench: keep his feet at least a body's width off its front edge
+      const p = jonny.group.position.clone().add(d);
+      const pl = p.clone().applyMatrix4(benchInv);
+      pl.z = Math.max(pl.z, BENCH.depth / 2 + 0.17);
+      jonny.group.position.copy(pl.applyMatrix4(bench.matrixWorld)).setY(bench.position.y);
+      armR.rotation.copy(ra);
+      torso.rotation.copy(rt);
+      jonny.group.updateMatrixWorld(true);
+    }
+    // eyes on the work: just ahead of the plane on the board
+    jonny.lookAt?.(new THREE.Vector3(BOARD.x - 0.12, BENCH.top + 0.04, BOARD.z).applyMatrix4(bench.matrixWorld));
   }
-  // shavings springing off the plane (spawn at the plane's mouth)
+  // shavings springing off the plane's mouth: up, back along the stroke and
+  // over the front of the bench (towards the visitor); they land on the bench
+  // top or tumble down to the porch floor
+  bench.updateMatrixWorld(true);
+  benchInv.copy(bench.matrixWorld).invert();
   const handPos = new THREE.Vector3();
   const back = new THREE.Vector3(1, 0, 0).applyEuler(bench.rotation);
+  const side = new THREE.Vector3(0, 0, -1).applyEuler(bench.rotation);
+  const fl = new THREE.Vector3();
+  const topY = bench.position.y + BENCH.top + 0.03;
   const shavings = makeShavings(ctx, {
-    count: 14,
+    count: 20,
+    rate: 4.2,
+    // the same pale maple as the shavings already lying about
+    material: mats.wood('maple').material,
+    geometry: paint(doubleFace(shavingGeo(0.044, 0.028, 1.4)), SPECIES.maple),
     source: (out) => {
       jonny.hand.getWorldPosition(handPos);
-      out.copy(handPos).addScaledVector(back, -0.06);
-      out.y = Math.max(out.y, bench.position.y + BENCH.top + 0.06);
+      out.copy(handPos).addScaledVector(back, 0.04);
+      out.y = Math.max(out.y, topY + 0.04);
       return out;
     },
     dir: back,
-    floorY: bench.position.y + BENCH.top + 0.035,
+    side,
+    floorAt: (p) => {
+      fl.copy(p).applyMatrix4(benchInv);
+      return Math.abs(fl.x) < BENCH.length / 2 + 0.08 && Math.abs(fl.z) < BENCH.depth / 2 ? topY : bench.position.y + 0.03;
+    },
   });
   group.add(shavings.object);
 
@@ -193,6 +239,9 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
     },
   };
 }
+
+/** The board on the bench (bench-local centre of its planed half, where the plane works). */
+const BOARD = { x: 0.16, z: BENCH.depth / 2 - 0.11 };
 
 /** A tube through points (for curved braces). */
 function tubeAlong(pts, r) {
@@ -211,7 +260,7 @@ function buildHobelbank(ctx, mats, rng) {
   const Bb = new Batch();
   const L = BENCH.length, D = BENCH.depth, H = BENCH.top;
   const beech = mats.wood('beech');
-  const beechDark = mats.wood('#a27c58');
+  const beechDark = mats.wood('#a8846a');
   const steel = mats.metal('#8f969b');
   const tt = 0.075; // top thickness
   // the top: a thick front plank, a tool tray (Beilade) behind, a back rail
@@ -252,7 +301,8 @@ function buildHobelbank(ctx, mats, rng) {
     Bb.add(beechDark, xf(board(0.08, 0.06, D + 0.08, { along: 'z', rng }), [x, 0.03, 0]));
     Bb.add(beechDark, xf(board(0.07, 0.05, D - 0.02, { along: 'z', rng }), [x, H - tt - 0.03, 0]));
   }
-  for (const y of [0.16]) {
+  const sy = H / 0.48; // the trestle's rails & shelf scale with the bench height
+  for (const y of [0.16 * sy]) {
     for (const t of [-1, 1]) {
       Bb.add(beechDark, xf(board(L - 0.3, 0.07, 0.04, { along: 'x', rng }), [0, y, t * (D / 2 - 0.08)]));
       // through-tenons poking out past the legs, with wedges
@@ -263,10 +313,11 @@ function buildHobelbank(ctx, mats, rng) {
     }
   }
   // lower shelf with a spare plane and a box of offcuts
-  Bb.add(mats.wood('spruce'), xf(board(L - 0.42, 0.02, D - 0.2, { along: 'x', rng }), [0, 0.2, 0]));
-  addPlane(Bb, mats, rng, [-0.2, 0.21 + 0.025, 0], 0.26, 0.07);
-  Bb.add(mats.wood('cherry'), xf(board(0.16, 0.05, 0.06, { along: 'x', rng }), [0.25, 0.235, 0.04], [0, 0.6, 0]));
-  Bb.add(mats.wood('walnut'), xf(board(0.12, 0.04, 0.05, { along: 'x', rng }), [0.3, 0.27, -0.02], [0, -0.3, 0]));
+  const shelfY = 0.2 * sy;
+  Bb.add(mats.wood('spruce'), xf(board(L - 0.42, 0.02, D - 0.2, { along: 'x', rng }), [0, shelfY, 0]));
+  addPlane(Bb, mats, rng, [-0.2, shelfY + 0.035, 0], 0.26, 0.07);
+  Bb.add(mats.wood('cherry'), xf(board(0.16, 0.05, 0.06, { along: 'x', rng }), [0.25, shelfY + 0.035, 0.04], [0, 0.6, 0]));
+  Bb.add(mats.wood('walnut'), xf(board(0.12, 0.04, 0.05, { along: 'x', rng }), [0.3, shelfY + 0.07, -0.02], [0, -0.3, 0]));
 
   // ── on the bench: the board being planed (half planed = lighter) ──────────
   const boardY = H + 0.017;
@@ -281,9 +332,10 @@ function buildHobelbank(ctx, mats, rng) {
     Bb.add(steel, xf(new THREE.BoxGeometry(0.02, 0.045, 0.028), [bx0 - 0.015, H + 0.02, bz + 0.0]), { cast: false });
     Bb.add(steel, xf(new THREE.BoxGeometry(0.02, 0.045, 0.028), [bx1 + 0.015, H + 0.02, bz + 0.0]), { cast: false });
   }
-  // a jointer (Rauhbank) and a smoother lying on their sides behind the board
-  addPlane(Bb, mats, rng, [-0.4, H + 0.03, -0.1], 0.36, 0.072, Math.PI / 2 - 0.15);
-  addPlane(Bb, mats, rng, [-0.02, H + 0.026, -0.12], 0.18, 0.06, Math.PI / 2 + 0.2);
+  // a jointer (Rauhbank) and a smoother lying on their sides at the front-vise
+  // end, out of the way (nothing tall stands between the visitor and Jonny)
+  addPlane(Bb, mats, rng, [-0.42, H + 0.03, -0.12], 0.36, 0.072, Math.PI / 2 - 0.15);
+  addPlane(Bb, mats, rng, [-0.1, H + 0.026, -0.14], 0.18, 0.06, Math.PI / 2 + 0.2);
   // chisels laid out in a row on a cloth roll
   Bb.add(mats.fabric('#7a5a3a'), xf(new THREE.BoxGeometry(0.3, 0.006, 0.17), [-0.45, H + 0.003, 0.11], [0, 0.1, 0]), { cast: false });
   for (let i = 0; i < 4; i++) {
@@ -295,27 +347,28 @@ function buildHobelbank(ctx, mats, rng) {
   // the round mallet (Klüpfel)
   {
     const head = new THREE.CylinderGeometry(0.042, 0.05, 0.1, 12);
-    Bb.add(mats.wood('ash'), xf(uvBox(head, 'y'), [0.1, H + 0.045, 0.04], [Math.PI / 2 - 0.1, 0, 0.3]), { cast: false });
-    Bb.add(mats.wood('ash'), xf(new THREE.CylinderGeometry(0.013, 0.015, 0.14, 8), [0.07, H + 0.016, 0.14], [Math.PI / 2, 0.3, 0]), { cast: false });
+    Bb.add(mats.wood('ash'), xf(uvBox(head, 'y'), [-0.2, H + 0.045, -0.02], [Math.PI / 2 - 0.1, 0, 0.3]), { cast: false });
+    Bb.add(mats.wood('ash'), xf(new THREE.CylinderGeometry(0.013, 0.015, 0.14, 8), [-0.23, H + 0.016, 0.08], [Math.PI / 2, 0.3, 0]), { cast: false });
   }
   // try square (steel blade in a rosewood stock)
   Bb.add(mats.wood('walnut'), xf(board(0.1, 0.012, 0.025, { along: 'x' }), [0.3, H + 0.006, -0.12]), { cast: false });
   Bb.add(steel, xf(new THREE.BoxGeometry(0.004, 0.006, 0.14), [0.25, H + 0.004, -0.06]), { cast: false });
   // marking gauge (Streichmass)
-  Bb.add(mats.wood('cherry'), xf(board(0.05, 0.05, 0.02, { along: 'y' }), [0.42, H + 0.012, 0.02], [Math.PI / 2, 0, 0.4]), { cast: false });
-  Bb.add(mats.wood('maple'), xf(new THREE.BoxGeometry(0.16, 0.012, 0.012), [0.42, H + 0.012, 0.02], [0, 0.4 + Math.PI / 2, 0]), { cast: false });
+  Bb.add(mats.wood('cherry'), xf(board(0.05, 0.05, 0.02, { along: 'y' }), [0.5, H + 0.012, -0.04], [Math.PI / 2, 0, 0.4]), { cast: false });
+  Bb.add(mats.wood('maple'), xf(new THREE.BoxGeometry(0.16, 0.012, 0.012), [0.5, H + 0.012, -0.04], [0, 0.4 + Math.PI / 2, 0]), { cast: false });
   // yellow folding rule (Meterstab), partly unfolded, and a carpenter's pencil
   for (let i = 0; i < 4; i++) {
     Bb.add(vc, xf(new THREE.BoxGeometry(0.1, 0.004, 0.016), [-0.15 + i * 0.07, H + 0.003 + (i % 2) * 0.004, -0.17 + (i % 2) * 0.01], [0, (i % 2 ? 0.3 : -0.1), 0]), { color: '#e8c22a', cast: false });
   }
-  Bb.add(vc, xf(new THREE.BoxGeometry(0.09, 0.008, 0.014), [0.35, H + 0.004, 0.12], [0, 1.1, 0]), { color: '#c4271c', cast: false });
+  Bb.add(vc, xf(new THREE.BoxGeometry(0.09, 0.008, 0.014), [0.47, H + 0.004, -0.14], [0, 1.1, 0]), { color: '#c4271c', cast: false });
   // a heap of curly shavings on the bench top
   {
     const sg = doubleFace(shavingGeo(0.03, 0.02, 1.4));
-    for (let i = 0; i < 26; i++) {
+    for (let i = 0; i < 22; i++) {
       const c = sg.clone();
       const sc = rng.range(0.7, 1.3);
-      xf(c, [rng.range(0.0, L / 2 + 0.1), H + 0.012 + rng.next() * 0.025, rng.range(-0.15, D / 2 - 0.02)], [rng.next() * 6, rng.next() * 6, rng.next() * 6], sc);
+      // mostly past the plane, towards the tail vise
+      xf(c, [rng.range(0.3, L / 2 + 0.1), H + 0.012 + rng.next() * 0.02, rng.range(-0.15, D / 2 - 0.02)], [rng.next() * 6, rng.next() * 6, rng.next() * 6], sc);
       Bb.add(mats.wood('maple'), c, { cast: false });
     }
   }

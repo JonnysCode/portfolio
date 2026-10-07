@@ -256,8 +256,8 @@ function buildSwing(ctx, mats, parent, L, u, updates, reduced) {
       const yy = -len + 0.12 + i * 0.1;
       const ang = i * 1.9 + (sx > 0 ? 1 : 0);
       const p = [sx * 0.98 + Math.cos(ang) * 0.05, yy, Math.sin(ang) * 0.05];
-      if (i % 3 === 1) SB.add(mats.critter, xf(blob(0.05, 1, 0.55, 1), p, [0, ang, 0.5]), { color: rng.pick(['#4f7f36', '#5f9440']) });
-      else SB.add(mats.critter, xf(blob(0.045, 1, 0.7, 1), p), { color: rng.pick(['#f08aa6', '#ffd166', '#f4f1ff', '#c77dff', '#ff9e5e']) });
+      if (i % 3 === 1) SB.add(mats.critter, xf(blob(0.05, 1, 0.55, 1, 6, 4), p, [0, ang, 0.5]), { color: rng.pick(['#4f7f36', '#5f9440']) });
+      else SB.add(mats.critter, xf(blob(0.045, 1, 0.7, 1, 6, 4), p), { color: rng.pick(['#f08aa6', '#ffd166', '#f4f1ff', '#c77dff', '#ff9e5e']) });
     }
   }
   const seat = new THREE.BoxGeometry(HW * 2 + 0.24, 0.08, 0.4, 4, 1, 2);

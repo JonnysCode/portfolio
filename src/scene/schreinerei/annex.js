@@ -285,7 +285,7 @@ export function buildAnnex(ctx, B, mats) {
     // mortar core behind the stones
     const core = new THREE.BoxGeometry(len, plinth, 0.24);
     xf(core, [(x0 + x1) / 2 - nx * 0.1, plinth / 2, (z0 + z1) / 2 - nz * 0.1], [0, Math.atan2(dx, dz) + Math.PI / 2, 0]);
-    F.add(mats.stone({ color: '#8d867a' }), uvBox(core, 'x', 1));
+    F.add(mats.stone(), uvBox(core, 'x', 1));
     // cap stones: flat slabs on top, slightly proud
     let s = 0;
     while (s < len) {
@@ -676,7 +676,7 @@ export function buildAnnex(ctx, B, mats) {
     const cw = 0.52;
     let course = 0;
     while (y < topY) {
-      const ch = rng.range(0.12, 0.17);
+      const ch = rng.range(0.15, 0.2); // chunky courses (cute, and fewer stones)
       const sideStones = 2;
       for (let face = 0; face < 4; face++) {
         for (let k = 0; k < sideStones; k++) {
@@ -696,7 +696,7 @@ export function buildAnnex(ctx, B, mats) {
     const leanTop = (topY - baseY) * lean;
     const core = new THREE.BoxGeometry(cw - 0.06, topY - baseY, cw - 0.06);
     xf(core, [chim.x + leanTop / 2, (topY + baseY) / 2, chim.z], [0, 0, lean]);
-    F.add(mats.stone({ color: '#8d867a' }), uvBox(core, 'y', 1));
+    F.add(mats.stone(), uvBox(core, 'y', 1));
     // cap slab + a little clay pot
     const cap = stoneGeo(rng, { r: 1, sx: 0.42, sy: 0.06, sz: 0.42, lump: 0.08 });
     F.add(mats.stone(), xf(cap, [chim.x + leanTop, topY + 0.04, chim.z], [0, 0.3, lean]));

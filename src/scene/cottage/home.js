@@ -8,7 +8,8 @@
 // vegetable bed and pumpkins, a joiner-made bench by the wall with a sleeping
 // cat, a woodpile, the carved "Jonny's Woodland" sign and the mailbox (flag up).
 //
-// Hotspots: front door → 'about-me', mailbox → 'contact', the cat (secret).
+// Hotspots: the front door leaf and a little portrait of Jonny in the upstairs
+// window above it → 'about-me' (both bounce on hover), mailbox → 'contact', the cat (secret).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { COTTAGE } from '../../world/layout.js';
@@ -16,7 +17,8 @@ import { getHeight } from '../../world/ground.js';
 import { createRng } from '../../core/rng.js';
 import { makeMushroomHouse } from '../../props/mushroomHouse.js';
 import { mats, mat4, xf, mossGeo, stoneGeo, addFern, addGrass, addFlower, addToadstool, FLOWER_COLORS } from './kit.js';
-import { fenceArc, gateArch, flagstones, vegBed, pumpkin, gardenBench, woodpile, stringLights, makeWoodlandSign, makeMailbox, makeCat, hitProxy, wateringCan, pot, clothesline, rainBarrel, birdHouse, frog, hedgehog } from './garden.js';
+import { fenceArc, gateArch, flagstones, vegBed, pumpkin, gardenBench, woodpile, stringLights, makeWoodlandSign, makeMailbox, makeCat, wateringCan, pot, clothesline, rainBarrel, birdHouse, frog, hedgehog } from './garden.js';
+import { whenFontsReady, FONT_HAND } from '../../props/text.js';
 
 /** World azimuth of the home's front door (faces the end of the cottage path). */
 export const HOME_DOOR_AZ = 1.0;
@@ -52,11 +54,15 @@ export function buildHome(ctx, B, root, halos, smoke = []) {
     dormer: true,
     lean: 0.3,
     leanDir: 2.6,
+    // a jaunty cap: the rim lifts a little towards the garden gate
+    capTilt: { phi: 0.15, slope: 0.06 },
+    doorLeaf: true,
     ivy: 0.8,
     windows: [
       { phi: 1.05, y: 1.25, shape: 'arch', shutters: true, box: true, color: '#6f8a5a' },
       { phi: -1.0, y: 1.3, shape: 'round', w: 0.56 },
-      { phi: 0.35, y: 3.05, shape: 'rect', w: 0.56, h: 0.66, shutters: true, color: '#4f7a86' },
+      // the upstairs window above the door (no glazing bars: Jonny's portrait stands on the sill inside)
+      { phi: 0.35, y: 3.05, shape: 'rect', w: 0.56, h: 0.66, shutters: true, color: '#4f7a86', mullions: false },
       { phi: -2.3, y: 3.0, shape: 'arch', w: 0.5, h: 0.7 },
       { phi: 2.75, y: 1.25, shape: 'rect', box: true },
     ],
@@ -245,14 +251,17 @@ export function buildHome(ctx, B, root, halos, smoke = []) {
     out.hotspots.push([mailbox, { entryId: 'contact', area: 'home', focus: { distance: 2.8, height: 0.45 } }]);
   }
 
-  // ── the front door → about me ──
+  // ── the front door (and Jonny's portrait in the window beside it) → about me ──
   {
-    const proxy = hitProxy(1.25, 2.0, 0.5, 'front-door');
-    proxy.position.copy(main.userData.doorTarget.position);
-    proxy.position.y = 1.05;
-    proxy.rotation.y = 0;
-    main.add(proxy);
-    out.hotspots.push([proxy, { entryId: 'about-me', area: 'home', focus: { distance: 4.4, height: 0.9 } }]);
+    const aboutFocus = { distance: 4.4, height: 0.9 };
+    const leaf = main.userData.doorLeaf;
+    out.hotspots.push([leaf, { entryId: 'about-me', area: 'home', focus: aboutFocus }]);
+    const win = main.userData.windows.find((w) => Math.abs(w.phi - 0.35) < 1e-3);
+    if (win) {
+      const portrait = makePortrait(win);
+      main.add(portrait);
+      out.hotspots.push([portrait, { entryId: 'about-me', area: 'home', focus: aboutFocus, marker: false }]);
+    }
     // a warm light over the door
     const lp = main.userData.doorTarget.position.clone().applyMatrix4(main.matrix);
     lp.y = 2.3;
@@ -268,3 +277,155 @@ export function buildHome(ctx, B, root, halos, smoke = []) {
   return out;
 }
 
+
+// ─── Jonny's portrait ────────────────────────────────────────────────────────
+/**
+ * A little framed portrait standing on the sill inside the upstairs window
+ * above the door, warmly backlit by the room: Jonny in his workshop shirt, a carpenter's
+ * pencil behind the ear. House-local group, origin at the foot of the frame
+ * (so it bounces from the sill).
+ */
+function makePortrait(win) {
+  const W = 256, H = 320;
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const g = c.getContext('2d');
+  const draw = () => {
+    // carved walnut frame with a gilded inner bead
+    const fr = g.createLinearGradient(0, 0, W, H);
+    fr.addColorStop(0, '#7a5232');
+    fr.addColorStop(1, '#4a3020');
+    g.fillStyle = fr;
+    g.fillRect(0, 0, W, H);
+    g.strokeStyle = 'rgba(255,220,160,0.35)';
+    g.lineWidth = 3;
+    g.strokeRect(6, 6, W - 12, H - 12);
+    g.fillStyle = '#c9a25a';
+    g.fillRect(20, 20, W - 40, H - 40);
+    // painted backdrop: warm sage with a soft glow behind the head
+    const bg = g.createRadialGradient(W / 2, H * 0.4, 10, W / 2, H * 0.45, H * 0.6);
+    bg.addColorStop(0, '#d9e2b8');
+    bg.addColorStop(0.55, '#8fa878');
+    bg.addColorStop(1, '#55704a');
+    g.fillStyle = bg;
+    g.fillRect(26, 26, W - 52, H - 52);
+    const cx = W / 2;
+    // shoulders: forest-green work shirt, apron straps
+    g.fillStyle = '#3f6a4a';
+    g.beginPath();
+    g.moveTo(34, H - 26);
+    g.bezierCurveTo(40, 215, 80, 198, cx, 196);
+    g.bezierCurveTo(W - 80, 198, W - 40, 215, W - 34, H - 26);
+    g.closePath();
+    g.fill();
+    g.fillStyle = '#c9b48e';
+    for (const sx of [-1, 1]) {
+      g.beginPath();
+      g.moveTo(cx + sx * 34, 204);
+      g.lineTo(cx + sx * 50, 204);
+      g.lineTo(cx + sx * 40, H - 26);
+      g.lineTo(cx + sx * 24, H - 26);
+      g.closePath();
+      g.fill();
+    }
+    // neck & head
+    g.fillStyle = '#e6b48c';
+    g.fillRect(cx - 16, 168, 32, 34);
+    g.fillStyle = '#f2c9a2';
+    g.beginPath();
+    g.ellipse(cx, 136, 48, 54, 0, 0, Math.PI * 2);
+    g.fill();
+    // ears
+    for (const sx of [-1, 1]) {
+      g.beginPath();
+      g.ellipse(cx + sx * 47, 140, 9, 13, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+    // tousled brown hair
+    g.fillStyle = '#6b4428';
+    g.beginPath();
+    g.moveTo(cx - 52, 132);
+    g.bezierCurveTo(cx - 58, 78, cx - 20, 70, cx + 4, 76);
+    g.bezierCurveTo(cx + 40, 68, cx + 62, 96, cx + 50, 132);
+    g.bezierCurveTo(cx + 40, 108, cx + 20, 100, cx - 6, 104);
+    g.bezierCurveTo(cx - 26, 106, cx - 42, 114, cx - 52, 132);
+    g.fill();
+    // a short, friendly beard
+    g.fillStyle = '#7a5032';
+    g.beginPath();
+    g.moveTo(cx - 44, 146);
+    g.bezierCurveTo(cx - 40, 196, cx + 40, 196, cx + 44, 146);
+    g.bezierCurveTo(cx + 30, 170, cx - 30, 170, cx - 44, 146);
+    g.fill();
+    // smiling eyes, rosy cheeks, a smile
+    g.strokeStyle = '#3a2618';
+    g.lineWidth = 4;
+    g.lineCap = 'round';
+    for (const sx of [-1, 1]) {
+      g.beginPath();
+      g.arc(cx + sx * 18, 136, 8, Math.PI * 1.1, Math.PI * 1.9);
+      g.stroke();
+    }
+    g.fillStyle = 'rgba(232,120,110,0.45)';
+    for (const sx of [-1, 1]) {
+      g.beginPath();
+      g.ellipse(cx + sx * 28, 152, 10, 6, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.strokeStyle = '#4a2a1a';
+    g.lineWidth = 3.5;
+    g.beginPath();
+    g.arc(cx, 156, 14, Math.PI * 0.15, Math.PI * 0.85);
+    g.stroke();
+    // carpenter's pencil behind the ear
+    g.save();
+    g.translate(cx + 50, 120);
+    g.rotate(-0.55);
+    g.fillStyle = '#d9a83a';
+    g.fillRect(-4, -26, 9, 44);
+    g.fillStyle = '#f0d9b0';
+    g.beginPath();
+    g.moveTo(-4, 18);
+    g.lineTo(5, 18);
+    g.lineTo(0.5, 28);
+    g.closePath();
+    g.fill();
+    g.restore();
+    // a name ribbon
+    g.fillStyle = '#f3e6c8';
+    g.beginPath();
+    g.moveTo(52, H - 70);
+    g.lineTo(W - 52, H - 70);
+    g.lineTo(W - 62, H - 52);
+    g.lineTo(W - 52, H - 34);
+    g.lineTo(52, H - 34);
+    g.lineTo(62, H - 52);
+    g.closePath();
+    g.fill();
+    g.fillStyle = '#4a2c17';
+    g.font = `400 34px ${FONT_HAND}`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText('Jonny', cx, H - 51);
+  };
+  draw();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  whenFontsReady(['400 34px "Patrick Hand"'], 'Jonny', () => {
+    draw();
+    tex.needsUpdate = true;
+  });
+  // lit by the warm room behind the window: a gentle self-lit term keeps it readable against the glowing pane
+  const mat = new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: new THREE.Color('#ffe8c8'), emissiveIntensity: 0.55, roughness: 0.85, name: 'portrait' });
+  const pw = Math.min(0.36, win.w * 0.6), ph = pw * 1.25;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(pw, ph).translate(0, ph / 2, 0), mat);
+  mesh.name = 'jonny-portrait';
+  const grp = new THREE.Group();
+  grp.name = 'portrait';
+  grp.add(mesh);
+  // stand it on the sill, a hair in front of the glowing pane (pane at z = −0.005 in the window frame)
+  grp.applyMatrix4(win.frame.clone().multiply(new THREE.Matrix4().makeTranslation(0.02, -win.h / 2 + 0.015, -0.001)));
+  return grp;
+}

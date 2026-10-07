@@ -11,7 +11,8 @@
 // chips, fabric samples, sketches — hotspot 'moodboards'), a little trestle
 // table with a card model and floor plan of a tiny flat (hotspot
 // 'small-space') and a villager designer with a paintbrush.
-// Hotspot 'living-room' covers the interior.
+// Hotspot 'living-room': the sofa (its own little group — it bounces on hover)
+// with a room-sized pick volume, so the whole room is the click target.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
@@ -24,6 +25,7 @@ import {
   paintFn, addFlower, addFern, addGrass, addIvy, TAU, WOOD,
 } from './kit.js';
 import { local, hitProxy, pot, stringLights, flagstones } from './garden.js';
+import { whenFontsReady, FONT_DISPLAY, FONT_HAND } from '../../props/text.js';
 
 /** The atelier faces the 'interior' spot camera (its open front looks this way). */
 /** Facing of the opened-up front (from layout.js, so the 'interior' spot camera looks straight in). */
@@ -52,13 +54,15 @@ export function buildAtelier(ctx, B, root, halos, smoke = []) {
   };
   const house = makeMushroomHouse({
     seed: 'wohnatelier',
-    height: 7.0,
+    height: 7.25,
     capShape: 'bell',
     capColor: '#de9a3e',
     wartColor: '#f4e4bf',
     capRadius: 3.35,
     stemRadius: 2.45,
-    stemHeight: 3.8,
+    stemHeight: 4.0,
+    // the rim lifts over the loggia: a band of warm gills frames the open front
+    capTilt: { phi: 0, slope: 0.1 },
     stem: 'plaster',
     stemColor: '#f0e0c2',
     door: false,
@@ -87,7 +91,14 @@ export function buildAtelier(ctx, B, root, halos, smoke = []) {
   out.colliders.push([A.x, A.z, house.userData.radius]);
   out.keepOut.push([A.x, A.z, house.userData.radius + 0.25]);
 
-  buildInterior(F, rng, I, halos, frame);
+  // the sofa is its own little group: the 'living-room' hotspot bounces it on hover
+  const sofaB = new Batch();
+  buildInterior(F, rng, I, halos, frame, sofaB);
+  const sofaGroup = new THREE.Group();
+  sofaGroup.name = 'living-room';
+  for (const m of sofaB.build(sofaGroup, 'sofa')) m.castShadow = false; // deep in the cap's shade
+  sofaGroup.position.set(0, I.floorY, SOFA_Z);
+  house.add(sofaGroup);
 
   // lanterns flanking the arch & fairy lights across it
   {
@@ -113,7 +124,7 @@ export function buildAtelier(ctx, B, root, halos, smoke = []) {
         const a = ((k + 0.5) / n - 0.5) * (Math.PI * 0.95) + rng.jitter(0.05);
         const x = Math.sin(a) * (r - zf) * 1.35, z = zf + Math.cos(a) * (r - zf);
         const sz = rng.range(0.2, 0.28);
-        const st = stoneGeo(rng, { r: 1, sx: sz * 1.2, sy: 0.045, sz: sz, lump: 0.14, flatTop: 0.3 });
+        const st = stoneGeo(rng, { r: 1, sx: sz * 1.2, sy: 0.045, sz: sz, lump: 0.14, flatTop: 0.3, detail: 'low' });
         F.add(M.stone, xf(st, [x, 0.02, z], [0, a + rng.jitter(0.3), 0]), { color: rng.pick(tint), cast: false });
         if (rng.chance(0.4)) F.add(M.moss, xf(mossGeo(rng, { r: 0.09, h: 0.025 }), [x + rng.jitter(0.25), 0, z + rng.jitter(0.2)]), { cast: false });
       }
@@ -164,12 +175,12 @@ export function buildAtelier(ctx, B, root, halos, smoke = []) {
     out.hotspots.push([table, { entryId: 'small-space', area: 'interior', focus: { distance: 2.5, height: 0.35 } }]);
   }
 
-  // ── the living room hotspot (an invisible box filling the room) ──
+  // ── the living room hotspot: the sofa + a pick volume filling the room (child of the sofa group) ──
   {
-    const proxy = hitProxy(3.6, 2.4, 2.8, 'living-room');
-    proxy.position.set(0, I.floorY + 1.2, -0.6);
-    house.add(proxy);
-    out.hotspots.push([proxy, { entryId: 'living-room', area: 'interior', focus: { distance: 4.4, height: 0.4 } }]);
+    const proxy = hitProxy(3.4, 1.8, 2.6, 'living-room-pick');
+    proxy.position.set(0, 0.9, -0.6 - SOFA_Z);
+    sofaGroup.add(proxy);
+    out.hotspots.push([sofaGroup, { entryId: 'living-room', area: 'interior', focus: { distance: 4.4, height: 0.4 } }]);
   }
 
   // a warm light inside (lamps) — the room is deep in the cap's shadow
@@ -184,7 +195,10 @@ export function buildAtelier(ctx, B, root, halos, smoke = []) {
 }
 
 // ─── interior ────────────────────────────────────────────────────────────────
-function buildInterior(F, rng, I, halos, frame) {
+/** The sofa stands against the back wall (house-local z). */
+const SOFA_Z = -1.42;
+
+function buildInterior(F, rng, I, halos, frame, sofaB) {
   const M = mats();
   const y0 = I.floorY;
   const at = (x, z, rotY = 0, y = y0) => mat4([x, y, z], [0, rotY, 0]);
@@ -199,8 +213,8 @@ function buildInterior(F, rng, I, halos, frame) {
 
   // rug
   rug(F, rng, at(0, -0.55), 1.4, 1.02);
-  // sofa against the back wall
-  sofa(F, rng, at(0, -1.42, 0), { len: 1.95, color: PALETTE.sage });
+  // sofa against the back wall (into its own batch, local to the sofa group's origin)
+  sofa(sofaB, rng, new THREE.Matrix4(), { len: 1.95, color: PALETTE.sage });
   // coffee table
   coffeeTable(F, rng, at(0.05, -0.45, 0.3));
   // reading nook: lounge chair, ottoman, tripod lamp, side stack of books
@@ -240,7 +254,7 @@ function buildInterior(F, rng, I, halos, frame) {
 // ─── furniture ───────────────────────────────────────────────────────────────
 /** A puffy cushion (rounded box with domed faces) — fabric UVs in world units. */
 function cushion(w, h, d, r = 0.035, puff = 0.18) {
-  const g = new RoundedBoxGeometry(w, h, d, 3, Math.min(r, h * 0.45, w * 0.3, d * 0.3));
+  const g = new RoundedBoxGeometry(w, h, d, 2, Math.min(r, h * 0.45, w * 0.3, d * 0.3));
   deform(g, (v) => {
     const kx = Math.max(0, 1 - (v.x / (w / 2)) ** 2);
     const kz = Math.max(0, 1 - (v.z / (d / 2)) ** 2);
@@ -577,13 +591,9 @@ function gallery(F, rng, I, wallPos) {
 
 function rug(F, rng, m, rx, rz) {
   const M = mats();
-  const g = new THREE.RingGeometry(0.001, 1, 96, 40);
-  g.rotateX(-Math.PI / 2);
   const cream = new THREE.Color('#e9dfcc'), terra = new THREE.Color('#b85c3c'), char = new THREE.Color('#3e3a36'), sand = new THREE.Color('#d8c6a2');
   const sage = new THREE.Color('#8fa286');
-  paintFn(g, '#e9dfcc', (x, y, z, i, c) => {
-    const r = Math.hypot(x, z);
-    const a = Math.atan2(x, z);
+  const colorAt = (r, a, c) => {
     c.copy(cream);
     if (r > 0.95) c.copy(char);
     else if (r > 0.88) c.copy(terra);
@@ -591,10 +601,37 @@ function rug(F, rng, m, rx, rz) {
     else if (r > 0.6 && r < 0.64) c.copy(char);
     else if (r > 0.42 && r < 0.48) c.copy(sage);
     else if (r < 0.22) c.copy(Math.abs(Math.sin(a * 4)) * (0.22 - r) > 0.06 ? terra : sand);
-    c.multiplyScalar(0.95 + 0.05 * Math.sin(r * 90));
-  });
+    return c.multiplyScalar(0.95 + 0.05 * Math.sin(r * 90));
+  };
+  // one ring of quads per woven band (rings only where the pattern changes → crisp bands, few triangles)
+  const edges = [0, 0.07, 0.14, 0.22, 0.42, 0.48, 0.6, 0.64, 0.76, 0.78, 0.8, 0.82, 0.84, 0.88, 0.95, 1.0];
+  const segs = 96;
+  const pos = [], col = [], idx = [];
+  const c = new THREE.Color();
+  for (let b = 0; b < edges.length - 1; b++) {
+    const r0 = edges[b], r1 = edges[b + 1];
+    const base = pos.length / 3;
+    for (const [r, rs] of [[r0, r0 + 0.002], [r1, r1 - 0.002]]) {
+      for (let i = 0; i <= segs; i++) {
+        const a = (i / segs) * TAU;
+        pos.push(Math.sin(a) * r, 0, Math.cos(a) * r);
+        colorAt(rs, Math.atan2(Math.sin(a), Math.cos(a)), c);
+        col.push(c.r, c.g, c.b);
+      }
+    }
+    for (let i = 0; i < segs; i++) {
+      const a0 = base + i, a1 = a0 + 1, o0 = base + segs + 1 + i, o1 = o0 + 1;
+      idx.push(a0, o0, o1, a0, o1, a1);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
   g.scale(rx, 1, rz);
+  g.computeVertexNormals();
   uvBox(g, 'x', 3);
+  void rng;
   F.add(M.fabric, g.applyMatrix4(m).translate(0, 0.012, 0), { color: null, cast: false });
 }
 
@@ -602,7 +639,7 @@ function monstera(F, rng, m) {
   const M = mats();
   const L = local(F, m);
   const prof = [[0, 0], [0.2, 0], [0.24, 0.05], [0.25, 0.42], [0.27, 0.44], [0.24, 0.44]].map(([a, b]) => new THREE.Vector2(a, b));
-  L.add(M.glossy, new THREE.LatheGeometry(prof, 16), { color: '#ece6da' });
+  L.add(M.glossy, new THREE.LatheGeometry(prof, 16), { color: '#ece6da', cast: false });
   L.add(M.soil, new THREE.CircleGeometry(0.235, 12).rotateX(-Math.PI / 2).translate(0, 0.42, 0), { cast: false });
   for (let i = 0; i < 9; i++) {
     const a = (i / 9) * TAU + rng.jitter(0.3);
@@ -613,14 +650,14 @@ function monstera(F, rng, m) {
     const lf = leafGeo(rng.range(0.42, 0.55), 1.0, 0.35, 5);
     lf.rotateX(-0.9 - rng.range(0, 0.6));
     lf.rotateY(a);
-    L.add(M.leafy, lf.translate(...tip), { color: rng.pick(['#3f6a2c', '#4a7a33', '#36602a']), cast: true });
+    L.add(M.leafy, lf.translate(...tip), { color: rng.pick(['#3f6a2c', '#4a7a33', '#36602a']), cast: false });
   }
 }
 
 function fiddleFig(F, rng, m) {
   const M = mats();
   const L = local(F, m);
-  L.add(M.clay, new THREE.CylinderGeometry(0.2, 0.16, 0.36, 14).translate(0, 0.18, 0), { color: '#b5633e' });
+  L.add(M.clay, new THREE.CylinderGeometry(0.2, 0.16, 0.36, 14).translate(0, 0.18, 0), { color: '#b5633e', cast: false });
   const trunk = [[0, 0.3, 0], [0.03, 0.9, 0.02], [-0.02, 1.4, 0], [0.02, 1.75, 0.01]];
   L.add(M.wood, taperTube(trunk, 0.03, 0.015, 5, 8), { color: '#6b5440', cast: false });
   for (let i = 0; i < 16; i++) {
@@ -688,7 +725,7 @@ function makeEasel(rng) {
   const bw = 1.0, bh = 0.78;
   const by = 0.79 + bh / 2 + 0.02;
   B.add(M.wood, board(bw + 0.05, bh + 0.05, 0.03, { along: 'x' }).translate(0, by, 0.1), { color: WOOD.walnut });
-  const tex = moodboardTexture(rng);
+  const tex = moodboardTexture();
   const face = new THREE.Mesh(new THREE.PlaneGeometry(bw, bh), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85, name: 'moodboard' }));
   face.position.set(0, by, 0.118);
   face.rotation.x = -0.0;
@@ -713,7 +750,13 @@ function makeEasel(rng) {
   return g;
 }
 
-function canvasTex(w, h, draw) {
+/**
+ * A canvas texture drawn by draw(g, w, h). The lettering uses the web fonts
+ * main.js loads before the world builds ('Fredoka', 'Patrick Hand' — exact
+ * family names); should one not be ready yet, the texture is redrawn as soon
+ * as it is (draw must be deterministic: seed its own rng).
+ */
+function canvasTex(w, h, draw, fonts = [], sample = '') {
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
@@ -722,13 +765,23 @@ function canvasTex(w, h, draw) {
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
+  if (fonts.length)
+    whenFontsReady(fonts, sample, () => {
+      g.clearRect(0, 0, w, h);
+      draw(g, w, h);
+      t.needsUpdate = true;
+    });
   return t;
 }
 
-const HAND = '"Patrick Hand", "Segoe Print", "Comic Sans MS", "DejaVu Sans", cursive';
+/** Hand-written notes (Patrick Hand ships one weight: 400) and Fredoka titles. */
+const HAND = FONT_HAND;
+const TITLE = FONT_DISPLAY;
+const NOTE_FONTS = ['400 26px "Patrick Hand"', '600 44px "Fredoka"'];
 
-function moodboardTexture(rng) {
+function moodboardTexture() {
   return canvasTex(1024, 800, (g, W, H) => {
+    const rng = createRng('wohnatelier-moodboard');
     // cork
     g.fillStyle = '#b98c5a';
     g.fillRect(0, 0, W, H);
@@ -770,9 +823,9 @@ function moodboardTexture(rng) {
       g.fillRect(40, 30, 420, 92);
     });
     g.fillStyle = '#3b2a1e';
-    g.font = `bold 44px ${HAND}`;
+    g.font = `600 44px ${TITLE}`;
     g.fillText('Wohnatelier', 62, 78);
-    g.font = `26px ${HAND}`;
+    g.font = `400 26px ${HAND}`;
     g.fillStyle = '#6b5440';
     g.fillText('warm · calm · crafted', 64, 110);
     tape(250, 30, 110, 26, -0.08, '#d6a23a');
@@ -787,7 +840,7 @@ function moodboardTexture(rng) {
       g.fillStyle = c;
       g.fillRect(x + 6, y + 6, 58, 78);
       g.fillStyle = '#5a4a3a';
-      g.font = `16px ${HAND}`;
+      g.font = `400 16px ${HAND}`;
       g.fillText(name, x + 8, y + 108);
     });
     // fabric swatches: linen, bouclé, velvet, herringbone
@@ -868,7 +921,7 @@ function moodboardTexture(rng) {
     pencil([[420, 600], [420, 420, 430, 400]]);
     pencil([[380, 400], [430, 340, 480, 400]]);
     pencil([[380, 400], [430, 410, 480, 400]]);
-    g.font = `22px ${HAND}`;
+    g.font = `400 22px ${HAND}`;
     g.fillStyle = '#4a4440';
     g.fillText('lounge chair — walnut + cognac', 70, 610);
     // photo: a cosy corner
@@ -893,9 +946,18 @@ function moodboardTexture(rng) {
       g.ellipse(612 + i * 6, 430 - i * 6, 18, 8, -0.8 + i * 0.3, 0, TAU);
       g.fill();
     }
-    g.font = `22px ${HAND}`;
+    g.font = `400 22px ${HAND}`;
     g.fillStyle = '#5a4a3a';
-    g.fillText('reading corner ♡', 620, 660);
+    g.fillText('reading corner', 620, 660);
+    // a little painted heart (the font has no ♡)
+    g.fillStyle = '#c46a43';
+    g.beginPath();
+    g.moveTo(790, 668);
+    g.bezierCurveTo(770, 652, 772, 634, 784, 636);
+    g.bezierCurveTo(788, 637, 790, 641, 790, 644);
+    g.bezierCurveTo(790, 641, 792, 637, 796, 636);
+    g.bezierCurveTo(808, 634, 810, 652, 790, 668);
+    g.fill();
     pin(710, 390, '#c9352a');
     // dried leaf & a wood sample
     shadow(() => {
@@ -911,7 +973,7 @@ function moodboardTexture(rng) {
       g.stroke();
     }
     g.fillStyle = '#f7f1e3';
-    g.font = `18px ${HAND}`;
+    g.font = `400 18px ${HAND}`;
     g.fillText('walnut', 905, 410);
     shadow(() => {
       g.fillStyle = '#7a8f4a';
@@ -924,7 +986,7 @@ function moodboardTexture(rng) {
     g.moveTo(905, 690);
     g.lineTo(975, 510);
     g.stroke();
-  });
+  }, NOTE_FONTS, 'Wohnatelier warm calm crafted lounge chair walnut cognac reading corner Sage Terracotta Ochre Linen Ink');
 }
 
 // ─── model table ─────────────────────────────────────────────────────────────
@@ -973,7 +1035,7 @@ function makeModelTable(rng) {
   block(0.16, -0.11, 0.16, 0.035, 0.05, '#b8a68a'); // kitchen
   B.add(M.wood, new THREE.SphereGeometry(0.025, 6, 5).translate(bx - 0.23, top + 0.05, bz - 0.14), { color: '#4e7a34', cast: false });
   // floor plan, scale ruler, pencil cup, a mug, rolled drawings
-  const plan = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.26).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: planTexture(rng), roughness: 0.9, name: 'floorplan' }));
+  const plan = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.26).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: planTexture(), roughness: 0.9, name: 'floorplan' }));
   plan.position.set(0.3, top + 0.003, 0.08);
   plan.rotation.y = -0.15;
   plan.receiveShadow = true;
@@ -992,7 +1054,7 @@ function makeModelTable(rng) {
   return g;
 }
 
-function planTexture(rng) {
+function planTexture() {
   return canvasTex(512, 400, (g, W, H) => {
     g.fillStyle = '#f6f3ea';
     g.fillRect(0, 0, W, H);
@@ -1040,11 +1102,11 @@ function planTexture(rng) {
     g.stroke();
     // labels & dimensions
     g.fillStyle = '#3b3b3b';
-    g.font = `22px ${HAND}`;
+    g.font = `400 22px ${HAND}`;
     g.fillText('living', 110, 150);
     g.fillText('sleep', 330, 290);
     g.fillText('cook', 320, 130);
-    g.font = `bold 26px ${HAND}`;
+    g.font = `600 26px ${TITLE}`;
     g.fillText('Tiny flat · 28 m²', 120, 375);
     g.strokeStyle = '#b8573a';
     g.lineWidth = 2;
@@ -1053,10 +1115,9 @@ function planTexture(rng) {
     g.lineTo(450, 30);
     g.stroke();
     g.fillStyle = '#b8573a';
-    g.font = `18px ${HAND}`;
+    g.font = `400 18px ${HAND}`;
     g.fillText('6.40', 230, 24);
-    void rng;
-  });
+  }, NOTE_FONTS, 'living sleep cook Tiny flat 28 m² 6.40');
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

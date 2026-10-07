@@ -53,7 +53,7 @@ export function mats() {
   const m = materials;
   M = {
     cap: m.surface('mushroomCap', { color: '#ffffff', vertexColors: true }),
-    gills: m.surface('gills', { gills: 'cone', side: THREE.DoubleSide, vertexColors: true }),
+    gills: bounceGills(m.surface('gills', { gills: 'cone', side: THREE.DoubleSide, vertexColors: true })),
     stem: m.surface('mushroomStem', { vertexColors: true }),
     plaster: m.surface('plaster', { vertexColors: true }),
     wallStone: m.surface('stone', { vertexColors: true, mossy: 0.3 }),
@@ -82,6 +82,40 @@ export function mats() {
   M.glossy = M.clay;
   M.bulb = M.glow;
   return M;
+}
+
+/**
+ * Gill undersides only ever see the cool sky/ground fill (the cap shades them
+ * from the sun), so they read grey. Painters add the warm light bouncing off
+ * the sunlit ground: this clone (never the cached original) adds an emissive
+ * "bounce" term proportional to the gill albedo — warm, but the lamellae
+ * texture & vertex shading stay readable. Its strength follows day/night
+ * through setCottageNight().
+ */
+const GILL_BOUNCE = { color: '#ffb064', day: 0.62, night: 0.36 };
+let gillMat = null;
+function bounceGills(base) {
+  const g = base.clone();
+  g.name = 'cottage-gills';
+  g.emissive = new THREE.Color(GILL_BOUNCE.color);
+  g.emissiveIntensity = GILL_BOUNCE.day;
+  const patch = g.onBeforeCompile;
+  g.onBeforeCompile = (shader, renderer) => {
+    patch(shader, renderer);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      '#include <emissivemap_fragment>\n  totalEmissiveRadiance *= diffuseColor.rgb; // bounce light: tinted by the albedo'
+    );
+  };
+  const key = g.customProgramCacheKey();
+  g.customProgramCacheKey = () => key + '|gill-bounce';
+  gillMat = g;
+  return g;
+}
+
+/** Ease the cottage's own day/night-dependent material terms (call every frame; cheap). */
+export function setCottageNight(night) {
+  if (gillMat) gillMat.emissiveIntensity = GILL_BOUNCE.day + (GILL_BOUNCE.night - GILL_BOUNCE.day) * night;
 }
 
 // ─── batching ────────────────────────────────────────────────────────────────
@@ -180,8 +214,10 @@ export class Batch {
    * Merge everything into meshes added to `parent`. Returns the meshes.
    * opts.mergeShadow: one mesh per material (casting) — for small hotspot pieces.
    * Otherwise a material's casting and non-casting parts are still merged when
-   * one side is small (fewer draw calls; a few extra shadow triangles or a few
-   * missing tiny shadows are invisible).
+   * one side is small (fewer draw calls); the merged mesh casts only when its
+   * casting part is a substantial share (a few missing tiny shadows are
+   * invisible, while every caster mesh costs a shadow-pass draw and all its
+   * triangles).
    */
   build(parent, name = 'batch', { mergeShadow = false, smallTris = 16000 } = {}) {
     const triCount = (e) => e.geos.reduce((n, g) => n + (g.index ? g.index.count : g.attributes.position.count) / 3, 0);
@@ -202,8 +238,8 @@ export class Batch {
       const cT = castE.reduce((n, e) => n + triCount(e), 0);
       const nT = noE.reduce((n, e) => n + triCount(e), 0);
       const all = { material: group[0].material, receive: true, geos: group.flatMap((e) => e.geos) };
-      if (mergeShadow || nT < smallTris) lists.push({ ...all, cast: true });
-      else if (cT < 2500) lists.push({ ...all, cast: false });
+      if (mergeShadow) lists.push({ ...all, cast: true });
+      else if (nT < smallTris || cT < 2500) lists.push({ ...all, cast: cT >= 0.35 * nT });
       else lists.push(...group);
     }
     const out = [];
@@ -559,9 +595,11 @@ export function rod(a, b, r1, r2 = r1, radial = 6) {
 
 /**
  * A lumpy stone (flattened noisy icosphere). opts: { r, sx, sy, sz, lump, detail, flatTop }
+ * detail: icosphere subdivision (1 = 80 triangles) or 'low' (32 triangles —
+ * pebbles, footing stones, flagstones: the many small ones nobody sees up close).
  */
 export function stoneGeo(rng, { r = 0.2, sx = 1, sy = 0.6, sz = 1, lump = 0.22, detail = 1, flatTop = 0.55 } = {}) {
-  let g = new THREE.IcosahedronGeometry(1, detail);
+  let g = detail === 'low' ? new THREE.OctahedronGeometry(1, 1) : new THREE.IcosahedronGeometry(1, detail);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -577,9 +615,9 @@ export function stoneGeo(rng, { r = 0.2, sx = 1, sy = 0.6, sz = 1, lump = 0.22, 
   return g;
 }
 
-/** A dressed block stone (rounded box with lumpy faces), size w × h × d. */
-export function blockStone(rng, w, h, d, lump = 0.12) {
-  let g = new THREE.BoxGeometry(w, h, d, 3, 2, 2);
+/** A dressed block stone (rounded box with lumpy faces), size w × h × d. segs: box segments (fewer for tiny stones). */
+export function blockStone(rng, w, h, d, lump = 0.12, segs = [3, 2, 2]) {
+  let g = new THREE.BoxGeometry(w, h, d, segs[0], segs[1], segs[2]);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -600,7 +638,7 @@ export function blockStone(rng, w, h, d, lump = 0.12) {
 
 /** A soft moss cushion (flattened lumpy dome) sitting on y = 0. */
 export function mossGeo(rng, { r = 0.25, h = 0.08, sx = 1, sz = 1 } = {}) {
-  let g = new THREE.SphereGeometry(1, 10, 5, 0, Math.PI * 2, 0, Math.PI / 2);
+  let g = new THREE.SphereGeometry(1, 9, 4, 0, Math.PI * 2, 0, Math.PI / 2);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -790,20 +828,20 @@ export function addFlower(F, rng, x, y, z, { color = null, size = 0.06, stem = 0
   const c = color ?? rng.pick(FLOWER_COLORS);
   const h = stem * rng.range(0.7, 1.2);
   const lean = [rng.jitter(0.25), 0, rng.jitter(0.25)];
-  F.add(M2.vc, xf(new THREE.CylinderGeometry(0.006, 0.008, h, 3, 1).translate(0, h / 2, 0), [x, y, z], lean), { color: '#4f7a34', cast: false });
+  F.add(M2.vc, xf(new THREE.CylinderGeometry(0.006, 0.008, h, 3, 1, true).translate(0, h / 2, 0), [x, y, z], lean), { color: '#4f7a34', cast: false });
   const tip = new THREE.Vector3(0, h, 0).applyEuler(new THREE.Euler(lean[0], 0, lean[2])).add(new THREE.Vector3(x, y, z));
   const petals = rng.int(5, 6);
   const rot = rng.next() * TAU;
   for (let i = 0; i < petals; i++) {
     const a = rot + (i / petals) * TAU;
-    const pg = new THREE.SphereGeometry(size * 0.5, 5, 3);
+    const pg = new THREE.SphereGeometry(size * 0.5, 4, 2); // a soft lozenge petal (8 triangles)
     pg.scale(1, 0.3, 0.55);
     pg.translate(size * 0.5, 0, 0);
     pg.rotateY(a);
     pg.rotateZ(0.25);
     F.add(M2.vc, pg.translate(tip.x, tip.y, tip.z), { color: c, cast: false });
   }
-  F.add(M2.vc, new THREE.SphereGeometry(size * 0.28, 5, 3).translate(tip.x, tip.y + size * 0.08, tip.z), { color: '#e8b33a', cast: false });
+  F.add(M2.vc, new THREE.SphereGeometry(size * 0.28, 4, 2).translate(tip.x, tip.y + size * 0.08, tip.z), { color: '#e8b33a', cast: false });
 }
 
 /** A tuft of grass cards at (x, y, z). */
@@ -844,15 +882,15 @@ export function addToadstool(F, rng, x, y, z, { size = 0.12, color = '#c4301f', 
   const M2 = mats();
   const h = size * rng.range(1.1, 1.8);
   const rx = rng.jitter(lean), rz = rng.jitter(lean), ry = rng.next() * TAU;
-  const stem = new THREE.CylinderGeometry(size * 0.15, size * 0.22, h, 7, 2);
+  const stem = new THREE.CylinderGeometry(size * 0.15, size * 0.22, h, 6, 1, true);
   stem.translate(0, h / 2, 0);
   // a little ring (annulus) under the cap
-  const ring = new THREE.CylinderGeometry(size * 0.2, size * 0.24, size * 0.06, 7, 1, true).translate(0, h * 0.78, 0);
+  const ring = new THREE.CylinderGeometry(size * 0.2, size * 0.24, size * 0.06, 6, 1, true).translate(0, h * 0.78, 0);
   const capR = size * rng.range(0.5, 0.62);
-  const cap = new THREE.SphereGeometry(capR, 10, 5, 0, TAU, 0, Math.PI / 2);
+  const cap = new THREE.SphereGeometry(capR, 9, 4, 0, TAU, 0, Math.PI / 2);
   cap.scale(1, rng.range(0.55, 0.85), 1);
   cap.translate(0, h - capR * 0.08, 0);
-  const under = new THREE.CircleGeometry(capR * 0.98, 10).rotateX(Math.PI / 2).translate(0, h - capR * 0.06, 0);
+  const under = new THREE.CircleGeometry(capR * 0.98, 9).rotateX(Math.PI / 2).translate(0, h - capR * 0.06, 0);
   for (const [g, c, m] of [[stem, '#efe5cf', M2.stem], [ring, '#efe5cf', M2.stem], [cap, color, M2.cap], [under, '#e3cfa8', M2.vc]]) {
     xf(g, [x, y, z], [rx, ry, rz]);
     F.add(m, g, { color: c, cast: false });
@@ -897,7 +935,7 @@ export function addIvy(F, rng, start, dir, { length = 1.2, droop = 0.6, size = 0
     d.addScaledVector(nrm, -d.dot(nrm)).normalize();
     p.addScaledVector(d, step);
   }
-  if (pts.length >= 2) F.add(mats().vc, tube(pts, 0.007, 3), { color: stemColor, cast: false });
+  if (pts.length >= 2) F.add(mats().vc, tube(pts, 0.007, 3, Math.max(4, pts.length)), { color: stemColor, cast: false });
   const C = cards ?? new Cards();
   const count = Math.round(n * 0.75 * density);
   const up = new THREE.Vector3();

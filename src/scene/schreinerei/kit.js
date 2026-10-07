@@ -30,8 +30,11 @@ export function makeMats(ctx) {
   // One vertex-coloured material per colorize kind: the species / colour rides
   // on the vertex colour, so every wood species (or metal, fabric) merges into
   // ONE draw call. mats.wood('walnut') returns a proxy the Batch unwraps.
+  // The wood's grain texture is colourised from a NEUTRAL grey: with a species
+  // base (oak) its hue would multiply every vertex colour and push walnut,
+  // ash, cherry … all towards the same orange.
   const proxy = (material, color) => ({ isProxy: true, material, color });
-  const vcSurface = (kind, extra = {}) => m.surface(kind, { ...(kind === 'wood' ? { species: 'oak' } : {}), vertexColors: true, ...extra });
+  const vcSurface = (kind, extra = {}) => m.surface(kind, { ...(kind === 'wood' ? { color: '#bdbdbd' } : {}), vertexColors: true, ...extra });
   const mats = {
     wood: (species = 'oak', extra = {}) => proxy(vcSurface('wood', extra), SPECIES[species] ?? species),
     /** A real (non-proxy) wood material, for meshes not built through a Batch. */
@@ -83,19 +86,19 @@ export function makeMats(ctx) {
 
 /**
  * Average (sRGB) colour of each wood species — the vertex colour on the shared
- * wood material. Kept a touch cooler and less saturated than the raw timber
- * because the golden post grade warms everything: oak a greyish tan, walnut a
- * cool chocolate, ash pale and greyish, cherry clearly red-brown, maple cream,
- * spruce straw, beech pinkish.
+ * (neutral) wood material, i.e. what the finished, oiled wood looks like.
+ * Natural and moderately saturated because the golden post grade warms
+ * everything: oak a honey tan, walnut chocolate, ash pale cream-grey, cherry
+ * clearly red-brown, maple cream, spruce straw, beech pinkish.
  */
 export const SPECIES = {
-  oak: '#9c8a70',
-  walnut: '#54433a',
-  spruce: '#cdbd9a',
-  ash: '#cbc3b0',
-  cherry: '#93594a',
-  maple: '#d9ccb2',
-  beech: '#b39a85',
+  oak: '#a88c68',
+  walnut: '#5c4334',
+  spruce: '#d2bb90',
+  ash: '#cdc2a8',
+  cherry: '#9c5a43',
+  maple: '#dccaa7',
+  beech: '#c29d7c',
 };
 
 // ─── batching ────────────────────────────────────────────────────────────────

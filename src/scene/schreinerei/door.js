@@ -174,7 +174,7 @@ export function buildDoor(ctx, B, mats) {
       v.z += wob * Math.sin(((v.y - y0) / (Hs + R)) * Math.PI);
     });
     uvBox(g, 'y', undefined, [rng.next() * 9, rng.next() * 9]);
-    leaf.add(oak, g, { color: i % 2 ? '#957558' : '#87694d' });
+    leaf.add(oak, g, { color: i % 2 ? '#a77a52' : '#966c47' });
   }
   // inside ledges + a diagonal brace (Z), hidden mostly but honest
   for (const ly of [leafBottom + 0.22, archY - 0.05]) leaf.add(oak, xf(board(LW - 0.12, 0.12, 0.035, { along: 'x', rng }), [0, ly, -0.02]));
@@ -425,13 +425,14 @@ export function buildDoor(ctx, B, mats) {
 
   // ── the EFZ certificate under its little roof (hotspot) ────────────────────
   // An important credential: big enough to read from the woodworking close
-  // view, at eye height beside the door, lit by a little brass picture lamp.
+  // view, at eye height beside the door, lit by a little forged picture lamp.
   const cert = makeCertificate(ctx, mats.piece, rng);
   {
-    const cx = R + F + 1.1, cy = 1.42;
-    const mount = barkMount(ctx, cx, cy, { spreadA: 0.12, spreadY: 0.4 });
+    const cx = R + F + 1.08, cy = 1.42;
+    // stand proud of the bark ridges either side, so nothing cuts into it
+    const mount = barkMount(ctx, cx, cy, { spreadA: 0.17, spreadY: 0.42 });
     const yaw = mount.a;
-    cert.position.copy(mount.point).addScaledVector(mount.normal, 0.1);
+    cert.position.copy(mount.point).addScaledVector(mount.normal, 0.17);
     cert.rotation.y = yaw;
     cert.userData.yaw = yaw;
     group.add(cert);
@@ -440,22 +441,22 @@ export function buildDoor(ctx, B, mats) {
     // two little brackets into the bark
     for (const s of [-1, 1]) {
       const p = at(s * bw * 0.32, -bh / 2 + 0.03, -0.1);
-      const q = at(s * bw * 0.32, -bh / 2 + 0.03, -0.55);
-      B.add(oakDark, xf(board(0.045, 0.055, 0.5, { along: 'z', rng }), [(p.x + q.x) / 2, p.y, (p.z + q.z) / 2], [0, yaw, 0]), { cast: false });
+      const q = at(s * bw * 0.32, -bh / 2 + 0.03, -0.7);
+      B.add(oakDark, xf(board(0.045, 0.055, 0.65, { along: 'z', rng }), [(p.x + q.x) / 2, p.y, (p.z + q.z) / 2], [0, yaw, 0]), { cast: false });
     }
-    // brass picture lamp on a swan-neck arm under the eave (merged into the
-    // shared metal & lamp-glow meshes: no extra draw call)
-    const brass = mats.metal('#b8893a');
+    // a little forged picture lamp on a swan-neck arm under the eave (merged
+    // into the shared metal & lamp-glow meshes: no extra draw call)
     const ly = roofTop - 0.2;
     const arm = [at(0, ly - 0.02, 0.0), at(0, ly + 0.02, 0.1), at(0, ly - 0.04, 0.2)].map((v) => [v.x, v.y, v.z]);
-    B.add(brass, tube(arm, 0.009, 4, 8), { cast: false });
+    B.add(iron, tube(arm, 0.009, 4, 8), { cast: false });
+    // half-round hood, its opening turned down and back onto the parchment
     const hood = new THREE.CylinderGeometry(0.045, 0.045, bw * 0.5, 10, 1, false, 0, Math.PI);
-    hood.rotateZ(Math.PI / 2).rotateX(-0.5);
+    hood.rotateZ(Math.PI / 2).rotateX(0.7);
     const hp = at(0, ly - 0.06, 0.21);
-    B.add(brass, xf(hood, [hp.x, hp.y, hp.z], [0, yaw, 0]), { cast: false });
-    const bulb = new THREE.CylinderGeometry(0.018, 0.018, bw * 0.46, 8);
+    B.add(iron, xf(hood, [hp.x, hp.y, hp.z], [0, yaw, 0]), { cast: false });
+    const bulb = new THREE.CylinderGeometry(0.012, 0.012, bw * 0.44, 8);
     bulb.rotateZ(Math.PI / 2);
-    const bp = at(0, ly - 0.075, 0.205);
+    const bp = at(0, ly - 0.065, 0.2);
     B.add(mats.glow('#ffd79a', 0.9), xf(bulb, [bp.x, bp.y, bp.z], [0, yaw, 0]), { cast: false, receive: false });
     pushHalo(at(0, ly - 0.12, 0.2), 0.32);
   }
@@ -674,7 +675,7 @@ function makeCertificate(ctx, mats, rng) {
   const fw = 0.045; // frame width
   const bw = W + fw * 2 + 0.14, bh = H + fw * 2 + 0.16; // backing board
   // backing board
-  B.add(mats.wood('spruce'), board(bw, bh, 0.04, { along: 'y', rng }).translate(0, 0.0, -0.045));
+  B.add(mats.wood('oak'), board(bw, bh, 0.04, { along: 'y', rng }).translate(0, 0.0, -0.045));
   // a little gable roof: two boards, each covered with three rows of tiny shingles
   const ridge = bw / 2 + 0.08; // half-span of the roof along its slope
   const apex = new THREE.Vector3(0, bh / 2 + 0.28, 0.03); // eaves just clear the board's top corners

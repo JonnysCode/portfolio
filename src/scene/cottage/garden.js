@@ -9,6 +9,7 @@
 // clicked, bounce on hover and animate.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
+import { paintWood, whenFontsReady, FONT_DISPLAY, FONT_HAND } from '../../props/text.js';
 import {
   Batch, mats, xf, mat4, board, boardBetween, rod, stoneGeo, blockStone, mossGeo, tube, taperTube, sagCurve, leafGeo,
   Cards, addFlower, addGrass, addFern, addToadstool, addIvy, uvBox, paintFn, deform, TAU, WOOD, IRON, FLOWER_COLORS,
@@ -162,7 +163,7 @@ export function addRose(F, rng, p, s, color) {
   const M = mats();
   const c = new THREE.Color(color);
   for (let k = 0; k < 3; k++) {
-    const ring = new THREE.SphereGeometry(s * (1 - k * 0.25), 7, 4, 0, TAU, 0, Math.PI * (0.55 - k * 0.08));
+    const ring = new THREE.SphereGeometry(s * (1 - k * 0.25), 6, 3, 0, TAU, 0, Math.PI * (0.55 - k * 0.08));
     ring.scale(1, 0.7, 1);
     ring.rotateX(-0.6 + rng.jitter(0.3));
     ring.rotateY(rng.next() * TAU);
@@ -196,8 +197,8 @@ export function stringLights(F, lines, halos, { spacing = 0.28, sag = 0.08, tran
     const n = Math.max(1, Math.floor(len / spacing));
     for (let k = 0; k < n; k++) {
       const p = curve.getPointAt((k + 0.5) / n);
-      F.add(M.metal, new THREE.CylinderGeometry(bulb * 0.45, bulb * 0.45, bulb * 0.7, 5).translate(p.x, p.y - bulb * 0.5, p.z), { color: '#3a332c', cast: false });
-      F.add(M.bulb, new THREE.SphereGeometry(bulb, 6, 4).scale(1, 1.25, 1).translate(p.x, p.y - bulb * 1.35, p.z), { cast: false });
+      F.add(M.metal, new THREE.CylinderGeometry(bulb * 0.45, bulb * 0.45, bulb * 0.7, 4, 1, true).translate(p.x, p.y - bulb * 0.5, p.z), { color: '#3a332c', cast: false });
+      F.add(M.bulb, new THREE.SphereGeometry(bulb, 5, 3).scale(1, 1.25, 1).translate(p.x, p.y - bulb * 1.35, p.z), { cast: false });
       if (halos) {
         _v.set(p.x, p.y - bulb * 1.35, p.z);
         if (transform) _v.applyMatrix4(transform);
@@ -224,7 +225,7 @@ export function flagstones(F, rng, pts, { width = 0.9, step = 0.5, y = 0 } = {})
     for (let j = 0; j < k; j++) {
       const off = k === 1 ? rng.jitter(0.12) : (j - 0.5) * width * 0.5 + rng.jitter(0.06);
       const sz = k === 1 ? rng.range(0.32, 0.42) : rng.range(0.2, 0.27);
-      const st = stoneGeo(rng, { r: 1, sx: sz * rng.range(0.9, 1.25), sy: 0.05, sz: sz * rng.range(0.8, 1.05), lump: 0.15, flatTop: 0.3 });
+      const st = stoneGeo(rng, { r: 1, sx: sz * rng.range(0.9, 1.25), sy: 0.05, sz: sz * rng.range(0.8, 1.05), lump: 0.15, flatTop: 0.3, detail: 'low' });
       xf(st, [p.x + side.x * off, y + 0.015, p.z + side.z * off], [0, rng.next() * TAU, 0]);
       F.add(M.stone, st, { color: rng.pick(tint), cast: false });
     }
@@ -390,7 +391,7 @@ export function hitProxy(w, h, d, name = 'hotspot') {
 
 /**
  * The carved "Jonny's Woodland" sign: a turned post with an ornate scrolled
- * frame around a painted parchment board (like the "Fairy Garden" sign).
+ * frame around a carved, painted oak board (like the "Fairy Garden" sign).
  * Front faces +Z. Returns a Group.
  */
 export function makeWoodlandSign(rng, { text = "Jonny's\nWoodland", F = null } = {}) {
@@ -421,9 +422,10 @@ export function makeWoodlandSign(rng, { text = "Jonny's\nWoodland", F = null } =
     }
     B.add(M.metal, tube(pts, 0.016, 5, 40), { color: gold, cast: false });
   }
-  // the board (painted parchment, own textured material)
+  // the board (carved & painted oak, own textured material)
   const tex = signTexture(text);
-  const boardMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.82, name: 'sign-board' });
+  // a faint self-lit term so the painted letters still read in the house's shade
+  const boardMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.82, emissiveMap: tex, emissive: new THREE.Color('#ffe2b8'), emissiveIntensity: 0.14, name: 'sign-board' });
   const panel = roundedPanel(bw, bh, 0.12, 0.05);
   paint(panel, WOOD.walnut);
   const face = new THREE.Mesh(panel, [boardMat, M.wood]);
@@ -433,7 +435,7 @@ export function makeWoodlandSign(rng, { text = "Jonny's\nWoodland", F = null } =
   g.add(face);
   // ornate frame: a rope-like moulding around the board + corner scrolls + crest
   const outline = roundedRectShape(bw + 0.05, bh + 0.05, 0.14).getSpacedPoints(64).slice(0, -1).map((p) => [p.x, by + p.y, 0.035]);
-  B.add(M.metal, tube(outline, 0.028, 6, 128, true), { color: gold, cast: true });
+  B.add(M.metal, tube(outline, 0.028, 5, 96, true), { color: gold, cast: true });
   const scroll = (cx, cy, sx, sy, size) => {
     const pts = [];
     for (let i = 0; i <= 18; i++) {
@@ -442,7 +444,7 @@ export function makeWoodlandSign(rng, { text = "Jonny's\nWoodland", F = null } =
       const r = size * (1 - t * 0.8);
       pts.push([cx + sx * (Math.cos(a) * r), cy + sy * (Math.sin(a) * r), 0.04]);
     }
-    B.add(M.metal, tube(pts, 0.017, 5, 36), { color: gold, cast: false });
+    B.add(M.metal, tube(pts, 0.017, 5, 26), { color: gold, cast: false });
   };
   for (const sx of [-1, 1]) {
     for (const sy of [-1, 1]) scroll(sx * (bw / 2 + 0.06), by + sy * (bh / 2 + 0.04), sx, sy, 0.11);
@@ -510,71 +512,185 @@ function roundedPanel(w, h, r, depth) {
   return g;
 }
 
-/** Painted parchment with the cottage's name in a storybook serif. */
+/**
+ * The sign board: two oak planks with the name CARVED in and painted — "Jonny's"
+ * hand-lettered (Patrick Hand), "Woodland" in round, friendly Fredoka — inside a
+ * painted moss-green border with curling vines, little flowers and a toadstool.
+ * Uses the web fonts main.js loads before the world builds (exact family names);
+ * should they arrive late, the board is redrawn as soon as they are in.
+ */
+const SIGN_FONTS = ['400 150px "Patrick Hand"', '600 200px "Fredoka"'];
 function signTexture(text) {
   const W = 1024, H = 512;
   const c = document.createElement('canvas');
   c.width = W;
   c.height = H;
   const g = c.getContext('2d');
-  // parchment: warm cream with mottling and a darker vignette
-  const grd = g.createRadialGradient(W / 2, H / 2, H * 0.15, W / 2, H / 2, W * 0.62);
-  grd.addColorStop(0, '#f3e5c2');
-  grd.addColorStop(0.7, '#e2cc9a');
-  grd.addColorStop(1, '#b8955e');
-  g.fillStyle = grd;
-  g.fillRect(0, 0, W, H);
-  for (let i = 0; i < 260; i++) {
-    const x = Math.random() * W, y = Math.random() * H, r = 6 + Math.random() * 40;
-    g.fillStyle = `rgba(${150 + Math.random() * 60},${110 + Math.random() * 50},${60 + Math.random() * 30},${0.03 + Math.random() * 0.05})`;
-    g.beginPath();
-    g.arc(x, y, r, 0, TAU);
-    g.fill();
-  }
-  // a fine painted border
-  g.strokeStyle = 'rgba(92,58,30,0.75)';
-  g.lineWidth = 6;
-  g.strokeRect(34, 34, W - 68, H - 68);
-  g.lineWidth = 2;
-  g.strokeRect(50, 50, W - 100, H - 100);
-  // leafy flourishes in the corners
-  g.strokeStyle = 'rgba(70,96,44,0.85)';
-  g.fillStyle = 'rgba(86,120,52,0.85)';
-  g.lineWidth = 4;
-  for (const [x, y, sx, sy] of [[70, 70, 1, 1], [W - 70, 70, -1, 1], [70, H - 70, 1, -1], [W - 70, H - 70, -1, -1]]) {
-    g.beginPath();
-    g.moveTo(x, y);
-    g.bezierCurveTo(x + sx * 60, y + sy * 10, x + sx * 90, y + sy * 40, x + sx * 120, y + sy * 20);
-    g.stroke();
-    for (let k = 0; k < 3; k++) {
-      const lx = x + sx * (35 + k * 32), ly = y + sy * (12 + k * 6);
-      g.beginPath();
-      g.ellipse(lx, ly - sy * 12, 16, 7, sx * sy * -0.6, 0, TAU);
-      g.fill();
-    }
-  }
-  // the lettering
   const lines = text.split('\n');
-  const font = '"Palatino Linotype", "Book Antiqua", Palatino, Georgia, "Liberation Serif", "DejaVu Serif", serif';
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  const sizes = lines.length > 1 ? [132, 150] : [170];
-  lines.forEach((ln, i) => {
-    const y = lines.length > 1 ? H * (0.34 + i * 0.36) : H / 2;
-    g.font = `italic bold ${sizes[i] ?? 140}px ${font}`;
-    let fs = sizes[i] ?? 140;
-    while (g.measureText(ln).width > W - 170 && fs > 40) {
-      fs -= 6;
-      g.font = `italic bold ${fs}px ${font}`;
+  const draw = () => {
+    g.clearRect(0, 0, W, H);
+    paintWood(g, W, H, { color: '#a77c4e', planks: 2, seed: 'woodland-sign', knots: true });
+    // a soft sunlit wash in the middle, darker weathered ends
+    const vg = g.createRadialGradient(W / 2, H * 0.45, H * 0.2, W / 2, H / 2, W * 0.62);
+    vg.addColorStop(0, 'rgba(255,226,170,0.16)');
+    vg.addColorStop(1, 'rgba(60,32,12,0.32)');
+    g.fillStyle = vg;
+    g.fillRect(0, 0, W, H);
+    // painted border: moss green band with a cream pin-line
+    const rr = (x, y, w, h, r) => {
+      g.beginPath();
+      g.moveTo(x + r, y);
+      g.arcTo(x + w, y, x + w, y + h, r);
+      g.arcTo(x + w, y + h, x, y + h, r);
+      g.arcTo(x, y + h, x, y, r);
+      g.arcTo(x, y, x + w, y, r);
+      g.closePath();
+    };
+    g.lineJoin = 'round';
+    rr(30, 30, W - 60, H - 60, 46);
+    g.strokeStyle = 'rgba(40,22,10,0.45)';
+    g.lineWidth = 18;
+    g.stroke();
+    g.strokeStyle = '#4f6e3c';
+    g.lineWidth = 12;
+    g.stroke();
+    rr(52, 52, W - 104, H - 104, 32);
+    g.strokeStyle = 'rgba(248,232,196,0.85)';
+    g.lineWidth = 3.5;
+    g.stroke();
+    // curling vines with leaves from each corner, a few painted blossoms
+    const leaf = (x, y, a, s, col) => {
+      g.save();
+      g.translate(x, y);
+      g.rotate(a);
+      g.fillStyle = col;
+      g.beginPath();
+      g.moveTo(0, 0);
+      g.quadraticCurveTo(s * 0.55, -s * 0.42, s, 0);
+      g.quadraticCurveTo(s * 0.55, s * 0.42, 0, 0);
+      g.fill();
+      g.strokeStyle = 'rgba(30,50,20,0.5)';
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.moveTo(1, 0);
+      g.lineTo(s * 0.85, 0);
+      g.stroke();
+      g.restore();
+    };
+    const blossom = (x, y, r, col) => {
+      g.fillStyle = col;
+      for (let k = 0; k < 5; k++) {
+        const a = (k / 5) * TAU;
+        g.beginPath();
+        g.arc(x + Math.cos(a) * r * 0.62, y + Math.sin(a) * r * 0.62, r * 0.5, 0, TAU);
+        g.fill();
+      }
+      g.fillStyle = '#f2c14e';
+      g.beginPath();
+      g.arc(x, y, r * 0.36, 0, TAU);
+      g.fill();
+    };
+    for (const [x, y, sx, sy] of [[66, 66, 1, 1], [W - 66, 66, -1, 1], [66, H - 66, 1, -1], [W - 66, H - 66, -1, -1]]) {
+      g.strokeStyle = '#3f5a2e';
+      g.lineWidth = 5;
+      g.lineCap = 'round';
+      g.beginPath();
+      g.moveTo(x, y);
+      g.bezierCurveTo(x + sx * 70, y + sy * 6, x + sx * 120, y + sy * 34, x + sx * 165, y + sy * 14);
+      g.stroke();
+      g.beginPath();
+      g.moveTo(x, y);
+      g.bezierCurveTo(x + sx * 8, y + sy * 50, x + sx * 30, y + sy * 80, x + sx * 14, y + sy * 112);
+      g.stroke();
+      for (let k = 0; k < 4; k++) {
+        const t = (k + 0.6) / 4.2;
+        leaf(x + sx * 165 * t, y + sy * (6 + 26 * Math.sin(t * 3.1)), (sy > 0 ? 0.9 : -0.9) * sx + (sx < 0 ? Math.PI : 0) - sx * sy * 0.4 * (k % 2 ? 1 : -1), 30 - k * 3, k % 2 ? '#6d9447' : '#56803a');
+      }
+      for (let k = 0; k < 2; k++) leaf(x + sx * (10 + k * 12), y + sy * (40 + k * 34), sy * 1.4 + (sx < 0 ? 0.6 : -0.6), 26, '#628a42');
+      blossom(x + sx * 18, y + sy * 16, 15, sy > 0 ? '#f29bb8' : '#f4f0e6');
+      blossom(x + sx * 120, y + sy * 34, 10, sx > 0 ? '#b48fd6' : '#f29bb8');
     }
-    g.fillStyle = 'rgba(255,240,205,0.55)';
-    g.fillText(ln, W / 2 + 3, y + 4);
-    g.fillStyle = '#4a2c17';
-    g.fillText(ln, W / 2, y);
-  });
+    // a tiny painted fly agaric beside the second line
+    const shroom = (x, y, s) => {
+      g.fillStyle = '#efe2c6';
+      g.beginPath();
+      g.moveTo(x - s * 0.16, y);
+      g.quadraticCurveTo(x - s * 0.2, y - s * 0.5, x - s * 0.1, y - s * 0.62);
+      g.lineTo(x + s * 0.1, y - s * 0.62);
+      g.quadraticCurveTo(x + s * 0.2, y - s * 0.5, x + s * 0.16, y);
+      g.closePath();
+      g.fill();
+      g.fillStyle = '#c4301f';
+      g.beginPath();
+      g.ellipse(x, y - s * 0.62, s * 0.48, s * 0.4, 0, Math.PI, 0);
+      g.closePath();
+      g.fill();
+      g.fillStyle = '#fff4dc';
+      for (const [dx, dy, r] of [[-0.22, -0.78, 0.07], [0.05, -0.9, 0.06], [0.25, -0.72, 0.055], [-0.02, -0.7, 0.04]]) {
+        g.beginPath();
+        g.arc(x + dx * s, y + dy * s, r * s, 0, TAU);
+        g.fill();
+      }
+      g.strokeStyle = 'rgba(50,25,10,0.6)';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.ellipse(x, y - s * 0.62, s * 0.48, s * 0.4, 0, Math.PI, 0);
+      g.stroke();
+    };
+    // ── the carved, painted lettering ──
+    const carve = (txt, x, y, font, size, paintTop, paintBottom) => {
+      g.font = `${font.weight} ${size}px ${font.family}`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.lineJoin = 'round';
+      const d = size * 0.022;
+      // the cut: its upper-left wall lies in shadow …
+      g.fillStyle = 'rgba(42,22,8,0.92)';
+      g.strokeStyle = 'rgba(42,22,8,0.92)';
+      g.lineWidth = size * 0.05;
+      g.strokeText(txt, x - d, y - d);
+      g.fillText(txt, x - d, y - d);
+      // … its lower lip catches the light
+      g.fillStyle = 'rgba(255,228,176,0.7)';
+      g.fillText(txt, x + d * 1.2, y + d * 1.4);
+      // the paint in the groove (a little worn)
+      const gr = g.createLinearGradient(0, y - size * 0.45, 0, y + size * 0.45);
+      gr.addColorStop(0, paintTop);
+      gr.addColorStop(1, paintBottom);
+      g.fillStyle = gr;
+      g.fillText(txt, x, y);
+      g.lineWidth = Math.max(1.5, size * 0.012);
+      g.strokeStyle = 'rgba(70,38,14,0.55)';
+      g.strokeText(txt, x, y);
+    };
+    const fit = (txt, font, size, maxW) => {
+      g.font = `${font.weight} ${size}px ${font.family}`;
+      const w = g.measureText(txt).width;
+      return w > maxW ? Math.floor((size * maxW) / w) : size;
+    };
+    const HANDF = { weight: 400, family: FONT_HAND };
+    const DISP = { weight: 600, family: FONT_DISPLAY };
+    if (lines.length > 1) {
+      const s1 = fit(lines[0], HANDF, 150, W - 360);
+      carve(lines[0], W / 2, H * 0.3, HANDF, s1, '#fff4d8', '#f1d7a0');
+      const s2 = fit(lines[1], DISP, 196, W - 250);
+      carve(lines[1], W / 2, H * 0.64, DISP, s2, '#fbe7b0', '#e9b65a');
+      g.font = `600 ${s2}px ${FONT_DISPLAY}`;
+      const half = g.measureText(lines[1]).width / 2;
+      shroom(W / 2 - half - 42, H * 0.64 + s2 * 0.32, 74);
+      shroom(W / 2 + half + 40, H * 0.64 + s2 * 0.32, 52);
+    } else {
+      carve(lines[0], W / 2, H / 2, DISP, fit(lines[0], DISP, 180, W - 220), '#fbe7b0', '#e9b65a');
+    }
+  };
+  draw();
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
+  whenFontsReady(SIGN_FONTS, text, () => {
+    draw();
+    tex.needsUpdate = true;
+  });
   return tex;
 }
 

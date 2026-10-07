@@ -5,9 +5,9 @@
 //   • the solid-oak dining table (breadboard ends, pegged mortise & tenon
 //     base), four chairs, a tea set and two villagers having tea → 'dining-table'
 //   • the record cabinet (sliding doors, LPs inside) → 'record-cabinet'
-//   • the record player (walnut plinth, spinning vinyl, swinging tonearm,
-//     open dust cover) with two little speakers → 'record-player'
-//     (click: opens its entry AND toggles music, ♪ notes float up)
+//   • the record player (cherry plinth, a record turning quietly with the
+//     arm down, open dust cover) with two little speakers → 'record-player'
+//     (click: opens its entry AND toggles the music, ♪ notes float up)
 //   • a low coffee table with a book and a plant, an armchair → 'coffee-table'
 //   • railings, lanterns, fairy lights strung above between poles & the oak.
 // Every piece is its own group (hotspot root) built from merged parts.
@@ -52,8 +52,8 @@ export function buildDeck(ctx, B, mats) {
     const bw = boardW - 0.012;
     const g = board(hw * 2 + 0.04 + rng.jitter(0.03), 0.035, bw, { along: 'x', rng, scale: 1 / 1.6 });
     F.add(tim, xf(g, [rng.jitter(0.015), h - 0.0175, z], [0, rng.jitter(0.004), 0]));
-    // nail heads at the joists
-    for (const x of [-hw + 0.15, 0, hw - 0.15]) for (const s of [-1, 1]) F.add(mats.metal('#3a332d'), xf(new THREE.CylinderGeometry(0.007, 0.007, 0.004, 5), [x, h + 0.001, z + s * 0.04]), { cast: false, receive: false });
+    // nail heads at the joists (flush little discs)
+    for (const x of [-hw + 0.15, 0, hw - 0.15]) for (const s of [-1, 1]) F.add(mats.metal('#3a332d'), xf(new THREE.CircleGeometry(0.008, 5), [x + rng.jitter(0.01), h + 0.0012, z + s * 0.04], [-Math.PI / 2, 0, 0]), { cast: false, receive: false });
   }
   // fascia boards
   F.add(oak, xf(board(hw * 2 + 0.08, 0.14, 0.03, { along: 'x', rng }), [0, h - 0.08, hd + 0.015]));
@@ -86,7 +86,8 @@ export function buildDeck(ctx, B, mats) {
     for (let i = 1; i < nb; i++) {
       const t = i / nb;
       const x = a[0] + (b[0] - a[0]) * t, z = a[1] + (b[1] - a[1]) * t;
-      const bal = new THREE.LatheGeometry([[0.0, 0], [0.018, 0], [0.018, 0.04], [0.026, 0.12], [0.014, 0.22], [0.022, 0.3], [0.014, 0.38], [0.018, 0.44], [0.018, 0.47], [0, 0.47]].map(([r, y]) => new THREE.Vector2(r, y)), 7);
+      // turned profile (its ends hide in the rails)
+      const bal = new THREE.LatheGeometry([[0.018, 0], [0.018, 0.04], [0.026, 0.12], [0.014, 0.22], [0.022, 0.3], [0.014, 0.38], [0.018, 0.47]].map(([r, y]) => new THREE.Vector2(r, y)), 6);
       F.add(mats.wood('oak'), xf(uvBox(bal, 'y'), [x, h + 0.14, z]), { cast: false });
     }
   };
@@ -114,14 +115,23 @@ export function buildDeck(ctx, B, mats) {
   table.position.set(-0.6, h, -0.08);
   table.scale.setScalar(FS);
   group.add(table);
+  // the candle's flame rides in the Schreinerei's shared lamp-glow mesh
+  {
+    const f = table.userData.flame;
+    F.add(mats.glow('#ffcf7a', 0.6), xf(new THREE.SphereGeometry(0.008, 6, 4), [table.position.x + f.x * FS, h + f.y * FS, table.position.z + f.z * FS], null, [FS, 1.8 * FS, FS]), { cast: false, receive: false });
+  }
   const cabX = 0.55;
   const cabinet = buildRecordCabinet(ctx, pm, rng);
   cabinet.position.set(cabX, h, -hd + 0.3);
   cabinet.scale.setScalar(FS);
   group.add(cabinet);
-  const player = buildRecordPlayer(ctx, pm, rng);
+  // the record player is the deck's star: a touch over-sized (cute) so the
+  // spinning record and its tonearm read from the woodworking camera
+  const PS = 1.45;
+  const reduced = !!ctx.engine?.reducedMotion;
+  const player = buildRecordPlayer(ctx, pm, rng, { idleSpin: !reduced });
   player.group.position.set(cabX, h + cabinet.userData.topY * FS, -hd + 0.3);
-  player.group.scale.setScalar(FS);
+  player.group.scale.setScalar(PS);
   group.add(player.group);
   const coffee = buildCoffeeTable(ctx, pm, rng);
   coffee.position.set(0.82, h, 0.78);
@@ -206,8 +216,11 @@ export function buildDeck(ctx, B, mats) {
   const light = ctx.lights?.addPoint?.(toWorld(0, h + 1.9, 0), { color: '#ffc477', day: 0.3, night: 3.2, distance: 6 });
 
   // ── record player behaviour ────────────────────────────────────────────────
-  const notes = makeNotes(ctx, { origin: toWorld(cabX, h + cabinet.userData.topY * FS + 0.15, -hd + 0.3) });
+  const notes = makeNotes(ctx, { origin: toWorld(cabX, h + cabinet.userData.topY * FS + 0.26, -hd + 0.3) });
   ctx.scene.add(notes.object);
+  // `playing` = the music. Until the visitor first touches it the record turns
+  // quietly with the arm down (a lived-in deck); a click starts the music and
+  // the notes, the next click lifts the arm and stops the platter.
   let playing = false;
   function togglePlaying() {
     playing = !playing;
@@ -223,6 +236,7 @@ export function buildDeck(ctx, B, mats) {
     cabinet,
     player: player.group,
     coffee,
+    cat: cat.group,
     light,
     togglePlaying,
     get playing() {
@@ -285,16 +299,15 @@ function buildDiningTable(ctx, mats, rng) {
     const c = chairGeos(Bt, mats, rng, mat4([x, 0, z], [0, rotY, 0]));
     seats.push({ x: x + Math.sin(rotY) * (0.02 + pull), y: c.seatY + 0.03, z: z + Math.cos(rotY) * (0.02 + pull), rotY });
   };
+  // (no chair at the right end: nothing may hide the record player)
   chairAt(-0.3, -W / 2 - 0.2, 0, 0);
-  chairAt(L / 2 + 0.22, -0.05, -Math.PI / 2, 0);
   chairAt(0.3, -W / 2 - 0.22, 0.1);
   chairAt(-L / 2 - 0.26, 0.08, Math.PI / 2 - 0.25);
   // the tea set (teapot, cups on saucers, cookies, flowers, a candle)
-  addTeaSet(Bt, mats, rng, H);
+  g.userData.flame = addTeaSet(Bt, mats, rng, H);
   Bt.build(g, 'dining-table', { mergeShadow: true });
-  // guests: the one behind the table and the one at the left end (the right
-  // end stays free so nothing hides the record player from the visitor)
-  g.userData.seats = [seats[0], seats[3]];
+  // guests: the one behind the table and the one at the left end
+  g.userData.seats = [seats[0], seats[2]];
   g.userData.topY = H;
   return g;
 }
@@ -367,10 +380,11 @@ function addTeaSet(Bt, mats, rng, H) {
       Bt.add(china, xf(new THREE.SphereGeometry(0.016, 6, 4), [fx, top + 0.03 + hh, fz]), { color: rng.pick(['#f2ead8', '#e8c22a', '#b39ddb', '#ef7a5a', '#7fb3e0']), cast: false });
     }
   }
-  // a candle in a brass holder (glows at night)
+  // a candle in a brass holder (its flame glows at night — returned, the deck
+  // merges it into the shared lamp glow)
   Bt.add(mats.wood('#b8893a'), xf(new THREE.CylinderGeometry(0.03, 0.035, 0.01, 10), [0.2, top + 0.005, 0.02]), { cast: false });
   Bt.add(china, xf(new THREE.CylinderGeometry(0.012, 0.012, 0.07, 8), [0.2, top + 0.045, 0.02]), { color: '#f7efdf', cast: false });
-  Bt.add(mats.glow('#ffcf7a', 0.6, 3), xf(new THREE.SphereGeometry(0.008, 6, 4), [0.2, top + 0.088, 0.02], null, [1, 1.8, 1]), { cast: false, receive: false });
+  return new THREE.Vector3(0.2, top + 0.088, 0.02);
 }
 
 /**
@@ -437,27 +451,32 @@ function buildRecordCabinet(ctx, mats, rng) {
 }
 
 /**
- * The record player: walnut plinth, aluminium platter with a spinning record,
- * tonearm (swings onto the record when playing), open dust cover, and two
- * little walnut speakers on either side.
+ * The record player: cherry plinth on brass feet, aluminium platter with a
+ * spinning record (big red label), a pale tonearm resting on the record,
+ * open dust cover, and two little walnut speakers on either side.
+ * opts.idleSpin: the record turns quietly (arm down) until first toggled.
  */
-function buildRecordPlayer(ctx, mats, rng) {
+function buildRecordPlayer(ctx, mats, rng, { idleSpin = true } = {}) {
   const g = new THREE.Group();
   g.name = 'record-player';
   const Bp = new Batch();
+  const plinth = mats.wood('cherry');
   const walnut = mats.wood('walnut');
   const PW = 0.34, PD = 0.27, PH = 0.055;
-  Bp.add(walnut, xf(board(PW, PH, PD, { along: 'x', rng, r: 0.008 }), [0, PH / 2 + 0.012, 0]));
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) Bp.add(mats.metal('#c8c8c0'), xf(new THREE.CylinderGeometry(0.014, 0.016, 0.012, 10), [sx * (PW / 2 - 0.03), 0.006, sz * (PD / 2 - 0.03)]), { cast: false });
-  const steel = mats.metal('#c9ccd0');
-  Bp.add(steel, xf(new THREE.CylinderGeometry(0.11, 0.11, 0.012, 32), [-0.04, PH + 0.018, 0]), { cast: false });
+  Bp.add(plinth, xf(board(PW, PH, PD, { along: 'x', rng, r: 0.008 }), [0, PH / 2 + 0.012, 0]));
+  // a thin maple stringer along the plinth's front edge
+  Bp.add(mats.wood('maple'), xf(new THREE.BoxGeometry(PW - 0.02, 0.006, 0.003), [0, PH / 2 + 0.012, PD / 2 + 0.001]), { cast: false });
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) Bp.add(mats.metal('#b8893a'), xf(new THREE.CylinderGeometry(0.014, 0.016, 0.012, 10), [sx * (PW / 2 - 0.03), 0.006, sz * (PD / 2 - 0.03)]), { cast: false });
+  const steel = mats.metal('#d4d6d8');
+  // platter: its bright rim frames the black record
+  Bp.add(steel, xf(new THREE.CylinderGeometry(0.112, 0.108, 0.014, 32), [-0.04, PH + 0.019, 0]), { cast: false });
   // speed knob & a little brass power button
-  Bp.add(steel, xf(new THREE.CylinderGeometry(0.012, 0.012, 0.012, 10), [-PW / 2 + 0.03, PH + 0.018, PD / 2 - 0.03]), { cast: false });
-  Bp.add(mats.metal('#b8893a'), xf(new THREE.CylinderGeometry(0.008, 0.008, 0.008, 8), [-PW / 2 + 0.06, PH + 0.016, PD / 2 - 0.03]), { cast: false });
+  Bp.add(steel, xf(new THREE.CylinderGeometry(0.013, 0.013, 0.014, 10), [-PW / 2 + 0.03, PH + 0.018, PD / 2 - 0.03]), { cast: false });
+  Bp.add(mats.metal('#c9a04a'), xf(new THREE.CylinderGeometry(0.009, 0.009, 0.01, 8), [-PW / 2 + 0.06, PH + 0.017, PD / 2 - 0.03]), { cast: false });
   // tonearm base & rest
   const armBase = new THREE.Vector3(0.12, PH + 0.012, -0.08);
-  Bp.add(steel, xf(new THREE.CylinderGeometry(0.018, 0.022, 0.03, 12), [armBase.x, armBase.y + 0.015, armBase.z]), { cast: false });
-  Bp.add(steel, xf(new THREE.CylinderGeometry(0.004, 0.004, 0.04, 6), [0.13, PH + 0.03, 0.08]), { cast: false });
+  Bp.add(steel, xf(new THREE.CylinderGeometry(0.02, 0.024, 0.03, 12), [armBase.x, armBase.y + 0.015, armBase.z]), { cast: false });
+  Bp.add(steel, xf(new THREE.CylinderGeometry(0.005, 0.005, 0.04, 6), [0.13, PH + 0.03, 0.08]), { cast: false });
   // dust cover, hinged open at the back
   const cover = new THREE.BoxGeometry(PW - 0.01, 0.06, PD - 0.01);
   cover.translate(0, 0.03, PD / 2);
@@ -465,37 +484,39 @@ function buildRecordPlayer(ctx, mats, rng) {
   Bp.add(ctx.materials.surface('glass'), cover, { cast: false, receive: false });
   // speakers
   for (const s of [-1, 1]) {
-    const sx = s * 0.36;
+    const sx = s * 0.3;
     Bp.add(walnut, xf(board(0.12, 0.2, 0.12, { along: 'y', rng, r: 0.008 }), [sx, 0.1, 0.0]));
-    Bp.add(mats.fabric('#3a3530'), xf(new THREE.BoxGeometry(0.1, 0.17, 0.004), [sx, 0.105, 0.061]), { cast: false });
+    Bp.add(mats.fabric('#4a4038'), xf(new THREE.BoxGeometry(0.1, 0.17, 0.004), [sx, 0.105, 0.061]), { cast: false });
     Bp.add(mats.vc(), xf(new THREE.CylinderGeometry(0.03, 0.022, 0.008, 14), [sx, 0.08, 0.064], [Math.PI / 2, 0, 0]), { color: '#1c1a18', cast: false });
-    Bp.add(mats.metal('#b8893a'), xf(new THREE.CylinderGeometry(0.011, 0.011, 0.006, 10), [sx, 0.155, 0.064], [Math.PI / 2, 0, 0]), { cast: false });
+    Bp.add(mats.metal('#c9a04a'), xf(new THREE.CylinderGeometry(0.011, 0.011, 0.006, 10), [sx, 0.155, 0.064], [Math.PI / 2, 0, 0]), { cast: false });
   }
   Bp.build(g, 'record-player', { mergeShadow: true });
 
   // spinning record (own mesh) with a label
   const rec = new THREE.Group();
-  rec.position.set(-0.04, PH + 0.026, 0);
+  rec.position.set(-0.04, PH + 0.028, 0);
   const vinyl = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.004, 40), makeVinylMaterial());
   vinyl.name = 'vinyl';
   rec.add(vinyl);
   g.add(rec);
-  // tonearm (pivot group swings)
+  // tonearm (pivot group swings): pale, a bit chunky so it reads
   const arm = new THREE.Group();
   arm.position.copy(armBase).add(new THREE.Vector3(0, 0.03, 0));
   const Ba = new Batch();
-  const armTube = new THREE.CylinderGeometry(0.004, 0.004, 0.2, 6);
+  const armTube = new THREE.CylinderGeometry(0.0055, 0.0055, 0.2, 6);
   armTube.rotateX(Math.PI / 2);
   armTube.translate(0, 0.004, 0.1);
   Ba.add(steel, armTube, { cast: false });
-  Ba.add(mats.metal('#2a2624'), xf(new THREE.BoxGeometry(0.02, 0.008, 0.03), [0, 0.0, 0.205]), { cast: false });
-  Ba.add(mats.metal('#e8e2d0'), xf(new THREE.BoxGeometry(0.003, 0.01, 0.003), [0, -0.007, 0.212]), { cast: false });
-  Ba.add(steel, xf(new THREE.CylinderGeometry(0.014, 0.014, 0.025, 10), [0, 0.006, -0.03], [Math.PI / 2, 0, 0]), { cast: false });
+  Ba.add(mats.metal('#2a2624'), xf(new THREE.BoxGeometry(0.026, 0.01, 0.036), [0, 0.0, 0.208]), { cast: false });
+  Ba.add(mats.metal('#e8e2d0'), xf(new THREE.BoxGeometry(0.004, 0.012, 0.004), [0, -0.008, 0.216]), { cast: false });
+  Ba.add(steel, xf(new THREE.CylinderGeometry(0.016, 0.016, 0.028, 10), [0, 0.006, -0.032], [Math.PI / 2, 0, 0]), { cast: false });
   Ba.build(arm, 'tonearm', { mergeShadow: true });
   g.add(arm);
   const REST = 0.12, PLAY = -0.58;
-  arm.rotation.y = REST;
-  let spin = 0, target = 0, armK = 0;
+  // start in the playing pose when the record turns idly
+  let target = idleSpin ? 1 : 0;
+  let spin = target, armK = target;
+  arm.rotation.y = REST + (PLAY - REST) * armK;
   return {
     group: g,
     setPlaying(on) {
@@ -517,31 +538,54 @@ function makeVinylMaterial() {
   const c = document.createElement('canvas');
   c.width = c.height = 256;
   const x = c.getContext('2d');
-  x.fillStyle = '#151313';
+  x.fillStyle = '#141212';
   x.fillRect(0, 0, 256, 256);
-  for (let r = 40; r < 128; r += 2) {
-    x.strokeStyle = `rgba(255,255,255,${0.03 + ((r * 7) % 5) * 0.008})`;
+  // grooves, with two darker gaps between tracks and a soft sheen
+  for (let r = 54; r < 127; r += 2) {
+    const gap = Math.abs(r - 80) < 2 || Math.abs(r - 104) < 2;
+    x.strokeStyle = gap ? 'rgba(0,0,0,0.6)' : `rgba(255,255,255,${0.05 + ((r * 7) % 5) * 0.01})`;
     x.beginPath();
     x.arc(128, 128, r, 0, Math.PI * 2);
     x.stroke();
   }
+  const sheen = x.createLinearGradient(40, 40, 216, 216);
+  sheen.addColorStop(0.0, 'rgba(255,255,255,0)');
+  sheen.addColorStop(0.45, 'rgba(255,255,255,0.12)');
+  sheen.addColorStop(0.55, 'rgba(255,255,255,0.12)');
+  sheen.addColorStop(1.0, 'rgba(255,255,255,0)');
+  x.fillStyle = sheen;
+  x.beginPath();
+  x.arc(128, 128, 127, 0, Math.PI * 2);
+  x.fill();
+  // big label: red with a cream ring and a yellow half so the turning shows
   x.fillStyle = '#d6332a';
   x.beginPath();
-  x.arc(128, 128, 40, 0, Math.PI * 2);
+  x.arc(128, 128, 52, 0, Math.PI * 2);
   x.fill();
+  x.fillStyle = '#f2c94a';
+  x.beginPath();
+  x.arc(128, 128, 52, Math.PI * 0.1, Math.PI * 0.6);
+  x.lineTo(128, 128);
+  x.fill();
+  x.strokeStyle = '#f2ead8';
+  x.lineWidth = 4;
+  x.beginPath();
+  x.arc(128, 128, 49, 0, Math.PI * 2);
+  x.stroke();
   x.fillStyle = '#f2ead8';
-  x.font = '600 18px "Fredoka", sans-serif';
+  x.font = '600 20px "Fredoka", sans-serif';
   x.textAlign = 'center';
-  x.fillText('JONNY', 128, 118);
+  x.fillText('JONNY', 128, 120);
   x.font = '400 12px "Fredoka", sans-serif';
-  x.fillText('side A · 33⅓', 128, 146);
+  x.fillText('side A · 33⅓', 128, 148);
   x.fillStyle = '#111';
   x.beginPath();
   x.arc(128, 128, 3, 0, Math.PI * 2);
   x.fill();
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
-  return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.35, metalness: 0.1, name: 'vinyl' });
+  tex.anisotropy = 4;
+  return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.32, metalness: 0.1, name: 'vinyl' });
 }
 
 /** Low coffee table (oak top on a walnut frame) with a book, a mug and a plant. */

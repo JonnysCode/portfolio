@@ -70,7 +70,7 @@ export function scatterPad(F, rng, { cx, cz, r0, r1, keepOut = [], density = 1, 
           lf.rotateX(-Math.PI / 2 + rng.jitter(0.2));
           lf.rotateY(rng.next() * TAU);
           F.add(M.leafy, lf.translate(x, y + 0.012 + rng.next() * 0.01, z), { color: rng.pick(['#b8762e', '#c98a3a', '#9a5a2a', '#d9a441', '#7a5a2a']), cast: false });
-        } else F.add(M.stone, xf(stoneGeo(rng, { r: rng.range(0.05, 0.18), sy: 0.55 }), [x, y + 0.02, z], [0, rng.next() * 3, 0]), { color: rng.pick(['#a49c8c', '#9c9282', '#b3a58c']), cast: false });
+        } else F.add(M.stone, xf(stoneGeo(rng, { r: rng.range(0.05, 0.18), sy: 0.55, detail: 'low' }), [x, y + 0.02, z], [0, rng.next() * 3, 0]), { color: rng.pick(['#a49c8c', '#9c9282', '#b3a58c']), cast: false });
       } else if (theme < 0.88) {
         // toadstool ring
         const col = rng.pick(['#c4301f', '#c4301f', '#b8562a', '#a77c52', '#d8c8a8']);

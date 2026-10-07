@@ -13,7 +13,7 @@
 import * as THREE from 'three';
 import { createRng } from '../../core/rng.js';
 import { getHeight } from '../../world/ground.js';
-import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, uvBox, paintBy, addToadstool, addFern, SPECIES } from './kit.js';
+import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, uvBox, uvCyl, paintBy, addToadstool, addFern, SPECIES } from './kit.js';
 import { ANNEX, annexFrame, annexToWorld } from './annex.js';
 
 export function buildYard(ctx, B, mats) {
@@ -94,7 +94,7 @@ export function buildYard(ctx, B, mats) {
         const a = (k / n) * Math.PI * 2 + (i % 2) * (Math.PI / n);
         // logs: bark on the sides, pale end grain on the ends (the visible face)
         const log = new THREE.CylinderGeometry(0.058, 0.062, 0.34, 6);
-        const endC = rng.pick(['#c9a476', '#d8bb8c', '#b98d5f', '#cfa982', '#bf9a6c']);
+        const endC = rng.pick(['#c2a886', '#d0bc9a', '#b39776', '#c8b08e', '#b8a080']);
         const barkC = rng.pick(['#4e3b2c', '#5a4434', '#463528']);
         paintBy(log, (nx, ny) => (Math.abs(ny) > 0.7 ? endC : barkC));
         log.rotateX(Math.PI / 2);
@@ -105,10 +105,11 @@ export function buildYard(ctx, B, mats) {
     }
     // cap: a little shingled cone (two layered rings) + a finial
     const capH = 0.42;
+    // (weathered timber, merged with the house's timbers: no extra draw call)
     const cone = new THREE.ConeGeometry(R + 0.14, capH, 14, 3, true);
-    F.add(mats.shingles(), xf(cone, [c[0], c[1] + H + 0.1 + capH / 2, c[2]]));
+    F.add(tim, xf(uvCyl(cone, 1 / 1.6, [0, 0], R), [c[0], c[1] + H + 0.1 + capH / 2, c[2]]));
     const skirt = new THREE.CylinderGeometry(R + 0.1, R + 0.17, 0.08, 14, 1, true);
-    F.add(mats.shingles(), xf(skirt, [c[0], c[1] + H + 0.11, c[2]]), { cast: false });
+    F.add(tim, xf(uvCyl(skirt, 1 / 1.6, [0, 0], R), [c[0], c[1] + H + 0.11, c[2]]), { cast: false });
     F.add(mats.wood('#4e3b2c'), xf(new THREE.CircleGeometry(R + 0.12, 14), [c[0], c[1] + H + 0.09, c[2]], [Math.PI / 2, 0, 0]), { cast: false });
     F.add(mats.wood('oak'), xf(new THREE.ConeGeometry(0.06, 0.2, 6), [c[0], c[1] + H + 0.1 + capH + 0.08, c[2]]));
     F.add(mats.moss(), xf(mossGeo(rng, { r: 0.14, h: 0.05 }), [c[0] + 0.12, c[1] + H + 0.32, c[2] + 0.14], [-0.5, 0.6, 0]), { cast: false });
@@ -130,7 +131,7 @@ export function buildYard(ctx, B, mats) {
       paintBy(log, (nx, ny, nz, px, py, pz) => {
         if (Math.abs(ny) < 0.7) return bark;
         const rr = Math.hypot(px, pz) / r;
-        return rr > 0.88 ? '#5a4330' : Math.sin(rr * 24) > 0.3 ? '#b8946a' : '#cdb08a';
+        return rr > 0.88 ? '#5a4330' : Math.sin(rr * 24) > 0.3 ? '#b39a78' : '#c9b394';
       });
       log.rotateZ(Math.PI / 2);
       F.add(mats.wood('oak'), log.translate(rng.jitter(0.08), y, z).applyMatrix4(M));
@@ -146,7 +147,7 @@ export function buildYard(ctx, B, mats) {
     const blk = new THREE.CylinderGeometry(0.22, 0.26, 0.42, 12);
     uvBox(blk, 'y', 1 / 2.6);
     F.add(mats.bark(), xf(blk, [c[0], g0 + 0.21, c[2]]));
-    F.add(mats.wood('oak'), xf(new THREE.CircleGeometry(0.2, 12), [c[0], g0 + 0.422, c[2]], [-Math.PI / 2, 0, 0]), { color: '#c9a476', cast: false });
+    F.add(mats.wood('oak'), xf(new THREE.CircleGeometry(0.2, 12), [c[0], g0 + 0.422, c[2]], [-Math.PI / 2, 0, 0]), { color: '#c2a886', cast: false });
     // the axe, stuck in the block
     F.add(mats.wood('ash'), xf(board(0.03, 0.55, 0.04, { along: 'y', rng }), [c[0] + 0.12, g0 + 0.6, c[2] + 0.02], [0.1, 0, -0.75]));
     F.add(iron, xf(new THREE.BoxGeometry(0.16, 0.08, 0.025), [c[0] - 0.03, g0 + 0.43, c[2] + 0.0], [0.1, 0, -0.75 + Math.PI / 2]), { cast: false });
@@ -241,7 +242,7 @@ export function buildYard(ctx, B, mats) {
     for (const z of [-0.25, 0.25]) Bl.push([mats.wood('#b89b6a'), xf(new THREE.TorusGeometry(0.13, 0.012, 4, 14), [0, 0.12, z], [0, 0, 0], [1, 0.8, 1])]);
     const tmpB = new Batch();
     for (const [m, g] of Bl) tmpB.add(m, g, { cast: true });
-    tmpB.build(load, 'snail-load', { mergeShadow: true });
+    tmpB.build(load, 'snail-load', { mergeShadow: true, cast: false });
     load.position.set(0, 0.02, 0);
     snail.seat.add(load);
     // a little parcel tag
@@ -257,14 +258,14 @@ export function buildYard(ctx, B, mats) {
     const n = 11;
     for (let i = 0; i < n; i++) {
       const p = curve.getPointAt(i / (n - 1));
-      const g = stoneGeo(rng, { r: 1, sx: rng.range(0.2, 0.28), sy: 0.05, sz: rng.range(0.17, 0.24), lump: 0.12 });
+      const g = stoneGeo(rng, { r: 1, sx: rng.range(0.2, 0.28), sy: 0.05, sz: rng.range(0.17, 0.24), lump: 0.12, detail: 0 });
       B.add(mats.stone(), xf(g, [p.x + rng.jitter(0.08), getHeight(p.x, p.z) + 0.015, p.z + rng.jitter(0.08)], [0, rng.next() * 3, 0]), { cast: false });
       if (rng.next() < 0.6) B.add(mats.moss(), xf(mossGeo(rng, { r: rng.range(0.06, 0.12), h: 0.025 }), [p.x + rng.jitter(0.25), getHeight(p.x, p.z), p.z + rng.jitter(0.25)]), { cast: false });
     }
     // a flagged apron in front of the workshop door
     for (let i = 0; i < 14; i++) {
       const x = -1.15 + rng.next() * 1.75, z = hz + 0.15 + rng.next() * 0.6;
-      const g = stoneGeo(rng, { r: 1, sx: rng.range(0.16, 0.26), sy: 0.035, sz: rng.range(0.14, 0.22), lump: 0.1 });
+      const g = stoneGeo(rng, { r: 1, sx: rng.range(0.16, 0.26), sy: 0.035, sz: rng.range(0.14, 0.22), lump: 0.1, detail: 0 });
       F.add(mats.stone(), xf(g, [x, 0.012, z], [0, rng.next() * 3, 0]), { cast: false });
     }
   }
@@ -341,8 +342,19 @@ function scatterGround(ctx, B, mats, rng) {
   ];
   const density = ctx.quality?.density ?? 1;
   const grass = ctx.materials.foliage({ variant: 'grass', color: '#6a9a40', wind: { strength: 0.05, base: 0.02 } });
-  const leaves = ctx.materials.foliage({ variant: 'oak', color: '#b07a3e' });
   const vc = mats.vc();
+  // fallen oak leaves: a little lobed shape, painted (shares the vc draw call)
+  const leafShape = (() => {
+    const s = new THREE.Shape();
+    s.moveTo(0, 0);
+    s.quadraticCurveTo(-0.05, 0.02, -0.035, 0.05);
+    s.quadraticCurveTo(-0.05, 0.075, -0.02, 0.085);
+    s.quadraticCurveTo(-0.02, 0.11, 0, 0.115);
+    s.quadraticCurveTo(0.02, 0.11, 0.02, 0.085);
+    s.quadraticCurveTo(0.05, 0.075, 0.035, 0.05);
+    s.quadraticCurveTo(0.05, 0.02, 0, 0);
+    return new THREE.ShapeGeometry(s, 2);
+  })();
   const tuft = (x, y, z, h) => {
     for (let k = 0; k < 3; k++) {
       const g = new THREE.PlaneGeometry(h * 0.9, h, 1, 1);
@@ -360,12 +372,13 @@ function scatterGround(ctx, B, mats, rng) {
       const roll = rng.next();
       if (roll < 0.42) tuft(x, y, z, rng.range(0.12, 0.3));
       else if (roll < 0.58) B.add(mats.moss(), xf(mossGeo(rng, { r: rng.range(0.08, 0.2), h: rng.range(0.025, 0.05) }), [x, y, z]), { cast: false });
-      else if (roll < 0.7) B.add(mats.stone(), xf(stoneGeo(rng, { r: rng.range(0.03, 0.07), sy: 0.55 }), [x, y + 0.01, z], [0, rng.next() * 6, 0]), { cast: false });
+      else if (roll < 0.7) B.add(mats.stone(), xf(stoneGeo(rng, { r: rng.range(0.03, 0.07), sy: 0.55, detail: 0 }), [x, y + 0.01, z], [0, rng.next() * 6, 0]), { cast: false });
       else if (roll < 0.88) {
-        // a fallen leaf lying flat
-        const g = new THREE.PlaneGeometry(0.09, 0.11);
-        g.translate(0, 0.055, 0);
-        B.add(leaves, xf(g, [x, y + 0.008, z], [-Math.PI / 2 + rng.jitter(0.25), rng.next() * 6, 0, 'YXZ']), { cast: false });
+        // a fallen leaf (or two) lying flat
+        for (let k = rng.next() < 0.4 ? 2 : 1; k > 0; k--) {
+          const g = leafShape.clone();
+          B.add(vc, xf(g, [x + rng.jitter(0.06), y + 0.008, z + rng.jitter(0.06)], [-Math.PI / 2 + rng.jitter(0.25), rng.next() * 6, 0, 'YXZ'], rng.range(0.8, 1.2)), { color: rng.pick(['#b07a3e', '#9a6232', '#c99a4a', '#8a5a34']), cast: false });
+        }
       } else {
         // clover with a tiny white or yellow flower
         for (let k = 0; k < 3; k++) B.add(vc, xf(new THREE.CircleGeometry(0.022, 5), [x + rng.jitter(0.05), y + 0.02, z + rng.jitter(0.05)], [-Math.PI / 2 + rng.jitter(0.3), 0, 0]), { color: '#5e8a3a', cast: false });

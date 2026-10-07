@@ -13,11 +13,14 @@
 //
 // Everything static is merged per material into ONE batch for the whole
 // corner (a few dozen draw calls); hotspot pieces are small separate groups.
-// Hotspots: about-me (front door), contact (mailbox), living-room (interior),
-// moodboards (easel), small-space (model table), a secret cat.
+// Hotspots (all real, visible objects that bounce on hover): about-me (the
+// front-door leaf + Jonny's portrait in the window), contact (mailbox),
+// living-room (the sofa, picking the whole room), moodboards (easel),
+// small-space (model table), a secret cat.
+// Perf (high): ≈ 202k triangles, 43 draw calls, 12 shadow casters (moduleStats).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { Batch } from './cottage/kit.js';
+import { Batch, setCottageNight } from './cottage/kit.js';
 import { buildHome } from './cottage/home.js';
 import { buildAtelier } from './cottage/atelier.js';
 import { buildShed } from './cottage/shed.js';
@@ -52,6 +55,8 @@ export default async function build(ctx) {
   if (halos.length) root.add(glowQuads(halos, '#ffc477', { day: 0.03, night: 0.38 }));
 
   const updates = [];
+  setCottageNight(ctx.env?.night ?? 0);
+  updates.push(() => setCottageNight(ctx.env?.night ?? 0)); // warm gill bounce follows day/night
   for (const p of parts) {
     for (const [obj, opts] of p.hotspots) ctx.interactions?.add?.(obj, opts);
     for (const [pos, opts] of p.lights) ctx.lights?.addPoint?.(pos, opts);
