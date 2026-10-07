@@ -12,6 +12,8 @@
 //   grassTemplate(rng, opts)  a tussock of crossed, bent grass cards.
 //   cloverTemplate(rng)       a patch of trefoils (heart-shaped leaflets that
 //                             use the leaf texture's veins).
+//   bilberryTemplate / brambleTemplate  low bushlets: wiry twigs with small
+//        leaves & berry beads; arching thorny canes with leaflets & blackberries
 //   flowerTemplate(kind, rng) small communities of wildflowers — bluebells,
 //        forget-me-nots, foxgloves, daisies, buttercups, a mixed meadow —
 //        built from real little bells, petals, discs, stems and leaves.
@@ -517,13 +519,115 @@ function meadow(B, rng) {
   }
 }
 
+// ─── bushlets ────────────────────────────────────────────────────────────────
+/** A tiny berry (an 8-sided double pyramid — reads as a round bead at any distance). */
+function berry(B, c, r, color) {
+  const base = B.count;
+  B.vert(c.x, c.y + r, c.z, 0, 1, 0, 0.5, 0.5, color);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * TAU + 0.4;
+    B.vert(c.x + Math.cos(a) * r, c.y, c.z + Math.sin(a) * r, Math.cos(a), 0, Math.sin(a), 0.5, 0.5, color);
+  }
+  B.vert(c.x, c.y - r, c.z, 0, -1, 0, 0.5, 0.5, color.clone().multiplyScalar(0.6));
+  for (let i = 0; i < 4; i++) {
+    const a = base + 1 + i, b = base + 1 + ((i + 1) % 4);
+    B.tri(base, b, a);
+    B.tri(base + 5, a, b);
+  }
+}
+
+/**
+ * A bilberry / lingonberry bushlet: wiry green twigs, a cloud of small oval
+ * leaves (some blushing red), beads of berries. opts: { stems, lite, berry }
+ */
+export function bilberryTemplate(rng, { stems = [6, 8], lite = false, berryColor = '#2c3566' } = {}) {
+  const B = new GeoBuilder();
+  const n = rng.int(stems[0], stems[1]);
+  const twig = col('#6a7a3a');
+  const berryC = col(berryColor);
+  for (let s = 0; s < n; s++) {
+    const az = (s / n) * TAU + rng.jitter(0.5);
+    const base = new THREE.Vector3(Math.sin(az) * 0.04, 0, Math.cos(az) * 0.04);
+    const pts = archPoints(base, az, rng.range(0.32, 0.5), rng.range(1.05, 1.35), rng.range(0.3, 0.7), 2);
+    for (let i = 0; i < pts.length - 1; i++) stem(B, pts[i], pts[i + 1], 0.008 * (1 - i * 0.3), twig);
+    // leaves all along the twig (alternate, angled up and out)
+    const leaves = lite ? 3 : 5;
+    for (let k = 0; k < leaves; k++) {
+      const t = 0.3 + (k / leaves) * 0.7;
+      const idx = Math.min(pts.length - 2, Math.floor(t * (pts.length - 1)));
+      const p = pts[idx].clone().lerp(pts[idx + 1], t * (pts.length - 1) - idx);
+      const la = az + (k % 2 ? 1 : -1) * rng.range(0.8, 1.6);
+      const dir = new THREE.Vector3(Math.sin(la), rng.range(0.25, 0.7), Math.cos(la)).normalize();
+      const red = rng.chance(0.14);
+      const c = red ? col(rng.pick(['#a8483a', '#b86a3a'])) : col(rng.pick(['#5f9a3c', '#6aa040', '#548a38', '#78a848']));
+      blade(B, p, dir, new THREE.Vector3(Math.cos(la), 0, -Math.sin(la)), rng.range(0.05, 0.075), rng.range(0.022, 0.03), c, { droop: 0.2, segs: 2, flat: true });
+    }
+    // berries hang under the leaves
+    if (rng.chance(lite ? 0.45 : 0.7)) {
+      const p = pts[1].clone().lerp(pts[2], rng.range(0.2, 0.8));
+      p.y -= 0.02;
+      berry(B, p, rng.range(0.016, 0.022), berryC.clone().offsetHSL(0, 0, rng.jitter(0.04)));
+    }
+  }
+  return B.build();
+}
+
+/**
+ * A bramble: a few arching thorny canes, leaves of three to five leaflets,
+ * blackberries (red → black) and a white bloom or two. opts: { canes, lite }
+ */
+export function brambleTemplate(rng, { canes = [3, 4], lite = false } = {}) {
+  const B = new GeoBuilder();
+  const n = rng.int(canes[0], canes[1]);
+  const cane = col('#7a5a46');
+  for (let c = 0; c < n; c++) {
+    const az = (c / n) * TAU + rng.jitter(0.6);
+    const pts = archPoints(new THREE.Vector3(rng.jitter(0.05), 0, rng.jitter(0.05)), az, rng.range(0.55, 0.85), rng.range(1.0, 1.25), rng.range(1.6, 2.3), lite ? 3 : 4);
+    for (let i = 0; i < pts.length - 1; i++) stem(B, pts[i], pts[i + 1], 0.012 * (1 - i * 0.18), cane);
+    const nl = lite ? 2 : 3;
+    for (let k = 0; k < nl; k++) {
+      const t = 0.25 + (k / nl) * 0.65;
+      const idx = Math.min(pts.length - 2, Math.floor(t * (pts.length - 1)));
+      const p = pts[idx].clone().lerp(pts[idx + 1], t * (pts.length - 1) - idx);
+      const la = az + (k % 2 ? 1 : -1) * rng.range(0.9, 1.5);
+      const leafCol = col(rng.pick(['#3f7032', '#4a7a36', '#3a6630']));
+      const lf = lite ? 3 : rng.chance(0.5) ? 5 : 3;
+      for (let l = 0; l < lf; l++) {
+        const off = (l - (lf - 1) / 2) * 0.55;
+        const dir = new THREE.Vector3(Math.sin(la + off), 0.35 + rng.jitter(0.15), Math.cos(la + off)).normalize();
+        blade(B, p, dir, new THREE.Vector3(Math.cos(la + off), 0, -Math.sin(la + off)), rng.range(0.07, 0.1) * (l === (lf - 1) / 2 ? 1.15 : 0.9), 0.034, leafCol, { droop: 0.35, segs: 2, flat: true });
+      }
+    }
+    // fruit at the cane's tip: a cluster of berries ripening red → black, or a bloom
+    const tip = pts[pts.length - 1];
+    if (rng.chance(0.7)) {
+      for (let k = 0; k < (lite ? 2 : 3); k++) {
+        const ripe = rng.next();
+        const bc = ripe < 0.35 ? col('#b0302a') : ripe < 0.55 ? col('#6a1a2a') : col('#1e1420');
+        berry(B, tip.clone().add(new THREE.Vector3(rng.jitter(0.035), -0.01 - rng.range(0, 0.03), rng.jitter(0.035))), rng.range(0.018, 0.024), bc);
+      }
+    } else {
+      radialFlower(B, tip.clone().add(new THREE.Vector3(0, 0.01, 0)), new THREE.Vector3(rng.jitter(0.4), 1, rng.jitter(0.4)).normalize(), { petals: 5, len: 0.026, wid: 0.018, petal: col('#f4ecef'), disc: col('#e8d070'), discR: 0.008, tilt: 0.1 });
+    }
+  }
+  return B.build();
+}
+
 const KINDS = { bluebells, forgetMeNots, foxgloves, daisies, buttercups, meadow };
 export const FLOWER_KINDS = Object.keys(KINDS);
 
-/** A small community of one wildflower kind (see FLOWER_KINDS). */
-export function flowerTemplate(kind, rng) {
+/**
+ * A small community of one wildflower kind (see FLOWER_KINDS). lite (lower
+ * quality tiers): a smaller community — fewer heads and leaves.
+ */
+export function flowerTemplate(kind, rng, { lite = false } = {}) {
   const B = new GeoBuilder();
-  (KINDS[kind] ?? meadow)(B, rng);
+  if (lite && kind === 'daisies') daisies(B, rng, [3, 5]);
+  else if (lite && kind === 'buttercups') buttercups(B, rng, [2, 4], [2, 3]);
+  else if (lite && kind === 'meadow') {
+    daisies(B, rng, [2, 4]);
+    buttercups(B, rng, [1, 2], [1, 2]);
+  } else (KINDS[kind] ?? meadow)(B, rng);
   return B.build();
 }
 

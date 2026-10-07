@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { TAU, TRUNK_TOP, FORK_Y, polar, trunkRadius, trunkMoss, baseRadius, HOLLOWS, DEG } from './shape.js';
+import { smoothstep, clamp } from '../../core/rng.js';
 import { weldSeamNormals } from './tubes.js';
 
 /** Row heights: dense near the ground (door niche, flare), coarser up the trunk. */
@@ -63,41 +64,153 @@ function revolveGrid(ys, cols, radiusFn, { keepTri = null, uvScale = [11, 0.42] 
   return g;
 }
 
-/** The bark surface of the trunk. */
+/**
+ * The bark surface of the trunk. Carries a per-vertex `oak` attribute
+ * (x: moss boost for the bark shader — moss creeping into the crevices where
+ * the moss shell thins out, y: cavity — how deep the vertex lies in a furrow
+ * or flute, for the painterly crevice darkening) and `userData.grid`
+ * ({ ys, cols, moss, cav }) for the moss shell.
+ */
 export function buildTrunkGeometry({ cols = 176 } = {}) {
   const ys = trunkRows();
-  return revolveGrid(ys, cols, (a, y, i) => (i === ys.length - 1 ? 0 : trunkRadius(a, y)));
+  const rows = ys.length;
+  const c1 = cols + 1;
+  const rad = new Float32Array(rows * c1);
+  const g = revolveGrid(ys, cols, (a, y, i, j) => {
+    const r = i === rows - 1 ? 0 : trunkRadius(a, y);
+    rad[i * c1 + j] = r;
+    return r;
+  });
+  // cavity: how far the bark lies below its local average (separable box blur
+  // over ±3 columns and ±2 rows) — furrows and the valleys between the flutes
+  const tmp = new Float32Array(rows * c1);
+  const blur = new Float32Array(rows * c1);
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      let sum = 0;
+      for (let d = -3; d <= 3; d++) sum += rad[i * c1 + ((j + d + cols) % cols)];
+      tmp[i * c1 + j] = sum / 7;
+    }
+    tmp[i * c1 + cols] = tmp[i * c1];
+  }
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j <= cols; j++) {
+      let sum = 0, n = 0;
+      for (let d = -2; d <= 2; d++) {
+        const ii = i + d;
+        if (ii < 0 || ii >= rows - 1) continue;
+        sum += tmp[ii * c1 + j];
+        n++;
+      }
+      blur[i * c1 + j] = n ? sum / n : rad[i * c1 + j];
+    }
+  }
+  const moss = new Float32Array(rows * c1);
+  const cav = new Float32Array(rows * c1);
+  const oak = new Float32Array(rows * c1 * 2);
+  for (let i = 0; i < rows; i++) {
+    const y = ys[i];
+    for (let j = 0; j <= cols; j++) {
+      const k = i * c1 + j;
+      const a = ((j % cols) / cols) * TAU;
+      const m = i === rows - 1 ? -1 : trunkMoss(a, y);
+      moss[k] = m;
+      const c = i === rows - 1 ? 0 : smoothstep(0.0, 0.16, blur[k] - rad[k]);
+      cav[k] = c;
+      // the bark shader's moss creeps a little beyond the shell (into the
+      // crevices first: its moss field already favours the texture's valleys)
+      // and paints the low, shady bark a little mossier everywhere
+      const shade = (0.5 - 0.5 * Math.cos(a)) * (1 - smoothstep(1.5, 6.5, y)); // back & low
+      oak[k * 2] = clamp(smoothstep(-0.35, 0.25, m) * 0.5 + c * 0.12 + shade * 0.12, 0, 0.62);
+      oak[k * 2 + 1] = c;
+    }
+  }
+  g.setAttribute('oak', new THREE.BufferAttribute(oak, 2));
+  g.userData.grid = { ys, cols, moss, cav };
+  return g;
 }
 
 /**
- * Moss shell: the same surface pushed out where trunkMoss() > 0. Where there
- * is no moss the shell dips under the bark, so its edge is the (irregular)
- * line where it pierces the bark — no z-fighting, no hard rim.
+ * Moss shell over the trunk's foot, its shady back and the fork, built on the
+ * bark grid itself (call before the bark geometry is merged): every vertex is
+ * the bark vertex pushed out along the BARK's own normal by a thin, clamped
+ * amount (thicker only where it fills a furrow), so the moss hugs the flutes
+ * instead of bridging them as flat plates. A one-quad apron around the mossy
+ * quads is forced back under the bark, so the shell always dips under before
+ * it ends; the visible edge is a ragged, per-vertex alpha (`mossA`, dithered
+ * alpha test in the moss material — see mossShellMaterial in oak.js).
  */
-export function buildTrunkMossGeometry({ cols = 176 } = {}) {
-  const ys = trunkRows().filter((y) => y > -0.4 && (y < 9.5 || (y > FORK_Y - 1.2 && y < TRUNK_TOP - 0.5)));
+export function buildTrunkMossGeometry(trunkGeo) {
+  const { ys, cols, moss, cav } = trunkGeo.userData.grid;
   const c1 = cols + 1;
-  const moss = new Float32Array(ys.length * c1);
-  const g = revolveGrid(
-    ys,
-    cols,
-    (a, y, i, j) => {
-      const m = trunkMoss(a, y);
-      moss[i * c1 + j] = m;
-      const r = trunkRadius(a, y);
-      // continuous thickness: the shell crosses the bark along a smooth, ragged line
-      return r + Math.max(m, -0.5) * 0.17;
-    },
-    {
-      keepTri: (i, j) => {
-        // skip quads that are completely under the bark; also never bridge the gap between the two bands
-        if (ys[i + 1] - ys[i] > 1) return false;
-        const k = i * c1 + j;
-        return moss[k] > -0.05 || moss[k + 1] > -0.05 || moss[k + c1] > -0.05 || moss[k + c1 + 1] > -0.05;
-      },
-      uvScale: [16, 0.7],
+  const rows = ys.length;
+  const P = trunkGeo.attributes.position.array;
+  const N = trunkGeo.attributes.normal.array;
+  const inBand = (y) => y > -0.4 && (y < 9.5 || (y > FORK_Y - 1.2 && y < TRUNK_TOP - 0.5));
+  const LIVE = 0.02; // a quad with a vertex above this carries visible moss
+  const quadLive = (i, j) => {
+    const k = i * c1 + j;
+    return moss[k] > LIVE || moss[k + 1] > LIVE || moss[k + c1] > LIVE || moss[k + c1 + 1] > LIVE;
+  };
+  const qRows = rows - 1;
+  const keep = new Uint8Array(qRows * cols); // 1 = mossy quad, 2 = apron
+  for (let i = 0; i < qRows; i++) {
+    if (!inBand(ys[i]) || !inBand(ys[i + 1])) continue;
+    for (let j = 0; j < cols; j++) if (quadLive(i, j)) keep[i * cols + j] = 1;
+  }
+  for (let i = 0; i < qRows; i++) {
+    if (!inBand(ys[i]) || !inBand(ys[i + 1])) continue;
+    for (let j = 0; j < cols; j++) {
+      if (keep[i * cols + j]) continue;
+      let near = false;
+      for (let di = -1; di <= 1 && !near; di++) {
+        const ii = i + di;
+        if (ii < 0 || ii >= qRows) continue;
+        for (let dj = -1; dj <= 1; dj++) if (keep[ii * cols + ((j + dj + cols) % cols)] === 1) near = true;
+      }
+      if (near) keep[i * cols + j] = 2;
     }
-  );
+  }
+  // effective moss per vertex: every vertex of an apron quad is pushed under
+  const mEff = Float32Array.from(moss);
+  for (let i = 0; i < qRows; i++) {
+    for (let j = 0; j < cols; j++) {
+      if (keep[i * cols + j] !== 2) continue;
+      const k = i * c1 + j;
+      for (const q of [k, k + 1, k + c1, k + c1 + 1]) mEff[q] = Math.min(mEff[q], -0.3);
+    }
+  }
+  // the seam column duplicates column 0
+  for (let i = 0; i < rows; i++) mEff[i * c1 + cols] = mEff[i * c1] = Math.min(mEff[i * c1], mEff[i * c1 + cols]);
+  const pos = new Float32Array(rows * c1 * 3);
+  const alpha = new Float32Array(rows * c1);
+  for (let k = 0; k < rows * c1; k++) {
+    const m = mEff[k];
+    // thin velvet (≤ ~0.08) that only swells where it fills a furrow; below
+    // zero it sinks under the bark
+    let off;
+    if (m > 0) off = Math.min(0.012 + 0.07 * smoothstep(0, 0.7, m), 0.03 + cav[k] * 0.09);
+    else off = Math.max(m, -0.6) * 0.14;
+    pos[k * 3] = P[k * 3] + N[k * 3] * off;
+    pos[k * 3 + 1] = P[k * 3 + 1] + N[k * 3 + 1] * off;
+    pos[k * 3 + 2] = P[k * 3 + 2] + N[k * 3 + 2] * off;
+    alpha[k] = smoothstep(0.0, 0.32, m);
+  }
+  const index = [];
+  for (let i = 0; i < qRows; i++) {
+    for (let j = 0; j < cols; j++) {
+      if (!keep[i * cols + j]) continue;
+      const a = i * c1 + j, b = (i + 1) * c1 + j;
+      index.push(a, a + 1, b, a + 1, b + 1, b);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  // the moss lies on the bark: shade it with the bark's normals
+  g.setAttribute('normal', new THREE.BufferAttribute(Float32Array.from(N), 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(Float32Array.from(trunkGeo.attributes.uv.array), 2));
+  g.setAttribute('mossA', new THREE.BufferAttribute(alpha, 1));
+  g.setIndex(index);
   return compact(g);
 }
 

@@ -361,6 +361,43 @@ export const LIMBS = [
     ],
     branches: 5,
   },
+  // Two high limbs (appended, so the limbs above keep their branches) that
+  // climb out of the fork to the left and back-right: the crown rises past
+  // the top of the frame in the glen-wide / overview shots and merges into
+  // the giants' high canopy — the king of the forest, not a mid-sized tree.
+  // They sprout above the fork, so they add no tendon to the bole.
+  {
+    id: 'left-high',
+    a0: -80,
+    noTendon: true,
+    pts: [
+      [0.8, -80, 16.4, 1.22],
+      [2.6, -77, 20.0, 1.08],
+      [4.6, -86, 23.4, 0.92, 0.24],
+      [6.8, -80, 26.8, 0.76],
+      [9.0, -88, 30.0, 0.62, 0.26],
+      [11.2, -82, 33.0, 0.48],
+      [13.0, -90, 35.6, 0.36, 0.2],
+      [14.4, -85, 37.8, 0.26],
+    ],
+    branches: 6,
+  },
+  {
+    id: 'back-high',
+    a0: 118,
+    noTendon: true,
+    pts: [
+      [0.8, 118, 16.6, 1.2],
+      [2.6, 114, 20.2, 1.06],
+      [4.6, 106, 23.6, 0.9, 0.24],
+      [6.8, 112, 26.8, 0.74],
+      [9.0, 102, 29.8, 0.6, 0.26],
+      [11.4, 108, 32.6, 0.46],
+      [13.6, 99, 35.2, 0.34, 0.2],
+      [15.4, 104, 37.4, 0.26],
+    ],
+    branches: 6,
+  },
 ];
 
 // ─── Sculpt features on the trunk ────────────────────────────────────────────
@@ -480,6 +517,7 @@ export function trunkSample(a, y) {
   // the limbs, not a column with branches stuck on); broad and strong where
   // the bark is free, gentler on the loft side
   for (let i = 0; i < LIMBS.length; i++) {
+    if (LIMBS[i].noTendon) continue;
     const ac = LIMBS[i].a0 * DEG + TWIST * (yc - FORK_Y);
     const d = angDiff(a, ac) * R0;
     const amp = (0.16 + 0.62 * free) * smoothstep(9, 16.5, yc) * (LIMBS[i].pts[0][3] / 1.45);

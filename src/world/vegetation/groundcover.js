@@ -16,6 +16,9 @@ const noise = createNoise2D(31337);
 export const BARK_MEAN = '#6a5845';
 /** Velvety moss tint for vertex-coloured bark & rock (linear-ish sRGB hex). */
 export const MOSS_TINT = '#55702a';
+/** Fallen logs: weathered bark and the lighter cushion moss on their backs. */
+const LOG_BARK = new THREE.Color('#7a5c3c');
+const LOG_MOSS = new THREE.Color('#6f8236');
 const UP = new THREE.Vector3(0, 1, 0);
 const _p = new THREE.Vector3();
 const _n = new THREE.Vector3();
@@ -192,15 +195,18 @@ export function fallenLog(B, rng, x, z, len, r, yaw) {
   const pts = groundPath(x - Math.sin(yaw) * len / 2, z - Math.cos(yaw) * len / 2, yaw, len, steps, (t) => r * 0.62 + Math.sin(t * Math.PI) * r * 0.05, rng.jitter(0.25));
   const radii = pts.map((_, i) => r * (1 - 0.18 * (i / steps)) * (1 + 0.06 * Math.sin(i * 1.7)));
   const s = rng.range(0, 10);
-  const bark = new THREE.Color(BARK_MEAN).multiplyScalar(0.85);
-  const moss = new THREE.Color(MOSS_TINT);
+  // (a weathered, sun-bleached grey-brown — darker bark multiplied by the moss
+  //  band rendered the small logs near black from the overview)
+  const bark = new THREE.Color(BARK_MEAN).lerp(LOG_BARK, 0.4);
+  const moss = LOG_MOSS;
   const mc = new THREE.Color();
   // moss blankets the upper side, creeping down in tongues; the broken ends stay bare
   const logMoss = (i, j, nrm, p) => {
     const tongue = 0.25 * noise(p.x * 1.7 + s, p.z * 1.7) + 0.15 * noise(p.x * 5, p.z * 5 + p.y * 3);
     const end = i === 0 || i === steps ? 0.35 : 1;
     const m = THREE.MathUtils.smoothstep(nrm.y + tongue, -0.15, 0.35) * end;
-    return mc.copy(bark).lerp(moss, m * 0.92);
+    // (the very crown of the log a touch lighter: it catches the key light)
+    return mc.copy(bark).lerp(moss, m * 0.88).multiplyScalar(1 + 0.12 * Math.max(0, nrm.y));
   };
   tube(B, pts, radii, 14, {
     vcol: logMoss,
@@ -219,7 +225,8 @@ export function fallenLog(B, rng, x, z, len, r, yaw) {
     const side = rng.chance(0.5) ? 1 : -1;
     const dir = new THREE.Vector3(Math.cos(yaw) * side, 0.8, -Math.sin(yaw) * side).normalize();
     const l = r * rng.range(1.5, 2.6);
-    tube(B, [p0, p0.clone().addScaledVector(dir, l * 0.5), p0.clone().addScaledVector(dir, l)], [r * 0.32, r * 0.26, r * 0.18], 7, { capEnd: true });
+    const stubCol = new THREE.Color(BARK_MEAN).lerp(LOG_BARK, 0.4);
+    tube(B, [p0, p0.clone().addScaledVector(dir, l * 0.5), p0.clone().addScaledVector(dir, l)], [r * 0.32, r * 0.22, r * 0.08], 7, { capEnd: true, color: () => stubCol });
   }
   const brackets = [];
   const nb = rng.int(1, 4);
@@ -236,12 +243,25 @@ export function fallenLog(B, rng, x, z, len, r, yaw) {
 const SMALL_BARK = new THREE.Color(BARK_MEAN).multiplyScalar(0.8);
 const smallBark = () => SMALL_BARK;
 
-/** A small exposed root snaking out of the soil (bark material). */
-export function smallRoot(B, rng, x, z, yaw, len, r) {
+/**
+ * A small exposed root snaking out of the soil (bark material). opts.mossy:
+ * moss on its upper side (the root runs out of the giants' bases); opts.seg.
+ */
+export function smallRoot(B, rng, x, z, yaw, len, r, { mossy = false, seg = 6 } = {}) {
   const steps = 7;
   const pts = groundPath(x, z, yaw, len, steps, (t) => r * (0.55 - t * 1.0) + Math.sin(t * Math.PI * 2) * r * 0.25, rng.jitter(0.8));
   const radii = pts.map((_, i) => r * (1 - 0.75 * (i / steps)));
-  tube(B, pts, radii, 6, { color: smallBark });
+  if (!mossy) {
+    tube(B, pts, radii, seg, { color: smallBark });
+    return pts;
+  }
+  const bark = new THREE.Color(BARK_MEAN).lerp(LOG_BARK, 0.3);
+  const mc = new THREE.Color();
+  const s = rng.range(0, 10);
+  tube(B, pts, radii, seg, {
+    vcol: (i, j, nrm, p) => mc.copy(bark).lerp(LOG_MOSS, THREE.MathUtils.smoothstep(nrm.y + 0.3 * noise(p.x * 2 + s, p.z * 2) + 0.2 * (1 - i / steps), -0.1, 0.5) * 0.9),
+  });
+  return pts;
 }
 
 /** A thin twig lying on the ground, with a fork. */

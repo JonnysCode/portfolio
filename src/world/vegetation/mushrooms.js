@@ -25,6 +25,9 @@
 //                               and orange amanitas, parasols): bulbous volva,
 //                               skirt ring, dome / cone / flat / upturned (old)
 //                               cap, gills, raised warts (colour per species)
+// kit.parasol(x, y, z, opts)    parasol mushroom at three ages (drumstick bud,
+//                               half-open bell, open parasol with umbo, scales,
+//                               drooping rim, snakeskin stem and a loose ring)
 // kit.bolete(x, y, z, opts)     fat porcini: bun cap, pale pore underside
 // kit.bonnets(x, y, z, opts)    a tuft of slender brown (or glowing) bonnets
 // kit.bracket(p, n, opts)       shelf fungus on a log or trunk
@@ -380,6 +383,185 @@ export class MushroomKit {
       wart(wartB, p, nn, size, wartCol.clone().multiplyScalar(rng.range(0.88, 1.02)), rng, wartSeg);
     }
     return { top, capR: R, capTop: top.y + capH };
+  }
+
+  /**
+   * A parasol mushroom (Macrolepiota) at one of three ages — not a pale disc
+   * on a pole: opts.age ≥ 0.75 the open parasol (a wide, shallow cap with a
+   * dark central umbo, concentric tan-brown scales, a drooping ragged rim over
+   * a shadowed gill line), 0.35–0.75 the half-open bell, < 0.35 the young
+   * "drumstick" (a closed brown egg on its stem). The stem is tall and
+   * slender, snakeskin-banded, bulbous at the foot, leaning and gently curved,
+   * with a loose, thick double ring that has slid down a little and sits
+   * askew. opts: { height, capR, age, lean, leanAz, curve, lod }
+   */
+  parasol(x, y, z, opts = {}) {
+    const rng = this.rng;
+    const H = opts.height ?? 1;
+    const age = opts.age ?? 1;
+    const stage = age >= 0.75 ? 'open' : age >= 0.35 ? 'bell' : 'bud';
+    const R = (opts.capR ?? H * 0.5) * (stage === 'open' ? 1 : stage === 'bell' ? 0.62 : 0.34);
+    const lod = THREE.MathUtils.clamp(opts.lod ?? 1, 0.4, 1);
+    const seg = Math.max(7, Math.round((H > 1.2 ? 26 : H > 0.6 ? 18 : H > 0.3 ? 12 : 8) * lod));
+    const sseg = Math.max(5, Math.round(seg * 0.5));
+    const rings = Math.max(3, Math.round((H > 1.2 ? 9 : H > 0.5 ? 6 : 4) * (0.6 + 0.4 * lod)));
+    const leanAz = opts.leanAz ?? rng.range(0, TAU);
+    const lean = opts.lean ?? rng.range(0.05, 0.16);
+    const curve = opts.curve ?? rng.range(0.04, 0.09);
+    const leanDir = new THREE.Vector3(Math.sin(leanAz), 0, Math.cos(leanAz));
+    const sideDir = new THREE.Vector3(Math.cos(leanAz), 0, -Math.sin(leanAz));
+    const sink = H * 0.05;
+    // (leans out, then the top turns back up towards the light: a gentle S)
+    const axisAt = (t) => new THREE.Vector3(x, y - sink + (H + sink) * t, z)
+      .addScaledVector(leanDir, Math.sin(lean) * H * t * t - Math.sin(t * Math.PI) * H * curve * 0.5)
+      .addScaledVector(sideDir, Math.sin(t * Math.PI * 1.3) * H * curve * 0.35);
+    const rs = Math.max(0.006, H * (stage === 'bud' ? 0.05 : 0.042));
+    const phase = rng.range(0, TAU);
+    const cream = C('#eee2c6');
+    const band = C('#8c6a48');
+    // ── stem: bulbous foot, slender shaft, snakeskin chevrons ──
+    {
+      const B = this.stems;
+      const base = B.count;
+      const pts = [];
+      for (let k = 0; k <= rings; k++) pts.push(axisAt((k / rings) * 0.98));
+      for (let k = 0; k <= rings; k++) {
+        const t = k / rings;
+        const p = pts[k];
+        const F = frameFor(p, pts[Math.min(rings, k + 1)].clone().sub(pts[Math.max(0, k - 1)]));
+        const bulb = 1 + 1.1 * Math.exp(-Math.pow((t - 0.03) / 0.08, 2));
+        const r = rs * bulb * (1 - 0.18 * t);
+        for (let i = 0; i <= sseg; i++) {
+          const th = (i / sseg) * TAU;
+          // zig-zag brown bands, finer and fainter towards the cap
+          const zig = Math.sin(t * 15 + Math.abs(Math.sin(th * 1.5 + phase)) * 2.6 + phase);
+          const b = THREE.MathUtils.smoothstep(zig, 0.2, 0.75) * (1 - THREE.MathUtils.smoothstep(t, 0.72, 0.9)) * (t > 0.08 ? 1 : 0.3);
+          const c = cream.clone().lerp(band, b * 0.75);
+          if (t < 0.08) c.lerp(C('#a08868'), 0.35);
+          const cx = Math.cos(th), sx = Math.sin(th);
+          _p.copy(p).addScaledVector(F.x, cx * r).addScaledVector(F.z, sx * r);
+          _n.set(0, 0, 0).addScaledVector(F.x, cx).addScaledVector(F.z, sx).normalize();
+          B.vert(_p.x, _p.y, _p.z, _n.x, _n.y, _n.z, i / sseg, t * Math.max(1, H * 0.8), c);
+        }
+      }
+      const row = sseg + 1;
+      for (let k = 0; k < rings; k++) for (let i = 0; i < sseg; i++) {
+        const a = base + k * row + i;
+        B.quad(a, a + row, a + row + 1, a + 1);
+      }
+    }
+    // ── the loose double ring, slid down the stem and sitting askew ──
+    if (stage !== 'bud' && H > 0.25) {
+      const t0 = stage === 'open' ? rng.range(0.6, 0.72) : 0.82;
+      const p = axisAt(t0);
+      const ax = axisAt(t0 + 0.04).sub(axisAt(t0 - 0.04)).normalize();
+      ax.x += rng.jitter(0.35);
+      ax.z += rng.jitter(0.35);
+      ax.normalize();
+      const F = frameFor(p, ax);
+      const h = H * 0.022, r1 = rs * 1.15, r2 = rs * 2.1;
+      lathe(this.stems, F, [
+        { r: r1, y: -h, v: 0 },
+        { r: r2, y: -h * 0.6, v: 0.3 },
+        { r: r2 * 1.04, y: h * 0.5, v: 0.7 },
+        { r: r1 * 1.1, y: h, v: 1 },
+      ], sseg, { wob: (th) => 1 + 0.06 * Math.sin(th * 5 + phase), color: (k) => (k === 1 ? C('#7a5c40') : C('#e8dcc0')) });
+    }
+    // ── cap ──
+    const top = axisAt(1);
+    const capAxis = axisAt(1).sub(axisAt(0.9)).normalize().lerp(UP, 0.55).normalize();
+    capAxis.x += rng.jitter(0.06);
+    capAxis.z += rng.jitter(0.06);
+    capAxis.normalize();
+    const F = frameFor(top, capAxis);
+    let prof;
+    if (stage === 'open') prof = [
+      // drooping, slightly ragged rim → shallow shoulder → a raised umbo
+      { r: R * 0.95, y: -R * 0.13, v: 0 },
+      { r: R * 1.0, y: -R * 0.05, v: 0.06 },
+      { r: R * 0.88, y: R * 0.06, v: 0.2 },
+      { r: R * 0.66, y: R * 0.12, v: 0.4 },
+      { r: R * 0.42, y: R * 0.16, v: 0.58 },
+      { r: R * 0.22, y: R * 0.2, v: 0.75 },
+      { r: R * 0.14, y: R * 0.27, v: 0.88 },
+      { r: 0, y: R * 0.3, v: 1 },
+    ];
+    else if (stage === 'bell') prof = [
+      { r: R * 0.82, y: -R * 0.12, v: 0 },
+      { r: R * 0.96, y: R * 0.12, v: 0.15 },
+      { r: R * 0.85, y: R * 0.45, v: 0.4 },
+      { r: R * 0.55, y: R * 0.7, v: 0.65 },
+      { r: R * 0.22, y: R * 0.84, v: 0.88 },
+      { r: 0, y: R * 0.88, v: 1 },
+    ];
+    else prof = [
+      // the drumstick: a closed brown egg, its rim tucked against the stem
+      { r: rs * 1.3, y: -R * 0.5, v: 0 },
+      { r: R * 0.72, y: -R * 0.2, v: 0.15 },
+      { r: R * 0.86, y: R * 0.25, v: 0.35 },
+      { r: R * 0.72, y: R * 0.72, v: 0.6 },
+      { r: R * 0.4, y: R * 1.02, v: 0.85 },
+      { r: 0, y: R * 1.12, v: 1 },
+    ];
+    if (lod < 0.7 && prof.length > 6) prof.splice(4, 1);
+    const n = prof.length;
+    const umbo = C('#6e4a2c');
+    const tan = C(opts.color ?? rng.pick(['#e4d2ae', '#dcc8a0', '#e8d8b8']));
+    const scale = C('#9a7350');
+    const wobPhase = rng.range(0, TAU);
+    // (a torn, wavy rim; the cap a little lopsided)
+    const capWob = (th, k) => 1 + (k < 2 ? 0.045 * Math.sin(th * 3 + wobPhase) + 0.03 * Math.abs(Math.sin(th * 9 + wobPhase * 2)) : 0.02 * Math.sin(th * 3 + wobPhase));
+    lathe(this.caps, F, prof, seg, {
+      wob: capWob,
+      color: (k, th) => {
+        const t = k / (n - 1); // 0 rim → 1 apex
+        if (stage === 'bud') return umbo.clone().lerp(scale, 0.3 * Math.abs(Math.sin(th * 4 + k)));
+        // the brown skin cracks into concentric rings of scales on the cream flesh
+        const crack = Math.abs(Math.sin(th * (5 + k * 2) + k * 1.9 + phase));
+        const sc = THREE.MathUtils.smoothstep(crack, 0.35, 0.8) * (0.35 + 0.65 * t);
+        return tan.clone().lerp(scale, sc * 0.55).lerp(umbo, THREE.MathUtils.smoothstep(t, 0.62, 0.9));
+      },
+    });
+    // gills: cream lamellae, a deep shadow line just inside the drooping rim
+    if (stage !== 'bud') {
+      const gp = stage === 'open'
+        ? [
+          { r: R * 0.95, y: -R * 0.13, v: 0 },
+          { r: R * 0.88, y: -R * 0.09, v: 0.12 },
+          { r: R * 0.5, y: R * 0.02, v: 0.55 },
+          { r: rs * 1.6, y: R * 0.04, v: 0.97 },
+          { r: rs * 0.9, y: -H * 0.04, v: 1 },
+        ]
+        : [
+          { r: R * 0.82, y: -R * 0.12, v: 0 },
+          { r: R * 0.5, y: R * 0.2, v: 0.5 },
+          { r: rs * 1.3, y: R * 0.3, v: 0.97 },
+          { r: rs * 0.9, y: -H * 0.04, v: 1 },
+        ];
+      const gill = C('#f4ecd8').multiplyScalar(1.5);
+      const shade = C('#6a5a44');
+      lathe(this.gills, F, gp, seg, { flip: true, disc: R, wob: (th, k) => (k === 0 ? capWob(th, 0) : 1), color: (k) => (k <= 1 && stage === 'open' ? shade : gill) });
+    }
+    // raised scale flakes in concentric rings (fewer on small ones)
+    if (stage !== 'bud' && lod > 0.45) {
+      const nW = Math.round((H > 1 ? 60 : H > 0.4 ? 22 : 8) * (0.5 + 0.5 * lod));
+      for (let i = 0; i < nW; i++) {
+        const t = 0.12 + Math.pow(rng.next(), 0.8) * 0.62; // rim … umbo edge
+        const th = rng.range(0, TAU);
+        const kf = t * (n - 1);
+        const k0 = Math.min(n - 2, Math.floor(kf)), k1 = k0 + 1;
+        const f = kf - k0;
+        const rr = (prof[k0].r * (1 - f) + prof[k1].r * f) * capWob(th, k0);
+        const yy = prof[k0].y * (1 - f) + prof[k1].y * f;
+        const c = Math.cos(th), sn = Math.sin(th);
+        const pp = F.o.clone().addScaledVector(F.x, c * rr).addScaledVector(F.z, sn * rr).addScaledVector(F.y, yy);
+        const dr = prof[k1].r - prof[k0].r, dy = prof[k1].y - prof[k0].y;
+        const l = Math.hypot(dr, dy) || 1;
+        const nn = new THREE.Vector3().addScaledVector(F.x, c * (dy / l)).addScaledVector(F.z, sn * (dy / l)).addScaledVector(F.y, -dr / l).normalize();
+        wart(this.warts, pp, nn, R * rng.range(0.035, 0.06) * (1.1 - t * 0.4), C('#8a6644').multiplyScalar(rng.range(0.85, 1.1)), rng, 4);
+      }
+    }
+    return { top, capR: R, capTop: top.y + (prof[n - 1].y) };
   }
 
   /** A fat porcini/bolete. opts: { height, capR, color, lean, leanAz } */

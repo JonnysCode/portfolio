@@ -22,7 +22,7 @@
 //   ctx.interactions.remove(h)          ctx.interactions.activate(h)
 //   ctx.interactions.hotspots / hovered / focused / nearest (= focused)
 //   ctx.interactions.forSpot(spotId)    ctx.interactions.findByEntry(entryId)
-//   ctx.interactions.screenPosition(h, out?) → { x, y, visible }
+//   ctx.interactions.screenPosition(h, out?) → { x, y, z, visible }  (z > 1: behind the camera)
 //   ctx.interactions.setFocused(h | null)   (keyboard focus ring + tooltip)
 //   ctx.interactions.setOpen(h | null) / markVisited(entryId) / isVisited(entryId)   (UI bookkeeping)
 //   ctx.interactions.progress() → { visited, total }   ctx.interactions.onVisit(fn(h, progress))
@@ -55,6 +55,8 @@ import { triGrid } from './triGrid.js';
  */
 const MARKER_TWEAKS = {
   'workbench-wip': { dx: 0.7, dz: 0.35, y: 1.25 },
+  // the two villagers sit at the table's back: the sparkle (and its leaf once read) floats over the free front end
+  'dining-table': { dx: -0.55, dz: 0.75, y: 1.05 },
 };
 
 const VISITED_KEY = 'woodland:visited';
@@ -85,6 +87,14 @@ export function createInteractions(ctx) {
   let lastPop = -1;
   let lastPick = -99;
   let canvasRect = canvas.getBoundingClientRect();
+  // the canvas box changes only with the viewport: measured on resize / scroll,
+  // not every frame (a read after the UI's style writes would force a layout)
+  let rectDirty = false;
+  const remeasure = () => (rectDirty = true);
+  window.addEventListener('resize', remeasure);
+  window.addEventListener('scroll', remeasure, { capture: true, passive: true });
+  window.visualViewport?.addEventListener?.('resize', remeasure);
+  if (window.ResizeObserver) new ResizeObserver(remeasure).observe(canvas);
   // markers pop in one by one after the camera lands
   let settledAt = 0;
   let wasMoving = false;
@@ -515,7 +525,10 @@ export function createInteractions(ctx) {
       warmed = true;
       idle(warmGrids);
     }
-    canvasRect = canvas.getBoundingClientRect(); // once per frame (no layout thrash in the UI loop)
+    if (rectDirty) {
+      rectDirty = false;
+      canvasRect = canvas.getBoundingClientRect();
+    }
     const ui = ctx.ui;
     const panelOpen = !!ui?.isPanelOpen;
     if (!panelOpen) openHotspot = null;
@@ -581,8 +594,9 @@ export function createInteractions(ctx) {
       else if (moving) want = 0;
       else {
         if (h.area && h.area === spot && (h.entryId || !h.onActivate)) {
-          want = panelOpen ? 0.4 : 1;
-          targetSize = isVisited ? 0.66 : 1;
+          // (a page already read: a small, quiet leaf — "been here", not a stray leaf over someone's face)
+          want = panelOpen ? 0.4 : isVisited ? 0.6 : 1;
+          targetSize = isVisited ? 0.45 : 1;
         } else if (spot === 'glen' && isFeatured(h) && !featuredSeen.has(h.entryId)) {
           // the overview's featured pieces: bigger than a firefly, with a slow halo
           featuredSeen.add(h.entryId);
@@ -687,7 +701,7 @@ export function createInteractions(ctx) {
     get steering() {
       return false;
     },
-    /** The canvas' client rect (measured once per frame): every projection uses this box. */
+    /** The canvas' client rect (re-measured when the viewport changes): every projection uses this box. */
     get canvasRect() {
       return canvasRect;
     },
@@ -805,6 +819,7 @@ export function createInteractions(ctx) {
       const r = canvasRect;
       out.x = r.left + ((v.x + 1) / 2) * r.width;
       out.y = r.top + ((1 - v.y) / 2) * r.height;
+      out.z = v.z;
       out.visible = v.z < 1 && Math.abs(v.x) < 1.02 && Math.abs(v.y) < 1.02;
       return out;
     },

@@ -22,12 +22,19 @@
 //                          straight behind: back light makes leaf cards glow
 //                          (translucency) and the canopy would read as day.
 //   beam SpotLight         a canopy-gap sunbeam: warm gold from the front-left,
-//                          pooling on the Schreinerei door, the porch bench and
-//                          the deck (the sun itself is behind the oak there).
-//                          Broken up by a dappled leaf cookie (no shadow map of
-//                          its own — cheap), matched by a volumetric shaft
-//                          (atmosphere). By night the same light becomes a
-//                          silver moonbeam on the fairy ring.
+//                          a small, irregular, dappled pool in front of the
+//                          Schreinerei door (the sun itself is behind the oak
+//                          there). A high-contrast leaf cookie with ragged
+//                          edges and many leaf holes (no shadow map of its own
+//                          — cheap) keeps it reading as sunlight through leaves,
+//                          not a spotlight oval, and the path stones keep their
+//                          value; matched by a volumetric shaft (atmosphere).
+//                          By night the same light becomes a silver moonbeam on
+//                          the fairy ring.
+//   canopy cookie          every lit material's key light is dappled by a
+//                          world-space leaf-gap pattern (env/canopy.js — a
+//                          global light-chunk patch): sun flecks on lawns,
+//                          paths, roofs and trunks, shimmering as leaves sway.
 //   scene.environment      a painted "under the canopy" PMREM (env/envmap.js) so
 //                          PBR surfaces get soft ambient and gentle
 //                          reflections; swapped for a night version at dusk.
@@ -44,18 +51,20 @@
 // (The returned light object is always valid during the build; afterwards
 // addPoint returns null once the budget is used up.)
 //
-// ctx.lights = { sun, hemi, rim, beam, keyDir, shadowExtent, shadowCenter, addPoint(position, opts), allocate(), points }
+// ctx.lights = { sun, hemi, rim, beam, keyDir, shadowExtent, shadowCenter, canopy, addPoint(position, opts), allocate(), points }
 //   keyDir is live (world space, towards the current key light).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { smoothstep } from '../core/rng.js';
 import { SUN_LIGHT_DIR, MOON_LIGHT_DIR, dirFromAngles, envUniforms } from './env/celestial.js';
 import { installFog } from './env/fog.js';
+import { installCanopy, canopyParams } from './env/canopy.js';
 import { buildEnvMaps } from './env/envmap.js';
 import { SPOTS, OAK, SCHREINEREI } from './layout.js';
 
-// Patch the fog chunks before any material compiles (idempotent).
+// Patch the fog & light chunks before any material compiles (idempotent).
 installFog();
+installCanopy();
 
 const DAY = {
   key: new THREE.Color('#ffd49a'),
@@ -66,8 +75,8 @@ const DAY = {
   rim: new THREE.Color('#a9d2e6'),
   rimI: 0.4,
   envI: 0.5,
-  beam: new THREE.Color('#ffcf8a'),
-  beamI: 2.9,
+  beam: new THREE.Color('#ffd9a8'),
+  beamI: 2.2,
 };
 const NIGHT = {
   key: new THREE.Color('#aab4ff'),
@@ -105,8 +114,9 @@ const BEAM_DAY = {
   target: new THREE.Vector3(OAK.door.x + 0.5, 0.6, (OAK.door.z + SCHREINEREI.porch.z) / 2 + 0.1),
   dir: dirFromAngles(50, 228),
   distance: 26,
-  angle: 0.33,
-  penumbra: 0.6,
+  // small: the cookie draws the ragged pool inside the cone (≈ 2–3 units)
+  angle: 0.2,
+  penumbra: 0.3,
 };
 const BEAM_NIGHT = {
   target: new THREE.Vector3(-4.5, 0, 11.2), // the fairy ring (refined after the build)
@@ -120,31 +130,53 @@ const BEAM_NIGHT = {
 const LIGHT_SPOTS = ['woodworking', 'home', 'interior', 'bikes', 'code'];
 const SPOT_WEIGHT = { woodworking: 1.5, home: 1.2, interior: 1.2, bikes: 1.2, code: 1.1, glen: 1 };
 
-/** A soft dappled leaf cookie for the sunbeam (multiplies the light colour). */
+/**
+ * The sunbeam's leaf cookie (multiplies the light colour): a small irregular
+ * pool of sun — overlapping soft lobes, ragged edges — riddled with crisp leaf
+ * shadows, plus a few stray pinhole flecks around it. Black outside, so the
+ * cone itself never shows as a smooth oval.
+ */
 function leafCookie() {
   if (typeof document === 'undefined') return null;
   const S = 256;
   const c = document.createElement('canvas');
   c.width = c.height = S;
   const g = c.getContext('2d');
-  g.fillStyle = '#fff6e8';
+  g.fillStyle = '#000';
   g.fillRect(0, 0, S, S);
-  // deterministic leaf blobs: dense towards the rim, a few drifting over the middle
-  let seed = 7;
+  let seed = 11;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-  g.filter = 'blur(7px)';
-  for (let i = 0; i < 70; i++) {
-    const a = rnd() * Math.PI * 2;
-    const r = Math.pow(rnd(), 0.55) * S * 0.62;
-    if (r < S * 0.16 && rnd() < 0.75) continue; // keep the heart of the pool open
-    const x = S / 2 + Math.cos(a) * r, y = S / 2 + Math.sin(a) * r;
-    const sz = S * (0.04 + rnd() * 0.08) * (0.6 + r / S);
-    const k = 0.22 + rnd() * 0.3;
-    g.fillStyle = `rgba(${Math.round(70 * k + 30)}, ${Math.round(60 * k + 26)}, ${Math.round(40 * k + 18)}, ${0.55 + rnd() * 0.35})`;
+  const blob = (x, y, rx, ry, rot, fill) => {
+    g.fillStyle = fill;
     g.beginPath();
-    g.ellipse(x, y, sz, sz * (0.55 + rnd() * 0.4), rnd() * Math.PI, 0, Math.PI * 2);
+    g.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2);
     g.fill();
+  };
+  // the pool: a ragged union of soft lobes (never a clean oval)
+  g.filter = 'blur(5px)';
+  for (let i = 0; i < 11; i++) {
+    const a = rnd() * Math.PI * 2;
+    const r = Math.pow(rnd(), 0.8) * S * 0.17;
+    const sz = S * (0.07 + rnd() * 0.1);
+    blob(S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r, sz, sz * (0.55 + rnd() * 0.45), rnd() * Math.PI, `rgba(255, 246, 230, ${0.75 + rnd() * 0.25})`);
   }
+  // stray pinhole flecks scattered around the pool
+  g.filter = 'blur(2px)';
+  for (let i = 0; i < 26; i++) {
+    const a = rnd() * Math.PI * 2;
+    const r = S * (0.2 + rnd() * 0.24);
+    const sz = S * (0.012 + rnd() * 0.022);
+    blob(S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r, sz, sz * (0.7 + rnd() * 0.3), rnd() * Math.PI, `rgba(255, 244, 226, ${0.55 + rnd() * 0.45})`);
+  }
+  // leaf shadows: crisp, many, so the pool is full of holes (high contrast)
+  g.filter = 'blur(1.5px)';
+  for (let i = 0; i < 120; i++) {
+    const a = rnd() * Math.PI * 2;
+    const r = Math.pow(rnd(), 0.7) * S * 0.36;
+    const sz = S * (0.012 + rnd() * 0.03);
+    blob(S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r, sz, sz * (0.4 + rnd() * 0.35), rnd() * Math.PI, `rgba(10, 8, 4, ${0.7 + rnd() * 0.3})`);
+  }
+  g.filter = 'none';
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
@@ -364,6 +396,10 @@ export default async function build(ctx) {
     /** The sunbeam (day) / moonbeam (night) geometry: { day: {pos, target}, night: {pos, target} }. */
     beams: { day: beamDay, night: beamNight },
     envMaps,
+    /** Live canopy-cookie parameters (env/canopy.js: a = time, strength, plane y, fade y; b = shade, gain, freq, bias). */
+    canopy: canopyParams,
+    /** Live multipliers (debug & tuning): canopy = strength of the dappled-sunlight cookie. */
+    settings: { canopy: 1 },
   };
 
   function place() {
@@ -395,8 +431,9 @@ export default async function build(ctx) {
       const cfg = phase ? BEAM_NIGHT : BEAM_DAY;
       beam.position.copy(b.pos);
       beam.target.position.copy(b.target);
-      beam.angle = cfg.angle;
-      beam.penumbra = cfg.penumbra;
+      // (without the cookie — 'low' — the daytime cone itself must stay small and soft)
+      beam.angle = cfg.angle * (!phase && !beam.map ? 0.65 : 1);
+      beam.penumbra = !phase && !beam.map ? 0.85 : cfg.penumbra;
       beam.color.copy(phase ? NIGHT.beam : DAY.beam);
       beam.target.updateMatrixWorld();
     }
@@ -424,9 +461,14 @@ export default async function build(ctx) {
   }
   let frameNo = 0;
 
-  engine.addUpdate(() => {
+  // the canopy cookie: leaves sway (time), a little softer by moonlight
+  const settings = ctx.lights.settings;
+  const canopyMotion = engine.reducedMotion ? 0 : 1;
+  engine.addUpdate((dt, t) => {
     if (!allocated && engine.frame > 1) allocate(); // safety net if post never ran
     const n = env?.night ?? 0;
+    canopyParams.a[0] = t * canopyMotion;
+    canopyParams.a[1] = settings.canopy * (1 - 0.35 * n);
     if (n !== lastNight) {
       lastNight = n;
       update(n);

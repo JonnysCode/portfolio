@@ -125,6 +125,7 @@ export function buildRoots() {
     bark.push(barkGeo);
     // moss on the top of the root, thicker where the root is big
     const sz = { w: 1, h: 1 };
+    const mossVals = []; // per vertex, in vertex order (organicTube calls shell once per vertex)
     const mossGeo = (
       organicTube({
         ...tubeOpts,
@@ -146,12 +147,21 @@ export function buildRoots() {
             const rr = Math.hypot(x - CX, z - CZ);
             if (z > CZ && rr < baseRadius(Math.max(y, 0)) + 1.6) m -= certZone(Math.atan2(x - CX, z - CZ), y, 0.45) * 1.4;
           }
+          // the open long edges of the partial tube always tuck under the
+          // bark (no hovering lip over the root's flank)
+          const e = smoothstep(1.05, 1.45, Math.abs(phi));
+          m = m * (1 - e) - 0.5 * e;
+          mossVals.push(m);
           const k = clamp(sz.w / 0.55, 0.35, 1.1);
-          return Math.max(m, -0.5) * 0.12 * k;
+          return Math.max(m, -0.75) * 0.12 * k;
         },
       })
     );
     if (door) carveDoorNiche(mossGeo, door, -0.12);
+    // ragged visible edge: per-vertex alpha for the dithered alpha test
+    const alpha = new Float32Array(mossGeo.attributes.position.count);
+    for (let i = 0; i < alpha.length; i++) alpha[i] = smoothstep(0.0, 0.3, mossVals[i] ?? -1);
+    mossGeo.setAttribute('mossA', new THREE.BufferAttribute(alpha, 1));
     moss.push(mossGeo);
     roots.push({ id: root.id, a0: root.a0 * DEG, curve, size, length: len, door });
   });

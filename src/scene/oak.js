@@ -110,7 +110,7 @@ export default async function build(ctx) {
   await tick();
 
   // ── crown ────────────────────────────────────────────────────────────────
-  const crown = buildCrown(ctx, rng.fork('crown'), skeleton.clumps, { density });
+  const crown = buildCrown(ctx, rng.fork('crown'), skeleton.clumps, { density, limbs: skeleton.limbs, branches: skeleton.branches });
   if (!debug.includes('noleaves')) for (const m of crown.meshes) group.add(m);
 
   // ── the little things: fungi, toadstools, lanterns, fairy lights, swing,
@@ -140,6 +140,6 @@ export default async function build(ctx) {
     forkY: FORK_Y,
     lanterns: details.lanterns,
   };
-  group.userData.stats = { leafCards: crown.cards, clumps: skeleton.clumps.length, ivyCards: ivy.cards };
+  group.userData.stats = { leafCards: crown.cards, clumps: skeleton.clumps.length, crownGaps: crown.gaps, gapFraction: +crown.gapFraction.toFixed(2), ivyCards: ivy.cards };
   return { update: details.update };
 }

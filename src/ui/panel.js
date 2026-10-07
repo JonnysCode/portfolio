@@ -13,6 +13,7 @@ import { AREA_BY_ID } from '../world/layout.js';
 import { h, svg } from './dom.js';
 import { icon, spotIcon } from './icons.js';
 import { sketchFor } from './sketches.js';
+import { presentEntry, mailAddress, showDrafts } from './draft.js';
 
 const FLOURISH = `<svg class="journal__flourish" viewBox="0 0 220 14" aria-hidden="true"><path d="M2 8 C 40 2, 70 12, 110 7 S 180 3, 218 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M104 7 c 3 -5 9 -5 9 0 c 0 4 -6 5 -8 2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>`;
 
@@ -66,11 +67,15 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
         ),
       );
     }
-    return h('figure', { class: 'polaroid is-sketch', style: { '--tilt': '-2deg' } }, svg(sketchFor(entry)), h('figcaption', {}, 'sketch · photos coming soon'));
+    // no photos yet: a small pencil sketch pinned beside the text (not a big
+    // empty polaroid pushing the words below the fold); none at all for the
+    // about / contact pages, where the words and the buttons are the point
+    if (entry.kind === 'contact' || entry.kind === 'about') return null;
+    return h('figure', { class: 'polaroid is-sketch', style: { '--tilt': '3deg' }, 'aria-hidden': 'true' }, svg(sketchFor(entry)), h('figcaption', {}, 'sketch'));
   }
 
-  function cutList(entry) {
-    if (!entry.facts?.length) return null;
+  function cutList(facts) {
+    if (!facts?.length) return null;
     return h(
       'section',
       { class: 'cutlist', 'aria-label': 'Facts' },
@@ -79,15 +84,22 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
         'table',
         {},
         h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, 'Pos.'), h('th', { scope: 'col' }, 'Part'), h('th', { scope: 'col' }, 'Spec'))),
-        h('tbody', {}, entry.facts.map(([k, v], i) => h('tr', {}, h('td', { class: 'cutlist__pos' }, String(i + 1).padStart(2, '0')), h('th', { scope: 'row' }, k), h('td', {}, v)))),
+        h('tbody', {}, facts.map(([k, v, draft], i) => h('tr', { class: draft ? 'is-draft' : null }, h('td', { class: 'cutlist__pos' }, String(i + 1).padStart(2, '0')), h('th', { scope: 'row' }, k), h('td', {}, v)))),
       ),
     );
   }
 
-  function links(entry) {
+  function links(entry, siblings) {
     const out = [];
     if (entry.kind === 'contact') {
-      if (content.profile.email) out.push(h('a', { class: 'stamp-btn is-primary', href: `mailto:${content.profile.email}` }, h('span', { html: icon('mail') }), 'Write me a letter'));
+      const mail = mailAddress(content.profile);
+      if (mail) out.push(h('a', { class: `stamp-btn is-primary${mail.draft ? ' is-draft' : ''}`, href: `mailto:${mail.email}`, title: mail.draft ? 'draft: put the real address into content.js' : null }, h('span', { html: icon('mail') }), 'Write me a letter'));
+      for (const l of content.profile.links ?? []) out.push(h('a', { class: 'stamp-btn', href: l.href, target: '_blank', rel: 'noopener' }, h('span', { html: icon(l.icon === 'github' ? 'github' : 'link') }), l.label));
+    }
+    if (entry.kind === 'about') {
+      // the next step after "who is this?": say hello
+      const hello = siblings?.find((s) => s.kind === 'contact');
+      if (hello) out.push(h('button', { type: 'button', class: 'stamp-btn is-primary', onclick: () => onNavigate?.(hello.id) }, h('span', { html: icon('mail') }), `${hello.title} `, h('span', { class: 'stamp-btn__arrow', html: icon('right') })));
       for (const l of content.profile.links ?? []) out.push(h('a', { class: 'stamp-btn', href: l.href, target: '_blank', rel: 'noopener' }, h('span', { html: icon(l.icon === 'github' ? 'github' : 'link') }), l.label));
     }
     for (const l of entry.links ?? []) out.push(h('a', { class: 'stamp-btn', href: l.href, target: '_blank', rel: 'noopener' }, h('span', { html: icon('link') }), l.label));
@@ -97,6 +109,16 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
   function nav(entry, siblings) {
     if (!siblings || siblings.length < 2) return null;
     const i = siblings.findIndex((s) => s.id === entry.id);
+    if (siblings.length === 2) {
+      // two pages: one clear button to the other (not the same title on both sides)
+      const other = siblings[1 - Math.max(0, i)];
+      const fwd = i <= 0;
+      return h(
+        'nav',
+        { class: 'journal__nav is-pair', 'aria-label': 'More from this place' },
+        h('button', { type: 'button', class: 'journal__navbtn is-pair', onclick: () => onNavigate?.(other.id), 'aria-label': `${fwd ? 'Next' : 'Back to'}: ${other.title}` }, !fwd && h('span', { html: icon('left') }), h('span', { class: 'journal__navtitle' }, fwd ? `Next: ${other.title}` : `Back to ${other.title}`), fwd && h('span', { html: icon('right') })),
+      );
+    }
     const prev = siblings[(i - 1 + siblings.length) % siblings.length];
     const next = siblings[(i + 1) % siblings.length];
     return h(
@@ -112,6 +134,10 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
     const area = AREA_BY_ID[entry.area];
     const info = content.areas[entry.area];
     const visited = ctx.interactions?.isVisited?.(entry.id);
+    const shown = presentEntry(entry);
+    // about & contact: the buttons come right under the title (the call to action above the fold)
+    const ctaFirst = entry.kind === 'contact' || entry.kind === 'about';
+    const cta = links(entry, siblings);
     return [
       h(
         'header',
@@ -120,14 +146,14 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
         h('h2', { id: 'journal-title', class: 'journal__title' }, entry.title),
         svg(FLOURISH),
         entry.subtitle && h('p', { class: 'journal__subtitle' }, entry.subtitle),
-        entry.year && h('span', { class: 'journal__stamp', 'aria-label': `Year: ${entry.year}` }, entry.year),
+        shown.year && h('span', { class: `journal__stamp${shown.yearDraft ? ' is-draft' : ''}`, 'aria-label': shown.yearDraft ? 'Year: still a draft' : `Year: ${shown.year}` }, shown.year),
         visited && h('span', { class: 'journal__visited', title: 'Already in your journal', html: icon('leaf') }),
       ),
-      figure(entry),
-      h('div', { class: 'journal__body' }, (entry.body ?? []).map((p) => h('p', {}, p))),
-      cutList(entry),
+      ctaFirst && cta,
+      h('div', { class: 'journal__body' }, figure(entry), shown.body.map((p) => h('p', { class: p.draft ? 'is-draft' : null }, p.text))),
+      cutList(shown.facts),
       entry.tags?.length && h('ul', { class: 'journal__tags', 'aria-label': 'Tags' }, entry.tags.map((t) => h('li', { class: 'paper-tag' }, t))),
-      links(entry),
+      !ctaFirst && cta,
       // a sticky foot: prev/next always at hand, and a "more ↓" cue while the page scrolls on
       h('div', { class: 'journal__foot' }, moreBtn, nav(entry, siblings)),
     ];
@@ -148,6 +174,7 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
     },
     open(entry, { siblings } = {}) {
       const was = isOpen;
+      el.classList.toggle('shows-drafts', showDrafts);
       if (!was) lastFocus = document.activeElement;
       cachedInset = null;
       body.replaceChildren(...render(entry, siblings).filter(Boolean));

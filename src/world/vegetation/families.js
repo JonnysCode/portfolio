@@ -12,7 +12,8 @@
 //   panther    brown caps, white warts
 //   ochre      ochre / tan caps, cream warts         (the painterly giants)
 //   orange     smooth orange caps, yellow gills & stem (caesar's mushroom)
-//   parasol    tall slender stem, wide flat tan cap with brown scales
+//   parasol    tall snakeskin stem with a loose ring; open parasols with a
+//              dark umbo and brown scales beside half-open bells & drumsticks
 //   bolete     fat porcini buns in chestnut, hazel, ochre
 //   bonnets    tufts of slender brown bonnets
 //
@@ -27,7 +28,7 @@ export const SPECIES = {
   panther: { kind: 'amanita', caps: CAP_BROWNS, warts: 1, gill: '#efe2c6', shapes: { dome: 4, flat: 4, upturned: 2 } },
   ochre: { kind: 'amanita', caps: CAP_OCHRES, warts: 0.7, wart: '#f4e6c4', gill: '#efdcb4', shapes: { dome: 5, flat: 3, upturned: 2 } },
   orange: { kind: 'amanita', caps: CAP_ORANGES, warts: 0, gill: '#f2c868', stem: '#f0d890', shapes: { dome: 4, flat: 3, upturned: 3 } },
-  parasol: { kind: 'amanita', caps: CAP_TANS, warts: 0.9, wart: '#8a6440', gill: '#f2ead8', stemRatio: 0.11, tall: 1.45, shapes: { flat: 6, dome: 2, upturned: 2 } },
+  parasol: { kind: 'parasol', caps: CAP_TANS, tall: 1.45 },
   bolete: { kind: 'bolete', caps: CAP_BOLETES },
   bonnets: { kind: 'bonnets', caps: ['#a87a4a', '#b8885a', '#c09868', '#946640', '#c8a878'] },
 };
@@ -56,6 +57,14 @@ export function placeMushroom(kits, rng, species, x, y, z, opts = {}) {
     // (boletes are stout: shorter and fatter than an amanita of the same "size")
     const h = H * 0.62;
     kit.bolete(x, y, z, { height: h, capR: h * rng.range(0.62, 0.85), color: opts.color ?? rng.pick(sp.caps), lean: opts.lean, leanAz: opts.leanAz, poreColor: rng.chance(0.4) ? '#b8ac5a' : '#ddca82' });
+    return;
+  }
+  if (sp.kind === 'parasol') {
+    // (a family of different ages: the lead fully open, the others half-open
+    //  bells and young drumsticks)
+    const h = H * sp.tall;
+    const age = opts.age ?? (opts.lead ? 1 : H < 0.16 ? 0.2 : pickWeighted(rng, { 1: 4, 0.55: 3, 0.2: 3 }) * 1);
+    kit.parasol(x, y, z, { height: h, capR: h * rng.range(0.42, 0.52), age: Number(age), lean: opts.lean, leanAz: opts.leanAz, lod: opts.lod });
     return;
   }
   if (sp.kind === 'bonnets') {
@@ -109,7 +118,7 @@ export function placeFamily(kits, rng, x, z, opts = {}) {
   const y0 = opts.ground(x, z, size);
   if (y0 === null || y0 === undefined) return 0;
   // the lead: the biggest, most upright
-  placeMushroom(kits, rng, species, x, y0, z, { height: size, lean: rng.range(0.02, 0.1), lod: opts.lod, glowGills: glow, glowSpots: glow, haloK: 1.8 });
+  placeMushroom(kits, rng, species, x, y0, z, { height: size, lean: rng.range(0.02, 0.1), lod: opts.lod, glowGills: glow, glowSpots: glow, haloK: 1.8, lead: true });
   opts.onPlace?.(x, z, size);
   placed++;
   const a0 = opts.side ?? rng.range(0, TAU);

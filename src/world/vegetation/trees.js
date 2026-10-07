@@ -5,7 +5,8 @@
 // Each giant: a trunk 3–5 units across, leaning and twisting a little, that
 // swells into buttress roots at the foot (lobes that run out over the ground
 // as mossy roots and plunge into the soil). The lower trunk stays a bare
-// cathedral column — moss, ivy, mossy broken branch stubs — and only high up
+// cathedral column — moss, ivy, drooping broken snags with moss and shelf
+// fungi — and only high up
 // (y > CEILING_Y) do a few heavy limbs reach into the canopy ceiling of
 // leaf-card masses, with gaps between the crowns for the light shafts. No leaf
 // mass hangs at loft height: seen from the spots the giants leave the top of
@@ -35,6 +36,7 @@ const BARK = new THREE.Color(BARK_MEAN);
 const MOSS = new THREE.Color(MOSS_TINT);
 const MOSS_DARK = new THREE.Color(MOSS_TINT).multiplyScalar(0.62);
 const HIGH = new THREE.Color('#857a6c'); // weathered, lichen-grey bark up high
+const BREAK = new THREE.Color('#a88a64'); // pale, weathered wood at a broken branch end
 const _col = new THREE.Color();
 const _p = new THREE.Vector3();
 const _n = new THREE.Vector3();
@@ -263,23 +265,49 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
     }
   }
 
-  // ── broken branch stubs (the bare column's only branches below the ceiling) ──
+  // ── broken snags (the bare column's only branches below the ceiling) ──
+  // Not dowels: each dead branch swells from a collar in the bark, tapers
+  // fast, droops under its own weight and ends in a jagged, splintered break;
+  // moss cushions its upper side (a shelf fungus or ivy is added by the caller
+  // via t.stubs). Birches carry thin dark twigs instead.
   const stubs = birch ? rng.int(1, 3) : rng.int(2, 4);
   for (let i = 0; i < stubs; i++) {
     const y = birch ? rng.range(4, H * 0.4) : rng.range(5, Math.min(CEILING_Y - 4, H * 0.45));
     const th = rng.range(0, TAU);
     const c = center(y);
     const r0 = radiusAt(y, th) * 0.9;
-    const dir = new THREE.Vector3(Math.cos(th), rng.range(0.1, 0.5), Math.sin(th)).normalize();
-    const p0 = c.clone().add(new THREE.Vector3(Math.cos(th) * r0 * 0.7, 0, Math.sin(th) * r0 * 0.7));
-    const l = R * rng.range(0.6, 1.4);
-    // (stub tips: something to hang a lantern from)
-    (t.stubs ??= []).push({ tip: p0.clone().addScaledVector(dir, l * 0.85), dir: dir.clone(), r: R * 0.12 });
-    tube(TB, [p0, p0.clone().addScaledVector(dir, l * 0.5), p0.clone().addScaledVector(dir, l)], [R * 0.2, R * 0.16, R * 0.12], 7, {
+    const out = new THREE.Vector3(Math.cos(th), 0, Math.sin(th));
+    const p0 = c.clone().addScaledVector(out, r0 * 0.72);
+    const l = R * rng.range(0.7, 1.5) * (birch ? 1.4 : 1);
+    const rise = rng.range(0.15, 0.45);
+    const sag = rng.range(0.25, 0.6);
+    const steps = 4;
+    const pts = [];
+    const radii = [];
+    const rb = R * (birch ? 0.12 : rng.range(0.16, 0.22));
+    for (let k = 0; k <= steps; k++) {
+      const f = k / steps;
+      // out of the bark rising a little, then drooping towards the broken tip
+      const p = p0.clone().addScaledVector(out, l * f).add(new THREE.Vector3(rng.jitter(0.04) * l * f, l * (rise * f - sag * f * f), rng.jitter(0.04) * l * f));
+      pts.push(p);
+      // collar swelling at the bark, a fast taper, a splintered stump of a tip
+      radii.push(rb * (k === 0 ? 1.35 : 1) * (1 - 0.72 * Math.pow(f, 0.8)));
+    }
+    const tipDir = pts[steps].clone().sub(pts[steps - 1]).normalize();
+    // (stub tips: something to hang a lantern from — a little short of the break)
+    (t.stubs ??= []).push({ tip: pts[steps - 1].clone().lerp(pts[steps], 0.4), dir: tipDir, r: rb * 0.45, y, th, out: out.clone() });
+    const sp = rng.range(0, TAU);
+    tube(TB, pts, radii, birch ? 5 : Math.round(8 * tubeK), {
       capEnd: true,
+      // jagged break: the last ring splinters (radius jags), the end cap is pointed
+      wob: (k, a) => (k === steps ? 0.55 + 0.6 * Math.abs(Math.sin(a * 3 + sp)) : 1 + 0.06 * Math.sin(a * 4 + k)),
       color: birch ? () => new THREE.Color('#3a3430') : null,
-      // a cushion of moss on the stub's upper side
-      vcol: birch ? null : (k, j, nrm) => _col.copy(BARK).lerp(HIGH, 0.3).lerp(MOSS, sstep(nrm.y, 0.1, 0.6) * 0.9).clone(),
+      // a cushion of moss on the snag's upper side, bare pale wood at the break
+      vcol: birch ? null : (k, j, nrm) => {
+        _col.copy(BARK).lerp(HIGH, 0.35).lerp(MOSS, sstep(nrm.y + 0.15 * Math.sin(j * 1.7 + k), 0.05, 0.55) * 0.92);
+        if (k === steps) _col.lerp(BREAK, 0.55);
+        return _col.clone();
+      },
     });
   }
 

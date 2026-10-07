@@ -20,8 +20,15 @@
 //   ui.isPanelOpen / ui.isModalOpen   ui.showFallback(reason)
 //   ui.fade(true|false) → Promise  (soft cross-fade, used for reduced-motion cuts)
 //   ui.showPrompt / hidePrompt / showRideHUD / hideRideHUD   (legacy no-ops)
+//   ui.followLink('#spot/entryId')  ui.swipeTravelled(fromId, toId)  (undo toast)
 // Keyboard: ←/→ previous/next spot (or page while a journal page is open),
 // 1–6 jump to a spot, G guidebook, M map, N day/night, H help, Esc closes.
+// Deep links & history: #spot, #spot/entryId (and #guidebook); every place, page
+// and book pushes a history entry, so Back (Android's gesture too) closes the
+// open page / book or glides back to the previous place. A link on load skips
+// the intro and goes straight there.
+// Places with things beyond the edge of the frame (phones!) get little edge
+// chips ("‹ 2 more") that swing the camera round to them.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { SPOTS, SPOT_BY_ID, SPOT_FOR_AREA } from '../world/layout.js';
@@ -31,6 +38,7 @@ import { createLoader } from './loader.js';
 import { createJournal } from './panel.js';
 import { renderGuidebook } from './guidebook.js';
 import { createMap } from './map.js';
+import { reportDrafts } from './draft.js';
 
 const HINT_KEY = 'woodland:hinted';
 /**
@@ -145,6 +153,18 @@ export function createUI(ctx) {
     h('button', { class: 'spotbar__arrow', type: 'button', 'aria-label': 'Next place (→)', html: icon('right'), onclick: () => step(1) }),
   );
   root.append(spotbar);
+  /**
+   * Scroll the (phone) spot bar so the current place sits in the middle. Set
+   * directly (not scrollIntoView): the pills change width when their names show,
+   * and a smooth scroll still running would land on the old position.
+   */
+  function centerPill(id, smooth = false) {
+    const pill = pills.get(id);
+    if (!pill || spotList.scrollWidth <= spotList.clientWidth + 1) return;
+    const left = pill.offsetLeft + pill.offsetWidth / 2 - spotList.clientWidth / 2; // (the list is the pills' offsetParent)
+    if (smooth && !reduced) spotList.scrollTo({ left, behavior: 'smooth' });
+    else spotList.scrollLeft = left;
+  }
   function setCurrentSpot(id) {
     for (const [sid, pill] of pills) {
       const on = sid === id;
@@ -152,11 +172,12 @@ export function createUI(ctx) {
       if (on) pill.setAttribute('aria-current', 'location');
       else pill.removeAttribute('aria-current');
     }
-    if (id && pills.get(id) && spotList.scrollWidth > spotList.clientWidth) pills.get(id).scrollIntoView({ block: 'nearest', inline: 'center', behavior: reduced ? 'auto' : 'smooth' });
+    if (id) centerPill(id, true);
   }
   function go(id) {
     if (!ctx.cameraRig) return;
-    if (ui.isPanelOpen) closeJournal({ release: false });
+    // (the same place again with a page open: just close the page — like the ✕)
+    if (ui.isPanelOpen) closeJournal({ release: false, user: id === ctx.cameraRig.spot });
     ctx.cameraRig.goTo(id);
   }
   function step(dir) {
@@ -199,10 +220,14 @@ export function createUI(ctx) {
     }
   }
   const hsLayer = h('div', { class: 'hs-layer', role: 'group', 'aria-label': 'Things to explore here' });
-  root.append(labelLayer, hsLayer);
+  // first in the tab order (before the HUD and the spot bar): Tab steps through
+  // the things at this place straight away, as the help card promises
+  root.prepend(hsLayer, labelLayer);
   let hsButtons = [];
   function rebuildHotspotButtons(spotId) {
     const list = ctx.interactions?.forSpot?.(spotId) ?? [];
+    const s = SPOT_BY_ID[spotId];
+    hsLayer.setAttribute('aria-label', list.length && s ? `${list.length} thing${list.length === 1 ? '' : 's'} to explore at ${s.title}` : 'Things to explore here');
     hsButtons = list.map((hs) => {
       const b = h('button', {
         class: 'hs-btn',
@@ -220,9 +245,40 @@ export function createUI(ctx) {
         },
         onclick: () => ctx.interactions?.activate?.(hs, { source: 'key' }),
       });
-      return { hs, b };
+      // last written position / tab state: the DOM is touched only when they change
+      return { hs, b, x: NaN, y: NaN, tab: -2 };
     });
     hsLayer.replaceChildren(...hsButtons.map((x) => x.b));
+  }
+
+  // ── edge chips: things of this place beyond the frame's edge ("‹ 2 more") ──
+  const makeChip = (side) => {
+    const text = h('span', { class: 'edge-chip__text' });
+    const el = h(
+      'button',
+      { class: `edge-chip is-${side}`, type: 'button', tabindex: '-1', onclick: () => showOffscreen(side) },
+      side === 'l' && h('span', { class: 'edge-chip__arrow', html: icon('left') }),
+      text,
+      side === 'r' && h('span', { class: 'edge-chip__arrow', html: icon('right') }),
+    );
+    root.append(el);
+    return { el, text, side, shown: false, label: '', y: NaN, list: [] };
+  };
+  const chips = { l: makeChip('l'), r: makeChip('r') };
+  const chipCenter = new THREE.Vector3();
+  const chipTmp = new THREE.Vector3();
+  /** Swing the camera round to the things beyond one edge (framed like a detail; the place's pill brings the composition back). */
+  function showOffscreen(side) {
+    const c = chips[side];
+    const rig = ctx.cameraRig;
+    if (!rig || !c.list.length) return;
+    chipCenter.set(0, 0, 0);
+    for (const hs of c.list) chipCenter.add(hs.center(chipTmp));
+    chipCenter.divideScalar(c.list.length);
+    let r = 0;
+    for (const hs of c.list) r = Math.max(r, hs.center(chipTmp).distanceTo(chipCenter) + (hs.bounds?.r ?? 0.6) * 0.8);
+    ctx.audio?.play?.('whoosh');
+    rig.focus(chipCenter, { radius: Math.max(1.2, r), distance: 3.2 });
   }
 
   // ── tooltip ───────────────────────────────────────────────────────────────
@@ -245,22 +301,25 @@ export function createUI(ctx) {
   // ── journal page ──────────────────────────────────────────────────────────
   const journal = createJournal(ctx, { onClose: () => ui.closePanel(), onNavigate: (id) => ui.openEntry(id) });
   root.append(journal.el);
-  function closeJournal({ release = true } = {}) {
+  /** user: closed by the visitor (✕, Esc, pull-down, a tap beside it) — history steps back / is rewritten. */
+  function closeJournal({ release = true, user = false } = {}) {
     if (!journal.isOpen) return;
     journal.close();
     ui.isPanelOpen = false;
     root.classList.remove('has-panel');
     ctx.interactions?.setOpen?.(null);
-    ctx.cameraRig?.setInset?.({ right: 0, bottom: 0 });
+    ctx.cameraRig?.setInset?.(ZERO_INSET);
     ctx.audio?.play?.('close');
     if (release) ctx.cameraRig?.release?.();
+    if (user) historyClosed('entry');
   }
+  const ZERO_INSET = Object.freeze({ right: 0, bottom: 0, top: 0 });
 
   // ── modal (guidebook / map / help / fallback) ─────────────────────────────
   const modalBody = h('div', { class: 'modal__body' });
-  const modalClose = h('button', { class: 'modal__close', type: 'button', 'aria-label': 'Close', html: icon('close'), onclick: () => closeModal() });
+  const modalClose = h('button', { class: 'modal__close', type: 'button', 'aria-label': 'Close', html: icon('close'), onclick: () => closeModal('user') });
   const modalCard = h('div', { class: 'modal__card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'modal-title', tabindex: '-1' }, modalClose, modalBody);
-  const modal = h('div', { class: 'modal', hidden: true, onclick: (e) => e.target === modal && closeModal() }, modalCard);
+  const modal = h('div', { class: 'modal', hidden: true, onclick: (e) => e.target === modal && closeModal('user') }, modalCard);
   root.append(modal);
   let modalRelease = null;
   let modalLastFocus = null;
@@ -279,8 +338,14 @@ export function createUI(ctx) {
     modalRelease = trapFocus(modalCard);
     requestAnimationFrame(() => modalCard.focus({ preventScroll: true }));
     ctx.audio?.play?.('page');
+    record('push');
   }
-  function closeModal() {
+  /**
+   * how: 'user' (✕, Esc, the backdrop: history steps back), 'nav' (a link in the
+   * book / a pin on the map leads on: the next history entry replaces the book's),
+   * 'silent' (history itself is moving).
+   */
+  function closeModal(how = 'user') {
     if (modal.hidden || root.classList.contains('is-fallback')) return;
     modal.hidden = true;
     modalKind = null;
@@ -289,14 +354,141 @@ export function createUI(ctx) {
     modalRelease?.();
     modalRelease = null;
     ctx.audio?.play?.('close');
-    if (modalLastFocus && document.contains(modalLastFocus) && modalLastFocus !== document.body) modalLastFocus.focus({ preventScroll: true });
+    if (how !== 'nav' && modalLastFocus && document.contains(modalLastFocus) && modalLastFocus !== document.body) modalLastFocus.focus({ preventScroll: true });
+    if (how === 'user') historyClosed('modal');
+    else if (how === 'nav') replaceNextRecord();
   }
   const map = createMap(ctx, {
     onPick: (id) => {
-      closeModal();
+      closeModal('nav');
       go(id);
     },
   });
+
+  // ── deep links & history ──────────────────────────────────────────────────
+  // Each place, journal page and book is a history entry: #woodworking,
+  // #woodworking/dining-table, #guidebook (the overview keeps a clean URL).
+  // Flipping pages within a place rewrites the entry rather than stacking them.
+  const hist = { ready: false, syncing: false, replaceNext: false, i: 0, states: [] };
+  /** '#spot', '#spot/entry', '#entry' or '#guidebook' → { spot, entry?, modal? } (null when it means nothing here). */
+  function parseHash(hash) {
+    let raw = '';
+    try {
+      raw = decodeURIComponent(String(hash ?? '').replace(/^#\/?/, ''));
+    } catch {
+      return null;
+    }
+    if (!raw) return null;
+    const [a, b] = raw.split('/');
+    if (a === 'guidebook' || a === 'guide') return { spot: 'glen', entry: null, modal: 'guide' };
+    const entryState = (id) => {
+      const e = content.getEntry?.(id);
+      return e ? { spot: SPOT_FOR_AREA[e.area] ?? 'glen', entry: id, modal: null } : null;
+    };
+    if (SPOT_BY_ID[a]) return (b && entryState(b)) || { spot: a, entry: null, modal: null };
+    return entryState(a);
+  }
+  function hashFor(st) {
+    if (st.entry) return `#${st.spot}/${st.entry}`;
+    if (st.modal === 'guide') return '#guidebook';
+    if (st.spot && st.spot !== 'glen') return `#${st.spot}`;
+    return location.pathname + location.search;
+  }
+  /** A shareable link to an entry (or a place). */
+  function linkFor(entryId) {
+    const e = content.getEntry?.(entryId);
+    const spot = e ? SPOT_FOR_AREA[e.area] : SPOT_BY_ID[entryId] ? entryId : null;
+    if (!spot) return null;
+    return `${location.origin}${location.pathname}#${e ? `${spot}/${entryId}` : spot}`;
+  }
+  const navState = () => ({ spot: ctx.cameraRig?.spot ?? 'glen', entry: journal.isOpen ? currentEntry?.id ?? null : null, modal: ui.isModalOpen ? modalKind : null });
+  const same = (a, b) => !!a && !!b && a.spot === b.spot && (a.entry ?? null) === (b.entry ?? null) && (a.modal ?? null) === (b.modal ?? null);
+  /** Write the current state into history: 'push' a new entry or 'replace' the current one. */
+  function record(mode = 'push') {
+    if (!hist.ready || hist.syncing || !ctx.cameraRig) return;
+    const st = navState();
+    if (hist.replaceNext) {
+      hist.replaceNext = false;
+      mode = 'replace';
+    }
+    if (mode === 'push' && same(hist.states[hist.i], st)) return;
+    const i = mode === 'push' ? hist.i + 1 : hist.i;
+    try {
+      history[mode === 'push' ? 'pushState' : 'replaceState']({ woodland: 1, i, ...st }, '', hashFor(st));
+    } catch {
+      return; // (sandboxed frames etc.: no history, nothing else changes)
+    }
+    hist.i = i;
+    hist.states.length = i;
+    hist.states[i] = st;
+  }
+  /** The next record (a link out of the book / map) replaces the book's entry; nothing followed → just rewrite it. */
+  function replaceNextRecord() {
+    hist.replaceNext = true;
+    setTimeout(() => {
+      if (!hist.replaceNext) return;
+      hist.replaceNext = false;
+      record('replace');
+    }, 0);
+  }
+  /** The visitor closed a page / the book: step back when the entry below is exactly where we are now, else rewrite. */
+  function historyClosed() {
+    if (!hist.ready || hist.syncing) return;
+    const below = hist.states[hist.i - 1];
+    const now = navState();
+    if (below && same(below, now) && history.state?.woodland && history.state.i === hist.i) {
+      hist.expectPop = true;
+      history.back();
+    } else record('replace');
+  }
+  /** Make the glen show a history state (Back / Forward / a followed link) — without recording it again. */
+  function applyState(st) {
+    if (!st || !ctx.cameraRig) return;
+    hist.syncing = true;
+    try {
+      if (intro) skipIntro();
+      if (ui.isModalOpen && st.modal !== modalKind) closeModal('silent');
+      if (st.entry) {
+        if (!journal.isOpen || currentEntry?.id !== st.entry) ui.openEntry(st.entry);
+      } else {
+        if (journal.isOpen) closeJournal({ release: true });
+        if (st.spot && SPOT_BY_ID[st.spot] && st.spot !== ctx.cameraRig.spot) go(st.spot);
+      }
+      if (st.modal && !ui.isModalOpen) {
+        if (st.modal === 'map') ui.showMap();
+        else if (st.modal === 'help') ui.showHelp();
+        else ui.showGuidebook();
+      }
+    } finally {
+      hist.syncing = false;
+    }
+  }
+  window.addEventListener('popstate', (e) => {
+    if (!hist.ready) return;
+    const st = e.state?.woodland ? e.state : parseHash(location.hash) ?? { spot: 'glen', entry: null, modal: null };
+    if (e.state?.woodland) {
+      hist.i = e.state.i;
+      hist.states[hist.i] = { spot: st.spot, entry: st.entry ?? null, modal: st.modal ?? null };
+    } else {
+      // a hash typed into the address bar: a new entry on top
+      hist.i += 1;
+      hist.states.length = hist.i;
+      hist.states[hist.i] = st;
+      try {
+        history.replaceState({ woodland: 1, i: hist.i, ...st }, '', hashFor(st));
+      } catch {
+        /* ignore */
+      }
+    }
+    if (hist.expectPop) {
+      // our own step back after a close: the glen already shows it
+      hist.expectPop = false;
+      if (same(st, navState())) return;
+    }
+    applyState(st);
+  });
+  /** Arrived by a link (#woodworking/dining-table): no intro card, straight there. */
+  const initialLink = parseHash(location.hash);
 
   // ── intro card ────────────────────────────────────────────────────────────
   let intro = null;
@@ -330,6 +522,10 @@ export function createUI(ctx) {
     root.classList.remove('is-intro');
     setTimeout(() => el.remove(), 900);
   }
+  /** Leave the intro for a place picked by a link / Back (no descent, no sound: the visitor has not chosen yet). */
+  function skipIntro() {
+    hideIntro();
+  }
   function enterWoodland() {
     ctx.audio?.unlock?.();
     ctx.audio?.setEnabled?.(ctx.audio?.preference ?? true);
@@ -342,7 +538,12 @@ export function createUI(ctx) {
   }
   function skipToGuidebook() {
     hideIntro();
-    ctx.cameraRig?.goTo?.('glen', { instant: true });
+    hist.syncing = true; // (the overview is where history already is)
+    try {
+      ctx.cameraRig?.goTo?.('glen', { instant: true });
+    } finally {
+      hist.syncing = false;
+    }
     ui.showGuidebook();
   }
   function showHintOnce() {
@@ -353,7 +554,7 @@ export function createUI(ctx) {
     } catch {
       /* ignore */
     }
-    ui.toast(isTouch ? 'Drag to look around · pinch to zoom · tap the ✦ sparkles · swipe to travel' : 'Drag to look around · scroll to zoom · click the ✦ sparkles · ← → to travel', seen ? 4200 : 7000, { icon: 'sparkle' });
+    ui.toast(isTouch ? 'Drag to look around · pinch to zoom · tap the ✦ sparkles · the bar below takes you places' : 'Drag to look around · scroll to zoom · click the ✦ sparkles · ← → to travel', seen ? 4200 : 7000, { icon: 'sparkle' });
   }
 
   // ── keyboard ──────────────────────────────────────────────────────────────
@@ -367,7 +568,7 @@ export function createUI(ctx) {
     if (ui.isModalOpen) {
       if (e.key === 'Escape') {
         e.preventDefault();
-        closeModal();
+        closeModal('user');
       }
       return;
     }
@@ -478,24 +679,77 @@ export function createUI(ctx) {
     }
     solveLabels(placed);
     for (const l of placed) {
-      l.el.style.transform = `translate(${l.x.toFixed(1)}px, ${l.y.toFixed(1)}px)`;
+      // (DOM writes only when a whole pixel changed: the breathing camera drifts sub-pixel)
+      const lx = Math.round(l.x), ly = Math.round(l.y);
+      if (lx !== l.px || ly !== l.py) {
+        l.px = lx;
+        l.py = ly;
+        l.el.style.transform = `translate(${lx}px, ${ly}px)`;
+      }
       const lift = Math.round(l.lift ?? 0);
       if (lift !== l.liftPx) {
         l.liftPx = lift;
         l.el.style.setProperty('--lift', `${lift}px`);
       }
     }
-    // keyboard hotspot buttons follow their markers
+    // keyboard hotspot buttons follow their markers; things beyond an edge are counted for the chips
+    const moving = rig.transitioning;
+    const chipsOn = !moving && !journal.isOpen && !ui.isModalOpen && !intro && !rig.overridden && rig.spot && rig.spot !== 'glen' && (ctx.interactions.gestures?.mode ?? 'none') !== 'drag';
+    chips.l.list.length = chips.r.list.length = 0;
+    let yl = 0, yr = 0;
     for (const x of hsButtons) {
       ctx.interactions.screenPosition(x.hs, sp);
-      x.b.style.transform = `translate(${sp.x}px, ${sp.y}px)`;
-      x.b.tabIndex = sp.visible && !rig.transitioning ? 0 : -1;
+      const bx = Math.round(sp.x), by = Math.round(sp.y);
+      if (bx !== x.x || by !== x.y) {
+        x.x = bx;
+        x.y = by;
+        x.b.style.transform = `translate(${bx}px, ${by}px)`;
+      }
+      const tab = sp.visible && !moving ? 0 : -1;
+      if (tab !== x.tab) {
+        x.tab = tab;
+        x.b.tabIndex = tab;
+      }
+      if (chipsOn && !sp.visible && sp.z < 1) {
+        if (sp.x < view.x + 2) (chips.l.list.push(x.hs), (yl += sp.y));
+        else if (sp.x > view.x + W - 2) (chips.r.list.push(x.hs), (yr += sp.y));
+      }
     }
+    syncChip(chips.l, yl, H);
+    syncChip(chips.r, yr, H);
     // speech bubbles
     for (const b of bubbles) b.update();
     // keep the subject framed beside the journal page — or just above the spot bar
     if (journal.isOpen) rig.setInset(focusInset());
-    else rig.setInset({ right: 0, bottom: intro ? 0 : barInset() });
+    else {
+      freeInset.bottom = intro ? 0 : barInset();
+      rig.setInset(freeInset);
+    }
+  }
+  const freeInset = { right: 0, bottom: 0, top: 0 };
+  /** Show / move / hide an edge chip (DOM touched only on change). */
+  function syncChip(c, ySum, H) {
+    const n = c.list.length;
+    const show = n > 0;
+    if (show) {
+      const label = n === 1 ? c.list[0].label : `${n} more`;
+      if (label !== c.label) {
+        c.label = label;
+        c.text.textContent = label;
+        c.el.setAttribute('aria-label', n === 1 ? `Look over to ${label}` : `Look over to ${n} more things here`);
+      }
+      // at the height of the things it points to (kept clear of the HUD, the banner and the spot bar)
+      const y = Math.round(Math.min(H * 0.72, Math.max(H * 0.3, ySum / n - view.y)) / 4) * 4 + view.y;
+      if (y !== c.y) {
+        c.y = y;
+        c.el.style.top = `${y}px`;
+      }
+    }
+    if (show !== c.shown) {
+      c.shown = show;
+      c.el.classList.toggle('is-shown', show);
+      c.el.tabIndex = show ? 0 : -1;
+    }
   }
 
   /**
@@ -506,17 +760,20 @@ export function createUI(ctx) {
    * labels glide rather than jump while the camera breathes.
    */
   const GAP = 6;
+  const solved = []; // (reused boxes: nothing allocated per frame)
   function solveLabels(list) {
     const minTop = narrow() ? 104 : 84; // below the HUD
     list.sort((a, b) => b.y - a.y);
-    const done = [];
+    const done = solved;
+    let nd = 0;
     for (const l of list) {
       const w = (l.fw ?? 140) + GAP, hh = (l.fh ?? 40) + GAP;
       const left = l.x - w / 2, right = l.x + w / 2;
       let bottom = l.y - 30; // the flag sits on a 30px stem
       for (let pass = 0; pass < 6; pass++) {
         let moved = false;
-        for (const o of done) {
+        for (let k = 0; k < nd; k++) {
+          const o = done[k];
           if (right <= o.left || left >= o.right) continue;
           if (bottom <= o.top || bottom - hh >= o.bottom) continue;
           bottom = o.top; // lift above it
@@ -531,7 +788,12 @@ export function createUI(ctx) {
       if (Math.abs(l.lift - want) < 0.5) l.lift = want;
       l.wasShown = true;
       const b = l.y - 30 - l.lift;
-      done.push({ left, right, top: b - hh, bottom: b });
+      const box = done[nd] ?? (done[nd] = {});
+      nd++;
+      box.left = left;
+      box.right = right;
+      box.top = b - hh;
+      box.bottom = b;
     }
     for (const l of labels) if (!l.shown) l.wasShown = false;
   }
@@ -544,12 +806,18 @@ export function createUI(ctx) {
     return barH * 0.55;
   }
   let hudH = 0;
+  const pageInset = { right: 0, bottom: 0, top: 0 };
   /** What the journal leaves free for a framed detail: beside / above the page, below the HUD, above the spot bar. */
   function focusInset() {
     const j = journal.inset();
     if (!hudH || ctx.engine.frame % 60 === 0) hudH = hud.getBoundingClientRect().bottom + 8;
     barInset();
-    return { right: j.right, bottom: Math.max(j.bottom, j.right ? barH : 0), top: narrow() ? hudH : 0 };
+    // a phone held sideways: the page runs the full height and the spot bar steps aside
+    const short = !narrow() && view.h <= 520;
+    pageInset.right = j.right;
+    pageInset.bottom = short ? 0 : Math.max(j.bottom, j.right ? barH : 0);
+    pageInset.top = narrow() ? hudH : 0;
+    return pageInset;
   }
 
   // ── speech bubbles ────────────────────────────────────────────────────────
@@ -627,6 +895,18 @@ export function createUI(ctx) {
     }, 3400);
   }
 
+  /** Share / copy a link to a page of the journal. */
+  function copyLink(link, title) {
+    const done = () => ui.toast(`Link copied — it opens “${title}” in the woodland`, 3600, { icon: 'link' });
+    const show = () => ui.toast(link, 7000, { icon: 'link' });
+    if (isTouch && navigator.share) {
+      navigator.share({ title: `${title} · ${P.name}’s Woodland`, url: link }).catch(() => {});
+      return;
+    }
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(link).then(done, show);
+    else show();
+  }
+
   let currentEntry = null;
   let focusing = false;
 
@@ -655,6 +935,8 @@ export function createUI(ctx) {
         if (!focusing && journal.isOpen) closeJournal({ release: false });
         if (!focusing && id) ctx.audio?.play?.('whoosh');
         if (id === 'glen') banner.classList.remove('is-visible');
+        // a new place is a new history entry (a page opening records itself)
+        if (!focusing && id) record('push');
       });
       rig?.onArrive?.((id) => {
         if (id && id !== 'glen' && !journal.isOpen) ui.showAreaBanner(id);
@@ -664,11 +946,11 @@ export function createUI(ctx) {
           clearTimeout(namedTimer);
           namedTimer = setTimeout(() => {
             spotbar.classList.remove('is-named');
-            const cur = pills.get(ctx.cameraRig?.spot);
-            if (cur && spotList.scrollWidth > spotList.clientWidth) cur.scrollIntoView({ block: 'nearest', inline: 'center', behavior: reduced ? 'auto' : 'smooth' });
+            centerPill(ctx.cameraRig?.spot, true);
           }, 3200);
-          const cur = pills.get(id);
-          if (cur) requestAnimationFrame(() => cur.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'auto' }));
+          // the pills just grew (names): centre the current one on the new widths
+          centerPill(id);
+          requestAnimationFrame(() => centerPill(id));
         }
       });
       rebuildHotspotButtons(rig?.spot ?? 'glen');
@@ -703,18 +985,63 @@ export function createUI(ctx) {
       ctx.engine.addUpdate(frame, 95);
       syncSound();
       ctx.audio?.onChange?.(() => syncSound());
+      // history starts here: the place a link points to, or the overview (clean URL)
+      try {
+        const st = initialLink ? { spot: initialLink.spot, entry: null, modal: null } : { spot: rig?.spot ?? 'glen', entry: null, modal: null };
+        history.replaceState({ woodland: 1, i: 0, ...st }, '', initialLink ? hashFor(st) : location.pathname + location.search);
+        hist.states = [st];
+        hist.i = 0;
+        hist.ready = true;
+      } catch {
+        /* no history API (sandboxed): links simply do nothing */
+      }
+      reportDrafts(content);
     },
     showIntro() {
+      // arrived by a link to a place / a page: no intro card, straight there
+      if (initialLink && ui.followLink(initialLink)) return;
       ctx.cameraRig?.holdIntro?.();
       root.classList.add('is-intro');
       intro = buildIntro();
       requestAnimationFrame(() => intro?.enter.focus({ preventScroll: true }));
     },
+    /** Go where a link points ('#woodworking/dining-table' or a parsed state): the place at once, then the page. */
+    followLink(link) {
+      const st = typeof link === 'string' ? parseHash(link) : link;
+      const rig = ctx.cameraRig;
+      if (!st || !rig) return false;
+      if (intro) skipIntro();
+      hist.syncing = true;
+      try {
+        if (ui.isModalOpen) closeModal('silent');
+        if (journal.isOpen) closeJournal({ release: false });
+        rig.goTo(st.spot, { instant: true });
+      } finally {
+        hist.syncing = false;
+      }
+      record('replace');
+      // the page (or the book) opens a moment later, as its own history entry: Back closes it
+      const then = () => {
+        if (st.entry) ui.openEntry(st.entry);
+        else if (st.modal === 'guide') ui.showGuidebook();
+        else showHintOnce();
+      };
+      if (st.entry || st.modal) setTimeout(then, reduced ? 0 : 700);
+      else then();
+      return true;
+    },
+    /** A swipe took the visitor on to another place: offer the way back for a moment. */
+    swipeTravelled(from, to) {
+      const a = SPOT_BY_ID[from];
+      if (!a || from === to) return;
+      ui.toast(`On to ${SPOT_BY_ID[to]?.title ?? 'the next place'}`, 4200, { icon: 'compass', action: { label: `back to ${a.title}`, arrow: 'left', onClick: () => go(from) } });
+    },
     openEntry(id, opts = {}) {
       const entry = content.getEntry(id);
       if (!entry) return console.warn('[ui] unknown entry', id);
+      const wasOpen = journal.isOpen;
       currentEntry = entry;
-      closeModal();
+      closeModal('nav');
       // opened from a keyboard hotspot button: its focus ring, tooltip and hover
       // ring must not stay drawn over the subject — focus moves into the page
       // (journal.open focuses the title at once; Esc brings it back to the button)
@@ -743,25 +1070,29 @@ export function createUI(ctx) {
       } finally {
         focusing = false;
       }
+      // a page is a history entry (flipping to the next page of the same place rewrites it)
+      record(wasOpen ? 'replace' : 'push');
     },
     openArea(id) {
       ui.showGuidebook();
       requestAnimationFrame(() => document.getElementById(`guide-${id}`)?.scrollIntoView({ block: 'start' }));
     },
     closePanel() {
-      closeJournal({ release: true });
+      closeJournal({ release: true, user: true });
     },
     showGuidebook() {
       openModal(
         'guide',
         renderGuidebook(ctx, {
           show3d: !!ctx.cameraRig,
+          linkFor,
+          onCopyLink: (link, e) => copyLink(link, e.title),
           onShow: (id) => {
-            closeModal();
+            closeModal('nav');
             ui.openEntry(id);
           },
           onVisit: (id) => {
-            closeModal();
+            closeModal('nav');
             go(id);
           },
         }),
@@ -822,8 +1153,24 @@ export function createUI(ctx) {
     hideTooltip() {
       tooltip.classList.remove('is-visible');
     },
-    toast(text, ms = 4200, { icon: ic, cls = '' } = {}) {
-      const el = h('div', { class: `toast ${cls}` }, ic && h('span', { class: 'toast__icon', html: icon(ic) }), h('span', {}, text));
+    toast(text, ms = 4200, { icon: ic, cls = '', action = null } = {}) {
+      const act =
+        action &&
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'toast__action',
+            onclick: () => {
+              action.onClick?.();
+              el.classList.remove('is-visible');
+              setTimeout(() => el.remove(), 400);
+            },
+          },
+          action.arrow === 'left' && h('span', { class: 'toast__arrow', html: icon('left') }),
+          action.label,
+        );
+      const el = h('div', { class: `toast ${cls}${act ? ' has-action' : ''}` }, ic && h('span', { class: 'toast__icon', html: icon(ic) }), h('span', {}, text), act);
       toasts.append(el);
       while (toasts.children.length > 3) toasts.firstElementChild.remove();
       requestAnimationFrame(() => el.classList.add('is-visible'));

@@ -10,7 +10,7 @@
   --kraft-2: #c6a676;
   --ink: #3a2a1c;
   --ink-soft: #6c5641;
-  --ink-faint: #9a8468;
+  --ink-faint: #6f5a42; /* 5.4:1 on paper (was #9a8468, 3:1) */
   --moss: #4f6a2c;
   --moss-2: #7e9650;
   --berry: #b8432f;
@@ -138,7 +138,7 @@ button { font: inherit; color: inherit; }
   box-shadow: inset 0 0 0 1px rgba(246, 215, 138, 0.22), 0 10px 30px rgba(0, 0, 0, 0.3);
   transition: opacity 0.8s ease, visibility 0.8s, transform 0.45s cubic-bezier(.2, .8, .2, 1);
 }
-.spotbar__list { list-style: none; display: flex; gap: 4px; margin: 0; padding: 0; overflow-x: auto; scrollbar-width: none; }
+.spotbar__list { position: relative; list-style: none; display: flex; gap: 4px; margin: 0; padding: 0; overflow-x: auto; scrollbar-width: none; }
 .spotbar__list::-webkit-scrollbar { display: none; }
 .spotbar__arrow { flex: none; width: 38px; height: 38px; padding: 8px; border: 0; border-radius: 50%; cursor: pointer; color: #f4e9cf; background: rgba(255, 240, 210, 0.1); transition: background 0.2s; }
 .spotbar__arrow:hover { background: rgba(255, 240, 210, 0.22); }
@@ -287,6 +287,9 @@ button { font: inherit; color: inherit; }
     linear-gradient(170deg, #ddc496, var(--kraft) 40%, #cdb07f);
   clip-path: polygon(0 0.4%, 6% 0, 18% 0.5%, 40% 0, 63% 0.4%, 85% 0, 100% 0.6%, 99.6% 30%, 100% 62%, 99.5% 100%, 70% 99.6%, 44% 100%, 18% 99.5%, 0 100%, 0.5% 66%, 0 31%);
   scrollbar-width: thin; scrollbar-color: rgba(90, 60, 25, 0.4) transparent;
+  /* small print on kraft needs darker ink than on paper (≥ 4.5:1) */
+  --ink-soft: #4f3d2b;
+  --ink-faint: #4f3d2b;
 }
 .journal__tape { position: absolute; z-index: 2; top: -11px; width: 92px; height: 26px; background: rgba(214, 226, 190, 0.78); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15); background-image: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.18) 0 6px, transparent 6px 12px); clip-path: polygon(3% 0, 97% 4%, 100% 50%, 96% 100%, 2% 96%, 0 50%); }
 .journal__tape.is-left { left: 22px; transform: rotate(-6deg); }
@@ -310,6 +313,13 @@ button { font: inherit; color: inherit; }
   font-family: var(--font-display); font-weight: 600; font-size: 13px; letter-spacing: 0.14em; color: rgba(160, 50, 30, 0.75);
   border: 2.5px double rgba(160, 50, 30, 0.6); border-radius: 5px; mix-blend-mode: multiply;
 }
+.journal__stamp.is-draft { padding: 1px 7px; font-size: 11px; letter-spacing: 0.1em; color: rgba(90, 70, 50, 0.7); border: 1.5px dashed rgba(90, 70, 50, 0.55); text-transform: uppercase; }
+/* placeholder copy (development builds only — production leaves it out): the owner sees what to fill in */
+.shows-drafts .journal__body p.is-draft { position: relative; margin-left: -10px; padding: 4px 8px 4px 10px; border-left: 2px dashed rgba(160, 50, 30, 0.45); background: rgba(255, 250, 235, 0.25); color: #5b4a39; }
+.shows-drafts .journal__body p.is-draft::before, .stamp-btn.is-draft::after { content: 'draft'; display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 3px; font-family: var(--font-display); font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #fff7ea; background: rgba(160, 50, 30, 0.6); vertical-align: 1px; }
+.stamp-btn.is-draft { outline: 1.5px dashed rgba(160, 50, 30, 0.6); outline-offset: 3px; }
+.stamp-btn.is-draft::after { margin: 0 0 0 4px; }
+.cutlist tr.is-draft td, .cutlist tr.is-draft th { color: #6a5440; font-style: italic; }
 .journal__visited { position: absolute; right: 18px; top: 68px; width: 24px; height: 24px; color: var(--moss); transform: rotate(-12deg); }
 .journal__photos { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin: 18px 0 8px; }
 .polaroid {
@@ -318,6 +328,10 @@ button { font: inherit; color: inherit; }
 }
 .polaroid img, .polaroid .sketch { display: block; width: 100%; height: auto; aspect-ratio: 3 / 2; object-fit: cover; background: #f1ead9; }
 .polaroid figcaption { padding-top: 6px; text-align: center; font-family: var(--font-hand); font-size: 16px; color: var(--ink-soft); }
+/* no photos yet: a small pencil sketch pinned beside the words (the text stays above the fold) */
+.journal__body .polaroid.is-sketch { float: right; width: min(40%, 160px); margin: 8px -4px 8px 14px; padding: 6px 6px 3px; }
+.journal__body .polaroid.is-sketch figcaption { padding-top: 2px; font-size: 13px; line-height: 1.1; }
+.journal__body::after { content: ''; display: block; clear: both; }
 .journal__body p { margin: 12px 0; font-size: 15.5px; line-height: 1.55; color: #33251a; }
 .cutlist { margin: 18px 0 8px; padding: 12px 14px 10px; background: rgba(250, 244, 228, 0.82); border-radius: 2px; box-shadow: 0 1px 0 rgba(90, 60, 25, 0.25), 0 4px 10px rgba(60, 40, 15, 0.12); transform: rotate(-0.4deg); }
 .cutlist__title { margin: 0 0 6px; font-family: var(--font-hand); font-weight: 400; font-size: 21px; }
@@ -338,6 +352,8 @@ button { font: inherit; color: inherit; }
 .paper-tag:nth-child(3n) { background: #f4dccf; }
 .paper-tag::before { content: ''; position: absolute; left: 9px; top: 50%; width: 5px; height: 5px; margin-top: -2.5px; border-radius: 50%; background: var(--kraft-2); box-shadow: inset 0 0 0 1px rgba(60, 40, 15, 0.5); }
 .journal__links { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 6px; }
+.journal__head + .journal__links { margin: 14px 0 4px; }
+.stamp-btn .stamp-btn__arrow { width: 16px; height: 16px; margin-left: -6px; }
 .journal__foot {
   position: sticky; bottom: -26px; z-index: 2; margin: 0 -30px -26px -34px; padding: 18px 30px 16px 34px;
   background: linear-gradient(180deg, rgba(205, 176, 127, 0), rgba(206, 177, 128, 0.97) 30px);
@@ -352,13 +368,18 @@ button { font: inherit; color: inherit; }
 .journal:not(.has-more) .journal__more { height: 0; padding: 0; margin: 0; overflow: hidden; }
 .journal__head:has(.journal__stamp) .journal__title { padding-right: 92px; }
 @media (max-height: 800px) and (min-width: 721px) { .polaroid { width: min(100%, 250px); margin-top: 12px; } }
-.journal__nav { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; margin: 6px -6px 0; padding-top: 10px; border-top: 1.5px dashed rgba(90, 60, 25, 0.35); }
-.journal__navbtn { display: inline-flex; align-items: center; gap: 4px; min-width: 0; padding: 6px 4px; border: 0; background: none; cursor: pointer; font-family: var(--font-hand); font-size: 17px; color: var(--ink-soft); }
+.journal__nav { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; column-gap: 10px; margin: 6px -6px 0; padding-top: 10px; border-top: 1.5px dashed rgba(90, 60, 25, 0.35); }
+.journal__nav.is-pair { display: flex; justify-content: center; }
+.journal__navbtn { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 6px 4px; border: 0; background: none; cursor: pointer; font-family: var(--font-hand); font-size: 17px; color: var(--ink-soft); }
+.journal__navbtn.is-pair { padding: 5px 14px 6px; border-radius: 999px; font-size: 18px; color: var(--ink); background: rgba(250, 244, 228, 0.55); box-shadow: inset 0 0 0 1.5px rgba(90, 60, 25, 0.3); }
+.journal__navbtn.is-pair:hover { background: rgba(255, 250, 238, 0.9); }
 .journal__navbtn span:not(.journal__navtitle) { width: 18px; height: 18px; flex: none; }
-.journal__navbtn.is-next { justify-self: end; text-align: right; }
+.journal__navbtn.is-next { justify-self: end; min-width: 0; text-align: right; }
 .journal__navbtn:hover { color: var(--ink); }
 .journal__navtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.journal__count { font-size: 12.5px; letter-spacing: 0.1em; color: var(--ink-faint); }
+.journal__count { font-size: 13px; letter-spacing: 0.1em; color: var(--ink-faint); white-space: nowrap; }
+/* tablets: the page is narrow — arrows + the counter carry the nav, titles shrink first */
+@media (min-width: 721px) and (max-width: 860px) { .journal__navbtn:not(.is-pair) { font-size: 15.5px; } }
 
 /* ── modal: guidebook, map, help ────────────────────────────────────────── */
 .modal { position: fixed; inset: 0; z-index: 9; display: grid; place-items: center; padding: 18px; background: radial-gradient(ellipse at center, rgba(20, 28, 18, 0.45), rgba(10, 14, 8, 0.72)); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); animation: fadeIn 0.3s ease; }
@@ -413,6 +434,14 @@ button { font: inherit; color: inherit; }
 .guide__facts dt { font-weight: 600; }
 .guide__facts dd { margin: 0; }
 .guide__show { margin-top: 8px; padding: 0; border: 0; background: none; cursor: pointer; font-family: var(--font-hand); font-size: 16px; color: var(--moss); text-decoration: underline wavy rgba(79, 106, 44, 0.45); text-underline-offset: 4px; }
+.guide__actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-top: 8px; }
+.guide__actions .guide__show { margin-top: 0; }
+.guide__copy { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-hand); font-size: 15px; color: var(--ink-soft); text-decoration: none; }
+.guide__copy span { width: 14px; height: 14px; }
+.guide__copy:hover { color: var(--ink); text-decoration: underline; }
+.guide__draft { margin-left: 6px; padding: 0 5px; border-radius: 3px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #fff7ea; background: rgba(160, 50, 30, 0.55); }
+.shows-drafts .guide__more p.is-draft, .shows-drafts .guide__facts .is-draft { color: #6a5440; font-style: italic; }
+.shows-drafts .guide__more p.is-draft::before { content: 'draft · '; font-style: normal; font-weight: 600; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(160, 50, 30, 0.8); }
 .guide__foot { margin-top: 18px; padding-top: 14px; border-top: 1.5px dashed rgba(90, 60, 25, 0.3); text-align: center; font-family: var(--font-hand); font-size: 16px; color: var(--ink-soft); }
 .guide__fallback { margin: 0 0 12px; padding: 10px 14px; border-radius: 4px; background: rgba(184, 67, 47, 0.1); font-size: 15px; }
 
@@ -485,7 +514,7 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px 4px; text-align: 
 .intro__tag { margin: 2px 0 0; font-size: 14px; letter-spacing: 0.06em; color: var(--berry); }
 .intro__text { margin: 14px 0 20px; font-size: 16.5px; line-height: 1.55; }
 .intro__actions { display: grid; justify-items: center; gap: 8px; }
-.intro__note { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 16px 0 0; font-size: 12.5px; color: var(--ink-faint); }
+.intro__note { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 16px 0 0; font-size: 13.5px; color: var(--ink-soft); }
 .intro__note span { width: 15px; height: 15px; }
 
 /* ── fader, noscript ────────────────────────────────────────────────────── */
@@ -517,7 +546,7 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px 4px; text-align: 
   /* for a moment after each arrival every place shows its name (then icons again) */
   .spotbar.is-named .spot-pill:not(.is-current) .spot-pill__name { display: inline; }
   .spot-pill.is-current { padding: 0 12px 0 8px; }
-  .spotbar__list { mask-image: linear-gradient(90deg, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%); -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%); }
+  .spotbar__list { padding: 0 6px; mask-image: linear-gradient(90deg, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%); -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%); }
   .spot-label__text small { display: none; }
   .spot-label__text b { font-size: 16px; }
   .spot-label__icon { width: 26px; height: 26px; padding: 4px; }
@@ -538,9 +567,11 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px 4px; text-align: 
   .journal__grip span { display: block; width: 46px; height: 5px; margin: 10px auto 0; border-radius: 3px; background: rgba(90, 60, 25, 0.45); }
   .journal__close { top: 2px; margin: 0 -6px 0 8px; width: 34px; height: 34px; }
   .journal__title { font-size: 36px; }
-  .journal__stamp { top: 2px; right: 52px; }
-  .journal__visited { top: 40px; right: 56px; }
-  .polaroid { width: min(86%, 300px); }
+  .journal__stamp { top: 44px; right: 2px; }
+  .journal__head:has(.journal__stamp) .journal__title { padding-right: 78px; }
+  .journal__visited { top: 76px; right: 14px; }
+  .journal__photos .polaroid { width: min(86%, 300px); }
+  .journal__body .polaroid.is-sketch { width: min(38%, 136px); }
   .modal { padding: 0; place-items: end stretch; }
   .modal__card, .modal__card.is-wide { width: 100%; max-height: 92vh; padding: 26px 18px 22px; border-radius: 16px 16px 0 0; animation: sheetIn 0.45s cubic-bezier(.2, 1, .3, 1); }
   .modal__close { margin: -14px -8px 0 8px; }
@@ -552,6 +583,59 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px 4px; text-align: 
   .map-pin__dot { padding: 6px; }
   .intro__card { padding: 26px 22px 20px; }
   .intro__text { font-size: 15px; }
+}
+
+/* ── short screens (a phone held sideways: 844 × 390) ────────────────────────
+   The desktop side page between the HUD and the spot bar would be ~170px tall:
+   here the page runs the full height on the right, the HUD shrinks and the
+   spot bar steps aside while a page is open. */
+@media (max-height: 520px) and (min-width: 721px) {
+  :root { --gutter: 10px; --bar-h: 52px; }
+  .plate { padding: 5px 18px 6px; }
+  .plate__name { font-size: 16px; }
+  .plate__tag { display: none; }
+  .hud-actions { gap: 5px; }
+  .hud-btn { width: 36px; height: 36px; padding: 7px; border-width: 2.5px; }
+  .hud__right { gap: 5px; }
+  .secrets-tag { font-size: 14px; padding: 2px 10px 2px 7px; }
+  .spotbar { padding: 4px; }
+  .spot-pill { height: 36px; font-size: 14px; padding: 0 12px 0 8px; }
+  .spotbar__arrow { width: 32px; height: 32px; padding: 6px; }
+  .ui.has-panel .spotbar { opacity: 0; visibility: hidden; pointer-events: none !important; transform: translate(-50%, 20px); }
+  .ui.has-panel .toasts { bottom: 14px; left: 30%; }
+  .banner { top: 58px; }
+  .banner__title { font-size: 40px; }
+  .journal { top: 8px; right: 8px; bottom: 8px; width: min(380px, 46vw); z-index: 5; }
+  .journal__sheet { padding: 20px 22px 18px 26px; }
+  .journal__close { width: 34px; height: 34px; margin: -10px -12px 0 8px; }
+  .journal__title { font-size: 34px; }
+  .journal__subtitle { font-size: 14.5px; }
+  .journal__stamp { top: 24px; }
+  .journal__head:has(.journal__stamp) .journal__title { padding-right: 70px; }
+  .journal__foot { bottom: -18px; margin: 0 -22px -18px -26px; padding: 12px 22px 10px 26px; }
+  .journal__nav { padding-top: 6px; }
+  .journal__navbtn { padding: 3px 4px; font-size: 16px; }
+  .polaroid { width: min(100%, calc(30vh * 1.5 + 20px)); margin: 10px auto 6px; }
+  .polaroid figcaption { font-size: 14px; padding-top: 3px; }
+  .modal { padding: 8px; }
+  .modal__card, .modal__card.is-wide { max-height: 96vh; padding: 22px 24px 18px; }
+  .modal__close { margin: -14px -14px 0 8px; }
+  .map-stage { width: min(100%, calc(80vh * 66 / 62)); }
+  .help__title { font-size: 34px; margin-bottom: 8px; }
+  .help__list { grid-template-columns: 1fr 1fr; column-gap: 18px; gap: 4px 18px; }
+  .help__list li { grid-template-columns: 112px 1fr; font-size: 14px; }
+  /* the intro card: two columns so it fits the short screen */
+  .intro { padding: 8px; }
+  .intro__card { width: min(640px, 100%); max-height: calc(100vh - 16px); overflow-y: auto; padding: 16px 24px 14px; display: grid; grid-template-columns: 1fr 1fr; column-gap: 22px; align-items: center; text-align: left; }
+  .intro__card > :not(.intro__text):not(.intro__actions):not(.intro__note):not(.journal__tape) { grid-column: 1; }
+  .intro__emblem { display: none; }
+  .intro__kicker { font-size: 18px; }
+  .intro__title { font-size: 44px; }
+  .intro__flourish { width: 160px; }
+  .intro__text { grid-column: 2; grid-row: 1 / span 4; margin: 0; font-size: 14.5px; line-height: 1.45; }
+  .intro__actions { grid-column: 1 / -1; margin-top: 12px; grid-auto-flow: column; justify-content: center; align-items: center; gap: 16px; }
+  .intro__note { grid-column: 1 / -1; margin-top: 8px; font-size: 13.5px; }
+  .stamp-btn.is-big { font-size: 20px; padding: 9px 20px 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

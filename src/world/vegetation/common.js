@@ -10,7 +10,9 @@
 //   mergeSafe(geos)   mergeGeometries that first aligns attribute sets
 //   moonlit(mat)      a clone of a foliage material that dims to a moonlit
 //                     silhouette at night, with a silver rim on its upper edges
-//   noise helpers     seeded 2D simplex fields shared by terrain & scatter
+//   noise helpers     seeded 2D simplex fields shared by terrain & scatter,
+//                     groundPatches() (cushions, drifts, clover, soil) and
+//                     microRelief() — the floor and the undergrowth agree
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -35,6 +37,47 @@ export const fieldMid = (x, z) => 0.5 + 0.5 * fbm(nB, x * 0.22, z * 0.22, 2);
 export const fieldFine = (x, z) => 0.5 + 0.5 * nC(x * 0.9, z * 0.9);
 /** Another independent broad field (flowers vs ferns …): 0..1. */
 export const fieldAlt = (x, z) => 0.5 + 0.5 * fbm(nD, x * 0.1 + 3.3, z * 0.1 - 1.7, 3);
+
+// ─── mid-scale ground patches (shared by the floor shader & the undergrowth) ──
+// The open glen must never read as a putting green: every few units the floor
+// changes character. The terrain bakes these per vertex (aPatch) and paints
+// them; the undergrowth reads the same fields, so clumps gather around the
+// cushions' edges, clover grows on the clover mats, pebbles lie in the bare
+// soil and the litter drifts stay (mostly) open.
+const nE = createNoise2D(6029);
+const nF = createNoise2D(8191);
+const nG = createNoise2D(3343);
+const nH = createNoise2D(9907);
+const nR = createNoise2D(2213);
+const sst = (a, b, x) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+/**
+ * { cushion, drift, clover, soil } 0..1 at (x, z):
+ *   cushion  dark velvet moss cushions (rounded blobs, 2–4 units, ~25 % of the floor)
+ *   drift    brown leaf-litter drifts, wind-blown streaks (≈ 6 × 2.5 units)
+ *   clover   cool clover mats (2–3 units)
+ *   soil     bare soil with needles & a pebble scatter (2–3 units)
+ */
+export function groundPatches(x, z, out = {}) {
+  const c = 0.5 + 0.5 * fbm(nE, x * 0.24 + 3.1, z * 0.24 - 7.4, 2);
+  out.cushion = sst(0.58, 0.68, c);
+  const ax = x * 0.8 + z * 0.6, az = -x * 0.6 + z * 0.8;
+  out.drift = sst(0.63, 0.73, 0.5 + 0.5 * fbm(nF, ax * 0.09, az * 0.22, 3)) * (1 - out.cushion * 0.8);
+  out.clover = sst(0.64, 0.74, 0.5 + 0.5 * fbm(nG, x * 0.2 - 2.2, z * 0.2 + 5.1, 2)) * (1 - out.cushion);
+  out.soil = sst(0.67, 0.77, 0.5 + 0.5 * fbm(nH, x * 0.18 + 8.8, z * 0.18 + 1.3, 2)) * (1 - out.cushion);
+  return out;
+}
+const _gp = {};
+/**
+ * Micro-relief (± ≈ 0.15): the cushions dome up, soft hummocks between them.
+ * Shading only — the terrain's normals carry it, getHeight() is untouched.
+ */
+export function microRelief(x, z) {
+  groundPatches(x, z, _gp);
+  return 0.11 * _gp.cushion + 0.06 * nR(x * 0.55, z * 0.55) + 0.025 * nR(x * 1.4 + 9.1, z * 1.4 - 3.3) - 0.03 * _gp.soil;
+}
 
 // ─── geometry accumulation ───────────────────────────────────────────────────
 const _v = new THREE.Vector3();

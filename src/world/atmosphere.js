@@ -53,7 +53,7 @@ export default async function build(ctx) {
   if (shafts && dayBeam) {
     const axis = new THREE.Vector3().subVectors(dayBeam.pos, dayBeam.target);
     const foot = dayBeam.target;
-    shafts.addBeam(foot.x, foot.y - 0.4, foot.z, axis, { length: 22, width: 3.4, intensity: 0.8 });
+    shafts.addBeam(foot.x, foot.y - 0.4, foot.z, axis, { length: 22, width: 2.4, intensity: 0.75 });
   }
   // moonbeams: placed on the first frame, once the lighting knows where the fairy ring is
   let moonbeams = false;

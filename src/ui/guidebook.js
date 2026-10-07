@@ -10,8 +10,9 @@ import { SPOTS } from '../world/layout.js';
 import { h } from './dom.js';
 import { icon, spotIcon } from './icons.js';
 import { sketchFor } from './sketches.js';
+import { presentEntry, mailAddress, showDrafts } from './draft.js';
 
-export function renderGuidebook(ctx, { show3d = true, onShow, onVisit } = {}) {
+export function renderGuidebook(ctx, { show3d = true, onShow, onVisit, linkFor, onCopyLink } = {}) {
   const { content } = ctx;
   const P = content.profile;
   const progress = ctx.interactions?.progress?.();
@@ -20,10 +21,11 @@ export function renderGuidebook(ctx, { show3d = true, onShow, onVisit } = {}) {
   // every daytime secret found, the night ones still waiting: a gentle hint
   const dayDone = !!daySecrets && daySecrets.total > 0 && daySecrets.found >= daySecrets.total && secrets.found < secrets.total;
 
+  const mail = mailAddress(P);
   const contact = h(
     'div',
     { class: 'guide__contact' },
-    P.email && h('a', { class: 'stamp-btn is-primary', href: `mailto:${P.email}` }, h('span', { html: icon('mail') }), 'Write me'),
+    mail && h('a', { class: `stamp-btn is-primary${mail.draft ? ' is-draft' : ''}`, href: `mailto:${mail.email}` }, h('span', { html: icon('mail') }), 'Write me'),
     (P.links ?? []).map((l) => h('a', { class: 'stamp-btn', href: l.href, target: '_blank', rel: 'noopener' }, h('span', { html: icon(l.icon === 'github' ? 'github' : 'link') }), l.label)),
   );
 
@@ -53,6 +55,17 @@ export function renderGuidebook(ctx, { show3d = true, onShow, onVisit } = {}) {
 
   function entryCard(e) {
     const visited = ctx.interactions?.isVisited?.(e.id);
+    const shown = presentEntry(e);
+    const meta = [e.subtitle, shown.year && !shown.yearDraft ? shown.year : null].filter(Boolean).join(' · ');
+    const link = linkFor?.(e.id);
+    // (an entry with no body yet shows its summary as the page: not twice here)
+    const more = [
+      shown.body.filter((p) => p.text !== e.summary).map((p) => h('p', { class: p.draft ? 'is-draft' : null }, p.text)),
+      shown.facts.length > 0 && h('dl', { class: 'guide__facts' }, shown.facts.flatMap(([k, v, draft]) => [h('dt', { class: draft ? 'is-draft' : null }, k), h('dd', { class: draft ? 'is-draft' : null }, v)])),
+      e.tags?.length && h('ul', { class: 'journal__tags' }, e.tags.map((t) => h('li', { class: 'paper-tag' }, t))),
+      e.kind === 'contact' && contact.cloneNode(true),
+      e.links?.length && h('div', { class: 'journal__links' }, e.links.map((l) => h('a', { class: 'stamp-btn', href: l.href, target: '_blank', rel: 'noopener' }, h('span', { html: icon('link') }), l.label))),
+    ].flat().filter(Boolean);
     return h(
       'article',
       { class: `guide__entry${e.featured ? ' is-featured' : ''}`, 'aria-labelledby': `guide-e-${e.id}` },
@@ -61,26 +74,23 @@ export function renderGuidebook(ctx, { show3d = true, onShow, onVisit } = {}) {
         'div',
         { class: 'guide__entrytext' },
         h('h4', { id: `guide-e-${e.id}` }, e.title, visited && h('span', { class: 'guide__leaf', title: 'In your journal', html: icon('leaf') })),
-        h('p', { class: 'guide__meta' }, [e.subtitle, e.year].filter(Boolean).join(' · ')),
+        meta && h('p', { class: 'guide__meta' }, meta, shown.yearDraft && showDrafts ? h('span', { class: 'guide__draft' }, 'year: draft') : null),
         e.summary && h('p', { class: 'guide__summary' }, e.summary),
-        h(
-          'details',
-          { class: 'guide__more' },
-          h('summary', {}, 'Read the whole page'),
-          (e.body ?? []).map((p) => h('p', {}, p)),
-          e.facts?.length && h('dl', { class: 'guide__facts' }, e.facts.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])),
-          e.tags?.length && h('ul', { class: 'journal__tags' }, e.tags.map((t) => h('li', { class: 'paper-tag' }, t))),
-          e.kind === 'contact' && contact.cloneNode(true),
-          e.links?.length && h('div', { class: 'journal__links' }, e.links.map((l) => h('a', { class: 'stamp-btn', href: l.href, target: '_blank', rel: 'noopener' }, h('span', { html: icon('link') }), l.label))),
-        ),
-        show3d && h('button', { type: 'button', class: 'guide__show', onclick: () => onShow?.(e.id) }, 'Show me in the woodland ', h('span', { html: icon('right') })),
+        more.length > 0 && h('details', { class: 'guide__more' }, h('summary', {}, 'Read the whole page'), more),
+        show3d &&
+          h(
+            'div',
+            { class: 'guide__actions' },
+            h('button', { type: 'button', class: 'guide__show', onclick: () => onShow?.(e.id) }, 'Show me in the woodland ', h('span', { html: icon('right') })),
+            link && h('a', { class: 'guide__copy', href: link, title: 'A link straight to this page of the journal', onclick: (ev) => { ev.preventDefault(); onCopyLink?.(link, e); } }, h('span', { html: icon('link') }), 'copy link'),
+          ),
       ),
     );
   }
 
   return h(
     'div',
-    { class: 'guide' },
+    { class: `guide${showDrafts ? ' shows-drafts' : ''}` },
     h(
       'header',
       { class: 'guide__cover' },

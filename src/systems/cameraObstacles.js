@@ -81,7 +81,21 @@ export function createCameraObstacles(ctx) {
       const r = s.type === 'circle' ? s.r : Math.hypot(s.hw ?? 0.5, s.hd ?? 0.5) * 0.85;
       const y = getHeight(s.x, s.z);
       cyl.push({ x: s.x, z: s.z, r: r + 0.35, y0: y - 20, y1: y + h });
+      // the Velowerkstatt's bell cap overhangs its stone drum (riverside/workshop.js:
+      // CAP_R 2.95, rim at 3.05, 3.15 tall, a rolled rim with fairy lights below it)
+      if (s.tag === 'velowerkstatt') cyl.push({ x: s.x, z: s.z, r: 2.95 + 0.75, y0: y + 3.05 - 0.9, y1: y + 3.05 + 3.15 + 0.5, cap: true });
     }
+    // mushroom-house caps overhang their stems (whose collider circles are all the
+    // footprints know about): a flat drum from just below the rim to the apex, so
+    // the lens can never park under a cap with the rolled rim across the frame
+    ctx.scene?.traverse?.((o) => {
+      const u = o.userData;
+      if (!u || typeof u.capRadius !== 'number' || typeof u.rimY !== 'number' || o === ctx.scene) return;
+      o.updateWorldMatrix(true, false);
+      const e = o.matrixWorld.elements;
+      const k = o.matrixWorld.getMaxScaleOnAxis();
+      cyl.push({ x: e[12], z: e[14], r: u.capRadius * k + 0.6, y0: e[13] + (u.rimY - 0.8) * k, y1: e[13] + ((u.height ?? u.rimY + 3) + 0.4) * k, cap: true });
+    });
     builtAt = ctx.colliders?.version ?? 0;
   }
 

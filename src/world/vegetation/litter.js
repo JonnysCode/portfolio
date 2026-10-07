@@ -1,14 +1,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Forest-floor litter: the tiny things that make the ground read as a real
 // miniature up close — fallen leaves (curled, autumn-toned, in drifts at the
-// giants' feet, blown against the path edges, under the forest wall) and
-// pebbles (along the paths and in the open soil).
+// giants' feet, blown against the path edges, in the floor's litter drifts,
+// under the forest wall) and pebbles (along the paths and in the floor's
+// bare-soil patches — common.groundPatches).
 //
 // Two InstancedMeshes, a few thousand instances, a handful of triangles each.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { getHeight, getNormal, getPathDistance } from '../ground.js';
-import { GeoBuilder, TAU, instanced, fieldMid, fieldBroad, normalizeAttributes } from './common.js';
+import { GeoBuilder, TAU, instanced, fieldBroad, groundPatches, normalizeAttributes } from './common.js';
 import { canGrow, oakDist, OAK_KEEP } from './zones.js';
 
 /** A small curled leaf lying flat: tip along +Z, folded along the midrib, edges lifted (4 triangles). */
@@ -53,6 +54,7 @@ export function buildLitter(ctx, rng, { trees = [], density = 1 } = {}) {
   const leaves = [];
   const pebbles = [];
   const nrm = new THREE.Vector3();
+  const gp = {};
   const tone = (list, l = 0.06) => new THREE.Color(rng.pick(list)).offsetHSL(rng.jitter(0.02), rng.jitter(0.08), rng.jitter(l));
 
   const addLeaf = (x, z) => {
@@ -86,8 +88,10 @@ export function buildLitter(ctx, rng, { trees = [], density = 1 } = {}) {
     const r = Math.sqrt(rng.range(6 * 6, 32 * 32));
     const x = Math.sin(az) * r, z = Math.cos(az) * r;
     const pd = getPathDistance(x, z);
-    // more along the path edges, in litter patches and under the forest wall
-    const w = (pd > 0.6 && pd < 1.8 ? 0.7 : 0.12) + (fieldBroad(x, z) > 0.6 ? 0.35 : 0) + (r > 22 ? 0.3 : 0) + (oakDist(x, z) < 14 ? 0.4 : 0);
+    groundPatches(x, z, gp);
+    // more along the path edges, in the floor's leaf-litter drifts, in litter
+    // patches and under the forest wall; few on the velvet cushions
+    const w = ((pd > 0.6 && pd < 1.8 ? 0.7 : 0.1) + gp.drift * 0.9 + (fieldBroad(x, z) > 0.6 ? 0.3 : 0) + (r > 22 ? 0.3 : 0) + (oakDist(x, z) < 14 ? 0.4 : 0)) * (1 - gp.cushion * 0.7);
     if (!rng.chance(w)) continue;
     // little clumps of 1–4
     const c = rng.int(1, 4);
@@ -101,7 +105,9 @@ export function buildLitter(ctx, rng, { trees = [], density = 1 } = {}) {
     const r = Math.sqrt(rng.range(5 * 5, 30 * 30));
     const x = Math.sin(az) * r, z = Math.cos(az) * r;
     const pd = getPathDistance(x, z);
-    const w = pd > 0.85 && pd < 1.6 ? 0.8 : fieldMid(x, z) > 0.7 ? 0.25 : 0.05;
+    groundPatches(x, z, gp);
+    // (scatters: along the paths and in the floor's bare-soil patches)
+    const w = pd > 0.85 && pd < 1.6 ? 0.8 : 0.03 + gp.soil * 0.75;
     if (!rng.chance(w)) continue;
     if (!canGrow(x, z, { path: 0.9 })) continue;
     const s = rng.range(0.025, 0.07) * (rng.chance(0.1) ? 1.8 : 1);

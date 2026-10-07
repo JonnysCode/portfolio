@@ -49,9 +49,11 @@ const ORBIT = {
   glen: { az: 0.62, up: 0.32, down: 0.1, zoom: [0.42, 1.22], pan: 9 },
   woodworking: { az: 0.55, up: 0.42, down: 0.06, zoom: [0.42, 1.45], pan: 3.5 },
   code: { az: 0.5, up: 0.32, down: 0.12, zoom: [0.45, 1.4], pan: 3 },
-  home: { az: 0.5, up: 0.4, down: 0.06, zoom: [0.45, 1.4], pan: 3 },
-  interior: { az: 0.5, up: 0.4, down: 0.06, zoom: [0.4, 1.45], pan: 3 },
-  bikes: { az: 0.55, up: 0.4, down: 0.08, zoom: [0.42, 1.45], pan: 3.5 },
+  // (capSafe: orbited far round, a zoom-in would park the lens under the cap
+  // rim / behind a door leaf — the closest zoom is held back a little there)
+  home: { az: 0.5, up: 0.4, down: 0.06, zoom: [0.45, 1.4], pan: 3, capSafe: 0.6 },
+  interior: { az: 0.5, up: 0.4, down: 0.06, zoom: [0.4, 1.45], pan: 3, capSafe: 0.6 },
+  bikes: { az: 0.55, up: 0.4, down: 0.08, zoom: [0.42, 1.45], pan: 3.5, capSafe: 0.6 },
   focus: { az: 0.55, up: 0.35, down: 0.12, zoom: [0.55, 1.8], pan: 1.2 },
 };
 
@@ -641,7 +643,7 @@ export function createCameraRig(ctx) {
       dAz = clamp(dAz, -R.az, R.az);
       const polMin = Math.max(L.minPolar, goal.polar - R.up), polMax = Math.min(L.maxPolar, goal.polar + R.down);
       dPol = clamp(goal.polar + dPol, Math.min(polMin, goal.polar), Math.max(polMax, goal.polar)) - goal.polar;
-      zoom = clamp(zoom, R.zoom[0], R.zoom[1]);
+      zoom = clamp(zoom, R.capSafe && Math.abs(dAz) > 0.3 ? Math.max(R.zoom[0], R.capSafe) : R.zoom[0], R.zoom[1]);
       if (pan.length() > R.pan) pan.setLength(R.pan);
       // never orbit into a trunk, a cap or the ground: refuse the move instead
       const dist0 = clamp(goal.distance * zoom, 1.4, L.maxDistance);
