@@ -103,10 +103,15 @@ async function boot() {
 
   ctx.ui.setProgress(0.95, 'Warming up shaders…');
   // Compile all shaders up front to avoid hitches on first view.
+  // Compile against the post chain's HDR target when post-processing is on, so
+  // the variants that are actually drawn get compiled (not the sRGB/tone-mapped ones).
   try {
+    engine.renderer.setRenderTarget(ctx.post?.target ?? null);
     await engine.renderer.compileAsync(engine.scene, engine.camera);
   } catch {
     /* compileAsync is an optimisation only */
+  } finally {
+    engine.renderer.setRenderTarget(null);
   }
   engine.step(1 / 60);
   ctx.ui.setProgress(1, 'Welcome!');

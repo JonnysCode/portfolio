@@ -138,14 +138,17 @@ export function createEngine(canvas) {
   };
 
   function resize() {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+    // the canvas is CSS-sized to the visible viewport (inset: 0)
+    const w = canvas.clientWidth || window.innerWidth;
+    const h = canvas.clientHeight || window.innerHeight;
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h, false);
     for (const fn of resizeListeners) fn(w, h);
   }
   window.addEventListener('resize', resize);
+  // mobile URL bars and on-screen keyboards change the visual viewport without always firing window resize
+  window.visualViewport?.addEventListener('resize', resize);
 
   return engine;
 }

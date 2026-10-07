@@ -645,6 +645,10 @@ export default async function build(ctx) {
     composer: null,
     bloom,
     settings: SETTINGS,
+    /** The HDR scene target the world renders into (null when post is off) — main.js warms shaders up against it. */
+    get target() {
+      return !failed && active ? sceneRT ?? null : null;
+    },
     get enabled() {
       return !failed && active;
     },
