@@ -314,13 +314,16 @@ export function buildBackdrop(ctx) {
   const LEAF = [[0.17, 0.25, 0.12], [0.13, 0.22, 0.14], [0.2, 0.27, 0.13], [0.11, 0.19, 0.13]];
   const BUSH = [0.12, 0.2, 0.11];
 
+  // crowns from this radius on use the coarse blob (deep in the mist; on
+  // 'medium' — phones — already from the second row)
+  const coarseFrom = tier === 'high' ? 72 : 50;
   // receding rows of colossal trees, the farthest a ghostly wall in the haze
   // (low: fewer trees, but enough that the gaps between them do not open onto bare sky)
   const rows = [
     { r: [41, 50], count: tier === 'low' ? 11 : 15, radius: [1.6, 2.8], height: [34, 46] },
     { r: [54, 66], count: tier === 'low' ? 12 : 17, radius: [2.2, 3.6], height: [42, 56] },
     { r: [72, 92], count: tier === 'low' ? 12 : 19, radius: [2.8, 4.6], height: [50, 66] },
-    { r: [100, 135], count: tier === 'low' ? 7 : 22, radius: [3.5, 6], height: [60, 80], far: true },
+    { r: [100, 135], count: tier === 'low' ? 7 : tier === 'medium' ? 14 : 22, radius: [3.5, 6], height: [60, 80], far: true },
     // understory: smaller trees whose crowns sit low enough to be seen between the giants
     { r: [50, 80], count: tier === 'low' ? 6 : 14, radius: [0.8, 1.4], height: [18, 28], under: true },
   ];
@@ -371,7 +374,7 @@ export function buildBackdrop(ctx) {
         const ma = rng.range(0, Math.PI * 2);
         const md = radius * rng.range(1.2, 4.8) * (row.under ? 1.8 : 1);
         const s = radius * rng.range(2.8, 4.6) * (row.under ? 1.7 : 1) * side;
-        parts.push(tint(blobGeometry(rng, tx + Math.cos(ma) * md, topY + rng.range(1, 9) * (row.under ? 0.4 : 1), tz + Math.sin(ma) * md, s * 1.25, s * 0.75, s * 1.25, row.r[0] >= 72), leaf()));
+        parts.push(tint(blobGeometry(rng, tx + Math.cos(ma) * md, topY + rng.range(1, 9) * (row.under ? 0.4 : 1), tz + Math.sin(ma) * md, s * 1.25, s * 0.75, s * 1.25, row.r[0] >= coarseFrom), leaf()));
       }
       // undergrowth at the foot
       if (tier !== 'low' && !row.far) {
@@ -381,7 +384,7 @@ export function buildBackdrop(ctx) {
           const bd = radius * rng.range(1.6, 3.5) + 1;
           const s = rng.range(1.6, 3.4);
           const bx = x + Math.cos(ba) * bd, bz = z + Math.sin(ba) * bd;
-          parts.push(tint(blobGeometry(rng, bx, farHeight(bx, bz) + s * 0.2, bz, s * 1.4, s * 0.8, s * 1.4, row.r[0] >= 72), BUSH));
+          parts.push(tint(blobGeometry(rng, bx, farHeight(bx, bz) + s * 0.2, bz, s * 1.4, s * 0.8, s * 1.4, row.r[0] >= coarseFrom), BUSH));
         }
       }
     }
@@ -393,7 +396,7 @@ export function buildBackdrop(ctx) {
     const r = rng.range(46, 95);
     const { x, z } = polar(r, az);
     const s = rng.range(7, 13);
-    parts.push(tint(blobGeometry(rng, x, farHeight(x, z) + rng.range(36, 52), z, s * 1.4, s * 0.7, s * 1.4, r > 70), leaf()));
+    parts.push(tint(blobGeometry(rng, x, farHeight(x, z) + rng.range(36, 52), z, s * 1.4, s * 0.7, s * 1.4, r > coarseFrom), leaf()));
   }
   const skirt = skirtGeometry();
   parts.push(tint(skirt, [0.11, 0.15, 0.09]));

@@ -72,7 +72,10 @@ const domeFragment = /* glsl */ `
     //    the crowns show the dome — keep it a soft hazy distance (the mist
     //    colour, a touch deeper) instead of flat cyan / navy patches ──
     if (uLow > 0.5) {
-      vec3 hazeCol = woodlandFogColor(d) * mix(1.04, 0.92, uNight);
+      vec3 hazeCol = woodlandFogColor(d);
+      // (by night deeper and less saturated: the filmic curve would turn the
+      //  mist colour into bright navy patches between the dark trunks)
+      hazeCol = mix(vec3(dot(hazeCol, vec3(0.2126, 0.7152, 0.0722))), hazeCol, 1.0 - 0.35 * uNight) * mix(1.04, 0.85, uNight);
       col = mix(col, hazeCol, 0.82 * smoothstep(-0.02, 0.3, y));
     }
 
@@ -92,24 +95,29 @@ const domeFragment = /* glsl */ `
       }
     }
 
-    // ── moon disc + halo ──
+    // ── at & below the horizon: exactly the (fully fogged) mist colour ──
+    vec3 mist = woodlandFogColor(d);
+    col = mix(col, mist, 1.0 - smoothstep(-0.02, 0.16, y));
+
+    // ── moon disc + halo: low over the far forest at the back-right, glimpsed
+    //    between the colossal trunks — seen through the mist, so near the
+    //    horizon it is hazier and a touch warmer, and the painted treelines
+    //    pass in front of it ──
     if (uNight > 0.01) {
       float md = max(dot(d, uMoonDir), 0.0);
       vec3 mr = normalize(cross(uMoonDir, vec3(0.0, 1.0, 0.0)));
       vec3 mu = cross(mr, uMoonDir);
-      vec2 ml = vec2(dot(d, mr), dot(d, mu)) / 0.038;
+      vec2 ml = vec2(dot(d, mr), dot(d, mu)) / 0.04;
       float r = length(ml);
-      vec3 moonCol = vec3(1.25, 1.25, 1.35);
-      moonCol *= 0.82 + 0.18 * smoothstep(0.3, 0.7, envNoise(ml * 2.1 + 4.0));
-      moonCol *= mix(0.6, 1.0, smoothstep(-0.9, -0.2, dot(ml, vec2(-0.75, -0.2))));
-      float disc = smoothstep(1.0, 0.92, r) * step(0.0, dot(d, uMoonDir));
-      col += vec3(0.45, 0.55, 0.95) * (pow(md, 600.0) * 0.6 + pow(md, 40.0) * 0.22 + pow(md, 6.0) * 0.06) * uNight;
-      col = mix(col, moonCol, disc * uNight);
+      float clear = smoothstep(-0.01, 0.2, y);
+      vec3 moonCol = vec3(1.3, 1.3, 1.4) * mix(vec3(1.05, 0.95, 0.82), vec3(1.0), clear);
+      moonCol *= 0.8 + 0.2 * smoothstep(0.3, 0.7, envNoise(ml * 2.1 + 4.0));
+      moonCol *= mix(0.62, 1.0, smoothstep(-0.9, -0.2, dot(ml, vec2(-0.75, -0.2))));
+      float disc = smoothstep(1.0, 0.9, r) * step(0.0, dot(d, uMoonDir));
+      float haze = mix(0.55, 1.0, clear);
+      col += vec3(0.5, 0.6, 0.95) * (pow(md, 500.0) * 0.7 + pow(md, 60.0) * 0.3 + pow(md, 8.0) * 0.08) * uNight * haze;
+      col = mix(col, moonCol, disc * uNight * haze);
     }
-
-    // ── at & below the horizon: exactly the (fully fogged) mist colour ──
-    vec3 mist = woodlandFogColor(d);
-    col = mix(col, mist, 1.0 - smoothstep(-0.02, 0.16, y));
 
     // ── the endless forest beyond: two soft painted treelines dissolving in the mist ──
     float az = atan(d.x, -d.z);
@@ -121,6 +129,8 @@ const domeFragment = /* glsl */ `
     col = mix(col, far1, smoothstep(fw, -fw, y - tl1) * smoothstep(-0.05, 0.02, y));
     col = mix(col, far2, smoothstep(fw, -fw, y - tl2) * smoothstep(-0.05, 0.02, y));
     col = mix(col, mist, 1.0 - smoothstep(-0.03, 0.03, y));
+    // (low tier, night: a little above the horizon the gaps sink into darkness)
+    if (uLow > 0.5) col *= mix(1.0, 0.6, uNight * smoothstep(0.03, 0.22, y));
 
     gl_FragColor = vec4(col, 1.0);
     #include <tonemapping_fragment>

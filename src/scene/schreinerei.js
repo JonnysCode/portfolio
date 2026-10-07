@@ -7,13 +7,16 @@
 //                         sign, lantern, the EFZ certificate (hotspot)
 //   schreinerei/annex.js  the crooked half-timbered workshop (SCHREINEREI.annex)
 //                         with its shingled roof, dormer, chimney & interior
-//   schreinerei/porch.js  the lean-to porch, the Hobelbank, Jonny planing (hotspot)
+//   schreinerei/porch.js  the lean-to porch, the Hobelbank at working height,
+//                         Jonny on his duckboard planing (hotspot), work lamp
 //   schreinerei/deck.js   the gallery deck: dining table & tea party, record
 //                         player (music toggle), record cabinet, coffee table
-//   schreinerei/yard.js   lumber rack, firewood, sawhorses, wheelbarrow, the
-//                         delivery snail, stepping stones, ground cover
-//   schreinerei/kit.js    shared geometry helpers + per-material Batch merging
-//   schreinerei/fx.js     chimney smoke, plane shavings, floating notes
+//   schreinerei/yard.js   lumber rack & stickered stack, firewood, a dovetailed
+//                         chest on sawhorses, wheelbarrow, the delivery snail,
+//                         stepping stones, path lanterns, ground cover
+//   schreinerei/kit.js    shared geometry helpers + per-material Batch merging,
+//                         tools (frame saw, hand saw, F-clamp), lantern posts
+//   schreinerei/fx.js     chimney smoke, plane shavings, floating notes, motes
 //
 // Static geometry of every builder lands in ONE Batch (merged per material);
 // hotspot pieces are their own small groups so the interaction "boing" works.
@@ -22,10 +25,11 @@
 //   togglePlaying(), get playing, anchors: { chimneyTop, lantern, sign } }.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { SCHREINEREI, SPOTS } from '../world/layout.js';
+import { SCHREINEREI, SPOTS, OAK } from '../world/layout.js';
 import { Batch, makeMats, takeHalos } from './schreinerei/kit.js';
-import { buildDoor } from './schreinerei/door.js';
-import { buildAnnex, ANNEX } from './schreinerei/annex.js';
+import { buildDoor, DOOR } from './schreinerei/door.js';
+import { buildAnnex, ANNEX, annexToWorld } from './schreinerei/annex.js';
+import { makeMotes } from './schreinerei/fx.js';
 import { buildPorch, BENCH } from './schreinerei/porch.js';
 import { buildDeck } from './schreinerei/deck.js';
 import { buildYard } from './schreinerei/yard.js';
@@ -94,7 +98,16 @@ export default async function build(ctx) {
     ctx.colliders.addBox(porch.bench.position.x, porch.bench.position.z, BENCH.length / 2 + 0.15, BENCH.depth / 2 + 0.1, porch.bench.rotation.y, 'hobelbank');
   }
 
-  const updates = [door.update, annex.update, porch.update, deck.update, yard.update];
+  // golden sawdust motes drifting in the warm light: the open workshop door,
+  // under the porch work lamp and in the spill of the oak door
+  const motes = makeMotes(ctx, [
+    { center: annexToWorld(-0.3, 1.1, ANNEX.hz + 0.15), size: [1.5, 1.7, 1.3], count: 14 },
+    { center: porch.lampPos.clone().setY(porch.lampPos.y - 0.42), size: [0.9, 0.85, 0.7], count: 10 },
+    { center: new THREE.Vector3(OAK.door.x + 0.3, 0.95, DOOR.z + 0.55), size: [1.1, 1.3, 0.9], count: 10 },
+  ]);
+  root.add(motes.object);
+
+  const updates = [door.update, annex.update, porch.update, deck.update, yard.update, motes.update];
   ctx.sites.schreinerei = {
     door,
     annex,

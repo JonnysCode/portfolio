@@ -115,8 +115,9 @@ const C = (hex) => new THREE.Color(hex);
 export const CAP_REDS = ['#c4301f', '#cc3a20', '#b82a1c', '#d2481f', '#c83a28'];
 export const CAP_BROWNS = ['#a8653b', '#b07848', '#8c5634', '#b08a5a', '#c08a48'];
 /** Ochre / tan amanitas (the painterly giants of the mossy-door reference). */
-export const CAP_OCHRES = ['#c99a4c', '#d2a65a', '#b8883e', '#d8b06c', '#c4904a'];
-export const CAP_ORANGES = ['#d8661e', '#e27a28', '#cc5a1c', '#e48a34'];
+export const CAP_OCHRES = ['#c8a465', '#d4b274', '#b8945a', '#dcbc80', '#c09a5c'];
+/** Golden apricot caps (caesar's / chanterelle hues — clearly not a fly agaric's red). */
+export const CAP_ORANGES = ['#e0943c', '#e8a44a', '#d68634', '#eaa850'];
 export const CAP_TANS = ['#d8c09a', '#ccb088', '#e0caa4', '#c4a47c'];
 /** Porcini & co.: chestnut, hazel, ochre and tan bun caps. */
 export const CAP_BOLETES = ['#7a4a26', '#8a5a2e', '#a0703a', '#b8884c', '#6e4022', '#c09858'];

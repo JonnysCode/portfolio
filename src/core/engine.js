@@ -24,7 +24,7 @@ function detectQuality() {
  */
 const QUALITY_PRESETS = {
   high: { pixelRatio: 2, shadows: true, shadowMapSize: 4096, density: 1, post: 'full' },
-  medium: { pixelRatio: 1.5, shadows: true, shadowMapSize: 1024, density: 0.6, post: 'lite' },
+  medium: { pixelRatio: 1.5, shadows: true, shadowMapSize: 1024, density: 0.5, post: 'lite' },
   low: { pixelRatio: 1, shadows: false, shadowMapSize: 512, density: 0.35, post: false },
 };
 

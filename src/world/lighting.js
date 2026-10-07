@@ -9,7 +9,8 @@
 //                          map size of the tier — no swimming, no re-fitting
 //                          while the camera glides. By night it becomes the
 //                          moonlight (silver-lavender, back-right). On 'medium'
-//                          the shadow map is re-rendered every other frame.
+//                          the shadow map is re-rendered every other frame and
+//                          small casters are left out of it.
 //   hemi HemisphereLight   soft sage sky fill (warm-neutral: the teal lives only
 //                          in the misty distance) / warm golden ground bounce.
 //   rim  DirectionalLight  faint cool light from the back-right that separates
@@ -23,10 +24,10 @@
 //   beam SpotLight         a canopy-gap sunbeam: warm gold from the front-left,
 //                          pooling on the Schreinerei door, the porch bench and
 //                          the deck (the sun itself is behind the oak there).
-//                          Shadowed with a dappled leaf cookie where the tier
-//                          has shadows, matched by a volumetric shaft
-//                          (ctx.atmosphere.addBeam). By night the same light
-//                          becomes a silver moonbeam on the fairy ring.
+//                          Broken up by a dappled leaf cookie (no shadow map of
+//                          its own — cheap), matched by a volumetric shaft
+//                          (atmosphere). By night the same light becomes a
+//                          silver moonbeam on the fairy ring.
 //   scene.environment      a painted "under the canopy" PMREM (env/envmap.js) so
 //                          PBR surfaces get soft ambient and gentle
 //                          reflections; swapped for a night version at dusk.
@@ -66,7 +67,7 @@ const DAY = {
   rimI: 0.4,
   envI: 0.5,
   beam: new THREE.Color('#ffcf8a'),
-  beamI: 2.6,
+  beamI: 3.1,
 };
 const NIGHT = {
   key: new THREE.Color('#aab4ff'),
@@ -101,11 +102,11 @@ const LIGHT_DISTANCE = 95;
  * moon's side onto the fairy ring (target found after the build).
  */
 const BEAM_DAY = {
-  target: new THREE.Vector3(OAK.door.x + 0.2, 0.5, (OAK.door.z + SCHREINEREI.porch.z) / 2 + 0.2),
+  target: new THREE.Vector3(OAK.door.x + 0.5, 0.6, (OAK.door.z + SCHREINEREI.porch.z) / 2 + 0.1),
   dir: dirFromAngles(50, 228),
   distance: 26,
-  angle: 0.3,
-  penumbra: 0.7,
+  angle: 0.33,
+  penumbra: 0.6,
 };
 const BEAM_NIGHT = {
   target: new THREE.Vector3(-4.5, 0, 11.2), // the fairy ring (refined after the build)
@@ -188,24 +189,17 @@ export default async function build(ctx) {
   rim.target.position.copy(SHADOW_CENTER);
   scene.add(rim, rim.target);
 
-  // The canopy-gap sunbeam (no distance falloff: it is sunlight).
+  // The canopy-gap sunbeam (no distance falloff: it is sunlight). It casts no
+  // shadow map of its own (a second depth pass over the glen's casters would
+  // cost ~0.5 M triangles a frame); a dappled leaf cookie breaks the pool up
+  // instead (spot maps work without shadows in current three).
   const beam = new THREE.SpotLight(DAY.beam, DAY.beamI, 0, BEAM_DAY.angle, BEAM_DAY.penumbra, 0);
   beam.name = 'sunbeam';
-  beam.castShadow = !!q.shadows;
-  if (beam.castShadow) {
-    const bs = q.tier === 'high' ? 1024 : 512;
-    beam.shadow.mapSize.set(bs, bs);
-    beam.shadow.bias = -0.0004;
-    beam.shadow.normalBias = 0.03;
-    beam.shadow.radius = 2;
-    // the beam starts in a gap of the canopy: leaves right at the light are not occluders
-    beam.shadow.camera.near = 7;
-    beam.shadow.camera.far = 60;
-    try {
-      beam.map = leafCookie();
-    } catch {
-      beam.map = null;
-    }
+  beam.castShadow = false;
+  try {
+    beam.map = q.tier === 'low' ? null : leafCookie();
+  } catch {
+    beam.map = null;
   }
   scene.add(beam, beam.target);
   const beamDay = { pos: new THREE.Vector3(), target: BEAM_DAY.target.clone() };
@@ -298,6 +292,7 @@ export default async function build(ctx) {
       chosen.add(r);
     }
     for (const r of requests) if (chosen.has(r)) enable(r.light);
+    if (q.tier === 'medium' && q.shadows) trimShadowCasters();
     ctx.lights.pointRequests = requests.map((r) => ({ spot: r.spot, priority: +r.priority.toFixed(1), on: chosen.has(r), p: r.light.position.toArray().map((v) => +v.toFixed(1)) }));
     // the moonbeam finds the fairy ring (a secret hotspot of the vegetation)
     try {
@@ -312,6 +307,40 @@ export default async function build(ctx) {
     } catch {
       /* keep the default target */
     }
+  }
+  /**
+   * 'medium' (phones): small casters (villagers, snails, furniture, props) and
+   * tiny instanced pieces (shingles, bulbs) leave the shadow map — on a phone
+   * screen their shadows are a few pixels, but each is a draw call in the
+   * shadow pass. Big shapes (trunks, crowns, canopy leaf clusters, houses,
+   * rocks, caps) keep casting the dappled light.
+   */
+  function trimShadowCasters() {
+    scene.updateMatrixWorld();
+    const sphere = new THREE.Sphere();
+    let trimmed = 0;
+    scene.traverse((o) => {
+      if (!o.isMesh || !o.castShadow) return;
+      const g = o.geometry;
+      if (!g) return;
+      if (!g.boundingSphere) g.computeBoundingSphere();
+      if (!g.boundingSphere) return;
+      if (o.isInstancedMesh) {
+        // per-instance size (the instances' own geometry), e.g. a shingle
+        const k = o.matrixWorld.getMaxScaleOnAxis();
+        if (g.boundingSphere.radius * k < 0.5) {
+          o.castShadow = false;
+          trimmed++;
+        }
+        return;
+      }
+      sphere.copy(g.boundingSphere).applyMatrix4(o.matrixWorld);
+      if (sphere.radius < 1.5) {
+        o.castShadow = false;
+        trimmed++;
+      }
+    });
+    ctx.lights.trimmedCasters = trimmed;
   }
   function applyPoint(l, n) {
     // Lanterns swell a little beyond linear as dusk falls (they "come on").

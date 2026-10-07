@@ -2,16 +2,26 @@
 // Vegetation — the forest around and inside the glen.
 //
 //   forest wall   colossal mossy trees (⌀ 3–6, 45–66 tall; r ≈ 23–38 on the
-//                 sides & back, the biggest stepping inside between the spots),
-//                 silver birches, buttress roots, moss creeping up the bark,
-//                 side limbs reaching into the clearing with ivy curtains, a
-//                 high leaf-card canopy                     (vegetation/trees.js)
-//   giants        GIANT fly agarics lining the front of the main path and
-//                 clustered at the glen's edges, plus troops of fly agarics of
-//                 every size along the paths            (vegetation/mushrooms.js)
+//                 sides & back, the biggest stepping inside between the spots):
+//                 bare cathedral columns up to y ≈ 31 (buttress roots, moss
+//                 creeping up the bark, ivy, shelf fungi, mossy broken stubs),
+//                 then a high leaf-card canopy ceiling; silver birches whose
+//                 crowns join it                            (vegetation/trees.js)
+//   giants        GIANT amanitas lining the front of the main path (mostly
+//                 red) and clustered at the glen's edges (red beside ochre,
+//                 tan and brown ones), each with a family at its foot
+//   families      mushrooms grow in families — one big lead, 3–7 smaller ones,
+//                 buttons — of several species (fly agarics, panther caps,
+//                 ochre & golden amanitas, parasols, boletes, bonnets) at tree
+//                 feet, along logs, at stumps, along the path edges
+//                              (vegetation/families.js, vegetation/mushrooms.js)
 //   ground        mossy rocks & boulders, moss mounds, fallen mossy logs with
 //                 shelf fungi, old saw-cut stumps with growth rings, small
 //                 exposed roots, twigs                (vegetation/groundcover.js)
+//   vignettes     every lawn broken into little scenes (0.3–1.5 units): moss
+//                 hummocks, small logs with a mushroom family, stumps, rock
+//                 groups with moss caps, fern & foxglove clumps; a big mossy
+//                 log frames the bottom of the wide overview
 //   undergrowth   ferns (three sizes), grass tussocks, clover, wildflower
 //                 communities (bluebells, forget-me-nots, foxgloves, daisies,
 //                 buttercups, meadow mix), broad-leaf clumps, bilberry shrubs,
@@ -26,7 +36,10 @@
 //                 drifts, broad leaves and bushes
 //   night magic   enchanted giants (gills glow soft mint, spots shimmer),
 //                 will-o'-the-wisp mushroom clusters along the paths, a
-//                 glowing fairy ring, fairy lights spiralling up two giants
+//                 glowing fairy ring, fairy lights spiralling up two giants,
+//                 warm lanterns hanging from the giants' broken limbs
+//                 (vegetation/lanterns.js); the canopy dims to moonlit
+//                 silhouettes with a silver rim (common.moonlit)
 //   secrets       a fairy ring (hotspot), snail stones for the wild snails
 //
 // Triangle budget: detail follows zones.viewDistance() — how close any
@@ -46,7 +59,7 @@
 //   { trees: [{x,z,y0,radius,height,kind,crownY,crownR}], giants: [{x,y,z,H,R}],
 //     canopy: [{x,y,z,r}] (leaf-mass spheres), flowerPatches: [{x,y,z,r,kind}],
 //     glowSpots: [{x,y,z}], mossyRocks: [{x,y,z,r}], snailRocks, logs, stumps,
-//     treesNear(x, z, radius, out), stats }
+//     treesNear(x, z, radius, out), stats (incl. timing: ms per section) }
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../core/rng.js';
@@ -118,6 +131,14 @@ export default async function build(ctx) {
   ctx.scene.add(group);
   const occ = new Occupancy(2);
   const stats = { drawCalls: 0, triangles: 0, instances: 0, meshes: {} };
+  // (build time per section, ms — stats.timing)
+  const timing = {};
+  let tLap = performance.now();
+  const lap = (k) => {
+    const n = performance.now();
+    timing[k] = Math.round(n - tLap);
+    tLap = n;
+  };
   const addMesh = (m) => {
     if (!m) return null;
     group.add(m);
@@ -146,6 +167,7 @@ export default async function build(ctx) {
     buildTree(t, builders, clumps, { density });
     occ.add(t.x, t.z, t.radius * 1.6, 'tree');
   }
+  lap('trees');
   // the canopy clump template (also used for the forest-edge bushes below)
   const clumpGeo = clumpTemplate(rng.fork('clump'), tier === 'low' ? 58 : 70, { size: [0.32, 0.46] });
 
@@ -202,7 +224,7 @@ export default async function build(ctx) {
       lod: viewDetail(x, y + H * 0.6, z, { r: R, near: 12, far: 32, min: 0.6 }),
     });
     occ.add(x, z, R * 0.45, 'giant');
-    giants.push({ x, y, z, H, R });
+    giants.push({ x, y, z, H, R, hue });
     // a family of little ones at its foot (its own kind, now and then a stranger)
     const kidSpecies = rng.chance(0.75) ? { red: 'flyAgaric', ochre: 'ochre', tan: 'parasol', brown: 'panther' }[hue] : pickWeighted(rng, { bolete: 2, bonnets: 1, orange: 1 });
     const ka = rng.range(0, TAU), kd = R * rng.range(0.62, 0.85);
@@ -237,7 +259,7 @@ export default async function build(ctx) {
         const x = p.x - tz * off * side, z = p.z + tx * off * side;
         // bigger towards the front and further from the path
         const H = rng.range(1.4, 2.4) + Math.max(0, (p.z - 16) * 0.22) + (off - 2.2) * 0.5;
-        tryGiant(x, z, Math.min(5.6, H), { leanAz: Math.atan2(tz * side, -tx * side) });
+        tryGiant(x, z, Math.min(5.6, H), { leanAz: Math.atan2(tz * side, -tx * side), hue: pickWeighted(rng, { red: 75, ochre: 15, brown: 10 }) });
       }
     }
   }
@@ -256,7 +278,8 @@ export default async function build(ctx) {
       for (let k = 0; k < n; k++) {
         const x = cx + rng.jitter(2.2), z = cz + rng.jitter(2.2);
         for (let tries = 0; tries < 3; tries++) {
-          if (tryGiant(x + rng.jitter(1), z + rng.jitter(1), rng.range(1.5, 5) * (k === 0 ? 1 : 0.7) * (tries ? 0.8 : 1))) {
+          // (the edge clusters mix colours: red beside ochre, tan and brown)
+          if (tryGiant(x + rng.jitter(1), z + rng.jitter(1), rng.range(1.5, 5) * (k === 0 ? 1 : 0.7) * (tries ? 0.8 : 1), { hue: pickWeighted(rng, { red: 42, ochre: 30, tan: 13, brown: 15 }) })) {
             made++;
             break;
           }
@@ -265,6 +288,7 @@ export default async function build(ctx) {
     }
   }
 
+  lap('giants');
   // (c) mushroom families of every species (the fly-agaric forest path): one
   //     big lead, a huddle of smaller ones, buttons at their feet — along the
   //     path edges and at the glen's edges (more at tree feet, logs, stumps
@@ -325,6 +349,7 @@ export default async function build(ctx) {
     }
   }
 
+  lap('families');
   // ── 3. rocks, moss mounds, logs, roots, twigs ─────────────────────────────
   const rockB = new GeoBuilder();
   const moundB = new GeoBuilder();
@@ -474,6 +499,7 @@ export default async function build(ctx) {
     twig(smallBarkB, rng, x, z);
   }
 
+  lap('ground');
   // ── 3b. mid-scale ground structure: every lawn broken into little vignettes ──
   // (moss hummocks, small fallen logs with brackets & a mushroom family, old
   //  stumps, rock groups with moss caps, fern & foxglove clumps). Low things
@@ -483,7 +509,10 @@ export default async function build(ctx) {
   const vigFerns = [], vigFox = [], vigBroad = [];
   const vignettes = { hummocks: 0, logs: 0, stumps: 0, rocks: 0, ferns: 0, framing: 0 };
   {
-    const lowOk = (x, z, h, r) => cameraClearance(x, z) > 4.2 && isClearOfSubjects(x, getHeight(x, z), z, h, r) && !inNearField(x, getHeight(x, z) + h * 0.5, z, 0.3, 0.4);
+    // (ankle-high ground detail is part of the overview's subject — the glen's
+    //  dressed floor — so only the other spots' subject cones apply to it)
+    const GLEN = ['glen'];
+    const lowOk = (x, z, h, r) => cameraClearance(x, z) > 2.6 && isClearOfSubjects(x, getHeight(x, z), z, h, r, h < 0.85 ? GLEN : null) && !inNearField(x, getHeight(x, z) + h * 0.5, z, 0.3, 0.4);
     const tallOk = (x, z, h, r) => cameraClearance(x, z) > 4.2 && isClearOfViews(x, getHeight(x, z), z, h, r);
     const hummocks = (cx, cz) => {
       const n = rng.int(3, 5);
@@ -588,7 +617,7 @@ export default async function build(ctx) {
     // glen): a big mossy trunk lying across the bottom of the frame, a family of
     // mushrooms on its back, ferns at its broken ends
     {
-      const cx = 2.5, cz = 38.6, len = 15, lr = 0.95, yaw = Math.PI / 2 + 0.06;
+      const cx = 2.5, cz = 36.4, len = 15, lr = 0.95, yaw = Math.PI / 2 + 0.06;
       const log = fallenLog(builders.bark, rng, cx, cz, len, lr, yaw);
       for (let t = -0.5; t <= 0.5; t += 0.125) occ.add(cx + Math.sin(yaw) * len * t, cz + Math.cos(yaw) * len * t, lr, 'log');
       for (const b of log.brackets) giantKit.bracket(b.p, b.n, { size: lr * rng.range(0.4, 0.6), tiers: rng.int(2, 3) });
@@ -659,6 +688,7 @@ export default async function build(ctx) {
     stats.vignettes = vignettes;
   }
 
+  lap('vignettes');
   // ── 4. undergrowth scatter ────────────────────────────────────────────────
   const fernL = [], fernM = [];
   const grassA = [];
@@ -768,6 +798,7 @@ export default async function build(ctx) {
     }
   }
 
+  lap('scatter');
   // grass & clover tucked between the path stones (moss and weeds take the gaps)
   for (const s of stones) {
     if (!rng.chance(0.55 * density)) continue;
@@ -867,6 +898,7 @@ export default async function build(ctx) {
     flowerPatches.push({ x: f.x, y: y + 0.5 * f.s, z: f.z, r: 0.3 * f.s, kind: 'foxgloves' });
   }
 
+  lap('beds');
   // ── 5. foreground framing: big ferns at the front edge ────────────────────
   for (let k = 0; k < 90; k++) {
     const x = rng.range(-30, 30), z = rng.range(18, 34);
@@ -1026,6 +1058,7 @@ export default async function build(ctx) {
     stats.wisps = lanterns.length;
   }
 
+  lap('framing+wisps');
   // ── 5c. no bare ground: whatever a composed shot still shows empty gets
   //     undergrowth — tufts & ferns in the glen's gaps, and beyond the forest
   //     wall (r > 35, seen between the trunks and at the overview's edges) big
@@ -1118,11 +1151,13 @@ export default async function build(ctx) {
     stats.gapFill = { inner, outer };
   }
 
+  lap('gapfill');
   // ── litter: fallen leaves & pebbles (close-up detail) ─────────────────────
   const litter = buildLitter(ctx, rng.fork('litter'), { trees: plan.trees, density });
   for (const m of litter.meshes) addMesh(m);
   stats.litter = { leaves: litter.leaves, pebbles: litter.pebbles };
 
+  lap('litter');
   // ── 6. meshes ─────────────────────────────────────────────────────────────
   const fernMat = M.foliage({ variant: 'fern', vertexColors: true, translucency: 0.9, wind: { strength: 0.045, base: 0.08, speed: 1.3 } });
   const grassMat = M.foliage({ variant: 'grass', vertexColors: true, translucency: 0.8, wind: { strength: 0.12, base: 0.02, speed: 1.7 } });
@@ -1196,6 +1231,7 @@ export default async function build(ctx) {
     stats.canopyLanterns = lant.lanterns.length;
   }
 
+  lap('meshes');
   group.traverse((o) => {
     if (o.isMesh && !o.userData.keepRaycast) o.raycast = () => {};
   });
@@ -1224,7 +1260,9 @@ export default async function build(ctx) {
   }
 
   stats.ms = Math.round(performance.now() - t0);
+  stats.timing = timing;
   stats.giants = giants.length;
+  stats.giantHues = giants.reduce((o, g) => ((o[g.hue] = (o[g.hue] ?? 0) + 1), o), {});
   stats.trees = plan.trees.length;
   // leaf masses of the forest canopy as spheres (camera obstacles, leaf sources)
   const canopy = clumps.map((c) => ({ x: c.x, y: c.y, z: c.z, r: c.s * 1.05 }));

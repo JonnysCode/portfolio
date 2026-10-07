@@ -253,26 +253,28 @@ export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = fa
  * worms hang (under limbs, under leaf masses); each anchor gets a few silk
  * threads with 1–4 glowing droplets. count: total lights.
  */
-export function createGlowWorms(ctx, { anchors = [], count = 450, reduced = false, yRange = [14, 35] } = {}) {
+export function createGlowWorms(ctx, { anchors = [], oakN = 0, count = 450, reduced = false, yRange = [14, 35] } = {}) {
   const rng = ctx.rng('ambient-glowworms');
   const pos = [], params = [], colors = [], blink = [], swirl = [];
   const tints = [new THREE.Color('#eaf8ff'), new THREE.Color('#a6f2ff'), new THREE.Color('#b8ffea'), new THREE.Color('#d6ecff')];
   const add = (x, y, z, size) => {
     pos.push(x, y, z);
     // (they hang on silk: barely any wander, a slow sway)
-    params.push(rng.range(0, 1), rng.range(0.12, 0.3), rng.range(0.03, 0.1), rng.range(0.11, 0.17) * size);
+    params.push(rng.range(0, 1), rng.range(0.12, 0.3), rng.range(0.03, 0.1), rng.range(0.14, 0.21) * size);
     const c = rng.pick(tints).clone().multiplyScalar(rng.range(0.75, 1.05));
     colors.push(c.r, c.g, c.b);
     // slow twinkle around a steady glow; they light up once it is properly dark
-    blink.push(rng.range(0.15, 0.45), rng.range(0.38, 0.62), rng.range(0.35, 0.6));
+    blink.push(rng.range(0.15, 0.45), rng.range(0.6, 0.85), rng.range(0.35, 0.6));
     swirl.push(0, 0, 0);
   };
   if (anchors.length) {
     for (let tries = 0; pos.length / 3 < count && tries < count * 8; tries++) {
-      const a = rng.pick(anchors);
+      // (two in three under the Great Oak, the rest under the giants' crowns)
+      const a = oakN && oakN < anchors.length ? (rng.chance(0.68) ? anchors[rng.int(0, oakN - 1)] : anchors[rng.int(oakN, anchors.length - 1)]) : rng.pick(anchors);
       const ang = rng.range(0, Math.PI * 2), d = Math.sqrt(rng.next()) * a.r;
       const x = a.x + Math.sin(ang) * d, z = a.z + Math.cos(ang) * d;
-      const y = a.y - rng.range(0.1, 1.2);
+      // (most hang close under the leaves; some on long silk threads below them)
+      const y = a.y - (rng.chance(0.65) ? rng.range(0.1, 0.9) : rng.range(0.9, 2.8));
       if (y < yRange[0] || y > yRange[1]) continue;
       if (inNearField(x, y, z, 0.5, 0.75)) continue;
       // a silk thread: droplets of light one under the other, the lowest brightest

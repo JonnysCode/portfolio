@@ -261,7 +261,7 @@ export function tone(hex, rng = null, { h = 0, s = 0, l = 0 } = {}) {
  * mass catch a soft silver moon rim. Follows the shared night uniform; the
  * day look is untouched. (The cached material itself is never mutated.)
  */
-export function moonlit(base, { dim = 0.6, rim = 0.14, color = [0.62, 0.72, 0.95] } = {}) {
+export function moonlit(base, { dim = 0.6, rim = 0.03, color = [0.55, 0.68, 0.92] } = {}) {
   const m = base.clone();
   m.name = `${base.name}-moonlit`;
   const prev = m.onBeforeCompile;
@@ -278,7 +278,7 @@ export function moonlit(base, { dim = 0.6, rim = 0.14, color = [0.62, 0.72, 0.95
     vec3 vegUp = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
     float vegTop = smoothstep(-0.1, 0.7, dot(normal, vegUp));
     float vegFres = pow(1.0 - abs(dot(normal, normalize(vViewPosition))), 2.0);
-    outgoingLight += vec3(${c}) * (vegTop * vegFres * ${rim.toFixed(3)} * uVegNight);
+    outgoingLight += vec3(${c}) * (vegTop * vegFres * vegFres * ${rim.toFixed(3)} * uVegNight);
   }
 #include <opaque_fragment>`);
   };

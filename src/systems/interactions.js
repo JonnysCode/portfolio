@@ -42,6 +42,16 @@ import { palette } from '../core/palette.js';
 import { damp } from '../core/rng.js';
 import { createPointerGestures } from './pointerGestures.js';
 
+/**
+ * Marker placement tweaks per entry (world offsets from the bounds centre, y
+ * from the object's origin): the Hobelbank's sparkle sat exactly over Jonny's
+ * head as seen from the Schreinerei camera — it floats over the bench's
+ * tail-vise end instead.
+ */
+const MARKER_TWEAKS = {
+  'workbench-wip': { dx: 0.7, dz: 0.35, y: 1.25 },
+};
+
 const VISITED_KEY = 'woodland:visited';
 const SECRETS_KEY = 'woodland:secrets';
 
@@ -170,6 +180,13 @@ export function createInteractions(ctx) {
     h.object.getWorldPosition(out);
     out.x += b.cx;
     out.z += b.cz;
+    const tw = h.entryId ? MARKER_TWEAKS[h.entryId] : null;
+    if (tw) {
+      out.x += tw.dx ?? 0;
+      out.z += tw.dz ?? 0;
+      out.y += tw.y;
+      return out;
+    }
     out.y += h.markerHeight !== undefined ? h.markerHeight : b.top + 0.45;
     return out;
   }
@@ -289,7 +306,8 @@ export function createInteractions(ctx) {
     const best = rawPick();
     if (!best) return null;
     const h = best.hotspot;
-    const camMoved = occMemo.cam.distanceToSquared(camera.position) > 1e-4;
+    // (the idle "breathing" drifts the camera a little all the time: re-test only after a real move)
+    const camMoved = occMemo.cam.distanceToSquared(camera.position) > 0.15 * 0.15;
     if (h !== occMemo.h || camMoved || Math.abs(ndc.x - occMemo.x) > 0.02 || Math.abs(ndc.y - occMemo.y) > 0.02) {
       occMemo.h = h;
       occMemo.x = ndc.x;

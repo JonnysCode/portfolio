@@ -29,7 +29,7 @@ export const DOOR = {
   frame: 0.17, // frame face width
   /** z of the frame front face (world). Proud of the bark so the lit niche is never swallowed. */
   z: OAK.door.z + 0.47,
-  ajar: 0.52, // radians the leaf stands open (outwards, hinged left)
+  ajar: 0.7, // radians the leaf stands open (outwards, hinged left): a warm wedge of the lit inside shows
 };
 
 const IRON = '#2f2b28';
@@ -176,12 +176,14 @@ export function buildDoor(ctx, B, mats) {
     uvBox(g, 'y', undefined, [rng.next() * 9, rng.next() * 9]);
     leaf.add(oak, g, { color: i % 2 ? '#a77a52' : '#966c47' });
   }
-  // inside ledges + a diagonal brace (Z), hidden mostly but honest
+  // inside ledges + a diagonal brace (Z), hidden mostly but honest: the brace
+  // rises from the hinge side (−x) at the bottom ledge to the latch side at the
+  // top ledge, so it works in compression and the leaf cannot sag
   for (const ly of [leafBottom + 0.22, archY - 0.05]) leaf.add(oak, xf(board(LW - 0.12, 0.12, 0.035, { along: 'x', rng }), [0, ly, -0.02]));
   {
     const len = Math.hypot(LW - 0.2, archY - 0.05 - (leafBottom + 0.22));
     const ang = Math.atan2(archY - 0.05 - (leafBottom + 0.22), LW - 0.2);
-    leaf.add(oak, xf(board(len, 0.1, 0.03, { along: 'x', rng }), [0, (archY - 0.05 + leafBottom + 0.22) / 2, -0.02], [0, 0, -ang]));
+    leaf.add(oak, xf(board(len, 0.1, 0.03, { along: 'x', rng }), [0, (archY - 0.05 + leafBottom + 0.22) / 2, -0.02], [0, 0, ang]));
   }
   // strap hinges (front), with fleur ends and nail heads
   const hingeYs = [leafBottom + 0.25, leafBottom + 0.95, archY + 0.25];

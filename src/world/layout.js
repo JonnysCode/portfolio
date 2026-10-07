@@ -169,8 +169,9 @@ export const SPOTS = [
     // lower and closer than before: the porch Hobelbank with Jonny planing sits on
     // the left third, the oak door in the middle, the deck still on the right
     focus: [-1.4, 1.1, -0.8],
-    camera: { position: [0.9, 3.5, 11.4], target: [0.2, 1.7, -0.7], fov: 40 },
-    portrait: { position: [1.0, 6.6, 15.5], target: [-0.6, 3.2, -1.2] },
+    camera: { position: [0.9, 3.0, 11.4], target: [-0.6, 2.2, -0.7], fov: 40 },
+    // phones: the Hobelbank with Jonny and the oak door (the deck is a swipe to the right)
+    portrait: { position: [-2.6, 3.6, 11.5], target: [-1.9, 1.9, -0.6] },
   },
   {
     id: 'code',

@@ -13,7 +13,8 @@
 import * as THREE from 'three';
 import { createRng } from '../../core/rng.js';
 import { getHeight } from '../../world/ground.js';
-import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, uvBox, uvCyl, paintBy, addToadstool, addFern, SPECIES } from './kit.js';
+import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, uvBox, uvCyl, paintBy, addToadstool, addFern, addLanternPost, addFClamp, SPECIES } from './kit.js';
+import { SPOTS } from '../../world/layout.js';
 import { ANNEX, annexFrame, annexToWorld } from './annex.js';
 
 export function buildYard(ctx, B, mats) {
@@ -164,39 +165,53 @@ export function buildYard(ctx, B, mats) {
     }
   }
 
-  // ── sawhorses with a board mid-cut ─────────────────────────────────────────
+  // ── a stickered lumber stack (Holzstapel) in front of the left window ─────
+  // boards on two bearers with spacer battens between the layers so the air
+  // gets through, the sawn ends sealed with red wax against checking, two old
+  // boards and a stone on top against the rain
   {
-    const c = [-1.95, 0, hz + 0.85];
+    const c = [-1.6, 0, hz + 1.15];
     c[1] = groundY(c[0], c[2]);
-    const rot = 0.55;
-    const M = mat4(c, [0, rot, 0]);
+    const M = mat4(c, [0, 0.06, 0]);
     const parts = [];
-    for (const sx of [-0.55, 0.55]) {
-      parts.push([tim, board(0.08, 0.06, 0.62, { along: 'z', rng, scale: 1 / 1.6 }).translate(sx, 0.46, 0)]);
-      for (const sz of [-0.22, 0.22]) {
-        for (const lx of [-1, 1]) {
-          const leg = board(0.045, 0.5, 0.045, { along: 'y', rng, scale: 1 / 1.6 });
-          parts.push([tim, xf(leg, [sx + lx * 0.09, 0.23, sz], [0, 0, lx * 0.2])]);
-        }
-      }
-      parts.push([tim, board(0.03, 0.05, 0.5, { along: 'z', rng, scale: 1 / 1.6 }).translate(sx, 0.18, 0)]);
+    const len = 1.2;
+    for (const z of [-0.42, 0.42]) {
+      parts.push([mats.stone(), stoneGeo(rng, { r: 1, sx: 0.12, sy: 0.05, sz: 0.1, detail: 0 }).translate(0, 0.03, z)]);
+      parts.push([tim, board(0.62, 0.09, 0.08, { along: 'x', rng, scale: 1 / 1.6 }).translate(0, 0.1, z)]);
     }
-    // the board (cherry), the saw resting in the kerf, a pencil line
-    parts.push([mats.wood('cherry'), board(1.7, 0.04, 0.22, { along: 'x', rng }).translate(0.05, 0.51, 0)]);
-    const blade = new THREE.Shape([new THREE.Vector2(0, 0), new THREE.Vector2(0.48, 0.02), new THREE.Vector2(0.48, 0.1), new THREE.Vector2(0, 0.13)]);
-    parts.push([mats.metal('#a8afb5'), xf(new THREE.ShapeGeometry(blade), [0.32, 0.48, 0.0], [Math.PI / 2 - 0.5, Math.PI / 2, 0])]);
-    parts.push([mats.wood('walnut'), xf(board(0.06, 0.12, 0.03, { along: 'y', rng }), [0.32, 0.62, 0.23], [-0.5, 0, 0])]);
-    parts.push([mats.vc(), xf(new THREE.BoxGeometry(0.004, 0.002, 0.2), [0.32, 0.531, 0])]);
-    for (const [mat, g] of parts) F.add(mat, g.applyMatrix4(M), { cast: mat !== parts[parts.length - 1][0] });
-    // sawdust under the cut
-    for (let i = 0; i < 5; i++) F.add(mats.vc(), xf(mossGeo(rng, { r: rng.range(0.08, 0.2), h: 0.012 }), [c[0] + 0.3 + rng.jitter(0.25), 0.002, c[2] + rng.jitter(0.25)]), { color: '#e6cc98', cast: false });
+    const sp = ['oak', 'ash', 'oak', 'cherry'];
+    let y = 0.145;
+    for (let layer = 0; layer < 4; layer++) {
+      let x = -0.27;
+      for (let k = 0; k < 3; k++) {
+        const w = rng.range(0.15, 0.19), t = rng.range(0.03, 0.04);
+        if (x + w > 0.3) break;
+        const s = sp[(layer + k) % sp.length];
+        parts.push([mats.wood(s), board(w - 0.008, t, len + rng.jitter(0.04), { along: 'z', rng, r: 0.005 }).translate(x + w / 2, y + t / 2, rng.jitter(0.02))]);
+        // the sawn front ends: pale end grain, waxed red at the edge
+        parts.push([mats.wood(s), new THREE.PlaneGeometry(w - 0.012, t * 0.9).translate(x + w / 2, y + t / 2, len / 2 + 0.003), lighten(SPECIES[s], 0.1)]);
+        parts.push([mats.wood(s), new THREE.PlaneGeometry(w - 0.012, t * 0.3).translate(x + w / 2, y + t * 0.85, len / 2 + 0.0035), '#a8382a']);
+        x += w;
+      }
+      y += 0.04;
+      // stickers (spacer battens) across the stack
+      for (const z of [-0.5, 0, 0.5]) parts.push([mats.wood('spruce'), board(0.6, 0.018, 0.028, { along: 'x', rng, r: 0.004 }).translate(0, y + 0.009, z)]);
+      y += 0.018;
+    }
+    // the rain cover: two weathered boards, a stone, a little moss
+    parts.push([tim, board(0.34, 0.025, len + 0.2, { along: 'z', rng, scale: 1 / 1.6 }).translate(-0.15, y + 0.013, 0).rotateZ(0.05)]);
+    parts.push([tim, board(0.34, 0.025, len + 0.16, { along: 'z', rng, scale: 1 / 1.6 }).translate(0.16, y + 0.03, 0.02).rotateZ(-0.04)]);
+    parts.push([mats.stone(), stoneGeo(rng, { r: 1, sx: 0.12, sy: 0.07, sz: 0.1 }).translate(0.0, y + 0.08, 0.1)]);
+    parts.push([mats.moss(), mossGeo(rng, { r: 0.12, h: 0.03, sz: 2 }).translate(-0.12, y + 0.03, -0.3)]);
+    for (const [mat, g, col] of parts) F.add(mat, g.applyMatrix4(M), col ? { color: col, cast: false } : { cast: mat !== mats.moss() });
   }
 
-  // ── wheelbarrow of offcuts by the porch ────────────────────────────────────
+  // ── a wheelbarrow of offcuts by the window ─────────────────────────────────
   {
-    const c = [3.35, 0, hz + 1.9];
+    // parked handles-first towards the visitor, clear of the lumber stack
+    const c = [-0.55, 0, hz + 2.75];
     c[1] = groundY(c[0], c[2]);
-    const M = mat4(c, [0, -0.9, 0]);
+    const M = mat4(c, [0, 2.95, 0]);
     const parts = [];
     const sp = tim;
     // tray: four planks + bottom
@@ -220,6 +235,35 @@ export function buildYard(ctx, B, mats) {
       parts.push([mats.wood(s), xf(g, [rng.jitter(0.18), 0.4 + rng.next() * 0.16, rng.jitter(0.22)], [rng.jitter(0.6), rng.next() * 3, rng.jitter(0.6)])]);
     }
     for (const [mat, g] of parts) F.add(mat, g.applyMatrix4(M));
+  }
+
+  // ── a dovetailed chest on two low sawhorses, between the porch and the oak ─
+  // (in clear view of the woodworking spot: a vertical corner turned towards
+  // the visitor shows the through dovetails — pale fan-shaped tails on the
+  // front, the dark end grain of the pins between them, the tails' end grain on
+  // the side; the lid waits against a sawhorse)
+  const chest = buildChestVignette(ctx, B, mats, rng);
+
+  // ── path lanterns: little lights on posts leading to the oak door ──────────
+  {
+    const { getPathDistance } = ctx.ground;
+    const posts = [
+      { x: 1.6, z: 4.0, side: 1 },
+      { x: -1.95, z: 5.8, side: -1 },
+      { x: 1.5, z: 7.7, side: 1 },
+    ];
+    for (const p of posts) {
+      // slide sideways until the post stands just off the path's edge
+      let x = p.x;
+      for (let i = 0; i < 24 && getPathDistance(x, p.z) < 1.42; i++) x += p.side * 0.05;
+      for (let i = 0; i < 24 && getPathDistance(x, p.z) > 1.6; i++) x -= p.side * 0.05;
+      const y = getHeight(x, p.z);
+      // the arm reaches over the path
+      addLanternPost(B, mats, rng, [x, y, p.z], { h: 1.0, yaw: p.side > 0 ? Math.PI : 0, scale: 0.55 });
+      B.add(mats.moss(), xf(mossGeo(rng, { r: 0.14, h: 0.04 }), [x + rng.jitter(0.08), y, p.z + rng.jitter(0.08)]), { cast: false });
+      addToadstool(B, mats, rng, x + p.side * 0.15, y, p.z + 0.12, { size: 0.08 });
+      ctx.colliders?.addCircle?.(x, p.z, 0.12, 'path-lantern');
+    }
   }
 
   // ── the delivery snail, parked by the rack with a strapped stack of planks ─
@@ -296,6 +340,7 @@ export function buildYard(ctx, B, mats) {
   return {
     group,
     snail,
+    chest,
     update() {},
   };
 }
@@ -392,4 +437,116 @@ function lighten(hex, k) {
   const c = new THREE.Color(hex);
   c.offsetHSL(0, -0.05, k);
   return '#' + c.getHexString();
+}
+
+/**
+ * The half-finished dovetailed chest on two low sawhorses (world space),
+ * turned so a vertical corner faces the woodworking camera. Through dovetails
+ * at all four corners: tails on the front & back, pins on the ends (pale long
+ * grain with the dark end grain of the pins on the tail faces, the tails' end
+ * grain on the pin faces). Returns its group-free placement { x, z, yaw }.
+ */
+function buildChestVignette(ctx, B, mats, rng) {
+  const { getPathDistance, getHeight: gh } = ctx.ground;
+  let cx = -1.7, cz = 0.9;
+  for (let i = 0; i < 20 && getPathDistance(cx, cz) < 1.65; i++) cx -= 0.05;
+  const cy = gh(cx, cz);
+  const cam = SPOTS.find((s) => s.id === 'woodworking')?.camera.position ?? [0.9, 3.5, 11.4];
+  const yaw = Math.atan2(cam[0] - cx, cam[2] - cz) + 0.62; // the front-left corner towards the visitor
+  const F = B.at(mat4([cx, cy, cz], [0, yaw, 0]));
+  const tim = mats.timber();
+  // two low sawhorses (lower than the Hobelbank: the work sits at bench height)
+  const hy = 0.33;
+  for (const sx of [-0.2, 0.2]) {
+    F.add(tim, board(0.075, 0.06, 0.52, { along: 'z', rng, scale: 1 / 1.6 }).translate(sx, hy - 0.03, 0));
+    for (const sz of [-1, 1]) {
+      for (const lx of [-1, 1]) {
+        const a = [sx + lx * 0.025, hy - 0.05, sz * 0.19], b = [sx + lx * 0.1, 0, sz * 0.24];
+        F.add(tim, timber(a, b, 0.04, 0.04, { rng, wobble: 0.004, up: [0, 0, 1] }), { cast: false });
+      }
+    }
+    F.add(tim, board(0.03, 0.05, 0.44, { along: 'z', rng, scale: 1 / 1.6 }).translate(sx, 0.11, 0), { cast: false });
+  }
+  // the chest: oak, sides through-dovetailed, a raised bottom, no lid yet
+  const L = 0.62, D = 0.34, H = 0.3, t = 0.022, y0 = hy;
+  const oak = mats.wood('#b08e64');
+  const oak2 = mats.wood('#a6845c');
+  F.add(oak, board(L, H, t, { along: 'x', rng, r: 0.003 }).translate(0, y0 + H / 2, D / 2 - t / 2));
+  F.add(oak2, board(L, H, t, { along: 'x', rng, r: 0.003 }).translate(0, y0 + H / 2, -D / 2 + t / 2));
+  for (const s of [-1, 1]) F.add(oak2, board(t, H, D - 2 * t, { along: 'z', rng, r: 0.003 }).translate(s * (L / 2 - t / 2), y0 + H / 2, 0));
+  F.add(mats.wood('#c2a37a'), board(L - 2 * t, 0.012, D - 2 * t, { along: 'x', rng }).translate(0, y0 + 0.03, 0), { cast: false });
+  // the dovetails (end grain darker than the long grain)
+  const vc = mats.vc();
+  const endGrain = '#6a4e33';
+  const pins = [0, H / 3, (2 * H) / 3, H]; // pin centres (half pins at the edges)
+  const pIn = 0.05, pOut = 0.022; // pin width at the baseline / at the corner
+  const clip = (v) => Math.min(H, Math.max(0, v));
+  for (const s of [-1, 1]) {
+    for (const q of [-1, 1]) {
+      // tail face (front/back): the pins' end grain as wedges narrowing to the corner
+      for (const pc of pins) {
+        const u0 = s * (L / 2 - t), u1 = s * (L / 2); // baseline → corner (actual x)
+        const pts = [[u0, clip(pc - pIn / 2)], [u1, clip(pc - pOut / 2)], [u1, clip(pc + pOut / 2)], [u0, clip(pc + pIn / 2)]];
+        if (pts[3][1] - pts[0][1] < 0.004) continue;
+        const sh = new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(q > 0 ? x : -x, y)));
+        const g = new THREE.ShapeGeometry(sh);
+        if (q < 0) g.rotateY(Math.PI);
+        F.add(vc, g.translate(0, y0, q * (D / 2 + 0.0008)), { color: endGrain, cast: false, receive: true });
+      }
+      // pin face (the ends): the tails' end grain as rectangles between the pins
+      for (let k = 0; k < pins.length - 1; k++) {
+        const ya = pins[k] + pOut / 2, yb = pins[k + 1] - pOut / 2;
+        const za = q * (D / 2 - t), zb = q * (D / 2);
+        const uz = (z) => (s > 0 ? -z : z);
+        const sh = new THREE.Shape([[uz(za), ya], [uz(zb), ya], [uz(zb), yb], [uz(za), yb]].map(([u, v]) => new THREE.Vector2(u, v)));
+        const g = new THREE.ShapeGeometry(sh);
+        // keep the winding facing outwards
+        g.rotateY(s * Math.PI / 2);
+        F.add(vc, g.translate(s * (L / 2 + 0.0008), y0, 0), { color: endGrain, cast: false });
+      }
+    }
+  }
+  // a try square on the front edge, a pencil, a little dovetail saw on a sawhorse
+  F.add(mats.wood('walnut'), board(0.1, 0.03, 0.014, { along: 'x' }).translate(0.12, y0 + H + 0.012, D / 2 - 0.01), { cast: false });
+  F.add(mats.metal('#9aa1a6'), new THREE.BoxGeometry(0.004, 0.004, 0.13).translate(0.07, y0 + H + 0.004, D / 2 - 0.08), { cast: false });
+  F.add(vc, xf(new THREE.BoxGeometry(0.08, 0.008, 0.012), [-0.1, y0 + H + 0.005, D / 2 - 0.011], [0, 0.2, 0]), { color: '#c4271c', cast: false });
+  {
+    const ds = new THREE.Shape([new THREE.Vector2(0, 0), new THREE.Vector2(0.22, 0), new THREE.Vector2(0.22, 0.05), new THREE.Vector2(0, 0.05)]);
+    const g = new THREE.ShapeGeometry(ds);
+    F.add(mats.metal('#b9c0c6'), xf(doubleFaceSafe(g), [0.27, hy + 0.004, -0.2], [-Math.PI / 2, 0, 0.3]), { cast: false });
+    F.add(mats.metal('#c9a04a'), xf(new THREE.BoxGeometry(0.22, 0.012, 0.012), [0.27 + 0.11 * Math.cos(0.3), hy + 0.006, -0.2 - 0.11 * Math.sin(0.3) + 0.04], [0, 0.3, 0]), { cast: false });
+  }
+  // the lid (a panel with breadboard ends) leaning against the far sawhorse
+  {
+    const m = mat4([0.44, 0.17, 0.0], [0, 0, 0.42]);
+    F.add(oak, board(0.02, 0.34, 0.36, { along: 'y', rng }).applyMatrix4(m));
+    for (const s of [-1, 1]) F.add(oak2, board(0.022, 0.05, 0.36, { along: 'z', rng }).translate(0, s * 0.17, 0).applyMatrix4(m), { cast: false });
+  }
+  // shavings & sawdust underneath
+  for (let i = 0; i < 3; i++) F.add(vc, xf(mossGeo(rng, { r: rng.range(0.08, 0.16), h: 0.01 }), [rng.jitter(0.35), 0.002, rng.jitter(0.25)]), { color: '#e6cc98', cast: false });
+  ctx.colliders?.addBox?.(cx, cz, 0.45, 0.32, yaw, 'chest');
+  return { x: cx, z: cz, yaw };
+}
+
+/** A flat shape visible from both sides. */
+function doubleFaceSafe(g) {
+  const back = g.clone();
+  const idx = back.index.array;
+  for (let i = 0; i < idx.length; i += 3) {
+    const tmp = idx[i + 1];
+    idx[i + 1] = idx[i + 2];
+    idx[i + 2] = tmp;
+  }
+  const nor = back.attributes.normal.array;
+  for (let i = 0; i < nor.length; i++) nor[i] = -nor[i];
+  const out = new THREE.BufferGeometry();
+  const pa = [...g.attributes.position.array, ...back.attributes.position.array];
+  const na = [...g.attributes.normal.array, ...nor];
+  const ua = [...g.attributes.uv.array, ...back.attributes.uv.array];
+  const n = g.attributes.position.count;
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pa, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(na, 3));
+  out.setAttribute('uv', new THREE.Float32BufferAttribute(ua, 2));
+  out.setIndex([...g.index.array, ...Array.from(idx, (v) => v + n)]);
+  return out;
 }

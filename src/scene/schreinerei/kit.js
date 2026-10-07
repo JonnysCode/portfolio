@@ -20,6 +20,8 @@ const noiseA = createNoise2D(91731);
 const noiseB = createNoise2D(5531);
 
 // ─── materials ───────────────────────────────────────────────────────────────
+/** Colour of the annex's timber frame (Ochsenblut-red oak, see mats.frame). */
+export const FRAME_COLOR = '#7a3f2c';
 /**
  * Material shortcuts (all cached by core/materials.js — never mutate them).
  * vc = one PBR material with vertex colours for the many tiny coloured bits
@@ -40,6 +42,11 @@ export function makeMats(ctx) {
     /** A real (non-proxy) wood material, for meshes not built through a Batch. */
     woodMat: (species = 'oak', extra = {}) => m.surface('wood', { species, ...extra }),
     timber: (extra = {}) => m.surface('timber', extra),
+    /**
+     * The annex & porch frame (Riegelwerk): oiled oak in the warm ox-blood
+     * red-brown of a Swiss Riegelhaus — not the near-black of a Tudor frame.
+     */
+    frame: () => m.surface('timber', { color: FRAME_COLOR }),
     /** Individual instanced shakes: weathered timber, world-mapped so every shake differs. */
     shingles: () => m.surface('timber', { triplanar: true, color: '#7a5a42' }),
     plaster: () => m.surface('plaster', { color: '#e8dbc0' }),
@@ -884,4 +891,148 @@ export function doubleFace(geo) {
   for (let i = 0; i < nor.array.length; i++) nor.array[i] = -nor.array[i];
   const out = mergeGeometries([g, back], false);
   return out;
+}
+
+// ─── workshop tools & fixtures (shared by the porch, the annex and the yard) ─
+/** A Matrix4 helper for the tool builders: parts are baked through `m` into frame `F`. */
+function bake(F, m, material, geo, opts = { cast: false }) {
+  return F.add(material, geo.applyMatrix4(m), opts);
+}
+
+/**
+ * A Swiss frame saw (Gestellsäge) in its own XY plane, facing +Z, origin at
+ * the middle of the stretcher: two curved, tapered beech arms, the centre
+ * stretcher (Steg), the blade with its turned handles at the bottom and the
+ * twisted tension cord (Spannschnur) with its toggle stick (Knebel) at the top.
+ * ≈ 0.62 tall × 0.52 wide at scale 1.
+ */
+export function addBowSaw(F, mats, rng, m, { scale = 1, wood = '#c8a27c' } = {}) {
+  const M = m.clone().multiply(new THREE.Matrix4().makeScale(scale, scale, scale));
+  const arm = mats.wood(wood);
+  const y0 = -0.3, y1 = 0.32;
+  const xc = (t) => 0.215 + 0.045 * t * t; // arms flare out towards their horned tops
+  const wAt = (t) => (t < 0.45 ? 0.03 + (0.044 - 0.03) * (t / 0.45) : 0.044 - (0.044 - 0.016) * ((t - 0.45) / 0.55));
+  for (const s of [-1, 1]) {
+    const pts = [];
+    const n = 10;
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      pts.push(new THREE.Vector2(s * (xc(t) + wAt(t) / 2), y0 + (y1 - y0) * t));
+    }
+    for (let i = n; i >= 0; i--) {
+      const t = i / n;
+      pts.push(new THREE.Vector2(s * (xc(t) - wAt(t) / 2), y0 + (y1 - y0) * t));
+    }
+    if (s < 0) pts.reverse();
+    const g = new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: 0.022, bevelEnabled: true, bevelSize: 0.004, bevelThickness: 0.004, bevelSegments: 1, curveSegments: 2 });
+    g.translate(0, 0, -0.011);
+    bake(F, M, arm, uvBox(g, 'y'));
+    // turned blade handle under each arm
+    bake(F, M, arm, uvBox(new THREE.CylinderGeometry(0.014, 0.018, 0.085, 8), 'y').translate(s * xc(0), y0 - 0.04, 0));
+  }
+  // stretcher (its ends sit in the arms' widest part)
+  const ys = y0 + (y1 - y0) * 0.45;
+  bake(F, M, arm, board(2 * xc(0.45) - 0.02, 0.026, 0.02, { along: 'x', rng }).translate(0, ys, 0));
+  // the blade, tensioned between the arm feet
+  bake(F, M, mats.metal('#b5bcc2'), new THREE.BoxGeometry(2 * xc(0.05), 0.024, 0.003).translate(0, y0 + 0.035, 0));
+  // twisted cord: two strands winding round each other between the arm tops
+  const ct = 0.94, cy = y0 + (y1 - y0) * ct, cx = xc(ct);
+  for (const ph of [0, Math.PI]) {
+    const strand = [];
+    for (let i = 0; i <= 28; i++) {
+      const u = i / 28;
+      const a = u * Math.PI * 2 * 7 + ph;
+      strand.push([-cx + 2 * cx * u, cy + Math.cos(a) * 0.006, Math.sin(a) * 0.006]);
+    }
+    bake(F, M, mats.rope(), tube(strand, 0.0045, 4, 56));
+  }
+  // the toggle stick, twisted into the cord, its lower end resting on the stretcher
+  bake(F, M, mats.wood('#a8835e'), xf(board(0.016, (cy - ys) + 0.06, 0.01, { along: 'y', rng, r: 0.003 }), [0.02, (cy + ys) / 2 + 0.03, 0.012], [0, 0, -0.1]));
+}
+
+/**
+ * A western hand saw (Fuchsschwanz) in its own XY plane, facing +Z: blade from
+ * the heel (x = 0, 0.12 tall) tapering to the toe (x = len, 0.05 tall), teeth
+ * along the bottom, a closed D-handle with two brass screws at the heel.
+ */
+export function addHandSaw(F, mats, m, { len = 0.5, wood = '#5c4334' } = {}) {
+  const s = new THREE.Shape();
+  const nT = Math.round(len / 0.016);
+  s.moveTo(0, 0.06);
+  s.lineTo(len, 0.0);
+  s.lineTo(len, -0.05);
+  for (let i = nT; i >= 0; i--) {
+    const x = (i / nT) * len;
+    s.lineTo(x, -0.06 + (i % 2 ? 0 : -0.008));
+  }
+  s.lineTo(0, 0.06);
+  const blade = new THREE.ExtrudeGeometry(s, { depth: 0.003, bevelEnabled: false });
+  blade.translate(0, 0, -0.0015);
+  bake(F, m, mats.metal('#b9c0c6'), blade);
+  // closed D-handle with the hand hole
+  const h = new THREE.Shape();
+  h.moveTo(0.03, 0.075);
+  h.bezierCurveTo(-0.02, 0.11, -0.1, 0.11, -0.125, 0.06);
+  h.bezierCurveTo(-0.15, 0.0, -0.14, -0.07, -0.1, -0.09);
+  h.bezierCurveTo(-0.05, -0.105, 0.0, -0.08, 0.03, -0.055);
+  h.lineTo(0.03, 0.075);
+  const hole = new THREE.Path();
+  hole.moveTo(-0.025, 0.04);
+  hole.bezierCurveTo(-0.06, 0.06, -0.1, 0.045, -0.1, 0.0);
+  hole.bezierCurveTo(-0.1, -0.045, -0.06, -0.06, -0.035, -0.045);
+  hole.bezierCurveTo(-0.015, -0.03, -0.015, 0.025, -0.025, 0.04);
+  h.holes.push(hole);
+  const hg = new THREE.ExtrudeGeometry(h, { depth: 0.022, bevelEnabled: true, bevelSize: 0.004, bevelThickness: 0.004, bevelSegments: 1, curveSegments: 5 });
+  hg.translate(0, 0, -0.011);
+  bake(F, m, mats.wood(wood), uvBox(hg, 'x'));
+  for (const [x, y] of [[0.0, 0.035], [0.005, -0.03]]) bake(F, m, mats.metal('#c9a04a'), new THREE.CylinderGeometry(0.008, 0.008, 0.03, 8).rotateX(Math.PI / 2).translate(x, y, 0));
+}
+
+/**
+ * An F-clamp (Schraubzwinge) along its own +Y (bar from y = 0 to len), the
+ * jaws reaching towards +X: painted cast jaws, a steel bar, the screw with its
+ * wooden handle under the sliding jaw. `open` = sliding-jaw height (0..1 of len).
+ */
+export function addFClamp(F, mats, m, { len = 0.5, reach = 0.11, color = '#c4372a', open = 0.35, handle = '#d9b27c' } = {}) {
+  const jaw = mats.metal(color);
+  bake(F, m, mats.metal('#8f969b'), new THREE.BoxGeometry(0.012, len, 0.024).translate(0, len / 2, 0));
+  bake(F, m, jaw, new THREE.BoxGeometry(reach + 0.03, 0.034, 0.03).translate(reach / 2 - 0.004, len - 0.017, 0));
+  const yj = len * open;
+  bake(F, m, jaw, new THREE.BoxGeometry(reach + 0.03, 0.04, 0.032).translate(reach / 2 - 0.004, yj, 0));
+  // the screw from the sliding jaw towards the fixed one, its handle below
+  bake(F, m, mats.metal('#8f969b'), new THREE.CylinderGeometry(0.006, 0.006, 0.1, 6).translate(reach - 0.01, yj + 0.03, 0));
+  bake(F, m, mats.metal('#8f969b'), new THREE.CylinderGeometry(0.014, 0.014, 0.008, 8).translate(reach - 0.01, yj + 0.082, 0));
+  bake(F, m, mats.wood(handle), uvBox(new THREE.CylinderGeometry(0.016, 0.014, 0.085, 8), 'y').translate(reach - 0.01, yj - 0.064, 0));
+}
+
+/** A turned part (LatheGeometry about Y) from [r, y] pairs. */
+export function turned(profile, segs = 10) {
+  return uvBox(new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y)), segs), 'y');
+}
+
+/**
+ * A little lantern on a timber post (path lights): stone footing, post with a
+ * forged arm, the lantern hanging from it (glow + halo, no point light).
+ * `pos` world [x, y (ground), z]; `yaw` turns the arm.
+ */
+export function addLanternPost(F, mats, rng, pos, { h = 1.05, yaw = 0, scale = 0.58, wood = null } = {}) {
+  const m = mat4(pos, [0, yaw, 0]);
+  const tim = wood ?? mats.timber();
+  F.add(tim, board(0.075, h, 0.075, { along: 'y', rng }).translate(0, h / 2, 0).applyMatrix4(m));
+  F.add(tim, board(0.09, 0.03, 0.09, { along: 'x', rng, r: 0.008 }).translate(0, h + 0.015, 0).applyMatrix4(m));
+  F.add(mats.stone(), stoneGeo(rng, { r: 1, sx: 0.13, sy: 0.06, sz: 0.12, detail: 0 }).translate(0, 0.02, 0).applyMatrix4(m), { cast: false });
+  const iron = mats.metal('#2f2b28');
+  const arm = [[0, h - 0.06, 0.03], [0.1, h - 0.02, 0.03], [0.2, h - 0.05, 0.03]];
+  F.add(iron, tube(arm, 0.008, 4, 8).applyMatrix4(m), { cast: false });
+  const tip = new THREE.Vector3(0.2, h - 0.07, 0.03).applyMatrix4(m);
+  const local = [0.2, h - 0.07, 0.03];
+  const g = new THREE.Vector3();
+  // the lantern (built in post space, halo in world space)
+  const sub = {
+    add(material, geo, opts) {
+      return F.add(material, geo.applyMatrix4(m), opts);
+    },
+  };
+  addLantern(sub, mats, local, g.copy(tip), { scale });
+  return tip;
 }

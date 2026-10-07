@@ -122,7 +122,7 @@ for (const s of SPOTS) {
     const dir = tgt.clone().sub(pos);
     const dist = dir.length();
     dir.normalize();
-    cones.push({ pos, dir, dist, tan: r / dist });
+    cones.push({ id: s.id, pos, dir, dist, tan: r / dist });
   }
 }
 const _d = new THREE.Vector3();
@@ -132,8 +132,9 @@ const _d = new THREE.Vector3();
  * from that spot's cameras (plain, -wide, -close). Looser than blocksView:
  * use it for framing elements that are meant to stand in the frames' margins.
  */
-export function blocksSubject(x, y, z, r) {
+export function blocksSubject(x, y, z, r, skip = null) {
   for (const c of cones) {
+    if (skip && skip.includes(c.id)) continue;
     _d.set(x - c.pos.x, y - c.pos.y, z - c.pos.z);
     const along = _d.dot(c.dir);
     if (along <= 0.3 || along > c.dist) continue; // behind the lens or behind the subject
@@ -143,10 +144,14 @@ export function blocksSubject(x, y, z, r) {
   return false;
 }
 
-/** blocksSubject for an upright thing (spheres stacked up its height). */
-export function isClearOfSubjects(x, y0, z, height, radius) {
+/**
+ * blocksSubject for an upright thing (spheres stacked up its height). skip:
+ * spot ids whose subject cones to ignore (e.g. ['glen'] for ankle-high ground
+ * detail: the overview's subject IS the dressed floor of the diorama).
+ */
+export function isClearOfSubjects(x, y0, z, height, radius, skip = null) {
   const steps = Math.max(1, Math.ceil(height / Math.max(0.4, radius * 1.2)));
-  for (let i = 0; i <= steps; i++) if (blocksSubject(x, y0 + (i / steps) * height, z, radius)) return false;
+  for (let i = 0; i <= steps; i++) if (blocksSubject(x, y0 + (i / steps) * height, z, radius, skip)) return false;
   return true;
 }
 

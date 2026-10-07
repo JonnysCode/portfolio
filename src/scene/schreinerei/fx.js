@@ -352,3 +352,101 @@ export function makeNotes(ctx, { origin = new THREE.Vector3(), count = 7 } = {})
     },
   };
 }
+
+// ─── motes ───────────────────────────────────────────────────────────────────
+const MOTES_VERT = /* glsl */ `
+  attribute vec3 aBase; // centre of this mote's little column (world)
+  attribute vec4 aSeed; // x: seed, y: height of its column, z: size, w: rise speed (cycles/s)
+  uniform float uTime;
+  varying float vA;
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    float s = aSeed.x;
+    float ph = fract(uTime * aSeed.w + s * 7.13);
+    vec3 p = aBase;
+    p.y += (ph - 0.5) * aSeed.y;
+    p.x += sin(uTime * 0.31 + s * 23.0) * 0.12 + sin(uTime * 0.77 + s * 5.0) * 0.04;
+    p.z += cos(uTime * 0.27 + s * 31.0) * 0.12;
+    // fade in & out over the cycle (the wrap is invisible) and twinkle
+    vA = sin(3.14159 * ph) * (0.55 + 0.45 * sin(uTime * 2.3 + s * 40.0));
+    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+    mv.xy += position.xy * aSeed.z;
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+const MOTES_FRAG = /* glsl */ `
+  uniform vec3 uColor;
+  uniform float uDay;
+  uniform float uNight;
+  varying float vA;
+  varying vec2 vUv;
+  void main() {
+    float d = length(vUv - 0.5) * 2.0;
+    float a = smoothstep(1.0, 0.0, d);
+    a *= a;
+    float k = max(vA, 0.0) * mix(uDay, 1.6, uNight);
+    gl_FragColor = vec4(uColor * a * k, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+  }
+`;
+
+/**
+ * Golden dust motes drifting in warm light (sawdust in a doorway, around a
+ * lamp): GPU-animated billboards, one draw call, faint by day, glowing at
+ * night. volumes: [{ center: Vector3 (world), size: [sx, sy, sz], count }].
+ */
+export function makeMotes(ctx, volumes, { color = '#ffcf7e', day = 0.35 } = {}) {
+  const density = ctx.quality?.density ?? 1;
+  const items = [];
+  let rnd = 4242;
+  const rand = () => ((rnd = (rnd * 16807) % 2147483647) / 2147483647);
+  for (const v of volumes) {
+    const n = Math.max(3, Math.round(v.count * density));
+    for (let i = 0; i < n; i++) {
+      items.push([
+        v.center.x + (rand() - 0.5) * v.size[0],
+        v.center.y + (rand() - 0.5) * v.size[1] * 0.3,
+        v.center.z + (rand() - 0.5) * v.size[2],
+        rand(), v.size[1], 0.03 + rand() * 0.025, 0.025 + rand() * 0.035,
+      ]);
+    }
+  }
+  const geo = new THREE.InstancedBufferGeometry();
+  const quad = new THREE.PlaneGeometry(1, 1);
+  geo.index = quad.index;
+  geo.setAttribute('position', quad.attributes.position);
+  geo.setAttribute('uv', quad.attributes.uv);
+  const base = new Float32Array(items.length * 3);
+  const seed = new Float32Array(items.length * 4);
+  items.forEach((it, i) => {
+    base.set(it.slice(0, 3), i * 3);
+    seed.set(it.slice(3), i * 4);
+  });
+  geo.setAttribute('aBase', new THREE.InstancedBufferAttribute(base, 3));
+  geo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seed, 4));
+  geo.instanceCount = items.length;
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(color) }, uDay: { value: day }, uNight: sharedUniforms.uNight },
+    vertexShader: MOTES_VERT,
+    fragmentShader: MOTES_FRAG,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    name: 'schreinerei-motes',
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 4;
+  mesh.name = 'motes';
+  mesh.raycast = () => {};
+  mesh.castShadow = mesh.receiveShadow = false;
+  const slow = ctx.engine?.reducedMotion ? 0.3 : 1;
+  return {
+    object: mesh,
+    update(dt, t) {
+      mat.uniforms.uTime.value = t * slow;
+    },
+  };
+}

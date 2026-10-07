@@ -15,7 +15,7 @@
 import * as THREE from 'three';
 import { SCHREINEREI } from '../../world/layout.js';
 import { createRng } from '../../core/rng.js';
-import { Batch, board, xf, mat4, stoneGeo, mossGeo, uvBox, peg, addToadstool, addFern, addLantern, addFairyLights } from './kit.js';
+import { Batch, board, xf, mat4, stoneGeo, mossGeo, uvBox, peg, addToadstool, addFern, addLantern, addFairyLights, SPECIES } from './kit.js';
 import { makeNotes } from './fx.js';
 import { barkMount } from './door.js';
 
@@ -130,7 +130,7 @@ export function buildDeck(ctx, B, mats) {
   const PS = 1.45;
   const reduced = !!ctx.engine?.reducedMotion;
   const player = buildRecordPlayer(ctx, pm, rng, { idleSpin: !reduced });
-  player.group.position.set(cabX, h + cabinet.userData.topY * FS, -hd + 0.3);
+  player.group.position.set(cabX, h + cabinet.userData.topY * FS, -hd + 0.33);
   player.group.scale.setScalar(PS);
   group.add(player.group);
   const coffee = buildCoffeeTable(ctx, pm, rng);
@@ -262,11 +262,16 @@ function buildDiningTable(ctx, mats, rng) {
   const Bt = new Batch();
   const oak = mats.wood('oak');
   const L = 1.3, W = 0.64, T = 0.045, H = 0.47;
-  // top: 4 boards + breadboard ends across the grain
+  // top: 4 glued-up boards (each its own tone, as boards from one log differ)
+  // + breadboard ends across the grain; faint glue lines between the boards
   const be = 0.07;
+  const oakC = new THREE.Color(SPECIES.oak);
+  const tones = [1.05, 0.95, 1.03, 0.96];
   for (let i = 0; i < 4; i++) {
     const bw = W / 4;
-    Bt.add(oak, xf(board(L - be * 2, T, bw - 0.002, { along: 'x', rng, r: 0.004 }), [0, H - T / 2, -W / 2 + bw * (i + 0.5)]));
+    const c = oakC.clone().multiplyScalar(tones[i]);
+    Bt.add(mats.wood('#' + c.getHexString()), xf(board(L - be * 2, T, bw - 0.002, { along: 'x', rng, r: 0.004 }), [0, H - T / 2, -W / 2 + bw * (i + 0.5)]));
+    if (i) Bt.add(mats.vc(), xf(new THREE.BoxGeometry(L - be * 2 - 0.01, 0.0012, 0.0025), [0, H + 0.0004, -W / 2 + bw * i]), { color: '#6b5236', cast: false });
   }
   for (const s of [-1, 1]) {
     Bt.add(oak, xf(board(be, T + 0.004, W + 0.01, { along: 'z', rng, r: 0.006 }), [s * (L / 2 - be / 2), H - T / 2, 0]));
@@ -405,14 +410,15 @@ function buildRecordCabinet(ctx, mats, rng) {
   for (const s of [-1, 1]) Bc.add(walnut, xf(board(t, Hc, Dp, { along: 'y', rng, r: 0.004 }), [s * (W / 2 - t / 2), y0 + Hc / 2, 0]));
   Bc.add(walnut, xf(board(W - 2 * t, Hc - 2 * t, 0.01, { along: 'x', rng }), [0, y0 + Hc / 2, -Dp / 2 + 0.005]));
   Bc.add(walnut, xf(board(0.015, Hc - 2 * t, Dp - 0.02, { along: 'y', rng }), [0, y0 + Hc / 2, 0]), { cast: false });
-  // through-dovetails at the top corners (pale maple pins show on the sides)
-  const maple = mats.wood('maple');
+  // through-dovetails at the top corners: the tails' end grain shows on the
+  // sides — darker than the walnut's long grain (one species, no contrast inlay)
+  const tailEnd = mats.wood('#35251b');
   for (const s of [-1, 1]) {
     for (let k = 0; k < 4; k++) {
       const z = -Dp / 2 + 0.04 + k * ((Dp - 0.08) / 3);
       const tail = new THREE.Shape([new THREE.Vector2(-0.012, 0), new THREE.Vector2(0.012, 0), new THREE.Vector2(0.018, t), new THREE.Vector2(-0.018, t)]);
       const tg = new THREE.ShapeGeometry(tail);
-      Bc.add(maple, xf(tg, [s * (W / 2 + 0.0005), y0 + Hc - t, z], [0, s * Math.PI / 2, 0]), { cast: false });
+      Bc.add(tailEnd, xf(tg, [s * (W / 2 + 0.0005), y0 + Hc - t, z], [0, s * Math.PI / 2, 0]), { cast: false });
     }
   }
   // sliding doors: two panels with a finger pull; the left one slid right
@@ -477,11 +483,13 @@ function buildRecordPlayer(ctx, mats, rng, { idleSpin = true } = {}) {
   const armBase = new THREE.Vector3(0.12, PH + 0.012, -0.08);
   Bp.add(steel, xf(new THREE.CylinderGeometry(0.02, 0.024, 0.03, 12), [armBase.x, armBase.y + 0.015, armBase.z]), { cast: false });
   Bp.add(steel, xf(new THREE.CylinderGeometry(0.005, 0.005, 0.04, 6), [0.13, PH + 0.03, 0.08]), { cast: false });
-  // dust cover, hinged open at the back
-  const cover = new THREE.BoxGeometry(PW - 0.01, 0.06, PD - 0.01);
-  cover.translate(0, 0.03, PD / 2);
-  xf(cover, [0, PH + 0.012, -PD / 2 + 0.004], [-1.25, 0, 0]);
+  // dust cover, hinged open at the back (opened past upright, resting on its
+  // hinges' stops — clear of the platter) with two little hinge blocks
+  const cover = new THREE.BoxGeometry(PW - 0.01, 0.04, PD - 0.03);
+  cover.translate(0, 0.02, (PD - 0.03) / 2);
+  xf(cover, [0, PH + 0.014, -PD / 2 + 0.024], [-1.62, 0, 0]);
   Bp.add(ctx.materials.surface('glass'), cover, { cast: false, receive: false });
+  for (const sx of [-1, 1]) Bp.add(mats.metal('#2a2624'), xf(new THREE.BoxGeometry(0.03, 0.024, 0.02), [sx * (PW / 2 - 0.05), PH + 0.022, -PD / 2 + 0.02]), { cast: false });
   // speakers
   for (const s of [-1, 1]) {
     const sx = s * 0.3;

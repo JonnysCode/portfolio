@@ -32,6 +32,10 @@ export function installDebug(ctx) {
       const def = typeof nameOrDef === 'string' ? views[nameOrDef] : nameOrDef;
       if (!def) throw new Error(`unknown view ${nameOrDef}; known: ${Object.keys(views).join(', ')}`);
       ctx.cameraRig.setOverride(v3(def.position), v3(def.target));
+      if (def.fov && ctx.camera.fov !== def.fov) {
+        ctx.camera.fov = def.fov;
+        ctx.camera.updateProjectionMatrix();
+      }
       return def;
     },
     free() {

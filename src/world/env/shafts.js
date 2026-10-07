@@ -26,7 +26,7 @@ import { envUniforms, GLSL_NOISE } from './celestial.js';
 import { sunlightUniforms, SUNLIGHT_GLSL } from './sunlight.js';
 
 /** Moonbeams: ~35 % of the day strength, times this (they are seen against the dark). */
-const NIGHT_BOOST = 1.4;
+const NIGHT_BOOST = 2.0;
 
 const VERT = /* glsl */ `
   attribute vec3 aBase;   // foot of the shaft (world)

@@ -29,7 +29,7 @@ import { createLeaves } from './ambient/leaves.js';
 import { createFlappers } from './ambient/flappers.js';
 import { createSnailPost, createWildSnails } from './ambient/snailpost.js';
 import { updatePointScale } from './ambient/points.js';
-import { STREAM } from './layout.js';
+import { STREAM, OAK } from './layout.js';
 
 export default async function build(ctx) {
   const density = ctx.quality?.density ?? 1;
@@ -52,23 +52,59 @@ export default async function build(ctx) {
       reduced,
     }),
   );
-  // the glow-worm canopy: under the Great Oak's limbs (twice as many) and the
-  // giants' leaf masses near the glen
+  // the glow-worm canopy: hanging just under the lowest leaves of the Great
+  // Oak's crown (read from its leaf cards: the lowest leaf per 1.2-unit cell)
+  // and under the giants' leaf masses near the glen
   const glowworms = safe('glowworms', () => {
     const anchors = [];
-    for (const l of ctx.oak?.limbInfo ?? []) {
-      if (!l.curve) continue;
-      for (let u = 0.12; u <= 1.001; u += 0.05) {
-        const p = l.curve.getPoint(Math.min(1, u));
-        const r = typeof l.radiusAt === 'function' ? l.radiusAt(Math.min(1, u)) : 0.5;
-        const a = { x: p.x, y: p.y - r - 0.25, z: p.z, r: 1.0 + u * 3.4 };
-        anchors.push(a, a);
+    const leaves = ctx.oak?.group?.getObjectByName?.('oak-leaves');
+    const P = leaves?.geometry?.attributes?.position;
+    if (P) {
+      leaves.updateWorldMatrix(true, false);
+      const C = 1.2;
+      const cells = new Map();
+      const v = new THREE.Vector3();
+      for (let i = 0; i < P.count; i++) {
+        v.fromBufferAttribute(P, i).applyMatrix4(leaves.matrixWorld);
+        const key = `${Math.floor(v.x / C)},${Math.floor(v.z / C)}`;
+        const c = cells.get(key);
+        if (!c) cells.set(key, { x: v.x, y: v.y, z: v.z, n: 1 });
+        else {
+          c.n++;
+          if (v.y < c.y) {
+            c.x = v.x;
+            c.y = v.y;
+            c.z = v.z;
+          }
+        }
+      }
+      // (only cells with a real leaf mass overhead; a lone stray card is no
+      //  ceiling. The crown's outer rim is what the cameras see from below and
+      //  from the side: those cells count up to three times)
+      let rMax = 1;
+      for (const c of cells.values()) rMax = Math.max(rMax, Math.hypot(c.x - OAK.x, c.z - OAK.z));
+      for (const c of cells.values()) {
+        if (c.n < 12) continue;
+        const a = { x: c.x, y: c.y - 0.15, z: c.z, r: C * 0.6 };
+        const rim = Math.hypot(c.x - OAK.x, c.z - OAK.z) / rMax;
+        anchors.push(a);
+        if (rim > 0.45) anchors.push(a);
+        if (rim > 0.7) anchors.push(a);
+      }
+    } else {
+      for (const l of ctx.oak?.limbInfo ?? []) {
+        if (!l.curve) continue;
+        for (let u = 0.3; u <= 1.001; u += 0.07) {
+          const p = l.curve.getPoint(Math.min(1, u));
+          anchors.push({ x: p.x, y: p.y - 2.5, z: p.z, r: 2 + u * 2 });
+        }
       }
     }
+    const oakN = anchors.length;
     for (const c of veg.canopy ?? []) {
-      if (Math.hypot(c.x, c.z) < 34) anchors.push({ x: c.x, y: c.y - c.r * 0.72, z: c.z, r: c.r * 0.75 });
+      if (Math.hypot(c.x, c.z) < 34) anchors.push({ x: c.x, y: c.y - c.r * 0.75, z: c.z, r: c.r * 0.7 });
     }
-    return createGlowWorms(ctx, { anchors, count: Math.round(Math.max(260, 480 * Math.min(1.2, density))), reduced, yRange: [12, 36] });
+    return createGlowWorms(ctx, { anchors, oakN, count: Math.round(Math.max(300, 600 * Math.min(1.2, density))), reduced, yRange: [11, 36] });
   });
   const motes = safe('motes', () => createMotes(ctx, { count: Math.round(Math.max(60, 160 * density) * k), reduced }));
   const leaves = safe('leaves', () => createLeaves(ctx, { count: Math.round(Math.max(14, 34 * density) * k), reduced }));

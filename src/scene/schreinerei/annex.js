@@ -20,8 +20,9 @@ import { createRng } from '../../core/rng.js';
 import {
   Batch, board, timber, peg, uvBox, xf, deform, mat4, stoneGeo, mossGeo, tube, rbox,
   ShingleField, layShingles, shingleGeo, addIvy, addToadstool, pushHalo, noiseA,
+  addBowSaw, addHandSaw, addFClamp, turned, doubleFace,
 } from './kit.js';
-import { makeSmoke } from './fx.js';
+import { makeSmoke, shavingGeo } from './fx.js';
 
 const A = SCHREINEREI.annex;
 /** Annex dimensions & key heights (annex-local). */
@@ -98,7 +99,7 @@ function makeWall(F, mats, rng, origin, sDir, normal) {
   const N = new THREE.Vector3(...normal);
   const p = (s, y, n = 0) => [O.x + S.x * s + N.x * n, y, O.z + S.z * s + N.z * n];
   const basis = new THREE.Matrix4().makeBasis(S, new THREE.Vector3(0, 1, 0), N);
-  const oak = mats.timber();
+  const oak = mats.frame();
   return {
     p,
     /** A timber from (s0,y0) to (s1,y1) with face width fw, depth d (outer face flush at n=0). */
@@ -254,7 +255,7 @@ export function buildAnnex(ctx, B, mats) {
   const { hx, hz, plinth, sillTop, plateBottom, eave, pitch: T, jetty } = ANNEX;
   const glow = mats.glow('#ffc66e', 0.42, 2.4);
   const glow2 = mats.glow('#ffad55', 0.28, 1.9);
-  const tim = mats.timber();
+  const tim = mats.frame(); // the Riegel frame, joist heads, rafters & purlins
   const yRoof = (x) => eave + (hx - Math.abs(x)) * T; // rafter underside line
 
   // ── fieldstone plinth (individual stones in rough courses) ────────────────
@@ -405,12 +406,17 @@ export function buildAnnex(ctx, B, mats) {
   };
   rail(3.04);
   rail(3.98);
-  // braces: outer K-braces and the "Mann" above
+  // braces — never through a window opening: short steep foot braces
+  // (Fussbänder) from the gable posts down into the sill, a long brace in each
+  // outer field from the post down to the window rail (towards the eaves),
+  // and the "Mann" bracing the king post above
   for (const s of [-1, 1]) {
-    gable.timber(s * (gW - 0.15), gs1 + 0.02, s * 1.36, 2.98, 0.11, 0.13, { proud: -0.01 });
+    gable.timber(s * 1.36, 2.97, s * 1.56, 2.79, 0.1, 0.12, { proud: -0.01 });
+    gable.timber(s * 1.36, 3.88, s * 2.08, 3.11, 0.11, 0.13, { proud: -0.01 });
     gable.timber(s * 1.2, 4.05, s * 0.09, 4.95, 0.11, 0.13, { proud: -0.01 });
-    gable.timber(s * 1.2, 3.1, s * 0.5, 3.92, 0.1, 0.12, { proud: -0.012 });
   }
+  // pegs where the braces meet posts & rails
+  for (const s of [-1, 1]) for (const [x, y] of [[1.28, 2.97], [1.28, 3.86], [2.1, 3.04], [1.28, 4.05], [0.0, 4.95]]) gable.peg(s * x, y);
   // gable windows with shutters
   const GW = [[-1.18, -0.52], [0.52, 1.18]];
   GW.forEach(([a, b], i) => addWindow(gable, mats, rng, a, 3.1, b, 3.92, { cols: 2, rows: 2, glow, glow2, shutters: i ? 'right' : 'left', shutterColor: '#3e6650' }));
@@ -752,15 +758,18 @@ export function buildAnnex(ctx, B, mats) {
   {
     const dw = (door.s1 - door.s0) / 2;
     // each leaf is built extending from its hinge (x = 0) towards the opening (dir = +1 left leaf, −1 right leaf)
-    for (const [dir, ang] of [[1, 1.22], [-1, 1.02]]) {
+    // the right leaf swings right round (beyond square) so the lit shop shows
+    // from the spot camera; both are plain oiled oak, not the painted frame
+    const leafWood = mats.timber();
+    for (const [dir, ang] of [[1, 1.42], [-1, 2.25]]) {
       const leaf = new Batch();
       for (let k = 0; k < 5; k++) {
         const pw = dw / 5;
-        leaf.add(tim, xf(board(pw - 0.008, door.top - 0.03, 0.05, { along: 'y', rng, scale: 1 / 1.6 }), [dir * pw * (k + 0.5), (door.top + 0.03) / 2, 0]));
+        leaf.add(leafWood, xf(board(pw - 0.008, door.top - 0.03, 0.05, { along: 'y', rng, scale: 1 / 1.6 }), [dir * pw * (k + 0.5), (door.top + 0.03) / 2, 0]));
       }
-      for (const y of [0.3, door.top - 0.3]) leaf.add(tim, xf(board(dw - 0.06, 0.12, 0.035, { along: 'x', rng, scale: 1 / 1.6 }), [dir * dw / 2, y, -0.04]));
+      for (const y of [0.3, door.top - 0.3]) leaf.add(leafWood, xf(board(dw - 0.06, 0.12, 0.035, { along: 'x', rng, scale: 1 / 1.6 }), [dir * dw / 2, y, -0.04]));
       const bl = Math.hypot(dw - 0.12, door.top - 0.72);
-      leaf.add(tim, xf(board(bl, 0.11, 0.03, { along: 'x', rng }), [dir * dw / 2, door.top / 2, -0.04], [0, 0, dir * Math.atan2(door.top - 0.72, dw - 0.12)]));
+      leaf.add(leafWood, xf(board(bl, 0.11, 0.03, { along: 'x', rng }), [dir * dw / 2, door.top / 2, -0.04], [0, 0, dir * Math.atan2(door.top - 0.72, dw - 0.12)]));
       for (const y of [0.3, door.top - 0.3]) {
         leaf.add(mats.metal('#2f2b28'), xf(new THREE.BoxGeometry(dw * 0.75, 0.045, 0.012), [dir * dw * 0.375, y, 0.032]), { cast: false });
         leaf.add(mats.metal('#2f2b28'), xf(new THREE.CylinderGeometry(0.02, 0.02, 0.1, 6), [0, y, 0.0]), { cast: false });
@@ -785,7 +794,7 @@ export function buildAnnex(ctx, B, mats) {
   const light = ctx.lights?.addPoint?.(annexToWorld(-0.6, 1.6, 0.8), { color: '#ffb866', day: 1.2, night: 7, distance: 7 });
 
   // a glow halo in each window at night
-  for (const [x, y, z, sz] of [[W1[0] + 0.65 - hx, 1.65, hz + 0.25, 0.95], [W2[0] + 0.5 - hx, 1.5, hz + 0.25, 0.7], [-0.85, 3.5, gz + 0.2, 0.6], [0.85, 3.5, gz + 0.2, 0.6], [dorm.x + 0.2, dorm.y0 + 0.4, dorm.z, 0.5]]) {
+  for (const [x, y, z, sz] of [[W1[0] + 0.65 - hx, 1.65, hz + 0.25, 0.95], [W2[0] + 0.5 - hx, 1.5, hz + 0.25, 0.7], [-0.85, 3.5, gz + 0.2, 0.8], [0.85, 3.5, gz + 0.2, 0.8], [dorm.x + 0.2, dorm.y0 + 0.4, dorm.z, 0.5]]) {
     pushHalo(annexToWorld(x, y, z), sz);
   }
 
@@ -802,96 +811,104 @@ export function buildAnnex(ctx, B, mats) {
   };
 }
 
-/** Workshop interior: plank floor, back wall with the shadow board, bench, clamps, boards, a lamp. */
+/**
+ * Workshop interior (seen through the open double door): a bright spruce back
+ * wall with a dense shadow board (frame saw, hand saws, chisels, brace,
+ * hammers, squares …) and a shelf of planes, a rack of F-clamps, a band saw in
+ * the back-left corner, an older second bench as the glue-up station (a
+ * dovetailed carcass in red clamps, a half-assembled drawer), shavings on the
+ * floor, boards leaning on the side wall and a low enamel lamp over it all.
+ */
 function buildInterior(ctx, F, mats, rng) {
   const { hx, hz, floor } = ANNEX;
   const z0 = -0.55; // the interior partition (the back is storage under the roots)
   const ix0 = -hx + 0.16, ix1 = hx - 0.16;
+  const vc = mats.vc();
+  const steel = mats.metal('#9aa1a6');
   // floor planks
   for (let x = ix0; x < ix1; x += 0.2) {
     const w = Math.min(0.2, ix1 - x) - 0.008;
     F.add(mats.wood('oak'), xf(board(w, 0.05, hz - z0, { along: 'z', rng }), [x + w / 2, floor - 0.025, (hz + z0) / 2]), { cast: false });
   }
-  // back partition: vertical boards (dark), the shadow board on it
+  // back partition: pale spruce boards — a bright wall behind the work
   for (let x = ix0; x < ix1; x += 0.24) {
-    F.add(mats.wood('oak'), xf(board(0.235, 2.3, 0.04, { along: 'y', rng }), [x + 0.12, floor + 1.15, z0]));
+    F.add(mats.wood('spruce'), xf(board(0.235, 2.3, 0.04, { along: 'y', rng }), [x + 0.12, floor + 1.15, z0]), { color: rng.pick(['#e2cfa6', '#d9c49a', '#e8d6b0']) });
   }
   // inner faces of the side walls & ceiling joists near the door
   for (const s of [-1, 1]) F.add(mats.plaster(), xf(new THREE.BoxGeometry(0.04, 2.3, hz - z0), [s * (hx - 0.17), floor + 1.15, (hz + z0) / 2]), { cast: false });
   for (let x = ix0 + 0.3; x < ix1; x += 0.85) F.add(mats.timber(), xf(board(0.12, 0.14, hz - z0 + 0.2, { along: 'z', rng }), [x, ANNEX.plateBottom + 0.07, (hz + z0) / 2]), { cast: false });
   F.add(mats.wood('spruce'), xf(new THREE.BoxGeometry(ix1 - ix0, 0.03, hz - z0), [0, ANNEX.plateBottom + 0.15, (hz + z0) / 2]), { cast: false });
 
-  // shadow board (painted panel) with tools
-  const sbx = -0.45, sby = 1.42, sbw = 1.9, sbh = 0.95;
-  F.add(mats.vc(), xf(rbox(sbw, sbh, 0.03, 0.01), [sbx, sby, z0 + 0.04]), { color: '#3d5a48' });
-  // tool silhouettes painted lighter, then the tools on them
-  const vc = mats.vc();
-  const steel = mats.metal('#9aa1a6');
-  const beech = mats.wood('maple');
+  // ── the shadow board (painted panel) with its tools ───────────────────────
+  const sbx = -0.42, sby = 1.27, sbw = 2.0, sbh = 0.92;
   const zt = z0 + 0.07;
-  // a bow saw (Gestellsäge) — the iconic Swiss/German frame saw
+  F.add(vc, xf(rbox(sbw, sbh, 0.03, 0.01), [sbx, sby, z0 + 0.04]), { color: '#3d5a48' });
+  // a frame saw with curved arms and its twisted cord
+  addBowSaw(F, mats, rng, mat4([sbx - 0.7, sby + 0.04, zt]), { scale: 0.82 });
+  // two hand saws, handle up: wide heel tapering to the toe, closed handles
+  addHandSaw(F, mats, mat4([sbx - 0.3, sby + 0.36, zt], [0, 0, -Math.PI / 2]), { len: 0.5, wood: '#5c4334' });
+  addHandSaw(F, mats, mat4([sbx - 0.08, sby + 0.36, zt + 0.004], [0, 0, -Math.PI / 2]), { len: 0.44, wood: '#9c5a43' });
+  // a brace (Bohrwinde): head, crank, chuck
   {
-    const cx = sbx - 0.5, cy = sby + 0.12;
-    F.add(beech, xf(board(0.03, 0.62, 0.025, { along: 'y', rng }), [cx - 0.22, cy, zt]), { cast: false });
-    F.add(beech, xf(board(0.03, 0.62, 0.025, { along: 'y', rng }), [cx + 0.22, cy, zt]), { cast: false });
-    F.add(beech, xf(board(0.44, 0.03, 0.025, { along: 'x', rng }), [cx, cy, zt]), { cast: false });
-    F.add(steel, xf(new THREE.BoxGeometry(0.44, 0.025, 0.004), [cx, cy - 0.27, zt]), { cast: false });
-    F.add(mats.rope(), xf(new THREE.CylinderGeometry(0.006, 0.006, 0.44, 4), [cx, cy + 0.27, zt], [0, 0, Math.PI / 2]), { cast: false });
-    F.add(beech, xf(board(0.1, 0.012, 0.012, { along: 'x' }), [cx, cy + 0.24, zt + 0.01], [0, 0, 0.5]), { cast: false });
+    const bx = sbx + 0.16, by = sby + 0.05;
+    const crank = [[bx, by + 0.2, zt], [bx, by + 0.12, zt], [bx + 0.09, by + 0.08, zt + 0.01], [bx + 0.09, by - 0.04, zt + 0.01], [bx, by - 0.08, zt], [bx, by - 0.16, zt]];
+    F.add(steel, tube(crank, 0.008, 5, 18), { cast: false });
+    F.add(mats.wood('#9c5a43'), xf(turned([[0, 0], [0.035, 0.0], [0.04, 0.025], [0.02, 0.045], [0, 0.045]]), [bx, by + 0.2, zt]), { cast: false });
+    F.add(mats.wood('#9c5a43'), xf(new THREE.CylinderGeometry(0.018, 0.018, 0.07, 8), [bx + 0.09, by + 0.02, zt + 0.01]), { cast: false });
+    F.add(steel, xf(new THREE.CylinderGeometry(0.016, 0.01, 0.06, 8), [bx, by - 0.19, zt]), { cast: false });
   }
-  // two hand saws
-  for (const [k, ox] of [[0, 0.05], [1, 0.32]]) {
-    const cx = sbx + ox, cy = sby + 0.08;
-    const blade = new THREE.Shape();
-    blade.moveTo(-0.04, 0.18);
-    blade.lineTo(0.04, 0.18);
-    blade.lineTo(0.025, -0.28);
-    blade.lineTo(-0.02, -0.28);
-    blade.lineTo(-0.04, 0.18);
-    F.add(steel, xf(new THREE.ShapeGeometry(blade), [cx, cy, zt]), { cast: false });
-    F.add(mats.wood(k ? 'cherry' : 'walnut'), xf(board(0.09, 0.13, 0.025, { along: 'y', rng }), [cx, cy + 0.24, zt + 0.005]), { cast: false });
+  // hammers: a Swiss joiner's hammer and a claw hammer, heads on pegs
+  for (const [hx2, w] of [[sbx + 0.36, 0.1], [sbx + 0.46, 0.12]]) {
+    F.add(mats.wood('ash'), xf(new THREE.CylinderGeometry(0.011, 0.013, 0.28, 6), [hx2, sby + 0.08, zt]), { cast: false });
+    F.add(mats.metal('#4a4f55'), xf(new THREE.BoxGeometry(w, 0.026, 0.024), [hx2, sby + 0.23, zt + 0.005]), { cast: false });
+  }
+  // squares (a try square and a big framing square), a sliding bevel, dividers
+  F.add(mats.wood('walnut'), xf(board(0.035, 0.26, 0.02, { along: 'y' }), [sbx + 0.62, sby + 0.18, zt]), { cast: false });
+  F.add(steel, xf(new THREE.BoxGeometry(0.2, 0.026, 0.004), [sbx + 0.72, sby + 0.06, zt]), { cast: false });
+  F.add(steel, xf(new THREE.BoxGeometry(0.03, 0.4, 0.004), [sbx + 0.9, sby + 0.12, zt]), { cast: false });
+  F.add(steel, xf(new THREE.BoxGeometry(0.26, 0.03, 0.004), [sbx + 0.78, sby - 0.07, zt]), { cast: false });
+  for (const s of [-1, 1]) F.add(steel, xf(new THREE.BoxGeometry(0.008, 0.2, 0.006), [sbx + 0.6 + s * 0.025, sby - 0.22, zt], [0, 0, s * 0.14]), { cast: false });
+  // files & rasps, screwdrivers with turned handles
+  for (let i = 0; i < 3; i++) {
+    const x = sbx + 0.36 + i * 0.05;
+    F.add(mats.metal('#55595e'), xf(new THREE.BoxGeometry(0.016, 0.2, 0.006), [x, sby - 0.2, zt]), { cast: false });
+    F.add(mats.wood('#b07a48'), xf(new THREE.CylinderGeometry(0.012, 0.014, 0.07, 6), [x, sby - 0.06, zt]), { cast: false });
+  }
+  for (let i = 0; i < 3; i++) {
+    const x = sbx + 0.08 + i * 0.06;
+    F.add(steel, xf(new THREE.CylinderGeometry(0.004, 0.004, 0.12, 4), [x, sby - 0.28, zt]), { cast: false });
+    F.add(mats.wood(['#c4372a', '#e8c22a', '#9c5a43'][i]), xf(new THREE.CylinderGeometry(0.014, 0.012, 0.08, 6), [x, sby - 0.18, zt]), { cast: false });
   }
   // a row of chisels in a rack
-  F.add(mats.wood('oak'), xf(board(0.6, 0.05, 0.06, { along: 'x', rng }), [sbx + 0.45, sby - 0.3, zt + 0.02]), { cast: false });
-  for (let i = 0; i < 7; i++) {
-    const x = sbx + 0.2 + i * 0.08;
+  F.add(mats.wood('oak'), xf(board(0.66, 0.05, 0.06, { along: 'x', rng }), [sbx - 0.6, sby - 0.3, zt + 0.02]), { cast: false });
+  for (let i = 0; i < 8; i++) {
+    const x = sbx - 0.88 + i * 0.08;
     F.add(mats.wood('ash'), xf(new THREE.CylinderGeometry(0.014, 0.012, 0.12, 6), [x, sby - 0.22, zt + 0.02]), { cast: false });
     F.add(steel, xf(new THREE.BoxGeometry(0.012 + (i % 3) * 0.006, 0.12, 0.004), [x, sby - 0.34, zt + 0.02]), { cast: false });
   }
-  // squares, a marking gauge, a mallet hanging
-  F.add(mats.wood('walnut'), xf(board(0.04, 0.3, 0.02, { along: 'y' }), [sbx + 0.72, sby + 0.18, zt]), { cast: false });
-  F.add(steel, xf(new THREE.BoxGeometry(0.22, 0.03, 0.004), [sbx + 0.82, sby + 0.04, zt]), { cast: false });
-  F.add(mats.wood('ash'), xf(new THREE.CylinderGeometry(0.014, 0.014, 0.22, 6), [sbx - 0.85, sby - 0.15, zt + 0.02]), { cast: false });
-  F.add(mats.wood('ash'), xf(board(0.12, 0.08, 0.07, { along: 'x', rng }), [sbx - 0.85, sby - 0.02, zt + 0.03]), { cast: false });
-  // a shelf of hand planes above the board
-  F.add(mats.wood('oak'), xf(board(1.7, 0.035, 0.18, { along: 'x', rng }), [sbx, sby + sbh / 2 + 0.06, z0 + 0.1]), { cast: false });
-  for (let i = 0; i < 5; i++) {
-    const len = [0.26, 0.2, 0.36, 0.16, 0.22][i];
-    const x = sbx - 0.62 + i * 0.3;
-    F.add(mats.wood('maple'), xf(board(len, 0.06, 0.06, { along: 'x', rng }), [x, sby + sbh / 2 + 0.11, z0 + 0.1]), { cast: false });
-    F.add(mats.wood('maple'), xf(new THREE.SphereGeometry(0.025, 6, 4), [x + len * 0.35, sby + sbh / 2 + 0.15, z0 + 0.1]), { cast: false });
+  // a shelf of hand planes above the board, jars & an oil can at its end
+  F.add(mats.wood('oak'), xf(board(1.9, 0.035, 0.18, { along: 'x', rng }), [sbx, sby + sbh / 2 + 0.06, z0 + 0.1]), { cast: false });
+  for (let i = 0; i < 6; i++) {
+    const len = [0.26, 0.2, 0.42, 0.16, 0.22, 0.3][i];
+    const x = sbx - 0.78 + i * 0.28;
+    F.add(mats.wood('beech'), xf(board(len, 0.06, 0.06, { along: 'x', rng }), [x, sby + sbh / 2 + 0.11, z0 + 0.1]), { cast: false });
+    F.add(mats.wood('beech'), xf(new THREE.SphereGeometry(0.025, 6, 4), [x + len * 0.35, sby + sbh / 2 + 0.15, z0 + 0.1]), { cast: false });
   }
-  // jars & a small oil can on the shelf end
-  for (let i = 0; i < 3; i++) F.add(vc, xf(new THREE.CylinderGeometry(0.035, 0.035, 0.09, 8), [sbx + 0.8 - i * 0.08, sby + sbh / 2 + 0.12, z0 + 0.1]), { color: rng.pick(['#8a5a3b', '#c9a26b', '#5c3d27']), cast: false });
+  for (let i = 0; i < 3; i++) F.add(vc, xf(new THREE.CylinderGeometry(0.035, 0.035, 0.09, 8), [sbx + 0.88 - i * 0.08, sby + sbh / 2 + 0.12, z0 + 0.1]), { color: rng.pick(['#8a5a3b', '#c9a26b', '#5c3d27']), cast: false });
 
-  // inner workbench under the shadow board
+  // ── a rack of F-clamps on the back wall, right of the board ──────────────
   {
-    const bx = -0.35, bz = z0 + 0.38, top = 0.5;
-    F.add(mats.wood('ash'), xf(board(1.9, 0.07, 0.48, { along: 'x', rng }), [bx, floor + top - 0.035, bz]));
-    for (const s of [-1, 1]) {
-      for (const t of [-1, 1]) F.add(mats.wood('ash'), xf(board(0.07, top - 0.07, 0.07, { along: 'y', rng }), [bx + s * 0.8, floor + (top - 0.07) / 2, bz + t * 0.17]));
-      F.add(mats.wood('ash'), xf(board(0.07, 0.07, 0.4, { along: 'z', rng }), [bx + s * 0.8, floor + 0.12, bz]));
+    const rx0 = 0.78, rx1 = 1.95, ry = 1.62;
+    F.add(mats.wood('oak'), xf(board(rx1 - rx0 + 0.1, 0.06, 0.07, { along: 'x', rng }), [(rx0 + rx1) / 2, ry, z0 + 0.06]));
+    const cols = ['#c4372a', '#c4372a', '#3f6f9a', '#c4372a', '#d9a441', '#c4372a', '#3f6f9a', '#c4372a', '#c4372a'];
+    for (let i = 0; i < cols.length; i++) {
+      const x = rx0 + (i / (cols.length - 1)) * (rx1 - rx0);
+      const len = [0.6, 0.48, 0.8, 0.6, 0.4, 0.7, 0.55, 0.48, 0.62][i];
+      // hung by the fixed jaw over the rail: bar down, jaws towards the wall
+      addFClamp(F, mats, mat4([x, ry + 0.064 - len, z0 + 0.13], [0, Math.PI / 2, 0]), { len, reach: 0.1, color: cols[i], open: 0.3 + (i % 3) * 0.12 });
     }
-    F.add(mats.wood('ash'), xf(board(1.55, 0.06, 0.05, { along: 'x', rng }), [bx, floor + 0.12, bz]));
-    // a drawer box with dovetails (cabinetmaker's pride) and a few offcuts on top
-    const dbx = bx + 0.45;
-    F.add(mats.wood('cherry'), xf(board(0.36, 0.14, 0.24, { along: 'x', rng }), [dbx, floor + top + 0.07, bz]));
-    for (let k = 0; k < 3; k++) F.add(mats.wood('maple'), xf(new THREE.BoxGeometry(0.004, 0.026, 0.03), [dbx - 0.18, floor + top + 0.025 + k * 0.045, bz + 0.105]), { cast: false });
-    F.add(mats.wood('walnut'), xf(board(0.5, 0.03, 0.12, { along: 'x', rng }), [bx - 0.4, floor + top + 0.015, bz + 0.05], [0, 0.2, 0]));
-    // under-bench storage: boxes
-    F.add(mats.wood('spruce'), xf(board(0.5, 0.25, 0.32, { along: 'x', rng }), [bx - 0.4, floor + 0.13, bz]));
   }
-  // clamp rack on the left wall (F-clamps on a rail)
+  // the old clamp rack on the left wall (long sash clamps)
   {
     const rx = -hx + 0.22;
     F.add(mats.wood('oak'), xf(board(0.06, 0.08, 1.4, { along: 'z', rng }), [rx, 1.75, 1.1]));
@@ -901,10 +918,94 @@ function buildInterior(ctx, F, mats, rng) {
       F.add(steel, xf(new THREE.BoxGeometry(0.012, len, 0.03), [rx + 0.06, 1.8 - len / 2, z]), { cast: false });
       F.add(mats.metal('#b23a2a'), xf(new THREE.BoxGeometry(0.03, 0.03, 0.12), [rx + 0.06, 1.79, z + 0.05]), { cast: false });
       F.add(mats.metal('#b23a2a'), xf(new THREE.BoxGeometry(0.03, 0.03, 0.12), [rx + 0.06, 1.8 - len + 0.12, z + 0.05]), { cast: false });
-      F.add(mats.wood('maple'), xf(new THREE.CylinderGeometry(0.018, 0.018, 0.1, 6), [rx + 0.06, 1.8 - len + 0.05, z + 0.1], [0, 0, 0]), { cast: false });
+      F.add(mats.wood('maple'), xf(new THREE.CylinderGeometry(0.018, 0.018, 0.1, 6), [rx + 0.06, 1.8 - len + 0.05, z + 0.1]), { cast: false });
     }
   }
-  // boards leaning against the right wall (different species)
+
+  // ── a band saw in the back-left corner (cast-iron frame, two wheel housings) ─
+  {
+    const bx = -1.86, bz = z0 + 0.36;
+    const paintC = mats.metal('#6f8f80');
+    const dark = mats.metal('#2f3436');
+    F.add(paintC, xf(rbox(0.5, 0.62, 0.42, 0.03), [bx, floor + 0.31, bz]));
+    F.add(dark, xf(new THREE.BoxGeometry(0.52, 0.05, 0.44), [bx, floor + 0.02, bz]), { cast: false });
+    F.add(paintC, xf(rbox(0.11, 1.0, 0.14, 0.02), [bx - 0.2, floor + 1.05, bz]));
+    const wheel = new THREE.CylinderGeometry(0.25, 0.25, 0.14, 22);
+    wheel.rotateX(Math.PI / 2);
+    F.add(paintC, xf(wheel.clone(), [bx - 0.02, floor + 1.55, bz]));
+    F.add(dark, xf(new THREE.CylinderGeometry(0.05, 0.05, 0.16, 10).rotateX(Math.PI / 2), [bx - 0.02, floor + 1.55, bz]), { cast: false });
+    // the table on its trunnion, the blade guard and the blade
+    F.add(mats.metal('#8f969b'), xf(new THREE.BoxGeometry(0.46, 0.035, 0.44), [bx + 0.02, floor + 0.86, bz + 0.02]));
+    F.add(dark, xf(new THREE.BoxGeometry(0.1, 0.18, 0.1), [bx + 0.02, floor + 0.74, bz]), { cast: false });
+    F.add(paintC, xf(new THREE.BoxGeometry(0.04, 0.42, 0.05), [bx + 0.1, floor + 1.1, bz + 0.03]), { cast: false });
+    F.add(mats.metal('#c9cfd4'), xf(new THREE.BoxGeometry(0.004, 0.36, 0.012), [bx + 0.1, floor + 0.98, bz + 0.065]), { cast: false });
+    // a switch box and an offcut on the table
+    F.add(dark, xf(new THREE.BoxGeometry(0.08, 0.1, 0.05), [bx + 0.27, floor + 0.55, bz + 0.12]), { cast: false });
+    F.add(vc, xf(new THREE.CylinderGeometry(0.014, 0.014, 0.02, 8).rotateX(Math.PI / 2), [bx + 0.27, floor + 0.57, bz + 0.15]), { color: '#c4271c', cast: false });
+    F.add(mats.wood('cherry'), xf(board(0.2, 0.04, 0.08, { along: 'x', rng }), [bx + 0.06, floor + 0.9, bz + 0.1], [0, 0.4, 0]), { cast: false });
+  }
+
+  // ── the glue-up station: an older bench with a carcass in clamps ─────────
+  {
+    const bx = -0.3, bz = z0 + 0.42, top = 0.44; // lower than the porch Hobelbank
+    const oldTop = mats.wood('#b8956c');
+    F.add(oldTop, xf(board(1.7, 0.07, 0.5, { along: 'x', rng }), [bx, floor + top - 0.035, bz]));
+    for (const s of [-1, 1]) {
+      for (const t of [-1, 1]) F.add(mats.wood('#7a5539'), xf(board(0.07, top - 0.07, 0.07, { along: 'y', rng }), [bx + s * 0.72, floor + (top - 0.07) / 2, bz + t * 0.17]));
+      F.add(mats.wood('#7a5539'), xf(board(0.08, 0.06, 0.48, { along: 'z', rng }), [bx + s * 0.72, floor + 0.03, bz]));
+    }
+    F.add(mats.wood('#7a5539'), xf(board(1.4, 0.06, 0.05, { along: 'x', rng }), [bx, floor + 0.14, bz]));
+    // a simple front vise with a wooden spindle
+    F.add(mats.wood('#c9a47c'), xf(board(0.22, 0.18, 0.05, { along: 'x', rng }), [bx - 0.65, floor + top - 0.09, bz + 0.28]));
+    F.add(mats.wood('#c9a47c'), xf(new THREE.CylinderGeometry(0.03, 0.03, 0.16, 10).rotateX(Math.PI / 2), [bx - 0.65, floor + top - 0.1, bz + 0.36]));
+    F.add(mats.wood('#c9a47c'), xf(new THREE.CylinderGeometry(0.01, 0.01, 0.26, 6), [bx - 0.65, floor + top - 0.16, bz + 0.43], [0, 0, 0.3]));
+    // the carcass: a small oak cabinet with through dovetails, glued up in clamps
+    const cx = bx - 0.12, cz = bz - 0.02, cw = 0.54, ch = 0.4, cd = 0.28, t = 0.022;
+    const y0 = floor + top;
+    const oak = mats.wood('#b08e64');
+    F.add(oak, xf(board(t, ch, cd, { along: 'y', rng, r: 0.004 }), [cx - cw / 2 + t / 2, y0 + ch / 2, cz]));
+    F.add(oak, xf(board(t, ch, cd, { along: 'y', rng, r: 0.004 }), [cx + cw / 2 - t / 2, y0 + ch / 2, cz]));
+    F.add(oak, xf(board(cw, t, cd, { along: 'x', rng, r: 0.004 }), [cx, y0 + ch - t / 2, cz]));
+    F.add(oak, xf(board(cw, t, cd, { along: 'x', rng, r: 0.004 }), [cx, y0 + t / 2, cz]));
+    F.add(mats.wood('#c2a37a'), xf(board(cw - 2 * t, ch - 2 * t, 0.008, { along: 'x', rng }), [cx, y0 + ch / 2, cz - cd / 2 + 0.006]), { cast: false });
+    // the dovetails: darker end-grain tails on the sides, pins on the top
+    for (const s of [-1, 1]) {
+      for (let k = 0; k < 4; k++) {
+        const z = cz - cd / 2 + 0.035 + k * ((cd - 0.07) / 3);
+        const tail = new THREE.Shape([new THREE.Vector2(-0.014, 0), new THREE.Vector2(0.014, 0), new THREE.Vector2(0.02, t), new THREE.Vector2(-0.02, t)]);
+        for (const [yy, flip] of [[y0 + ch - t, 1], [y0, -1]]) {
+          const g = new THREE.ShapeGeometry(tail);
+          if (flip < 0) g.rotateZ(Math.PI).translate(0, t, 0);
+          F.add(vc, xf(g, [cx + s * (cw / 2 + 0.0008), yy, z], [0, s * Math.PI / 2, 0]), { color: '#6e5236', cast: false });
+          // and the tail's end grain on the top/bottom face
+          F.add(vc, xf(new THREE.PlaneGeometry(t, 0.03), [cx + s * (cw / 2 - t / 2), flip > 0 ? y0 + ch + 0.0008 : y0 + 0.0008, z], [-Math.PI / 2, 0, 0]), { color: '#7d5f40', cast: false });
+        }
+      }
+    }
+    // a glue squeeze-out line and the white glue bottle with its orange cap
+    F.add(vc, xf(new THREE.BoxGeometry(cw - 0.06, 0.004, 0.004), [cx, y0 + ch - t - 0.002, cz + cd / 2 - 0.004]), { color: '#f4efe2', cast: false });
+    F.add(vc, xf(new THREE.CylinderGeometry(0.03, 0.032, 0.12, 10), [bx + 0.42, y0 + 0.06, bz + 0.1]), { color: '#f2f0ea', cast: false });
+    F.add(vc, xf(new THREE.ConeGeometry(0.02, 0.05, 8), [bx + 0.42, y0 + 0.145, bz + 0.1]), { color: '#e8772e', cast: false });
+    // two clamps across the top (jaws down the sides), one across the front at the bottom
+    const clampLen = cw + 0.2;
+    const openK = (clampLen - 0.017 - cw - 0.03) / clampLen;
+    for (const dz of [cd / 2 - 0.05, -cd / 2 + 0.05]) {
+      addFClamp(F, mats, mat4([cx - clampLen / 2 - 0.0, y0 + ch + 0.012 + 0.11, cz + dz], [0, 0, -Math.PI / 2]), { len: clampLen, reach: 0.12, color: '#c4372a', open: openK });
+    }
+    addFClamp(F, mats, mat4([cx - clampLen / 2, y0 + 0.08, cz + cd / 2 + 0.11], [Math.PI / 2, 0, -Math.PI / 2]), { len: clampLen, reach: 0.12, color: '#3f6f9a', open: openK });
+    // the half-assembled dovetailed drawer: front with one side on, the other side waiting
+    {
+      const dx = bx + 0.45, dz = bz - 0.05;
+      const cherry = mats.wood('cherry');
+      F.add(cherry, xf(board(0.34, 0.11, 0.02, { along: 'x', rng, r: 0.003 }), [dx, y0 + 0.055, dz + 0.1]));
+      F.add(cherry, xf(board(0.015, 0.11, 0.26, { along: 'z', rng, r: 0.003 }), [dx - 0.16, y0 + 0.055, dz - 0.03]));
+      for (let k = 0; k < 3; k++) F.add(vc, xf(new THREE.PlaneGeometry(0.012, 0.022), [dx - 0.1675 - 0.0008, y0 + 0.02 + k * 0.035, dz + 0.09], [0, -Math.PI / 2, 0]), { color: '#5e3424', cast: false });
+      // the loose side, its tails cut, lying flat
+      F.add(cherry, xf(board(0.26, 0.015, 0.11, { along: 'x', rng, r: 0.003 }), [dx + 0.08, y0 + 0.0075, dz - 0.1], [0, 0.25, 0]));
+    }
+  }
+
+  // boards leaning against the right wall (different species, stickers between)
   {
     const species = ['oak', 'walnut', 'cherry', 'maple', 'spruce', 'ash', 'oak'];
     for (let i = 0; i < species.length; i++) {
@@ -913,17 +1014,26 @@ function buildInterior(ctx, F, mats, rng) {
       F.add(mats.wood(species[i]), xf(board(0.03, h, 0.12 + rng.range(0, 0.08), { along: 'y', rng }), [hx - 0.32 - i * 0.02, floor + h / 2 * Math.cos(0.18), z], [0, 0, 0.18 + rng.jitter(0.04)]));
     }
   }
-  // sawdust on the floor near the bench
-  for (let i = 0; i < 6; i++) {
+  // sawdust and curly shavings on the floor near the benches and the door
+  for (let i = 0; i < 7; i++) {
     const g = mossGeo(rng, { r: rng.range(0.12, 0.3), h: 0.015 });
-    F.add(mats.vc(), xf(g, [rng.range(-1.4, 0.8), floor, rng.range(z0 + 0.3, hz - 0.3)]), { color: '#e3c995', cast: false });
+    F.add(vc, xf(g, [rng.range(-1.5, 0.8), floor, rng.range(z0 + 0.3, hz - 0.3)]), { color: '#e3c995', cast: false });
   }
-  // hanging lamp (glowing)
   {
-    const lx = -0.35, ly = 2.05, lz = 0.65;
-    F.add(mats.metal('#2f2b28'), xf(new THREE.CylinderGeometry(0.004, 0.004, 0.3, 3), [lx, ly + 0.17, lz]), { cast: false });
-    F.add(mats.metal('#3a4a40'), xf(new THREE.ConeGeometry(0.16, 0.12, 12, 1, true), [lx, ly, lz]), { cast: false });
-    F.add(mats.glow('#fff1c4', 1.5, 4), xf(new THREE.SphereGeometry(0.05, 8, 6), [lx, ly - 0.06, lz]), { cast: false, receive: false });
+    const sg = doubleFace(shavingGeo(0.032, 0.02, 1.3));
+    for (let i = 0; i < 26; i++) {
+      F.add(mats.wood('maple'), xf(sg.clone(), [rng.range(-1.2, 0.6), floor + 0.015, rng.range(z0 + 0.7, hz - 0.15)], [rng.next() * 6, rng.next() * 6, rng.next() * 6], rng.range(0.8, 1.4)), { cast: false });
+    }
+  }
+  // a low enamel lamp over the glue-up (glows through the door)
+  {
+    const lx = -0.35, ly = 1.62, lz = 0.05;
+    const enamel = mats.metal('#2f5a46');
+    F.add(mats.metal('#2f2b28'), xf(new THREE.CylinderGeometry(0.004, 0.004, ANNEX.plateBottom + 0.15 - ly - 0.05, 3), [lx, (ANNEX.plateBottom + 0.15 + ly + 0.05) / 2, lz]), { cast: false });
+    F.add(enamel, xf(new THREE.ConeGeometry(0.17, 0.12, 16, 1, true), [lx, ly, lz]), { cast: false });
+    F.add(vc, xf(doubleFace(new THREE.ConeGeometry(0.162, 0.114, 16, 1, true)), [lx, ly - 0.002, lz]), { color: '#f4ecd8', cast: false, receive: false });
+    F.add(mats.glow('#fff1c4', 1.5, 4), xf(new THREE.SphereGeometry(0.045, 8, 6), [lx, ly - 0.05, lz]), { cast: false, receive: false });
+    pushHalo(annexToWorld(lx, ly - 0.06, lz), 0.5);
   }
   return { z0 };
 }
