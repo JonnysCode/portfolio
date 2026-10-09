@@ -1,5 +1,7 @@
 # 🍄 Jonny's Woodland
 
+**▶ Live: https://jonnyscode.github.io/portfolio/**
+
 A portfolio you can explore like a miniature diorama: a magical forest glen
 under a colossal oak, full of mushroom houses, little villagers, snails and
 fireflies — built **entirely procedurally with three.js** (no 3D model or
@@ -71,4 +73,5 @@ together (layout & anchors, module contract, art bible, performance budget).
 paths, so it works on any static host. A GitHub Actions workflow
 ([`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)) publishes to
 GitHub Pages on every push to `main` — enable it once under
-**Settings → Pages → Source: GitHub Actions**.
+**Settings → Pages → Source: GitHub Actions**, with `main` as the default
+branch (the `github-pages` environment only deploys from the default branch).
