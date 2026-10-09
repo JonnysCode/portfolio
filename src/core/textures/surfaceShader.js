@@ -17,8 +17,9 @@
 //     end grain when its V carries the END_GRAIN_V marker (materials.boxUV adds
 //     it on faces across the grain): darker Hirnholz with ring arcs around a
 //     pith, rays and (timber) drying checks
-//   • bark (SF_BARK): in direct sun the furrows are lifted and the plates'
-//     highlights desaturated, so a sunlit trunk never reads as a tiger stripe
+//   • bark (SF_BARK): in direct (warm) sun the furrows are lifted and the
+//     plates' highlights desaturated, so a sunlit trunk never reads as a tiger
+//     stripe; a near-white vertex colour turns it into smooth birch bark
 // FOLIAGE
 //   • the same wrap lighting + translucency: leaves glow when back-lit by the
 //     sun (and by lantern point lights), shadow-aware
@@ -49,17 +50,23 @@ float sfNoise3(vec3 p) {
 const DIRECT_OVERRIDE = /* glsl */ `
 uniform vec4 sfLight; // x: wrap, y: translucency, z: unused, w: unused
 #ifdef SF_BARK
-vec3 sfDirK = vec3(1.0); // per-fragment albedo multiplier for DIRECT light only (set by the surface)
+vec3 sfDirK = vec3(1.0); // per-fragment albedo multiplier for the sun's light only (set by the surface)
 vec3 sfDirN = vec3(0.0); // the unmapped geometry normal (view space), set by the surface
+int sfDirectCalls = 0;   // three lights point → spot → sun → directional: counts which one this is
 #endif
 void RE_Direct_Woodland(const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in PhysicalMaterial material, inout ReflectedLight reflectedLight) {
 #ifdef SF_BARK
-  // bark in direct light: the furrows' walls turned from the sun would go
-  // black against sunlit plates (a painted tiger band) — light it with the
-  // relief half flattened; shade & ambient keep the full relief
+  // bark in direct sun: the furrows' walls turned from the light would go black
+  // against sunlit plates (a painted tiger band) — light it with lifted furrows
+  // and the relief partly flattened. Only the warm directional SUN: lanterns &
+  // the spot beam (point / spot lights come first in three's light loops) keep
+  // the full raking relief, as do the cool moon, shade & ambient.
+  float sfSunW = sfDirectCalls >= NUM_POINT_LIGHTS + NUM_SPOT_LIGHTS ? 1.0 : 0.0;
+  sfSunW *= clamp((directLight.color.r - directLight.color.b) / max(directLight.color.r, 1e-4) * 4.0, 0.0, 1.0);
+  sfDirectCalls++;
   PhysicalMaterial sfMD = material;
-  sfMD.diffuseContribution *= sfDirK;
-  vec3 sfNB = normalize(mix(geometryNormal, sfDirN, 0.6));
+  sfMD.diffuseContribution *= mix(vec3(1.0), sfDirK, sfSunW);
+  vec3 sfNB = normalize(mix(geometryNormal, sfDirN, 0.6 * sfSunW));
   RE_Direct_Physical(directLight, geometryPosition, sfNB, geometryViewDir, geometryClearcoatNormal, sfMD, reflectedLight);
 #else
   RE_Direct_Physical(directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
@@ -298,6 +305,26 @@ const SURFACE_MAIN = /* glsl */ `
     }
   }
 #endif
+#endif
+
+#if defined(SF_BARK) && (defined(USE_COLOR) || defined(USE_COLOR_ALPHA))
+  {
+    // a near-white vertex colour is a silver BIRCH: papery, smooth bark. The
+    // deep oak furrows × chalk white read as a black-and-yellow tiger stripe —
+    // keep only a trace of them and add fine horizontal lenticels instead
+    // (the builder's own dark dashes & patches stay: they are in the colour)
+    float birch = smoothstep(0.4, 0.6, dot(vColor.rgb, vec3(0.2126, 0.7152, 0.0722)));
+    if (birch > 0.0) {
+      sfCol = mix(sfCol, vec3(0.86, 0.85, 0.83), 0.8 * birch);
+      float ln = sfNoise3(vec3(sfWPos.x * 8.0, sfWPos.y * 42.0, sfWPos.z * 8.0));
+      float lnFade = 1.0 - smoothstep(0.4, 0.9, fwidth(sfWPos.y * 42.0));   // sub-pixel → off (no shimmer)
+      sfCol *= 1.0 - 0.5 * smoothstep(0.74, 0.86, ln) * birch * lnFade;
+      sfCol *= 1.0 + 0.1 * (sfNoise3(sfWPos * vec3(1.3, 4.0, 1.3) + 4.0) - 0.5) * birch;
+      normal = normalize(mix(normal, sfNormal0, 0.75 * birch));
+      sfN = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
+      sfAO = mix(sfAO, 1.0, 0.75 * birch);
+    }
+  }
 #endif
 
   float sfMossM = 0.0;

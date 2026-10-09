@@ -22,6 +22,8 @@ import { createEnv } from './systems/env.js';
 import { createInteractions } from './systems/interactions.js';
 import { createCameraRig } from './systems/cameraRig.js';
 import { createNightSecrets } from './systems/nightSecrets.js';
+// (patches a shader chunk: before anything compiles)
+import './systems/nearFade.js';
 import { createUI } from './ui/index.js';
 import { createAudio } from './audio/audio.js';
 import { installDebug } from './debug.js';

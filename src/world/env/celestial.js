@@ -39,18 +39,19 @@ export const SUN_SKY_DIR = dirFromAngles(16, 292);
 /** Moonlight: from the back-right, high enough to silver roofs & caps. */
 export const MOON_LIGHT_DIR = dirFromAngles(50, 62);
 /**
- * Where the moon disc is drawn: the hero moon, low over the far forest at the
- * back-right, in the canopy gap right above the waterfall in the glen shot
- * (≈ x 1020, y 95 of 1280 × 720 — under the edge of the oak's crown, left of
- * the giant by the falls, its lower rim veiled by the mist of a far valley).
- * The far forest (env/backdrop.js) keeps a window open along this direction
- * as seen from the glen camera, and the valley beyond it, so the disc rises
- * clear of the trunks. The glen frame's top edge is only ≈ 6° above the
- * horizon and the overview looks down past it, so a higher moon would never
- * be seen: there the moonlit in-scatter glow of the mist, which gathers
- * around this direction, carries the night sky instead.
+ * Where the moon disc is drawn: the hero moon, rising out of a far misty
+ * valley at the back-right, in the canopy gap right above the waterfall in the
+ * glen shot (≈ x 1015, y 122 of 1280 × 720 — just under the edge of the oak's
+ * crown, left of the giant by the falls, its lower rim veiled by the valley's
+ * mist). The far forest (env/backdrop.js) keeps a window open along this
+ * direction as seen from the glen camera and lets the ground fall away into
+ * that valley, so the disc stands clear of trunks and hills. The glen frame's
+ * top edge is only ≈ 6° above the horizon and the overview looks down past it,
+ * so a higher moon would never be seen; in the overview the moonlit
+ * in-scatter glow of the mist, which gathers around this direction, carries
+ * the night sky instead.
  */
-export const MOON_SKY_DIR = dirFromAngles(1.0, 15.2);
+export const MOON_SKY_DIR = dirFromAngles(-0.4, 14.8);
 /** The glen spot camera the moon window is cut for (layout.js SPOTS glen). */
 export const MOON_EYE = new THREE.Vector3(4, 17, 40);
 

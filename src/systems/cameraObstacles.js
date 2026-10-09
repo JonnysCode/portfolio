@@ -9,7 +9,14 @@
 //   const obs = createCameraObstacles(ctx)
 //   obs.penetration(p)            → how deep p is inside anything (0 = clear)
 //   obs.plan(p0, p3, { lift })    → { p1, p2 } Bézier handles of a clear glide
+//   obs.decorAlong(a, b, skipEnd) → how many soft occluders (fairy-light bulbs,
+//                                   lanterns, lamp posts) sit on the segment a → b
 //   obs.rebuild()                 (lazily built on first use, after the world)
+//
+// Soft occluders ("decor"): things far too thin for the solid raycasts that
+// still ruin a close-up when they hang in front of the lens — every glowing
+// bulb and lamp (their halo points), and lamp posts. They also keep the lens a
+// hand's width away (penetration), so an orbit never parks on a bulb.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { OAK } from '../world/layout.js';
@@ -30,7 +37,14 @@ const COLLIDER_HEIGHT = {
 
 const CROWN_FLOOR = 17.5; // below this the oak's crown is only its limbs
 
+/** Halo sizes up to this are bulbs / lanterns (decor); bigger ones are windows & doorways on solid walls. */
+const DECOR_MAX_HALO = 0.95;
+const DECOR_CELL = 2;
+
 export function createCameraObstacles(ctx) {
+  /** soft occluders: spheres { x, y, z, r } and lamp-post segments { a, b, r } (kind 's' | 'c') */
+  const decor = [];
+  const decorGrid = new Map();
   /** vertical cylinders { x, z, r, y0, y1 } */
   const cyl = [];
   /** capsules { a: Vector3, b: Vector3, r } */
@@ -96,7 +110,120 @@ export function createCameraObstacles(ctx) {
       const k = o.matrixWorld.getMaxScaleOnAxis();
       cyl.push({ x: e[12], z: e[14], r: u.capRadius * k + 0.6, y0: e[13] + (u.rimY - 0.8) * k, y1: e[13] + ((u.height ?? u.rimY + 3) + 0.4) * k, cap: true });
     });
+    buildDecor();
     builtAt = ctx.colliders?.version ?? 0;
+  }
+
+  const dv = new THREE.Vector3();
+  function addDecor(d) {
+    const i = decor.push(d) - 1;
+    const lo = d.kind === 's' ? [d.x - d.r, d.y - d.r, d.z - d.r] : [Math.min(d.a.x, d.b.x) - d.r, Math.min(d.a.y, d.b.y) - d.r, Math.min(d.a.z, d.b.z) - d.r];
+    const hi = d.kind === 's' ? [d.x + d.r, d.y + d.r, d.z + d.r] : [Math.max(d.a.x, d.b.x) + d.r, Math.max(d.a.y, d.b.y) + d.r, Math.max(d.a.z, d.b.z) + d.r];
+    for (let x = Math.floor(lo[0] / DECOR_CELL); x <= Math.floor(hi[0] / DECOR_CELL); x++)
+      for (let y = Math.floor(lo[1] / DECOR_CELL); y <= Math.floor(hi[1] / DECOR_CELL); y++)
+        for (let z = Math.floor(lo[2] / DECOR_CELL); z <= Math.floor(hi[2] / DECOR_CELL); z++) {
+          const k = `${x},${y},${z}`;
+          let list = decorGrid.get(k);
+          if (!list) decorGrid.set(k, (list = []));
+          list.push(i);
+        }
+  }
+  function buildDecor() {
+    decor.length = 0;
+    decorGrid.clear();
+    const seen = new Set();
+    ctx.scene?.traverse?.((o) => {
+      if (o.name === 'lampPost') {
+        o.updateWorldMatrix(true, false);
+        const a = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld);
+        const b = a.clone();
+        b.y += (o.userData.height ?? 2.9) * o.matrixWorld.getMaxScaleOnAxis();
+        addDecor({ kind: 'c', a, b, r: 0.24 });
+        return;
+      }
+      if (!o.isMesh || o.material?.name !== 'props-glow-halo' || !o.visible) return;
+      const pos = o.geometry?.attributes?.position;
+      const size = o.geometry?.attributes?.aSize;
+      if (!pos || !size) return;
+      o.updateWorldMatrix(true, false);
+      const k = o.matrixWorld.getMaxScaleOnAxis();
+      // (glowGeometry: four corners per halo share its centre)
+      for (let i = 0; i < pos.count; i += 4) {
+        const sz = size.getX(i) * k;
+        if (sz > DECOR_MAX_HALO) continue;
+        dv.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+        const key = `${Math.round(dv.x * 20)},${Math.round(dv.y * 20)},${Math.round(dv.z * 20)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        addDecor({ kind: 's', x: dv.x, y: dv.y, z: dv.z, r: sz <= 0.3 ? 0.17 : 0.3 });
+      }
+    });
+  }
+
+  const sa = new THREE.Vector3();
+  const sb = new THREE.Vector3();
+  const sp = new THREE.Vector3();
+  /** Distance from point p to the segment a → b. */
+  function segDist(p, a, b) {
+    sb.subVectors(b, a);
+    sa.subVectors(p, a);
+    const t = Math.max(0, Math.min(1, sa.dot(sb) / Math.max(sb.lengthSq(), 1e-9)));
+    return sa.addScaledVector(sb, -t).length();
+  }
+  /** Distance between two segments (sampled: decor segments are short posts). */
+  function segSegDist(a0, a1, b0, b1) {
+    let best = Infinity;
+    for (let i = 0; i <= 8; i++) {
+      sp.lerpVectors(b0, b1, i / 8);
+      best = Math.min(best, segDist(sp, a0, a1));
+    }
+    return best;
+  }
+  const hitSet = new Set();
+  const qa = new THREE.Vector3();
+  const qb = new THREE.Vector3();
+  const qs = new THREE.Vector3();
+  /**
+   * How many soft occluders lie on the segment a → b (the last `skipEnd` units
+   * before b — the framed subject and what hangs right by it — don't count).
+   */
+  function decorAlong(a, b, skipEnd = 0) {
+    ensure();
+    if (!decor.length) return 0;
+    const len = a.distanceTo(b);
+    const L = len - skipEnd;
+    if (L <= 0.05) return 0;
+    qa.copy(a);
+    qb.lerpVectors(a, b, L / len);
+    hitSet.clear();
+    const steps = Math.ceil(L / 0.5);
+    for (let i = 0; i <= steps; i++) {
+      qs.lerpVectors(qa, qb, i / steps);
+      const list = decorGrid.get(`${Math.floor(qs.x / DECOR_CELL)},${Math.floor(qs.y / DECOR_CELL)},${Math.floor(qs.z / DECOR_CELL)}`);
+      if (list) for (const j of list) hitSet.add(j);
+    }
+    let n = 0;
+    for (const j of hitSet) {
+      const d = decor[j];
+      if (d.kind === 's') {
+        sp.set(d.x, d.y, d.z);
+        if (segDist(sp, qa, qb) < d.r) n++;
+      } else if (segSegDist(qa, qb, d.a, d.b) < d.r) n++;
+    }
+    return n;
+  }
+  /** Depth of p inside a soft occluder (a hand's width around bulbs, lamps and posts). */
+  function decorPenetration(p) {
+    const list = decorGrid.get(`${Math.floor(p.x / DECOR_CELL)},${Math.floor(p.y / DECOR_CELL)},${Math.floor(p.z / DECOR_CELL)}`);
+    if (!list) return 0;
+    let worst = 0;
+    for (const j of list) {
+      const d = decor[j];
+      const r = d.r + 0.18;
+      const dist = d.kind === 's' ? Math.hypot(p.x - d.x, p.y - d.y, p.z - d.z) : segDist(p, d.a, d.b);
+      if (r - dist > worst) worst = r - dist;
+    }
+    return worst;
   }
 
   function ensure() {
@@ -121,6 +248,8 @@ export function createCameraObstacles(ctx) {
       const d = c.r - ap.addScaledVector(ab, -t).length();
       if (d > worst) worst = d;
     }
+    const dp = decorPenetration(p);
+    if (dp > worst) worst = dp;
     if (crown && p.y > crown.y0 && p.y < crown.y1) {
       const d = Math.min(crown.r - Math.hypot(p.x - crown.x, p.z - crown.z), p.y - crown.y0 + 0.5);
       if (d > worst) worst = d;
@@ -189,11 +318,12 @@ export function createCameraObstacles(ctx) {
     penetration,
     plan,
     bezier,
+    decorAlong,
     rebuild: build,
     /** Debug: the shapes the camera avoids. */
     get shapes() {
       ensure();
-      return { cyl, caps, crown };
+      return { cyl, caps, crown, decor };
     },
   };
 }

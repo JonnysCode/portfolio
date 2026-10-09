@@ -269,10 +269,12 @@ const POOL_VERT = /* glsl */ `
   uniform float uNight;
   varying vec2 vPool;
   varying vec3 vTint;
+  varying vec2 vWorld;
   ${LAMP_GLSL}
   void main() {
     vPool = aPool;
     vec4 wp = modelMatrix * vec4(position, 1.0);
+    vWorld = wp.xz;
     float lamp = aLamp >= 0.0 ? lampOn((modelMatrix * vec4(aCenter, 1.0)).xyz, aLamp) : 1.0;
     vec4 mv = viewMatrix * wp;
     gl_Position = projectionMatrix * mv;
@@ -284,20 +286,34 @@ const POOL_FRAG = /* glsl */ `
   uniform float uStrength;
   varying vec2 vPool;
   varying vec3 vTint;
+  varying vec2 vWorld;
+  float poolHash(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+  }
+  float poolNoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(poolHash(i), poolHash(i + vec2(1.0, 0.0)), u.x), mix(poolHash(i + vec2(0.0, 1.0)), poolHash(i + vec2(1.0, 1.0)), u.x), u.y);
+  }
   void main() {
     float d2 = dot(vPool, vPool);
     if (d2 >= 1.0) discard;
-    // a soft pool with a brighter core, exactly 0 at the rim
+    // light falling off from the lamp (a bright core, a long soft tail, exactly 0
+    // at the rim) — never an even disc …
     float a = (1.0 - d2) * (1.0 - d2);
-    a *= 0.55 + 0.45 * exp(-d2 * 5.0);
+    a *= 0.22 + 0.78 * exp(-d2 * 5.5);
+    // … broken up a little, like light catching stones, moss and leaf litter
+    a *= 0.72 + 0.56 * poolNoise(vWorld * 3.1);
     gl_FragColor = vec4(vTint * (a * uStrength), 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
 `;
 
-/** Overall pool brightness (HDR, added to the lit ground): a strength-1 amber pool adds ≈ 0.14 at its core. */
-const POOL_STRENGTH = 0.14;
+/** Overall pool brightness (HDR, added to the lit ground): a strength-1 amber pool adds ≈ 0.65 (red) at its core. */
+const POOL_STRENGTH = 0.65;
 let poolMat = null;
 /** The shared additive pool material (uniforms: uStrength — live-tunable). */
 export function lightPoolMaterial() {

@@ -8,9 +8,14 @@
 // knots, massive limbs kinked at knobbly elbows (two high ones carry the crown
 // past the top of the wide shots), and a huge crown of painterly clusters-of-
 // clusters with windows onto the limbs and the sky, sun-kissed tops and cool
-// bellies (moonlit blue-grey at night). The bark is finely fissured (cavity
-// darkening, cross-checks, moss creeping into the crevices); the moss shell
-// hugs the bark and ends in a ragged, dithered edge. All procedural (see ./oak/*).
+// bellies (at night a dark blue-green silhouette with a thin silver moon rim).
+// The long low limb is a bare, gnarled arm over the cottage path with a few
+// high tufts, lanterns, fairy lights, ivy and beard-moss curtains, glow-worms
+// on silk; one buttress root arches over a mossy boulder it grips; bracket
+// fungi grow in overlapping tiers of zoned shelves. The bark is finely
+// fissured (cavity darkening, cross-checks, moss creeping into the crevices)
+// and spirals with the bole; the moss shell hugs the bark and ends in a
+// ragged, dithered edge. All procedural (see ./oak/*).
 //
 // Exposes for other builders:
 //   ctx.oak = {

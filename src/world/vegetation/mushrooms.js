@@ -97,20 +97,47 @@ function lathe(B, F, profile, seg, { wob = null, color = null, flip = false, dis
   }
 }
 
-/** A low-poly lumpy wart, flattened along the normal. */
-function wart(B, p, n, size, color, rng, seg = 5) {
+/**
+ * A low-poly lumpy wart, flattened along the normal. (Rounded: the centre
+ * domes up and the rim normals splay outwards, so even a 5-sided flake shades
+ * like a soft cushion of veil, not a flat chip; round = an extra shoulder
+ * ring for the giants' big warts, seen up close.)
+ */
+function wart(B, p, n, size, color, rng, seg = 5, round = false) {
   const F = frameFor(p, n);
   const base = B.count;
-  const top = p.clone().addScaledVector(F.y, size * rng.range(0.3, 0.5)); // flattish flakes, not cones
+  const lift = size * (round ? rng.range(0.5, 0.62) : rng.range(0.34, 0.52)); // cushions, not cones
+  const top = p.clone().addScaledVector(F.y, lift);
   B.vert(top.x, top.y, top.z, F.y.x, F.y.y, F.y.z, 0.5, 0.5, color);
+  const ph = rng.range(0, TAU);
+  const rr = [];
+  for (let i = 0; i < seg; i++) rr.push(size * rng.range(0.78, 1.1));
+  if (round) {
+    // the shoulder: 70 % out, most of the way up — a soft dome of veil
+    for (let i = 0; i < seg; i++) {
+      const a = (i / seg) * TAU + ph;
+      const r = rr[i] * 0.72;
+      const q = p.clone().addScaledVector(F.x, Math.cos(a) * r).addScaledVector(F.z, Math.sin(a) * r).addScaledVector(F.y, lift * 0.8);
+      const nn = new THREE.Vector3().addScaledVector(F.x, Math.cos(a) * 0.62).addScaledVector(F.z, Math.sin(a) * 0.62).addScaledVector(F.y, 0.78).normalize();
+      B.vert(q.x, q.y, q.z, nn.x, nn.y, nn.z, 0.5, 0.5, color);
+    }
+  }
+  const ring = B.count;
   for (let i = 0; i < seg; i++) {
-    const a = (i / seg) * TAU + rng.jitter(0.3);
-    const r = size * rng.range(0.7, 1.1);
+    const a = (i / seg) * TAU + ph;
+    const r = rr[i];
     const q = p.clone().addScaledVector(F.x, Math.cos(a) * r).addScaledVector(F.z, Math.sin(a) * r).addScaledVector(F.y, -size * 0.15);
-    const nn = new THREE.Vector3().addScaledVector(F.x, Math.cos(a) * 0.6).addScaledVector(F.z, Math.sin(a) * 0.6).addScaledVector(F.y, 0.8).normalize();
+    const nn = new THREE.Vector3().addScaledVector(F.x, Math.cos(a) * 0.85).addScaledVector(F.z, Math.sin(a) * 0.85).addScaledVector(F.y, 0.55).normalize();
     B.vert(q.x, q.y, q.z, nn.x, nn.y, nn.z, 0.5, 0.5, color);
   }
-  for (let i = 0; i < seg; i++) B.tri(base, base + 1 + ((i + 1) % seg), base + 1 + i);
+  const inner = round ? base + 1 : ring;
+  for (let i = 0; i < seg; i++) B.tri(base, inner + ((i + 1) % seg), inner + i);
+  if (round) {
+    for (let i = 0; i < seg; i++) {
+      const i1 = (i + 1) % seg;
+      B.quad(inner + i, inner + i1, ring + i1, ring + i);
+    }
+  }
 }
 
 const C = (hex) => new THREE.Color(hex);
@@ -135,7 +162,7 @@ export function mushroomGlowMaterials(ctx) {
   const gills = M.surface('gills', { vertexColors: true }).clone();
   gills.name = 'gills-glow';
   gills.emissive = new THREE.Color('#86ecc4');
-  const warts = M.standard('#f3eada', { roughness: 0.9, vertexColors: true }).clone();
+  const warts = M.standard('#ffffff', { roughness: 0.9, vertexColors: true }).clone();
   warts.name = 'warts-glow';
   warts.emissive = new THREE.Color('#e4ffd8');
   set = {
@@ -368,9 +395,12 @@ export class MushroomKit {
     const dk = this.detail * this.detail;
     const nW = Math.round(density * (H > 1 ? 96 : H > 0.4 ? 17 : 6) * Math.min(2.2, R / Math.max(0.05, H * 0.5)) * (0.5 + 0.5 * lod) * dk);
     const wartK = 1 / Math.sqrt(dk);
-    const wartCol = C(opts.wartColor ?? '#f5ecd8');
+    // (a cool, chalky white: the white material × a cream colour multiplied
+    //  down to khaki under the warm grade)
+    const wartCol = C(opts.wartColor ?? '#f8f6f0');
     const wartB = opts.glowSpots ? this.glowWarts : this.warts;
-    const wartSeg = H > 2.2 && lod > 0.8 ? 5 : 4;
+    const wartSeg = H > 2.2 && lod > 0.8 ? 6 : H > 1 ? 5 : 4;
+    const wartRound = H > 1.2 && lod > 0.7;
     for (let i = 0; i < nW; i++) {
       // pick a profile position (area-weighted towards the rim, but keep the apex covered)
       const t = Math.pow(rng.next(), 0.75) * 0.92;
@@ -387,7 +417,7 @@ export class MushroomKit {
       const l = Math.hypot(dr, dy) || 1;
       const nn = new THREE.Vector3().addScaledVector(F.x, c * (dy / l)).addScaledVector(F.z, s * (dy / l)).addScaledVector(F.y, -dr / l).normalize();
       const size = R * (rng.chance(0.3) ? rng.range(0.075, 0.125) : rng.range(0.035, 0.065)) * (1 - t * 0.25) * Math.min(1.5, wartK);
-      wart(wartB, p, nn, size, wartCol.clone().multiplyScalar(rng.range(0.88, 1.02)), rng, wartSeg);
+      wart(wartB, p, nn, size, wartCol.clone().multiplyScalar(rng.range(0.9, 1.0)), rng, wartSeg, wartRound && size > R * 0.06);
     }
     return { top, capR: R, capTop: top.y + capH };
   }
@@ -641,6 +671,52 @@ export class MushroomKit {
     }
   }
 
+  /**
+   * A fairy-ring bonnet (a glowing Mycena): a slender pale stem, a bell cap
+   * that glows mint at night (pale mint-white by day) and mint gills under it.
+   * Big enough to read as a mushroom, not a dot. opts: { height, capR, lean,
+   * leanAz, halo (night halo sprite size factor, 0 = none) }
+   */
+  glowcap(x, y, z, opts = {}) {
+    const rng = this.rng;
+    const H = opts.height ?? 0.25;
+    const R = opts.capR ?? H * rng.range(0.34, 0.42);
+    const lean = opts.lean ?? rng.range(0.03, 0.2);
+    const leanAz = opts.leanAz ?? rng.range(0, TAU);
+    const base = new THREE.Vector3(x, y - 0.012, z);
+    const tip = new THREE.Vector3(x + Math.sin(leanAz) * Math.sin(lean) * H, y + H, z + Math.cos(leanAz) * Math.sin(lean) * H);
+    // stem: a gentle curve (two straight frames), widening at the foot
+    const mid = base.clone().lerp(tip, 0.5).add(new THREE.Vector3(rng.jitter(0.02) * H, 0, rng.jitter(0.02) * H));
+    const stemCol = C('#e4f0e6');
+    for (const [a, b, r0, r1] of [[base, mid, R * 0.2, R * 0.13], [mid, tip, R * 0.13, R * 0.11]]) {
+      const F0 = frameFor(a, b.clone().sub(a));
+      lathe(this.stems, F0, [
+        { r: r0, y: 0, v: 0 },
+        { r: r1, y: a.distanceTo(b), v: 1 },
+      ], 5, { color: () => stemCol });
+    }
+    // the bell: rim → shoulder → rounded apex with a small umbo
+    const axis = tip.clone().sub(mid).normalize().lerp(UP, 0.5).normalize();
+    const F = frameFor(tip, axis);
+    const prof = [
+      { r: R * 0.98, y: -R * 0.2, v: 0 },
+      { r: R * 0.9, y: R * 0.18, v: 0.3 },
+      { r: R * 0.66, y: R * 0.6, v: 0.6 },
+      { r: R * 0.3, y: R * 0.9, v: 0.85 },
+      { r: 0, y: R * 1.02, v: 1 },
+    ];
+    const seg = H > 0.2 ? 9 : 7;
+    const ph = rng.range(0, TAU);
+    lathe(this.glow, F, prof, seg, { wob: (th, k) => (k === 0 ? 1 + 0.06 * Math.sin(th * 4 + ph) : 1) });
+    lathe(this.glowGills, F, [
+      { r: R * 0.98, y: -R * 0.2, v: 0 },
+      { r: R * 0.5, y: R * 0.12, v: 0.6 },
+      { r: R * 0.12, y: R * 0.08, v: 1 },
+    ], seg, { flip: true, disc: R, color: () => C('#e8fff4') });
+    if (opts.halo !== 0) this.glowPoints.push({ x: tip.x, y: tip.y + R * 0.35, z: tip.z, size: R * (opts.halo ?? 2.4) });
+    return { top: tip, capR: R };
+  }
+
   /** A shelf fungus growing out of a surface at p with outward normal n. opts: { size, color, tiers } */
   bracket(p, n, opts = {}) {
     const rng = this.rng;
@@ -712,7 +788,7 @@ export class MushroomKit {
     add(this.stems, M.surface('mushroomStem', { vertexColors: true }), 'stems');
     if (this.shared) return out;
     add(this.gills, M.surface('gills', { vertexColors: true }), 'gills', false);
-    add(this.warts, M.standard('#f3eada', { roughness: 0.9, vertexColors: true }), 'warts', false);
+    add(this.warts, M.standard('#ffffff', { roughness: 0.9, vertexColors: true }), 'warts', false);
     add(this.glow, M.glow('#8ff5d6', { day: 0.12, night: 1.25 }), 'glowcaps', false);
     if (this.glowGills.count || this.glowWarts.count) {
       const G = mushroomGlowMaterials(ctx);

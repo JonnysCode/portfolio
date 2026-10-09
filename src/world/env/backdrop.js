@@ -13,16 +13,19 @@
 // aerial-perspective fog (env/fog.js) then grades every row into the mist.
 //
 //   forest      trunks, curved tapering limbs with leaf sprays, crowns built
-//               from several lumpy lobes (never a single flattened disc),
-//               the far ground — one merged mesh
+//               from several lumpy lobes with hanging bellies (never a single
+//               flattened disc), the far ground — one merged mesh. Every crown
+//               sits above the top edge of the zoomed-out glen shots, so from
+//               there the giants are columns rising out of the frame
 //   ceiling     a high, sagging leaf roof spanning the far forest, torn open in
 //               ragged gaps (some where the far god rays fall through) whose
 //               leafy edges glow when the light comes through — looking up
 //               from the glen it reads as a cathedral roof; out of frame in
 //               the zoomed-out shots, hidden when the camera rises above it
-//   understorey shrub cards at the feet of the giants (r ≈ 36–54) with ragged
-//               leafy outlines top AND bottom, sunk into the ground, so no bright
-//               open meadow ever reads through and no card shows a straight edge
+//   understorey dark leafy shrub cards at the feet of the giants and in a band
+//               (r ≈ 36–64), ragged top AND bottom and sunk into the ground, so
+//               no bright open meadow reads through and no card shows a
+//               straight edge (a clean alpha cut where MSAA is thin, no stipple)
 //   mist        soft curtains between the rows (thinning around the moon)
 //
 // 4 draw calls. Only the arc the camera can ever look at is filled (the camera
@@ -30,8 +33,8 @@
 // stays open. The nearer forest (r ≲ 36) is built by the vegetation module.
 //
 // The moon window: along MOON_SKY_DIR as seen from the glen camera, no trunk,
-// crown or card is placed and the far ground dips into a little valley, so the
-// hero moon rises clear in the canopy gap above the waterfall.
+// crown or card is placed and the far ground falls away into a valley, so the
+// hero moon rises clear out of its mist in the canopy gap above the waterfall.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng, smoothstep } from '../../core/rng.js';
@@ -47,7 +50,7 @@ const TAU = Math.PI * 2;
 const noise = createNoise2D(4711);
 
 // ─── the moon window ─────────────────────────────────────────────────────────
-/** Half-angle (rad) kept clear around the moon from the glen camera (disc ≈ 0.045 + halo). */
+/** Half-angle (rad) kept clear around the moon from the glen camera (disc ≈ 0.038 + its corona). */
 const MOON_CONE = 0.085;
 const MOON_AZ = Math.atan2(MOON_SKY_DIR.x, -MOON_SKY_DIR.z);
 
@@ -71,7 +74,9 @@ function farHeight(x, z) {
   const cx = THREE.MathUtils.clamp(x, -H, H);
   const cz = THREE.MathUtils.clamp(z, -H, H);
   const out = Math.hypot(x - cx, z - cz);
-  const valley = 8 * moonBearing(x, z) * Math.min(1, out / 30);
+  // (deepening all the way out: the far ground must stay below the low moon
+  //  as seen from the glen, or the disc sets behind the misty hills)
+  const valley = moonBearing(x, z) * (9 * Math.min(1, out / 30) + 0.3 * Math.max(0, out - 30));
   return getHeight(cx, cz) + out * 0.18 + noise(x * 0.02, z * 0.02) * 2.5 * Math.min(1, out / 20) - valley;
 }
 
@@ -236,8 +241,9 @@ function blobGeometry(rng, cx, cy, cz, sx, sy, sz, base = blobCoarse) {
   for (let i = 0; i < src.length; i += 3) {
     const x = src[i], y = src[i + 1], z = src[i + 2];
     const big = noise(x * 1.25 + y * 0.6 + s, z * 1.25 - y * 0.5) + noise(y * 1.3 - z * 0.4 - s, x * 1.1 + z * 0.6 + 3.7);
-    const n = 1 + 0.24 * big + 0.12 * noise(x * 3.4 - s, y * 3.6 + z * 1.2) + 0.05 * noise(x * 7.0 + z * 2.0, y * 7.0 + s);
-    const yy = y < 0 ? y * 0.88 : y;
+    // (only bulges the icosphere can carry — finer noise would alias into crumpled facets)
+    const n = 1 + 0.2 * big + 0.08 * noise(x * 2.2 - s, y * 2.4 + z * 0.8);
+    const yy = y < 0 ? y * 0.94 : y;
     pos[i] = cx + x * sx * n;
     pos[i + 1] = cy + yy * sy * n;
     pos[i + 2] = cz + z * sz * n;
@@ -255,13 +261,14 @@ function blobGeometry(rng, cx, cy, cz, sx, sy, sz, base = blobCoarse) {
  * dark hanging bellies underneath, never one flat plate.
  */
 function crownMass(acc, rng, cx, cy, cz, s, leafRgb, { fine = false, lobes = 1 } = {}) {
-  addGeo(acc, blobGeometry(rng, cx, cy, cz, s * 1.15, s * 0.9, s * 1.15, fine ? blobFine : blobCoarse), leafRgb);
+  addGeo(acc, blobGeometry(rng, cx, cy, cz, s * 1.08, s * 0.95, s * 1.08, fine ? blobFine : blobCoarse), leafRgb);
   for (let i = 0; i < lobes; i++) {
     const a = rng.range(0, TAU);
-    const d = s * rng.range(0.6, 0.95);
+    const d = s * rng.range(0.55, 0.9);
     const ls = s * rng.range(0.45, 0.62);
-    const up = s * (i === 0 ? rng.range(0.15, 0.45) : rng.range(-0.5, -0.1));
-    addGeo(acc, blobGeometry(rng, cx + Math.cos(a) * d, cy + up, cz + Math.sin(a) * d, ls * 1.1, ls * 0.95, ls * 1.1), leafRgb);
+    // the first heaps up on top, the others hang lower: a lumpy belly, never a flat plate
+    const up = s * (i === 0 ? rng.range(0.15, 0.45) : rng.range(-0.62, -0.3));
+    addGeo(acc, blobGeometry(rng, cx + Math.cos(a) * d, cy + up, cz + Math.sin(a) * d, ls * 1.1, ls, ls * 1.1), leafRgb);
   }
 }
 
@@ -358,15 +365,17 @@ const FOREST_VERT = /* glsl */ `
   }
 `;
 
-/** Silver moon rim (night) + golden sun rim (day) on a silhouette: shared by forest & understorey. */
+/** The silver moon rim of the far silhouettes (night). */
 const RIM_GLSL = /* glsl */ `
-  // a narrow line on the edges that face the moon, much stronger looking towards it (backlit trunks)
+  // a narrow line on the edges that face the moon: faint from most angles (a
+  // thread, not a neon outline), strongest where the trunks stand against the
+  // moonlit haze (backlit, like the trees of the references)
   float moonRimK(vec3 n, vec3 v, vec3 moonDir) {
-    float edge = pow(1.0 - abs(dot(n, v)), 4.0);
+    float edge = pow(1.0 - abs(dot(n, v)), 6.0);
     vec3 mh = normalize(vec3(moonDir.x, 0.0, moonDir.z));
-    float side = smoothstep(-0.15, 0.55, dot(n, mh));
-    float back = pow(max(dot(v, moonDir), 0.0), 4.0);
-    return edge * side * (0.3 + 1.7 * back);
+    float side = smoothstep(-0.1, 0.6, dot(n, mh));
+    float back = pow(max(dot(v, moonDir), 0.0), 6.0);
+    return edge * side * (0.035 + 1.2 * back);
   }
 `;
 
@@ -479,14 +488,14 @@ const CEIL_FRAG = /* glsl */ `
     if (e > 0.6) discard;
     // underside of the leaf roof: deep, cool green in leafy clumps
     float clump = envNoise(vW.xz * 0.16 + 2.0) * 0.65 + envNoise(vW.xz * 0.47 - 1.0) * 0.35;
-    vec3 base = mix(vec3(0.03, 0.05, 0.025), vec3(0.07, 0.1, 0.04), clump);
+    vec3 base = mix(vec3(0.025, 0.045, 0.03), vec3(0.06, 0.09, 0.05), clump);
     // thin leaves at the rim of a gap glow a little when the light comes
     // through them (yellow-green looking towards the sun, silver towards the moon)
     vec3 v = normalize(vW - cameraPosition);
-    float edge = smoothstep(0.46, 0.6, e);
+    float edge = smoothstep(0.53, 0.6, e);
     float sunBack = 0.25 + 0.75 * pow(max(dot(v, uKeyDir), 0.0), 3.0);
     float moonBack = 0.2 + 0.8 * pow(max(dot(v, uMoonDir), 0.0), 3.0);
-    vec3 dayLit = base * vec3(1.25, 1.35, 1.0) + uKeyColor * vec3(0.1, 0.12, 0.03) * edge * sunBack;
+    vec3 dayLit = base * vec3(1.15, 1.25, 1.05) + uKeyColor * vec3(0.06, 0.075, 0.02) * edge * sunBack;
     vec3 nightLit = base * vec3(0.5, 0.7, 0.95) * 0.5 + uMoonRim * 0.06 * edge * moonBack;
     vec3 col = mix(dayLit, nightLit, uNight);
     vec4 hazeV = woodlandFog(vW);
@@ -494,8 +503,9 @@ const CEIL_FRAG = /* glsl */ `
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #include <fog_fragment>
-    // (a roof overhead is nearer than the haze says: keep it a deep silhouette)
-    gl_FragColor.rgb = mix(gl_FragColor.rgb, col, 0.3 * hazeV.a);
+    // (a roof overhead is nearer than the haze says: keep it a deep, cool
+    //  silhouette — never a khaki sheet in the sun's glow)
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, col, 0.5 * hazeV.a);
   }
 `;
 
@@ -604,21 +614,27 @@ const UNDER_FRAG = /* glsl */ `
   #include <fog_pars_fragment>
   void main() {
     float x = vUv.x * 2.0 - 1.0;
-    float sd = vSeed.x * 37.0;
+    // (the per-card seed, snapped: an interpolated 'constant' varying wobbles
+    //  in its last bits, and the hashes below would blow that up into a
+    //  different shrub outline per pixel — a stippled edge)
+    float sd = floor(vSeed.x * 211.0 + 0.5) * 0.173;
     // a shrub: a few overlapping round leaf masses (kind 1: a lower, wider
     // bush) with a ragged leafy outline — no single dome, no spikes
     float h = 0.0;
     for (int i = 0; i < 4; i++) {
       float fi = float(i);
-      float cx = (envHash(vec2(sd, fi * 7.1)) * 2.0 - 1.0) * 0.55;
-      float r = mix(0.32, 0.55, envHash(vec2(fi * 3.3, sd + 1.7)));
+      float cx = (envHash(vec2(sd, fi * 7.1)) * 2.0 - 1.0) * 0.45;
+      float r = mix(0.3, 0.5, envHash(vec2(fi * 3.3, sd + 1.7)));
       float cy = mix(0.25, 0.5, envHash(vec2(sd + fi, 5.3))) * (1.0 - 0.45 * vSeed.y);
       float dx = (x - cx) / r;
-      h = max(h, cy + r * sqrt(max(1.0 - dx * dx, 0.0)) * (1.0 - 0.3 * vSeed.y));
+      // (each mass rounds off to nothing at its sides: no flat-topped block
+      //  running out to the card's straight side edges)
+      float k = max(1.0 - dx * dx, 0.0);
+      h = max(h, (cy * pow(k, 0.3) + r * sqrt(k)) * (1.0 - 0.3 * vSeed.y));
     }
-    h *= 1.0 - 0.15 * x * x;
+    h *= 1.0 - smoothstep(0.8, 1.0, abs(x));
     // (leafy notches a few pixels wide even far away: no stipple)
-    h -= 0.08 * envNoise(vUv * vec2(9.0, 6.0) + sd) + 0.05 * envNoise(vUv * vec2(19.0, 13.0) - sd);
+    h -= 0.08 * envNoise(vUv * vec2(9.0, 6.0) + sd) + 0.05 * envNoise(vUv * vec2(19.0, 13.0) - sd) + 0.06 * envNoise(vUv * vec2(33.0, 25.0) + sd * 1.7);
     // the foot is just as ragged (the card is sunk into the ground; never a straight bottom)
     float foot = 0.05 + 0.11 * envNoise(vec2(vUv.x * 7.0 + sd, sd * 0.37)) + 0.05 * envNoise(vec2(vUv.x * 17.0 - sd, 3.1));
     // soft leafy edges where alpha to coverage has enough samples (high), a clean cut elsewhere
@@ -658,7 +674,7 @@ const UNDER_FRAG = /* glsl */ `
 
 /** Shrub cards of the understorey band (crossed vertical quads). */
 function understoreyGeometry(rng, tier, feet = []) {
-  const clumps = tier === 'low' ? 70 : tier === 'medium' ? 110 : 170;
+  const clumps = tier === 'low' ? 80 : tier === 'medium' ? 130 : 210;
   const pos = [];
   const uv = [];
   const seed = [];
@@ -668,7 +684,7 @@ function understoreyGeometry(rng, tier, feet = []) {
     let x, z, big = 1;
     if (k < clumps) {
       const az = -ARC - 0.1 + ((k + rng.range(0, 1)) / clumps) * (2 * ARC + 0.2);
-      const r = 36 + Math.pow(rng.next(), 1.3) * 18;
+      const r = 36 + Math.pow(rng.next(), 1.3) * 28;
       ({ x, z } = polar(r, az));
     } else {
       // shrubs at the feet of the giants
@@ -729,9 +745,6 @@ export function buildBackdrop(ctx) {
     { r: [54, 66], count: tier === 'low' ? 12 : 17, radius: [2.2, 3.6], height: [42, 56] },
     { r: [72, 92], count: tier === 'low' ? 12 : 19, radius: [2.8, 4.6], height: [50, 66] },
     { r: [100, 135], count: tier === 'low' ? 7 : tier === 'medium' ? 14 : 22, radius: [3.5, 6], height: [60, 80], far: true },
-    // understory: low bushy trees whose crowns sink into the mist between the
-    // giants' feet (dark leafy masses in the haze, never lumps on poles)
-    { r: [50, 80], count: tier === 'low' ? 6 : 14, radius: [0.7, 1.2], height: [9, 15], under: true },
   ];
   const lobes = tier === 'low' ? 0 : 1;
   const from = new THREE.Vector3();
@@ -757,28 +770,18 @@ export function buildBackdrop(ctx) {
       // looks through a blob
       const side = 1 - 0.45 * THREE.MathUtils.smoothstep(Math.abs(az), THREE.MathUtils.degToRad(85), ARC);
       const masses = [];
-      if (row.under) {
-        // understory crowns: a loose heap of round leafy lumps, low in the mist
-        const n = Math.round(rng.int(4, 5) * side);
-        for (let m = 0; m < n; m++) {
-          const ma = rng.range(0, Math.PI * 2);
-          const md = radius * rng.range(0.4, 3.2) * 1.5;
-          masses.push({ dx: Math.cos(ma) * md, dy: rng.range(-1.5, 2), dz: Math.sin(ma) * md, s: radius * rng.range(1.9, 3.0) * 1.4 * side });
-        }
-      } else {
-        const n = Math.round((row.far ? rng.int(3, 4) : rng.int(4, 6)) * side);
-        for (let m = 0; m < n; m++) {
-          const ma = rng.range(0, Math.PI * 2);
-          const md = radius * rng.range(1.2, 4.6);
-          masses.push({ dx: Math.cos(ma) * md, dy: rng.range(2, 9), dz: Math.sin(ma) * md, s: radius * rng.range(2.6, 4.0) * side });
-        }
+      const nm = Math.round((row.far ? rng.int(3, 4) : rng.int(4, 6)) * side);
+      for (let m = 0; m < nm; m++) {
+        const ma = rng.range(0, Math.PI * 2);
+        const md = radius * rng.range(1.2, 4.6);
+        masses.push({ dx: Math.cos(ma) * md, dy: rng.range(2, 9), dz: Math.sin(ma) * md, s: radius * rng.range(2.6, 4.0) * side });
       }
       // (the giants grow until their crowns clear the zoomed-out frame)
       const at = (h) => {
         const bend = lean * h;
         return { tx: x + Math.sin(leanAz) * bend, tz: z - Math.cos(leanAz) * bend, topY: y0 + h - 3 };
       };
-      if (!row.under) {
+      {
         const { tx, tz, topY } = at(height);
         height += liftFor(masses.map((c) => ({ x: tx + c.dx, y: topY + c.dy, z: tz + c.dz, s: c.s })));
       }
@@ -795,7 +798,7 @@ export function buildBackdrop(ctx) {
       addGeo(acc, trunk, bark);
       // limbs: curved, tapering branches that arch up into the crown and end
       // in leaf sprays; now and then one forks off lower down (gnarled giants)
-      const limbs = row.far || row.under ? 0 : rng.int(2, 3);
+      const limbs = row.far ? 0 : rng.int(2, 3);
       for (let l = 0; l < limbs; l++) {
         const la = rng.range(0, Math.PI * 2);
         let low = l === 0 && rng.next() < 0.3;
@@ -831,8 +834,8 @@ export function buildBackdrop(ctx) {
       }
       for (const c of masses) {
         const cx = tx + c.dx, cy = topY + c.dy, cz = tz + c.dz;
-        if (inMoonWindow(cx, cy, cz, c.s * (row.under ? 1.3 : 1.5))) continue;
-        crownMass(acc, rng, cx, cy, cz, c.s, leaf(), { fine: !row.under && row.r[0] < coarseFrom, lobes: row.far ? 0 : lobes });
+        if (inMoonWindow(cx, cy, cz, c.s * 1.5)) continue;
+        crownMass(acc, rng, cx, cy, cz, c.s, leaf(), { fine: row.r[0] < coarseFrom, lobes: row.far ? 0 : row.r[0] < 70 ? lobes * 2 : lobes });
       }
       // undergrowth at the foot: leafy shrub cards (understorey mesh), no pillows
       if (tier !== 'low' && !row.far) {
@@ -854,16 +857,17 @@ export function buildBackdrop(ctx) {
     const r = rng.range(44, 58);
     const { x, z } = polar(r, az);
     const y0 = farHeight(x, z);
-    const radius = rng.range(0.65, 1.15);
-    let height = rng.range(30, 42);
+    const radius = rng.range(0.75, 1.25);
+    // (up into the leaf roof: from below, a slim column vanishing into the canopy)
+    let height = Math.max(rng.range(30, 42), ceilingBase(x, z, r) - y0 + rng.range(0, 4));
     const lean = rng.range(0.004, 0.03);
     const leanAz = rng.range(0, Math.PI * 2);
-    const n = rng.int(2, 3);
+    const n = rng.int(3, 4);
     const masses = [];
     for (let m = 0; m < n; m++) {
       const ma = rng.range(0, Math.PI * 2);
-      const md = rng.range(0.3, 2.2);
-      masses.push({ dx: Math.cos(ma) * md, dy: rng.range(-1.5, 1.5), dz: Math.sin(ma) * md, s: rng.range(2.2, 3.4) });
+      const md = rng.range(0.8, 3.6);
+      masses.push({ dx: Math.cos(ma) * md, dy: rng.range(-1.5, 2.5), dz: Math.sin(ma) * md, s: rng.range(3.0, 4.6) });
     }
     {
       const bend = lean * height;

@@ -54,10 +54,14 @@ export function mats() {
   if (M) return M;
   const m = materials;
   M = {
-    cap: velvetCap(m.surface('mushroomCap', { color: '#ffffff', vertexColors: true, roughness: 1.55 })),
-    // the cream warts on the caps: the glen's enchanted-agaric spot material (faint
-    // cream-mint glow at night) with a warm lift by day — see creamWarts()
+    cap: velvetCap(m.surface('mushroomCap', { color: '#ffffff', vertexColors: true, roughness: 2.1 })),
+    // the cream warts on the caps: torn veil flakes with a warm lift by day and only a
+    // faint mint glint on their rims at night — see creamWarts()
     warts: creamWarts(mushroomGlowMaterials({ materials: m }).warts),
+    // window panes: lamp-lit glass with a warm gradient in the vertex colours (see paneGlow)
+    pane: paneGlow(),
+    // the Wohnatelier's window seen from inside: daylight by day, dark blue at night
+    daylight: daylightPane(),
     gills: bounceGills(m.surface('gills', { gills: 'cone', side: THREE.DoubleSide, vertexColors: true })),
     stem: m.surface('mushroomStem', { vertexColors: true }),
     plaster: m.surface('plaster', { vertexColors: true }),
@@ -99,7 +103,7 @@ export function mats() {
  * texture & vertex shading stay readable. Its strength follows day/night
  * through setCottageNight().
  */
-const GILL_BOUNCE = { color: '#ffb064', day: 0.62, night: 0.3 };
+const GILL_BOUNCE = { color: '#ffb064', day: 0.4, night: 0.24 };
 let gillMat = null;
 function bounceGills(base) {
   const g = base.clone();
@@ -121,22 +125,44 @@ function bounceGills(base) {
 }
 
 /**
- * The caps' warts: raised cream domes in the cap's shade would read khaki-grey
- * with a plain standard material (the cap itself has a soft wrap/velvet term),
- * so this clone (never the cached original; same shader program) is white with
- * the true cream in the vertex colours, plus a faint warm-white "subsurface"
- * lift by day that hands over to the glen's cream-mint enchanted-agaric glow at
- * night (same levels & ramp as world/vegetation/mushrooms.js updateMushroomGlow,
- * driven here by setCottageNight()).
+ * The caps' warts: torn cream veil flakes. In the cap's shade a plain standard
+ * material would read khaki-grey, so this clone (never the cached original) is
+ * white with the true cream (and a per-flake tone) in the vertex colours, plus
+ * a faint warm-white "subsurface" lift by day. At night they must not turn into
+ * white polka-dot stickers: the albedo dims a little and the emissive becomes a
+ * faint mint GLINT — scaled by the flake's own vertex tone and a fresnel term,
+ * so only the rims of the raised flakes catch it while their faces stay in the
+ * moonlit shade (the cap's fairy lights and the windows carry the light).
  */
-const WART_GLOW = { day: '#fff1d8', night: '#e4ffd8', dayI: 0.07, nightI: 0.42 };
+const WART_GLOW = { day: '#fff1d8', night: '#d6ffe2', dayI: 0.06, nightI: 0.14 };
 let wartMat = null;
+const wartUniforms = { uWartNight: { value: 0 } };
 function creamWarts(base) {
   const w = base.clone();
   w.name = 'cottage-warts';
   w.color.set('#ffffff');
   w.emissive = new THREE.Color(WART_GLOW.day);
   w.emissiveIntensity = WART_GLOW.dayI;
+  const patch = w.onBeforeCompile;
+  w.onBeforeCompile = (shader, renderer) => {
+    patch?.(shader, renderer);
+    Object.assign(shader.uniforms, wartUniforms);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('void main() {', 'uniform float uWartNight;\nvoid main() {')
+      .replace(
+        '#include <emissivemap_fragment>',
+        `#include <emissivemap_fragment>
+  {
+    // by day a soft even lift; at night only the flake rims glint (fresnel), each flake its own tone
+    float wFres = pow(1.0 - saturate(abs(dot(normal, normalize(vViewPosition)))), 2.0);
+    float wTone = dot(vColor.rgb, vec3(0.3, 0.5, 0.2));
+    totalEmissiveRadiance *= mix(vec3(1.0), vec3(wTone * (0.1 + 1.7 * wFres)), uWartNight);
+    diffuseColor.rgb *= 1.0 - 0.35 * uWartNight;
+  }`
+      );
+  };
+  const key = w.customProgramCacheKey();
+  w.customProgramCacheKey = () => key + '|cottage-warts';
   wartMat = w;
   return w;
 }
@@ -144,16 +170,89 @@ const _wDay = new THREE.Color(WART_GLOW.day);
 const _wNight = new THREE.Color(WART_GLOW.night);
 
 /**
- * The caps' skin: velvety rather than plastic — the texture's roughness is
- * raised (opts.roughness above) and this clone (never the cached original)
- * gets a stronger soft rim sheen, like the bloom on a fresh fly agaric.
+ * The caps' skin: velvety and painterly rather than plastic. The texture's
+ * roughness is raised (opts.roughness above: a broad, dim highlight), this
+ * clone (never the cached original) gets a stronger soft rim sheen, and its
+ * shader adds what vertex colours cannot carry: fine radial fibril streaks
+ * running from the rim towards the crown (two octaves, faded out where they
+ * would get sub-pixel), and a chalky, desaturated velvet bloom at grazing
+ * angles, like the bloom on a fresh fly agaric. The mottled hue (crimson rim →
+ * orange crown, blotches) is painted into the vertex colours by the builder.
+ * Cap UVs: U = around (× 2), V = 0 at the rim → 1 at the apex.
  */
 function velvetCap(base) {
   const c = base.clone();
   c.name = 'cottage-cap';
   const u = materials.surfaceUniforms(c);
-  if (u?.sfQ) u.sfQ.value.z = 0.62; // velvet (the kind's default is 0.35)
+  if (u?.sfQ) u.sfQ.value.z = 0.5; // velvet rim sheen (the kind's default is 0.35)
+  const patch = c.onBeforeCompile;
+  c.onBeforeCompile = (shader, renderer) => {
+    patch?.(shader, renderer);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      `#include <emissivemap_fragment>
+#if defined(USE_UV) && !defined(SF_TRIPLANAR)
+  {
+    float cA = vUv.x * 3.14159265;                         // around (seam-free on a circle)
+    vec2 cR = vec2(cos(cA), sin(cA));
+    float cV = clamp(vUv.y, 0.0, 1.0);
+    // fine fibrils (≈ 400 around) and coarser brush streaks (≈ 120 around), long along V
+    vec3 q1 = vec3(cR * 64.0, cV * 2.6);
+    vec3 q2 = vec3(cR * 19.0, cV * 1.4 + 7.3);
+    float w1 = fwidth(q1.x) + fwidth(q1.y);
+    float w2 = fwidth(q2.x) + fwidth(q2.y);
+    float f1 = (1.0 - smoothstep(0.5, 1.4, w1)) * smoothstep(0.02, 0.2, cV);
+    float f2 = 1.0 - smoothstep(0.6, 1.6, w2);
+    float s1 = sfNoise3(q1 + vec3(0.0, 0.0, 1.7 * sfNoise3(q2 * 0.5)));
+    float s2 = sfNoise3(q2);
+    float streak = (smoothstep(0.52, 0.86, s1) * 0.2 - smoothstep(0.42, 0.1, s1) * 0.07) * f1
+                 + (smoothstep(0.5, 0.9, s2) * 0.14 - smoothstep(0.45, 0.12, s2) * 0.06) * f2;
+    diffuseColor.rgb *= 1.0 - streak;
+    // velvet bloom: chalky and a little desaturated where the skin turns away
+    float cF = pow(1.0 - saturate(abs(dot(normal, normalize(vViewPosition)))), 3.0);
+    float cL = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(cL) * vec3(1.5, 1.25, 1.15) + diffuseColor.rgb * 0.25, cF * 0.3);
+  }
+#endif`
+    );
+  };
+  const key = c.customProgramCacheKey();
+  c.customProgramCacheKey = () => key + '|cottage-cap';
   return c;
+}
+
+/**
+ * Lamp-lit window glass: the emissive is tinted by the vertex colours, so each
+ * pane carries a warm gradient (bright honey low in the middle where the lamp
+ * stands, deeper amber towards the top and the frame) instead of a flat
+ * emissive sheet. Follows day/night through setCottageNight().
+ */
+const PANE_GLOW = { day: 0.5, night: 1.35 };
+let paneMat = null;
+function paneGlow() {
+  const m = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#ffffff', emissiveIntensity: PANE_GLOW.day, roughness: 0.9, vertexColors: true });
+  m.name = 'cottage-pane';
+  m.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n  totalEmissiveRadiance *= vColor.rgb;');
+  };
+  m.customProgramCacheKey = () => 'cottage-pane';
+  paneMat = m;
+  return m;
+}
+
+/**
+ * Glass seen from INSIDE a room (the Wohnatelier's arched window): bright
+ * daylight by day (sky above, sunlit foliage below, from the vertex colours),
+ * nearly dark at night.
+ */
+const DAYLIGHT = { day: 1.0, night: 0.06 };
+let daylightMat = null;
+function daylightPane() {
+  const m = new THREE.MeshBasicMaterial({ color: '#ffffff', vertexColors: true, toneMapped: true });
+  m.name = 'cottage-daylight';
+  m.color.setScalar(DAYLIGHT.day);
+  daylightMat = m;
+  return m;
 }
 
 /**
@@ -256,11 +355,57 @@ export function setCottageNight(night) {
   if (gillMat) gillMat.emissiveIntensity = GILL_BOUNCE.day + (GILL_BOUNCE.night - GILL_BOUNCE.day) * night;
   if (paperMat) paperMat.emissiveIntensity = PAPER_LAMP.day + (PAPER_LAMP.night - PAPER_LAMP.day) * night;
   if (limeMat) limeMat.emissiveIntensity = LIME_BOUNCE.day + (LIME_BOUNCE.night - LIME_BOUNCE.day) * night;
+  if (paneMat) paneMat.emissiveIntensity = PANE_GLOW.day + (PANE_GLOW.night - PANE_GLOW.day) * night;
+  if (daylightMat) daylightMat.color.setScalar(DAYLIGHT.day + (DAYLIGHT.night - DAYLIGHT.day) * night);
+  if (lightSpillMat) lightSpillMat.opacity = LIGHT_SPILL.day + (LIGHT_SPILL.night - LIGHT_SPILL.day) * night;
   if (wartMat) {
     const k = THREE.MathUtils.smoothstep(night, 0.1, 0.85);
     wartMat.emissive.lerpColors(_wDay, _wNight, k);
     wartMat.emissiveIntensity = WART_GLOW.dayI + (WART_GLOW.nightI - WART_GLOW.dayI) * k;
+    wartUniforms.uWartNight.value = k;
   }
+}
+
+/**
+ * A soft patch of daylight falling through a window onto the floor / furniture:
+ * an additive, unlit quad with a feathered falloff (RGBA vertex colours on a
+ * small grid; alpha = brightness). One shared material whose strength follows
+ * day/night (gone at night). geo: from lightSpillGeo().
+ */
+const LIGHT_SPILL = { day: 1.0, night: 0.0 };
+let lightSpillMat = null;
+export function lightSpillMaterial() {
+  if (lightSpillMat) return lightSpillMat;
+  lightSpillMat = new THREE.MeshBasicMaterial({
+    color: '#ffffff',
+    vertexColors: true,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: true,
+    fog: false,
+  });
+  lightSpillMat.name = 'cottage-light-spill';
+  return lightSpillMat;
+}
+/**
+ * A feathered quad w × h in the XY plane (centred): an elliptical soft patch,
+ * colour `color` at peak strength `peak`, `tilt` (−1..1) brightening one end
+ * along Y (the end nearest the window).
+ */
+export function lightSpillGeo(w, h, { color = '#fff1d6', peak = 0.3, tilt = 0, n = 8 } = {}) {
+  const g = new THREE.PlaneGeometry(w, h, n, n);
+  const pos = g.attributes.position;
+  const col = new Float32Array(pos.count * 4);
+  const c = new THREE.Color(color);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i) / (w / 2), y = pos.getY(i) / (h / 2);
+    const d = Math.min(1, Math.hypot(x, y));
+    const a = peak * (1 - d * d * (3 - 2 * d)) * Math.max(0, 1 + tilt * y * 0.6);
+    col.set([c.r, c.g, c.b, a], i * 4); // additive: src.rgb × src.a
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 4));
+  return g;
 }
 
 // ─── batching ────────────────────────────────────────────────────────────────

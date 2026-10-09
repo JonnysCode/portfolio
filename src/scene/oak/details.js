@@ -1,11 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The little things on the Great Oak that reward a closer look:
-//   bracket fungi on the bark and limbs (their lamellae glow mint at night),
-//   fly agarics on the roots, glowing glow-caps between the roots, glow-worms
-//   in the ivy, two little round windows (someone lives up there), lanterns
-//   hanging on chains from the low limbs, fairy lights draped over the trunk
-//   (one garland spirals from the door up to the loft stairs), along the low
-//   limb and down the roots, a rope swing, a
+//   bracket fungi in overlapping tiers of zoned brown shelves sunk into the
+//   bark and limbs (only their pore plates glow mint at night, fading towards
+//   the bark), the boulder a root grips, fly agarics on the roots, glowing
+//   glow-caps between the roots, glow-worms in the ivy and on silk threads
+//   under the lower limbs, two little round windows (someone lives up there),
+//   lanterns hanging on chains from the lower limbs, fairy lights draped over
+//   the trunk (one garland spirals from the door up to the loft stairs),
+//   sagging along the lower limbs and down the roots, a rope swing, a
 //   bird house with its tenant, an owl blinking in its hollow (eyes glow at
 //   night) and — the secret — a tiny mouse door in the front-right root
 //   (its door swings open and the resident peeks out when clicked).
@@ -164,9 +166,10 @@ function zoneColor(zones, t, out) {
  *           the ramp's red channel),
  *   depth — the shelf's depth out of the bark.
  */
-function shelfGeos(r, rng, zonesKey = 'glow') {
+function shelfGeos(r, rng, zonesKey = 'glow', lo = false) {
   const zones = SHELF_ZONES[zonesKey] ?? SHELF_ZONES.glow;
-  const SEG = 12, RINGS = 9;
+  // (fewer segments on the lower quality tiers)
+  const SEG = lo ? 9 : 12, RINGS = lo ? 6 : 9;
   const d = r * 0.74; // out of the bark
   const th = r * 0.44; // thickness at the bark
   const phMax = Math.PI / 2 + 0.34; // wrap into the bark at the sides
@@ -239,14 +242,14 @@ function shelfGeos(r, rng, zonesKey = 'glow') {
   for (let i = 0; i < rowsU; i++) {
     const rho = i / RINGS;
     // dark & unlit where it grows from the bark, full glow towards the rim;
-    // a warm buff pore plate (r channel = the glow ramp, see fungusGlow)
+    // a warm tan pore plate (r channel = 0.82 × the glow ramp, see fungusGlow)
     const g = 0.3 + 0.7 * THREE.MathUtils.smoothstep(rho, 0.2, 0.95);
     for (let j = 0; j <= SEG; j++) {
       const phi = -phMax + (2 * phMax * j) / SEG;
       at(rho, phi, yUnder(rho, phi), v);
       const k = i * (SEG + 1) + j;
       posU.set([v.x, v.y, v.z], k * 3);
-      colU.set([g, g * 0.84, g * 0.62], k * 3);
+      colU.set([g * 0.82, g * 0.66, g * 0.46], k * 3);
       uvU.set([0.5 + (0.5 * v.x) / (r * 1.12), 0.5 + (0.5 * v.z) / (r * 1.12)], k * 2);
     }
   }
@@ -477,6 +480,7 @@ function boulderFrame() {
 export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLinings, ivyLeaves = null }) {
   const { materials, props } = ctx;
   const reduced = !!ctx.engine?.reducedMotion;
+  const lowDetail = (ctx.quality?.density ?? 1) < 0.9;
   const B = new Batch();
   const updates = [];
   /** Every warm glow halo (lanterns, windows, the mouse lantern) → one draw call. */
@@ -525,7 +529,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
       prev?.call(fungusGlow, shader, renderer);
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <emissivemap_fragment>',
-        '#include <emissivemap_fragment>\n  totalEmissiveRadiance *= vColor.r * vColor.r;'
+        '#include <emissivemap_fragment>\n  totalEmissiveRadiance *= (vColor.r * vColor.r) / 0.6724;'
       );
     };
     const key = fungusGlow.customProgramCacheKey();
@@ -555,7 +559,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
    * into it. `halo`: a small mint halo BELOW the shelf (≤ 0.6 × its width).
    */
   const addShelf = (m, r, rng, { zones = 'glow', halo = false } = {}) => {
-    const { top, under, depth } = shelfGeos(r, rng, zones);
+    const { top, under, depth } = shelfGeos(r, rng, zones, lowDetail);
     const sunk = m.clone().multiply(new THREE.Matrix4().makeTranslation(0, 0, -0.15 * depth));
     B.add(mats.fungusTop, top.applyMatrix4(sunk), { color: 'keep' });
     if (zones === 'glow') {
@@ -568,7 +572,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
       // sulphur shelves: a pale yellow pore plate, no glow
       const col = under.attributes.color;
       for (let i = 0; i < col.count; i++) {
-        const g = 0.55 + 0.45 * col.getX(i);
+        const g = 0.55 + 0.45 * Math.min(1, col.getX(i) / 0.82);
         col.setXYZ(i, g * 0.98, g * 0.84, g * 0.46);
       }
       // (no glow ramp needed: the sulphur shelves' pores are plain yellow)
@@ -684,7 +688,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
 
   // ── the boulder the right-long root arches over and grips ────────────────
   {
-    const g = new THREE.IcosahedronGeometry(1, 4);
+    const g = new THREE.IcosahedronGeometry(1, lowDetail ? 3 : 4);
     const pos = g.attributes.position;
     const v = new THREE.Vector3();
     for (let i = 0; i < pos.count; i++) {
@@ -1207,7 +1211,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
     const per = { 'front-left-low': 24, front: 18, 'left-high': 14, right: 10, 'front-right-high': 9, 'back-left': 12, 'back-right': 8, leader: 5, 'back-high': 8 };
     const v = new THREE.Vector3();
     for (const L of limbs) {
-      const n = per[L.id] ?? 0;
+      const n = Math.round((per[L.id] ?? 0) * Math.min(1, Math.max(0.5, ctx.quality?.density ?? 1)));
       for (let k = 0; k < n; k++) {
         const u = rng.range(0.12, 0.92);
         const P = L.curve.getPointAt(u);

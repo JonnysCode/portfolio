@@ -25,13 +25,15 @@ function detectQuality() {
  * Per tier. shadowMapSize: the sun's shadow map (fixed frustum over the glen);
  * post: 'full' (AO + DOF + bloom + grade), 'lite' (bloom + grade, 2× MSAA) or
  * false (plain renderer); grade: on 'low' (post false) a single grade-only
- * finishing pass keeps the art direction (no bloom, AO or DOF). 'medium'
- * (phones, 30 fps) also re-renders its shadow maps only every other frame
- * (lighting.js, shadowEvery). ao / dof / bloom are live flags the governor
- * may switch off.
+ * finishing pass keeps the art direction (no bloom, AO or DOF). shadowEvery:
+ * the sun & moon never move, so the shadow map is re-rendered only every Nth
+ * frame (lighting.js) — every other frame on 'high' and 'medium' halves the
+ * shadow pass (≈ 0.75 M triangles on 'high') while walking villagers, snails
+ * and swaying leaves still update at 30 Hz. ao / dof / bloom are live flags
+ * the governor may switch off.
  */
 const QUALITY_PRESETS = {
-  high: { pixelRatio: 2, shadows: true, shadowMapSize: 4096, shadowEvery: 1, density: 1, post: 'full', ao: true, dof: true, bloom: true },
+  high: { pixelRatio: 2, shadows: true, shadowMapSize: 4096, shadowEvery: 2, density: 1, post: 'full', ao: true, dof: true, bloom: true },
   medium: { pixelRatio: 1.5, shadows: true, shadowMapSize: 1024, shadowEvery: 2, density: 0.5, post: 'lite', ao: false, dof: false, bloom: true },
   low: { pixelRatio: 1, shadows: false, shadowMapSize: 512, shadowEvery: 1, density: 0.35, post: false, grade: true, ao: false, dof: false, bloom: false },
 };
@@ -40,7 +42,7 @@ const QUALITY_PRESETS = {
  * Runtime frame-time governor. While the real animation loop runs, the median
  * frame time of the last 90 frames is checked; above the tier's limit the
  * renderer steps down — DPR 2 → 1.5 → 1.25, AO off, DOF off, shadow map
- * 4096 → 2048, then (still slow) shadows every other frame, DPR 1, a 1024 map,
+ * 4096 → 2048, then (still slow) shadows every third frame, DPR 1, a 1024 map,
  * bloom off — one step at a time, each followed by a settle period. A step that
  * brings no gain (a vsync- or battery-capped display) is undone and the governor
  * retires. The reached level is remembered in localStorage (per tier, 30 days),
@@ -62,7 +64,7 @@ const GOVERNOR_STEPS = [
   { id: 'ao-off', when: (q) => q.ao, apply: (q) => { q.ao = false; } },
   { id: 'dof-off', when: (q) => q.dof, apply: (q) => { q.dof = false; } },
   { id: 'shadow-2048', when: (q) => q.shadows && q.shadowMapSize > 2048, apply: (q) => { q.shadowMapSize = 2048; } },
-  { id: 'shadow-every-2', when: (q) => q.shadows && q.shadowEvery < 2, apply: (q) => { q.shadowEvery = 2; } },
+  { id: 'shadow-every-3', when: (q) => q.shadows && q.shadowEvery < 3, apply: (q) => { q.shadowEvery = 3; } },
   { id: 'dpr-1', when: (q, dpr) => dpr > 1, apply: (q) => { q.pixelRatio = 1; } },
   { id: 'shadow-1024', when: (q) => q.shadows && q.shadowMapSize > 1024, apply: (q) => { q.shadowMapSize = 1024; } },
   { id: 'bloom-off', when: (q) => q.bloom, apply: (q) => { q.bloom = false; } },

@@ -159,6 +159,13 @@ export const SPOTS = [
     areas: [],
     focus: [0, 4, -2],
     camera: { position: [4, 17, 40], target: [0, 6.5, -2], fov: 40 },
+    // phones: the whole village on one tall screen — seen from high over the
+    // stream's bank (front right, a giant's trunk framing the right edge) the
+    // houses line up down the frame: the cottages and the Wohnatelier at the back
+    // left, the oak with its loft and the Schreinerei in the middle, the bridge and
+    // the Velowerkstatt in front, the lily pond lower left. (No 16:9-style frame
+    // fits ~45 units of village on a 390 px wide screen; this diagonal does.)
+    portrait: { position: [36.9, 34, 23.5], target: [6.8, 7.5, 7.5], fov: 64, focus: [-2, 2.5, 3] },
   },
   {
     id: 'woodworking',
@@ -169,12 +176,13 @@ export const SPOTS = [
     // lower and closer than before: the porch Hobelbank with Jonny planing sits on
     // the left third, the oak door in the middle, the deck still on the right
     focus: [-1.4, 1.1, -0.8],
-    camera: { position: [0.9, 3.0, 11.4], target: [-0.6, 2.2, -0.7], fov: 40 },
-    // phones: the whole workshop at the foot of the giant oak — the Hobelbank with
-    // Jonny on the left, the door, the EFZ board and the deck with its four pieces
-    // on the right (all six sparkles in frame), the trunk and the loft stairs
-    // rising above: a tall frame for a tall tree
-    portrait: { position: [1.8, 5.9, 21.0], target: [1.1, 4.1, -0.5], fov: 60, focus: [0.8, 1.0, 0.3] },
+    // (trucked right and a step back: the deck's four pieces sit inside the right third, not on the edge)
+    camera: { position: [1.6, 3.05, 12.3], target: [0.0, 2.2, -0.8], fov: 40 },
+    // phones: at eye level in front of the workshop — the annex and its porch with
+    // Jonny at the Hobelbank, the door, and the giant trunk towering above (the
+    // ground is seen at a grazing angle: no band of blurred cobbles); the deck's
+    // pieces are a swipe (or the '4 more' edge chip) away on the right
+    portrait: { position: [-1.2, 2.4, 14.0], target: [-2.2, 5.0, -1.2], fov: 62, focus: [-2.0, 1.2, -0.6] },
   },
   {
     id: 'code',
@@ -207,7 +215,8 @@ export const SPOTS = [
     focus: [-21.5, 1.8, 2.5],
     camera: { position: [-24.6, 3.8, 12.6], target: [-21.4, 2.0, 2.8], fov: 40 },
     // phones: the open front with the moodboard easel on the left and the model table on the right
-    portrait: { position: [-24.8, 5.2, 19.0], target: [-22.1, 2.0, 3.6], fov: 52 },
+    // (from a little higher: the lens looks into the room, and the moss in front is in focus, not a blur)
+    portrait: { position: [-24.6, 7.8, 17.2], target: [-22.0, 2.0, 3.4], fov: 52 },
   },
   {
     id: 'bikes',
@@ -217,7 +226,8 @@ export const SPOTS = [
     areas: ['bikes'],
     focus: [16, 1.6, 6.6],
     camera: { position: [8.5, 4.6, 16.5], target: [15.2, 1.8, 6.2], fov: 40 },
-    portrait: { position: [10.2, 7.3, 18.4], target: [16.4, 2.3, 7.8] },
+    // phones: from above the bank — the open door and the bikes, the stream in front (no fern blur)
+    portrait: { position: [10.6, 9.6, 17.2], target: [16.4, 1.8, 7.6], fov: 48 },
     close: { position: [11.0, 6.6, 13.4], target: [16.2, 1.6, 6.8] },
   },
 ];

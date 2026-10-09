@@ -4,7 +4,8 @@
 // A big round-arched plank door, slightly ajar with warm light spilling out,
 // set in a carved oak frame (bent arch segments, pegs, a keystone with the
 // cabinetmakers' guild emblem). The bark has grown around the frame into a
-// thick burl collar, two mossy roots flank worn stone steps. Forged strap
+// thick burl collar, two fissured roots — moss only along their top ridge,
+// ferns, ivy and toadstools on them — flank worn stone steps. Forged strap
 // hinges, a ring pull, a bullseye window, a lantern on a scroll bracket, the
 // carved "Schreinerei" sign swinging above and the framed EFZ certificate
 // under its own little roof (hotspot 'efz-certificate').
@@ -19,7 +20,7 @@
 import * as THREE from 'three';
 import { OAK, oakRadiusAt } from '../../world/layout.js';
 import { createRng } from '../../core/rng.js';
-import { Batch, board, uvBox, xf, deform, mat4, mossGeo, tube, archShape, arcSegment, addIvy, addToadstool, addLantern, pushHalo, peg, noiseA, noiseB } from './kit.js';
+import { Batch, board, uvBox, xf, deform, mat4, mossGeo, tube, archShape, arcSegment, addIvy, addToadstool, addFern, addLantern, pushHalo, peg, noiseA, noiseB } from './kit.js';
 
 /** Door dimensions (exported so others can align to it). */
 export const DOOR = {
@@ -149,32 +150,65 @@ export function buildDoor(ctx, B, mats) {
     group.add(m);
   }
 
-  // ── the door leaf: 6 vertical planks, ledges & brace, strap hinges ──────────
+  // ── the door leaf: 6 V-grooved boards, ledges & brace, strap hinges ──────
+  // Boards of slightly different widths and tones (real stock), chamfered
+  // where they meet so each joint reads as a V-groove, nailed to the ledges
+  // and the brace from the front and clinched over on the back.
   const leaf = new Batch();
   const LW = W + 0.06, LR = LW / 2, LT = 0.065;
   const leafBottom = y0 + 0.012;
   const nPl = 6;
-  const plankW = LW / nPl;
   const leafTop = (x) => archY + Math.sqrt(Math.max(0, LR * LR - x * x));
-  for (let i = 0; i < nPl; i++) {
-    const x0 = -LR + i * plankW + 0.004, x1 = -LR + (i + 1) * plankW - 0.004;
-    const s = new THREE.Shape();
-    s.moveTo(x0, leafBottom);
-    s.lineTo(x1, leafBottom);
-    const steps = 6;
-    for (let k = 0; k <= steps; k++) {
-      const x = x1 + ((x0 - x1) * k) / steps;
-      s.lineTo(x, leafTop(x) - 0.002);
+  const bw = [];
+  for (let i = 0; i < nPl; i++) bw.push(1 + rng.jitter(0.13));
+  const bwSum = bw.reduce((a, b) => a + b, 0);
+  const boardX = []; // [x0, x1] of each board
+  {
+    const tones = ['#a77a52', '#966c47', '#a07450', '#8f6643', '#a87d55', '#9a6f4a'];
+    let xa = -LR;
+    for (let i = 0; i < nPl; i++) {
+      const pw = (bw[i] / bwSum) * LW;
+      const x0 = xa + 0.003, x1 = xa + pw - 0.003;
+      boardX.push([xa, xa + pw]);
+      xa += pw;
+      const s = new THREE.Shape();
+      s.moveTo(x0, leafBottom);
+      s.lineTo(x1, leafBottom);
+      const steps = 6;
+      for (let k = 0; k <= steps; k++) {
+        const x = x1 + ((x0 - x1) * k) / steps;
+        s.lineTo(x, leafTop(x) - 0.002);
+      }
+      s.lineTo(x0, leafBottom);
+      // the deep chamfers of neighbouring boards meet in a V
+      const g = new THREE.ExtrudeGeometry(s, { depth: LT, bevelEnabled: true, bevelSize: 0.012, bevelThickness: 0.01, bevelSegments: 1, curveSegments: 2 });
+      // a little warp per plank
+      const wob = rng.jitter(0.006);
+      deform(g, (v) => {
+        v.z += wob * Math.sin(((v.y - y0) / (Hs + R)) * Math.PI);
+      });
+      uvBox(g, 'y', undefined, [rng.next() * 9, rng.next() * 9]);
+      leaf.add(oak, g, { color: tones[i] });
     }
-    s.lineTo(x0, leafBottom);
-    const g = new THREE.ExtrudeGeometry(s, { depth: LT, bevelEnabled: true, bevelSize: 0.007, bevelThickness: 0.007, bevelSegments: 1, curveSegments: 2 });
-    // a little warp per plank
-    const wob = rng.jitter(0.006);
-    deform(g, (v) => {
-      v.z += wob * Math.sin(((v.y - y0) / (Hs + R)) * Math.PI);
-    });
-    uvBox(g, 'y', undefined, [rng.next() * 9, rng.next() * 9]);
-    leaf.add(oak, g, { color: i % 2 ? '#a77a52' : '#966c47' });
+  }
+  // hand-forged nails: two per board through each ledge and one through the
+  // brace (heads on the front), their tips clinched over on the back
+  {
+    const ly0 = leafBottom + 0.175, ly1 = archY - 0.05;
+    const bl0 = leafBottom + 0.22, bl1 = archY - 0.05;
+    const braceY = (x) => (bl0 + bl1) / 2 + (x / (LW - 0.2)) * (bl1 - bl0);
+    const nail = (x, y) => {
+      const head = new THREE.SphereGeometry(0.0085, 6, 3, 0, Math.PI * 2, 0, Math.PI / 2);
+      head.rotateX(Math.PI / 2);
+      leaf.add(iron, xf(head, [x + rng.jitter(0.004), y + rng.jitter(0.004), LT + 0.009]), { cast: false });
+      const tip = new THREE.TorusGeometry(0.008, 0.0022, 3, 6, Math.PI);
+      leaf.add(iron, xf(tip, [x, y, -0.04], [0, Math.PI / 2, rng.next() < 0.5 ? 0 : Math.PI]), { cast: false });
+    };
+    for (const [xa, xb] of boardX) {
+      const xc = (xa + xb) / 2, q = (xb - xa) * 0.26;
+      for (const y of [ly0, ly1]) for (const x of [xc - q, xc + q]) nail(x, y);
+      if (Math.abs(xc) < LR - 0.12) nail(xc, braceY(xc));
+    }
   }
   // inside ledges + a diagonal brace (Z), hidden mostly but honest: the brace
   // rises from the hinge side (−x) at the bottom ledge to the latch side at the
@@ -286,7 +320,12 @@ export function buildDoor(ctx, B, mats) {
     }
   }
 
-  // ── two roots flanking the steps, mossy on top ─────────────────────────────
+  // ── two roots flanking the steps ───────────────────────────────────────────
+  // Fissured bark with moss only along the top ridge (mossy 0.22: the bark
+  // reads through and nothing competes with the lit door), dark vertex-colour
+  // AO in the furrows, underneath and where they dive into the soil; each
+  // carries a fern, an ivy runner and a toadstool cluster.
+  const rootMat = rootBarkMaterial(ctx);
   for (const s of [-1, 1]) {
     const pts = [];
     const x0 = s * (R + F + 0.5);
@@ -294,27 +333,39 @@ export function buildDoor(ctx, B, mats) {
       const t = i / 8;
       pts.push([x0 + s * t * 0.75 + Math.sin(t * 5 + s) * 0.06, (1 - t) * 1.05 + Math.sin(t * Math.PI) * 0.1, -0.55 + t * 1.55]);
     }
-    const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(...p)));
-    const g = new THREE.TubeGeometry(curve, 24, 1, 9, false);
-    // taper + flatten (roots are oval and sink into the ground)
-    const pos = g.attributes.position;
-    const tmp = new THREE.Vector3(), c = new THREE.Vector3();
-    for (let i = 0; i < pos.count; i++) {
-      const seg = Math.floor(i / 10);
-      const t = seg / 24;
-      curve.getPointAt(Math.min(1, t), c);
-      tmp.fromBufferAttribute(pos, i).sub(c);
-      const r = 0.34 * (1 - t * 0.7);
-      tmp.normalize().multiplyScalar(r);
-      tmp.y *= 0.75;
-      tmp.addScalar(noiseA(c.x * 3 + tmp.x * 4, c.z * 3 + tmp.y * 4) * 0.03);
-      tmp.add(c);
-      pos.setXYZ(i, tmp.x, tmp.y, tmp.z);
+    const { geo, curve, radiusAt } = rootGeo(rng, pts, { r0: 0.34, r1: 0.1, flat: 0.75 });
+    D.add(rootMat, geo);
+    const c = new THREE.Vector3(), T = new THREE.Vector3();
+    const Y = new THREE.Vector3(0, 1, 0), S = new THREE.Vector3(), N = new THREE.Vector3();
+    const frame = (t) => {
+      curve.getPointAt(t, c);
+      curve.getTangentAt(t, T);
+      S.crossVectors(T, Y).normalize();
+      N.crossVectors(S, T).normalize();
+      return radiusAt(t);
+    };
+    // a toadstool cluster growing out of the root's outer flank
+    {
+      frame(0.5);
+      const side = S.clone().multiplyScalar(Math.sign(S.x) === s ? 1 : -1);
+      for (let i = 0; i < 4; i++) {
+        const t = 0.44 + i * 0.05 + rng.jitter(0.02);
+        const rr = frame(t);
+        const p = c.clone().addScaledVector(side, rr * 0.62).addScaledVector(N, rr * 0.42 * 0.75);
+        addToadstool(D, mats, rng, p.x, p.y - 0.02, p.z, { size: rng.range(0.045, 0.075), color: i % 3 ? '#b98a4e' : '#c9352a', lean: 0.25 });
+      }
     }
-    g.computeVertexNormals();
-    uvBox(g, 'z', 1.2);
-    // moss creeps over the root's back (shader overlay) — flat cushions stood off the tube like shelves
-    D.add(mats.mossyBark(), g);
+    // a fern where the root leaves the bark, another at its foot
+    frame(0.12);
+    addFern(D, ctx, rng, c.x + s * 0.18, c.y - 0.25, c.z + 0.12, { size: 0.36, fronds: 6 });
+    frame(0.9);
+    addFern(D, ctx, rng, c.x + s * 0.22, 0, c.z + 0.08, { size: 0.32, fronds: 5 });
+    // an ivy runner along the top ridge
+    {
+      const r = frame(0.22);
+      const start = c.clone().addScaledVector(N, r * 0.78);
+      addIvy(D, mats, rng, [start.x, start.y, start.z], [T.x, T.y, T.z], { length: 0.75, droop: 0.15, size: 0.055, normal: [N.x, N.y, N.z], density: 0.8 });
+    }
     // a couple of toadstools nestled at the root's foot
     for (let i = 0; i < 3; i++) {
       addToadstool(D, mats, rng, x0 + s * (0.75 + rng.range(0.1, 0.4)), 0, 0.9 + rng.jitter(0.3), { size: rng.range(0.07, 0.13) });
@@ -494,6 +545,57 @@ export function buildDoor(ctx, B, mats) {
     update,
     anchors: { lantern: lanternPos, sign },
   };
+}
+
+/** The shared vertex-coloured, lightly mossy root bark (door roots & annex roots: one draw call). */
+export function rootBarkMaterial(ctx) {
+  return ctx.materials.surface('bark', { mossy: 0.22, vertexColors: true });
+}
+
+const BARK_MEAN = new THREE.Color('#6a5845');
+/**
+ * A root along `pts` (frame space): an oval tube tapering r0 → r1 (`flat` =
+ * height / width), with long bark ridges and furrows that wander a little.
+ * Vertex colours carry the AO for rootBarkMaterial: dark in the furrows,
+ * underneath and near the ground (y = `ground`). Returns { geo, curve, radiusAt(t) }.
+ */
+export function rootGeo(rng, pts, { r0 = 0.3, r1 = 0.08, flat = 0.75, radial = 14, tubular = 28, ground = 0 } = {}) {
+  const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p[0], p[1], p[2])));
+  const g = new THREE.TubeGeometry(curve, tubular, 1, radial, false);
+  const pos = g.attributes.position;
+  const col = new Float32Array(pos.count * 3);
+  const c = new THREE.Vector3(), d = new THREE.Vector3();
+  const ox = rng.next() * 50;
+  const radiusAt = (t) => r0 + (r1 - r0) * Math.pow(t, 0.8);
+  for (let j = 0; j <= tubular; j++) {
+    const t = j / tubular;
+    curve.getPointAt(t, c);
+    const r = radiusAt(t);
+    for (let k = 0; k <= radial; k++) {
+      const i = j * (radial + 1) + k;
+      const ang = (k / radial) * Math.PI * 2;
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      d.fromBufferAttribute(pos, i).sub(c).normalize();
+      // ridges along the root (periodic in the angle: no seam)
+      const f = Math.sin(ang * 7 + noiseA(t * 3 + ox + ca * 0.8, sa * 0.8) * 2.4 + t * 1.6);
+      const rid = Math.sign(f) * Math.pow(Math.abs(f), 0.6);
+      const lump = noiseB(c.x * 2.2 + ox + ca * 0.5, c.z * 2.2 + sa * 0.5) * 0.09;
+      d.multiplyScalar(r * (1 + 0.065 * rid + lump));
+      const under = THREE.MathUtils.smoothstep(-d.y / r, -0.1, 0.8);
+      d.y *= flat;
+      const y = c.y + d.y;
+      pos.setXYZ(i, c.x + d.x, y, c.z + d.z);
+      const near = 1 - THREE.MathUtils.smoothstep(y - ground, 0.0, 0.3);
+      const ao = THREE.MathUtils.clamp(1.04 - 0.4 * Math.max(0, -rid) + 0.06 * Math.max(0, rid) - 0.3 * under - 0.32 * near, 0.32, 1.12);
+      col[i * 3] = BARK_MEAN.r * ao;
+      col[i * 3 + 1] = BARK_MEAN.g * ao;
+      col[i * 3 + 2] = BARK_MEAN.b * ao;
+    }
+  }
+  g.computeVertexNormals();
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  uvBox(g, 'z', 1.2);
+  return { geo: g, curve, radiusAt };
 }
 
 /** World z of the oak's (nominal) bark surface in front of the trunk at x, y. */

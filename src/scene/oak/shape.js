@@ -260,8 +260,9 @@ export const BOULDER = { a: 66.2, rho: 6.45, lift: 0.34, rRad: 1.0, rUp: 0.98, r
 // and branch further (limbs.js). Every limb is kinked two or three times — an
 // old oak's limbs zig-zag where they once lost a leader — and `elbow` (a
 // fraction of the radius) swells the bark into a knobbly elbow at that point.
-// L1 is the long low limb reaching front-left over the cottage path (it
-// carries two lanterns and fairy lights). Nothing grows in front of the
+// L1 is the long low limb reaching front-left over the cottage path (a bare,
+// gnarled arm with a few high tufts — limbs.js — carrying lanterns, fairy
+// lights and moss curtains). Nothing grows in front of the
 // Code Loft (front-right, below y ≈ 16.5). The limbs to the back and right
 // stay low enough that the crown's underside forms a ceiling across the top
 // of the spot views. (Check: no limb tube may enter a spot camera frustum.)

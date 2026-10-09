@@ -10,6 +10,8 @@
 //   mergeSafe(geos)   mergeGeometries that first aligns attribute sets
 //   moonlit(mat)      a clone of a foliage material that dims to a moonlit
 //                     silhouette at night, with a silver rim on its upper edges
+//                     (the old mossBalanced() patch is gone: the surface shader's
+//                     moss now ignores vertex colours itself — opts.mossGain)
 //   noise helpers     seeded 2D simplex fields shared by terrain & scatter,
 //                     groundPatches() (cushions, drifts, clover, soil) and
 //                     microRelief() — the floor and the undergrowth agree
@@ -329,33 +331,3 @@ export function moonlit(base, { dim = 0.6, rim = 0.03, color = [0.55, 0.68, 0.92
   m.customProgramCacheKey = () => `${key}|moonlit-${dim}-${rim}`;
   return m;
 }
-
-// ─── moss-balanced surfaces ──────────────────────────────────────────────────
-/**
- * A clone of a vertex-coloured, `mossy` surface material whose moss overlay
- * ignores the vertex colour. (The overlay paints the moss texture's own albedo
- * and the vertex colour then multiplies it again: on a moss-tinted log, root
- * or stone top the two multiplied down to near black.) gain lifts the moss a
- * little towards the sunlit carpet around it. The cached material is never
- * mutated; if the surface shader changes the patch simply does nothing.
- */
-export function mossBalanced(base, gain = 1.3) {
-  const m = base.clone();
-  m.name = `${base.name}-mossbal`;
-  const prev = m.onBeforeCompile;
-  m.onBeforeCompile = (shader, renderer) => {
-    prev?.call(m, shader, renderer);
-    shader.fragmentShader = shader.fragmentShader.replace(
-      'sfCol = mix(sfCol, mA.rgb * mix(vec3(1.0), vec3(1.1, 1.14, 0.9), up), m);',
-      `#ifdef USE_COLOR
-    sfCol = mix(sfCol, mA.rgb * mix(vec3(1.0), vec3(1.1, 1.14, 0.9), up) * ${gain.toFixed(3)} / max(vColor.rgb, vec3(0.05)), m);
-#else
-    sfCol = mix(sfCol, mA.rgb * mix(vec3(1.0), vec3(1.1, 1.14, 0.9), up), m);
-#endif`,
-    );
-  };
-  const key = m.customProgramCacheKey();
-  m.customProgramCacheKey = () => `${key}|mossbal-${gain}`;
-  return m;
-}
-

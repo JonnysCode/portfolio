@@ -3,11 +3,16 @@
 // any more: the visitor explores by gliding the camera between spots
 // (cameraRig.js) and clicking the little things they discover.
 //
-// • Markers: gently bobbing golden sparkles (one Points draw call for all)
-//   float above the hotspots of the CURRENT spot; in the 'glen' overview only
-//   the featured pieces get a small one. Visited entries turn into a little
-//   leaf. Markers pop in one by one after the camera lands and hide while
-//   their panel is open.
+// • Markers: small golden firefly wisps with two or three circling motes (one
+//   Points draw call for all) drift above the hotspots of the CURRENT spot; in
+//   the 'glen' overview only the featured pieces get one. A thin ring appears
+//   round a wisp only while it is hovered / keyboard-focused. By night they
+//   turn silver-mint, smaller and fainter (the lamps own the night); far ones
+//   fade. Visited entries turn into a little leaf. Markers pop in one by one
+//   after the camera lands and hide while their panel is open.
+// • Secret tells: lingering at a place (~20 s untouched), or having read all
+//   its pages, makes one unfound secret in plain view twitch and glimmer once
+//   (with a soft twinkle) — remembered, never repeated; secrets stay markerless.
 // • Secrets (opts.kind === 'secret'): no marker at all — hovering one makes a
 //   pale sparkle appear; activating it the first time counts towards the
 //   "secrets found x/y" discovery counter (chime + toast).
@@ -27,6 +32,7 @@
 //   ctx.interactions.setOpen(h | null) / markVisited(entryId) / isVisited(entryId)   (UI bookkeeping)
 //   ctx.interactions.progress() → { visited, total }   ctx.interactions.onVisit(fn(h, progress))
 //   ctx.interactions.secrets({ by: 'day' }?) → { found, total }   ctx.interactions.onSecret(fn(h, secrets, isNew))
+//   ctx.interactions.onTell(fn(h))      (a secret gave its one-time tell)
 //   ctx.interactions.onGroundClick((point, event) => …)  (tap on empty ground)
 //   ctx.interactions.pickGround() / pickHotspot() / setPointerFromClient(x, y)
 //   ctx.interactions.refreshBounds(h)   (call if a hotspot object changes size a lot)
@@ -54,13 +60,18 @@ import { triGrid } from './triGrid.js';
  * tail-vise end instead.
  */
 const MARKER_TWEAKS = {
-  'workbench-wip': { dx: 0.7, dz: 0.35, y: 1.25 },
+  'workbench-wip': { dx: 0.55, dz: 0.35, y: 1.5 },
   // the two villagers sit at the table's back: the sparkle (and its leaf once read) floats over the free front end
   'dining-table': { dx: 0.62, dz: 0.25, y: 1.0 },
+  // the record player stands on the cabinet: the cabinet's wisp hangs at its free right end, the
+  // coffee table's low and to the front (four pieces on the deck, four clear places to tap)
+  'record-cabinet': { dx: 0.62, dz: 0.12, y: 0.98 },
+  'coffee-table': { dx: -0.12, dz: 0.4, y: 0.6 },
 };
 
 const VISITED_KEY = 'woodland:visited';
 const SECRETS_KEY = 'woodland:secrets';
+const TOLD_KEY = 'woodland:secret-tells';
 
 /** Marker kinds (shader). */
 const K_SPARKLE = 0, K_LEAF = 1, K_SECRET = 2, K_FEATURED = 3;
@@ -142,6 +153,7 @@ export function createInteractions(ctx) {
     attr('aSize', 1);
     attr('aPhase', 1);
     attr('aKind', 1);
+    attr('aHot', 1);
     markers.geometry = markerGeo;
   }
   ensureCapacity(48);
@@ -389,8 +401,9 @@ export function createInteractions(ctx) {
       if (v.z > 1) continue;
       const sx = r.left + ((v.x + 1) / 2) * r.width, sy = r.top + ((1 - v.y) / 2) * r.height;
       const pr = engine.renderer.getPixelRatio() || 1;
-      const px = Math.min(84 * pr, Math.max(24 * (h.__size ?? 1) * pr, ((h.__size ?? 1) * markerScale() * 0.75) / Math.max(dist, 0.1))) / pr;
-      const reach = px * 0.5 + (generous ? 22 : 6);
+      // (the sprite's size as the marker shader draws it; the wisp itself is its middle ~60 %)
+      const px = Math.min(56 * pr, Math.max(16 * (h.__size ?? 1) * pr, ((h.__size ?? 1) * markerScale() * 0.5) / Math.max(dist, 0.1))) / pr;
+      const reach = px * 0.5 + (generous ? 24 : 9);
       const d = Math.hypot(sx - clientX, sy - clientY);
       if (d < reach && d < bestD) {
         bestD = d;
@@ -461,18 +474,22 @@ export function createInteractions(ctx) {
 
   // springy "boing" on the hotspot root; restores the exact original scale
   const bouncing = new Set();
-  function bounce(h) {
+  function bounce(h, { amp = 0.075, twice = false } = {}) {
     if (reduced || boundsOf(h).r > 3.6) return;
     if (!h.__bounce) h.__bounce = { base: h.object.scale.clone(), t: 0 };
     else h.__bounce.t = 0;
+    h.__bounce.amp = amp;
+    h.__bounce.twice = twice;
     bouncing.add(h);
   }
+  const wob = (t) => (t > 0 ? Math.sin(t * 19) * Math.exp(-t * 6.5) : 0);
   function updateBounces(dt) {
     for (const h of bouncing) {
       const b = h.__bounce;
       b.t += dt;
-      const s = 1 + 0.075 * Math.sin(b.t * 19) * Math.exp(-b.t * 6.5);
-      if (b.t > 0.9) {
+      // (a secret's tell: a second, smaller twitch — an ear flick, a bob)
+      const s = 1 + b.amp * (wob(b.t) + (b.twice ? 0.7 * wob(b.t - 0.55) : 0));
+      if (b.t > (b.twice ? 1.45 : 0.9)) {
         h.object.scale.copy(b.base);
         h.__bounce = null;
         bouncing.delete(h);
@@ -562,6 +579,7 @@ export function createInteractions(ctx) {
     if (focused && !isLive(focused)) api.setFocused(null);
 
     updateMarkers(dt, t, spot, moving, panelOpen);
+    if (f % 20 === 0) maybeTell(t, spot, moving, panelOpen);
     updateRing(dt, t, panelOpen);
     updateBounces(dt);
   }, 2);
@@ -573,7 +591,8 @@ export function createInteractions(ctx) {
     const sizeA = markerGeo.attributes.aSize.array;
     const phase = markerGeo.attributes.aPhase.array;
     const kind = markerGeo.attributes.aKind.array;
-    const kUp = damp(6, dt), kDown = damp(10, dt);
+    const hotA = markerGeo.attributes.aHot.array;
+    const kUp = damp(6, dt), kDown = damp(10, dt), kHot = damp(9, dt);
     const sinceLanding = t - settledAt;
     featuredSeen.clear();
     let n = 0, order = 0;
@@ -619,8 +638,9 @@ export function createInteractions(ctx) {
         }
         k = isVisited ? K_LEAF : spot === 'glen' && h.area !== 'glen' ? K_FEATURED : K_SPARKLE;
       }
-      const hot = h === hovered || h === focused;
-      if (hot && !isSecret) targetSize *= 1.25;
+      // hovered / keyboard-focused: a thin ring appears around the wisp
+      const hot = (h === hovered || h === focused) && !isSecret ? 1 : 0;
+      h.__hot = (h.__hot ?? 0) + (hot - (h.__hot ?? 0)) * kHot;
       const a0 = h.__alpha ?? 0;
       h.__alpha = a0 + (want - a0) * (want > a0 ? kUp : kDown);
       if (h.__alpha < 0.01) continue;
@@ -634,15 +654,17 @@ export function createInteractions(ctx) {
       sizeA[n] = h.__size * (reduced ? 1 : 1 + 0.35 * Math.sin(Math.min(1, h.__alpha) * Math.PI) * (want > a0 ? 1 : 0));
       phase[n] = (h.id * 1.618) % (Math.PI * 2);
       kind[n] = k;
+      hotA[n] = h.__hot;
       n++;
     }
     markerGeo.setDrawRange(0, n);
-    for (const key of ['position', 'aAlpha', 'aSize', 'aPhase', 'aKind']) markerGeo.attributes[key].needsUpdate = n > 0;
+    for (const key of ['position', 'aAlpha', 'aSize', 'aPhase', 'aKind', 'aHot']) markerGeo.attributes[key].needsUpdate = n > 0;
     markers.visible = n > 0;
     markerMat.uniforms.uTime.value = reduced ? 0 : t;
     markerMat.uniforms.uTimeF.value = reduced ? 0 : t;
     markerMat.uniforms.uScale.value = markerScale();
     markerMat.uniforms.uPx.value = engine.renderer.getPixelRatio() || 1;
+    markerMat.uniforms.uNight.value = ctx.env?.night ?? (isNight() ? 1 : 0);
   }
 
   function updateRing(dt, t, panelOpen) {
@@ -680,6 +702,68 @@ export function createInteractions(ctx) {
     ringMat.uniforms.uTime.value = t;
     ring.visible = true;
   }
+
+  // ─── secrets: a one-time tell ─────────────────────────────────────────────
+  // A visitor who lingers at a place (~20 s without touching anything), or who
+  // has read every page there, gets one quiet hint of a secret in view: it
+  // twitches (the cat's ear, the duck's bob), a pale glimmer, a soft twinkle.
+  // Each secret tells only once (remembered); secrets keep no marker.
+  const told = loadSet(TOLD_KEY);
+  let lastInputAt = 0;
+  let toldThisVisit = null;
+  gestures.on('input', () => (lastInputAt = engine.elapsed));
+  canvas.addEventListener('pointermove', () => (lastInputAt = engine.elapsed), { passive: true });
+  const tellP = new THREE.Vector3();
+  const tellDir = new THREE.Vector3();
+  const tellS = {};
+  function maybeTell(t, spot, moving, panelOpen) {
+    if (!spot || moving || panelOpen || ctx.cameraRig?.focused || ctx.ui?.isModalOpen) return;
+    if (toldThisVisit === spot + settledAt) return;
+    const since = t - settledAt;
+    const quiet = t - lastInputAt;
+    const pages = api.forSpot(spot);
+    const allRead = pages.length > 0 && pages.every((h) => visited.has(h.entryId));
+    if (!((since > 20 && quiet > 10) || (allRead && since > 5 && quiet > 4))) return;
+    let best = null, bestD = Infinity;
+    for (const h of hotspots) {
+      if (h.kind !== 'secret' || !isLive(h) || secretsFound.has(secretKey(h)) || told.has(secretKey(h))) continue;
+      api.screenPosition(h, tellS);
+      if (!tellS.visible) continue;
+      const r = canvasRect;
+      const nx = (tellS.x - r.left) / r.width - 0.5, ny = (tellS.y - r.top) / r.height - 0.5;
+      if (Math.abs(nx) > 0.42 || ny < -0.36 || ny > 0.36) continue;
+      // in view only (not hidden behind a wall, a deck or the trunk): its middle or its top must be clear
+      centerOf(h, tellP);
+      if (tellP.distanceTo(camera.position) > 26) continue;
+      let seen = false;
+      for (let k = 0; k < 2 && !seen; k++) {
+        if (k === 1) markerWorld(h, tellP).y -= 0.3;
+        const dist = tellP.distanceTo(camera.position);
+        tellDir.subVectors(tellP, camera.position).divideScalar(dist || 1);
+        seen = firstSolidHit(camera.position, tellDir, camera.near, Math.max(camera.near, dist - boundsOf(h).r * 0.5 - 0.2), h.object) === Infinity;
+      }
+      if (!seen) continue;
+      // this place's own secrets first, then the most central one
+      const d = Math.hypot(nx, ny) - (h.area === spot ? 0.5 : 0);
+      if (d < bestD) {
+        bestD = d;
+        best = h;
+      }
+    }
+    // (nothing in view: look again a little later — the visitor may have turned round)
+    if (!best) {
+      lastInputAt = Math.max(lastInputAt, t - 6);
+      return;
+    }
+    toldThisVisit = spot + settledAt;
+    told.add(secretKey(best));
+    saveSet(TOLD_KEY, told);
+    bounce(best, { amp: 0.1, twice: true });
+    best.__sparkUntil = t + 2.4;
+    ctx.audio?.play?.('twinkle');
+    for (const fn of tellListeners) fn(best);
+  }
+  const tellListeners = new Set();
 
   function secretKey(h) {
     return h.secretId ?? `${h.area ?? 'glen'}:${h.label ?? h.id}`;
@@ -841,6 +925,11 @@ export function createInteractions(ctx) {
       visitListeners.add(fn);
       return () => visitListeners.delete(fn);
     },
+    /** fn(hotspot) when a secret gives its one-time tell (a twitch and a glimmer). */
+    onTell(fn) {
+      tellListeners.add(fn);
+      return () => tellListeners.delete(fn);
+    },
     /** fn(hotspot, { found, total }, isNew) whenever a secret is activated. */
     onSecret(fn) {
       secretListeners.add(fn);
@@ -899,7 +988,12 @@ function saveSet(key, set) {
   }
 }
 
-/** Golden sparkle (unvisited) / little green leaf (visited) / pale secret twinkle point sprites. */
+/**
+ * Marker point sprites: a golden firefly wisp with orbiting motes (unvisited;
+ * a thin ring around it only while hovered / keyboard-focused), a little
+ * green leaf (visited), a pale secret twinkle. By night they turn silver-mint,
+ * smaller and fainter (the warm lamps own the night), and far ones fade.
+ */
 function makeMarkerMaterial() {
   const c = (hex) => new THREE.Color(hex);
   return new THREE.ShaderMaterial({
@@ -907,12 +1001,14 @@ function makeMarkerMaterial() {
       uTime: { value: 0 },
       uTimeF: { value: 0 },
       uScale: { value: 600 },
+      uNight: { value: 0 },
       uGold: { value: c(palette.postYellow ?? '#ffcc33') },
       uCore: { value: c(palette.spots) },
       uEdge: { value: c(palette.capBrown) },
       uLeaf: { value: c(palette.leafLight) },
       uLeafDark: { value: c(palette.leafDark) },
       uMint: { value: c('#c8fff0') },
+      uSilver: { value: c('#dff7ff') },
       uPx: { value: 1 },
     },
     vertexShader: /* glsl */ `
@@ -920,77 +1016,99 @@ function makeMarkerMaterial() {
       attribute float aSize;
       attribute float aPhase;
       attribute float aKind;
+      attribute float aHot;
       uniform float uTime;
       uniform float uScale;
       uniform float uPx;
+      uniform float uNight;
       varying float vAlpha;
       varying float vKind;
       varying float vSpin;
       varying float vTw;
       varying float vPh;
+      varying float vHot;
+      varying float vGrow;
       void main() {
         vec3 p = position;
         vPh = aPhase;
-        p.y += sin(uTime * 2.1 + aPhase) * 0.09;
+        // fireflies drift a little more than they bob
+        p.y += sin(uTime * 1.7 + aPhase) * 0.07;
+        p.x += sin(uTime * 0.9 + aPhase * 2.3) * 0.03;
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
-        float pulse = 1.0 + 0.07 * sin(uTime * 3.3 + aPhase * 1.7);
-        // never smaller than a readable dot, never a blob filling the screen
-        gl_PointSize = clamp(aSize * pulse * uScale * 0.75 / max(0.1, -mv.z), 24.0 * aSize * uPx, 84.0 * uPx) * step(0.001, aAlpha);
-        vAlpha = aAlpha;
+        float dist = max(0.1, -mv.z);
+        float pulse = 1.0 + 0.06 * sin(uTime * 2.6 + aPhase * 1.7);
+        float night = aKind > 1.5 && aKind < 2.5 ? 0.0 : uNight;
+        // never smaller than a readable firefly, never a blob filling the screen
+        float px = clamp(aSize * pulse * uScale * 0.5 / dist, 16.0 * aSize * uPx, 56.0 * uPx) * (1.0 - 0.28 * night);
+        // hovered / focused: the sprite grows to make room for its ring (the wisp keeps its size)
+        float wisp = aKind < 0.5 || aKind > 2.5 ? 1.0 : 0.0;
+        vGrow = 1.0 + 0.5 * aHot * wisp;
+        gl_PointSize = px * vGrow * step(0.001, aAlpha);
+        // far away (the overview's featured pieces): quieter
+        vAlpha = aAlpha * mix(1.0, 0.6, smoothstep(24.0, 58.0, dist)) * (1.0 - 0.42 * night);
         vKind = aKind;
+        vHot = aHot;
         vSpin = aKind > 0.5 && aKind < 1.5 ? 0.5 + 0.25 * sin(uTime * 1.6 + aPhase) : sin(uTime * 0.9 + aPhase) * 0.35 + uTime * (aKind > 1.5 && aKind < 2.5 ? 0.8 : 0.0);
-        if (aKind > 2.5) gl_PointSize *= 1.6; // room for the halo ring
-        vTw = 0.75 + 0.25 * sin(uTime * 7.0 + aPhase * 3.0);
+        vTw = 0.7 + 0.3 * sin(uTime * 5.3 + aPhase * 3.0);
       }
     `,
     fragmentShader: /* glsl */ `
       uniform vec3 uGold;
       uniform float uTimeF;
+      uniform float uNight;
       uniform vec3 uCore;
       uniform vec3 uEdge;
       uniform vec3 uLeaf;
       uniform vec3 uLeafDark;
       uniform vec3 uMint;
+      uniform vec3 uSilver;
       varying float vAlpha;
       varying float vKind;
       varying float vSpin;
       varying float vTw;
       varying float vPh;
+      varying float vHot;
+      varying float vGrow;
       void main() {
-        vec2 uv = gl_PointCoord * 2.0 - 1.0;
-        uv.y = -uv.y;
+        vec2 uv0 = gl_PointCoord * 2.0 - 1.0;
+        uv0.y = -uv0.y;
+        // (the wisp keeps its pixel size inside a sprite grown for the hover ring)
+        vec2 uv = uv0 * vGrow;
         float cs = cos(vSpin), sn = sin(vSpin);
         vec2 q = mat2(cs, -sn, sn, cs) * uv;
         vec3 col;
         float a;
         float r = length(uv);
-        float ringA = 0.0;
-        if (vKind > 2.5) {
-          // featured (overview): the sparkle in the middle of a slowly breathing golden halo
-          float br = 0.5 + 0.5 * sin(uTimeF * 1.7 + vPh);
-          float ringR = 0.74 + 0.16 * br;
-          ringA = exp(-pow((r - ringR) / 0.06, 2.0)) * (0.42 - 0.24 * br) + exp(-r * r * 3.0) * 0.18;
-          uv *= 1.6;
-          q *= 1.6;
-          r = length(uv);
-        }
         if (vKind < 0.5 || vKind > 2.5) {
-          // sparkle: astroid-like four-point star with a cream core and a soft halo
-          float s = pow(abs(q.x), 0.55) + pow(abs(q.y), 0.55);
-          float star = 1.0 - smoothstep(0.74, 0.8, s);
-          // a smaller diagonal star behind it: an eight-point twinkle
-          vec2 q2 = mat2(0.7071, -0.7071, 0.7071, 0.7071) * q;
-          float s2 = pow(abs(q2.x), 0.55) + pow(abs(q2.y), 0.55);
-          float star2 = (1.0 - smoothstep(0.44, 0.5, s2)) * (0.55 + 0.45 * vTw);
-          float edge = smoothstep(0.58, 0.72, s);
-          float core = 1.0 - smoothstep(0.0, 0.5, length(q) * 1.8);
-          col = mix(uGold, uEdge, edge * 0.55);
-          col = mix(col, uCore, core);
-          float halo = exp(-r * r * 4.0) * 0.55;
-          a = max(max(star, star2), halo);
-          col = mix(uGold * 1.2, col, max(star, star2 * 0.8));
-          col *= 1.35;
+          // firefly wisp: a small hot core in a soft golden glow, a faint
+          // four-point glint, and two or three motes circling it
+          float featured = step(2.5, vKind);
+          float br = 0.5 + 0.5 * sin(uTimeF * 1.4 + vPh);
+          float core = exp(-r * r * 30.0);
+          float glow = exp(-r * r * 5.5) * (0.42 + 0.16 * br + 0.1 * featured);
+          float glint = (exp(-abs(q.x) * 15.0) * (1.0 - smoothstep(0.08, 0.72, abs(q.y)))
+                      + exp(-abs(q.y) * 15.0) * (1.0 - smoothstep(0.08, 0.72, abs(q.x)))) * 0.6 * vTw;
+          float motes = 0.0;
+          for (int i = 0; i < 3; i++) {
+            float fi = float(i);
+            float an = uTimeF * (0.85 + 0.3 * fi) * (mod(fi, 2.0) < 0.5 ? 1.0 : -1.0) + vPh * 2.0 + fi * 2.094;
+            float rr = 0.56 + 0.1 * sin(uTimeF * 1.3 + fi * 1.7 + vPh);
+            vec2 dm = uv - vec2(cos(an), sin(an) * 0.72) * rr;
+            motes += exp(-dot(dm, dm) * 95.0) * (0.55 + 0.45 * sin(uTimeF * 3.7 + fi * 2.0 + vPh)) * (fi < 1.5 + featured ? 1.0 : 0.0); // two motes, three round a featured piece
+          }
+          a = clamp(core + glow + glint + motes * 0.85, 0.0, 1.0);
+          col = mix(uGold * 1.15, uCore * 1.3, clamp(core * 1.3 + glint * 0.25, 0.0, 1.0));
+          // (pale motes: not one more amber bulb among the fairy lights)
+          col = mix(col, mix(uCore, uMint, 0.35) * 1.3, clamp(motes, 0.0, 1.0) * 0.8);
+          // by night: silver-mint, apart from the amber lamps
+          col = mix(col, mix(uSilver, uMint, 0.5) * (0.75 + 0.6 * core), uNight * 0.75);
+          // the ring: only while hovered / focused
+          float ring = exp(-pow((length(uv0) - 0.84) / 0.05, 2.0)) * 0.8 * vHot;
+          if (ring > 0.0) {
+            col = mix(mix(uGold, uSilver, uNight * 0.6) * 1.2, col, clamp(a, 0.0, 1.0));
+            a = max(a, ring);
+          }
         } else if (vKind < 1.5) {
           // leaf: a lens shape with a midrib
           vec2 l = q * vec2(1.6, 1.0);
@@ -1011,10 +1129,6 @@ function makeMarkerMaterial() {
           float sats = exp(-dot(s1, s1) * 140.0) + exp(-dot(s2, s2) * 160.0);
           a = clamp(thin * vTw + core + sats * vTw + exp(-r * r * 4.0) * 0.25, 0.0, 1.0);
           col = mix(uMint, uCore, core) * 1.3;
-        }
-        if (ringA > 0.0) {
-          col = mix(uGold * 1.25, col, clamp(a, 0.0, 1.0));
-          a = max(a, ringA);
         }
         a *= vAlpha;
         if (a < 0.01) discard;

@@ -16,14 +16,15 @@
 // Plus the flagstones / stepping stones along every path
 // (vegetation/pathStones.js) — individual irregular stones, sunk in.
 //
-// The mesh is a radial LOD (see lodLattice): the glen at ground.js' 0.5-unit
-// bake resolution, the forest wall at 1-unit, the misty rim at 2-unit cells,
-// sized per quality tier (high ≈ 48k, medium ≈ 43k, low ≈ 38k triangles —
-// the old uniform 280 × 280 grid was 157k).
+// The mesh is a radial LOD (see lodLattice): the glen (an ellipse) at
+// ground.js' 0.5-unit bake resolution, the forest wall at 1-unit, the misty
+// rim at 2-unit cells, sized per quality tier (the old uniform 280 × 280 grid
+// was 157k triangles). TERRAIN_BUDGET covers the whole module (mesh + stones).
 //
 // ctx.terrainMesh = the ground mesh (raycast target for ground clicks).
 // Result (ctx.modules.terrain): { mesh, pathStones: [{ x, z, r }], stats: { triangles,
-//   vertices, budget, overBudget }, budget: { high, medium, low } }
+//   vertices, budget, overBudget }, budget: { high, medium, low }, paintBlooms(zones) }
+//   (paintBlooms: the vegetation paints its flower drifts' wash into aBloom)
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { heightGrid, pathGrid, streamGrid, GRID_RES, PADS } from './ground.js';
@@ -41,14 +42,24 @@ import { forestPlan } from './vegetation/plan.js';
 // lattice (its height is read straight from heightGrid — no resampling), and
 // the coarse cells that border a finer level are fanned around the finer
 // level's edge midpoints, so the levels stitch without T-junction cracks.
-// Rects are [x0, x1, z0, z1] in world units (multiples of the next level's cell).
+//
+// The fine level is an ELLIPSE around the glen (rx across, rz front-to-back,
+// centred cz in front of the oak — the open front band the overview looks over
+// keeps its fine floor), built from whole 1-unit blocks; its old rectangle's
+// corners lay under the forest wall, where nothing ever sees a 0.5-unit cell.
+// The mid level is a rectangle [x0, x1, z0, z1] (multiples of 2 units).
 const LOD = {
-  high: { fine: [-31, 31, -29, 37], mid: [-46, 46, -44, 54] },
-  medium: { fine: [-28, 28, -27, 34], mid: [-44, 44, -42, 50] },
-  low: { fine: [-26, 26, -25, 32], mid: [-40, 40, -40, 46] },
+  high: { fine: { rx: 31, rz: 33, cz: 4 }, mid: [-46, 46, -44, 54] },
+  medium: { fine: { rx: 28, rz: 30.5, cz: 3.5 }, mid: [-44, 44, -42, 50] },
+  low: { fine: { rx: 26, rz: 28.5, cz: 3.5 }, mid: [-40, 40, -40, 46] },
 };
-/** Triangle budgets per tier (ctx.modules.terrain.budget; checked against stats.triangles). */
-export const TERRAIN_BUDGET = { high: 50000, medium: 44000, low: 40000 };
+/**
+ * Triangle budgets per tier for the WHOLE terrain module — the ground mesh
+ * plus the path flagstones (≈ 12k on every tier), i.e. every mesh moduleStats()
+ * counts for 'terrain' (ctx.modules.terrain.budget). Measured in round 4:
+ * ≈ 55.7k / 51.0k / 47.1k (the elliptical fine level saved ≈ 4–5k per tier).
+ */
+export const TERRAIN_BUDGET = { high: 58000, medium: 53500, low: 49500 };
 
 /**
  * Indexed lattice mesh: { lattice [ix, iz] per vertex, index } — ix/iz are
@@ -59,14 +70,21 @@ export function lodLattice(tier) {
   const CELL = (TERRAIN_HALF_SIZE * 2) / GRID_RES;
   const N = GRID_RES + 1;
   const toL = (w) => Math.round((w + TERRAIN_HALF_SIZE) / CELL);
-  const rect = (r) => (r ? [toL(r[0]), toL(r[1]), toL(r[2]), toL(r[3])] : null);
-  const full = [0, GRID_RES, 0, GRID_RES];
-  // (cell size in lattice steps, outer rect, the finer level's rect inside it)
-  const levels = [
-    { s: 1, outer: rect(L.fine), inner: null },
-    { s: 2, outer: rect(L.mid), inner: rect(L.fine) },
-    { s: 4, outer: full, inner: rect(L.mid) },
-  ];
+  const toW = (i) => -TERRAIN_HALF_SIZE + i * CELL;
+  const mid = [toL(L.mid[0]), toL(L.mid[1]), toL(L.mid[2]), toL(L.mid[3])];
+  const F = L.fine;
+  // a 2-step block (origin bx, bz) is fine when its centre lies in the ellipse —
+  // and never on the mid rectangle's border ring (fine cells must not meet the
+  // 4-step cells, or a coarse edge would need three extra points)
+  const fineSet = new Set();
+  const isFine = (bx, bz) => fineSet.has(bz * N + bx);
+  for (let bz = mid[2] + 4; bz < mid[3] - 4; bz += 2) {
+    for (let bx = mid[0] + 4; bx < mid[1] - 4; bx += 2) {
+      const x = toW(bx + 1), z = toW(bz + 1);
+      if ((x / F.rx) ** 2 + ((z - F.cz) / F.rz) ** 2 < 1) fineSet.add(bz * N + bx);
+    }
+  }
+  const inMid = (ix, iz) => ix >= mid[0] && ix < mid[1] && iz >= mid[2] && iz < mid[3];
   const map = new Map();
   const lattice = [];
   const index = [];
@@ -80,41 +98,50 @@ export function lodLattice(tier) {
     }
     return i;
   };
-  // (upward-facing order around a cell: (x0,z0) → (x0,z1) → (x1,z1) → (x1,z0))
-  for (const { s, outer, inner } of levels) {
-    const [ox0, ox1, oz0, oz1] = outer;
-    for (let iz = oz0; iz < oz1; iz += s) {
-      for (let ix = ox0; ix < ox1; ix += s) {
-        const x1 = ix + s, z1 = iz + s;
-        if (inner && ix >= inner[0] && x1 <= inner[1] && iz >= inner[2] && z1 <= inner[3]) continue;
-        // edges that border the finer level carry its midpoint
-        const h = s / 2;
-        const zIn = inner && iz >= inner[2] && z1 <= inner[3];
-        const xIn = inner && ix >= inner[0] && x1 <= inner[1];
-        const left = zIn && ix === inner[1]; // x = x0 edge touches the inner rect's right side
-        const right = zIn && x1 === inner[0];
-        const bottom = xIn && iz === inner[3];
-        const top = xIn && z1 === inner[2];
-        if (!(left || right || bottom || top)) {
-          const a = v(ix, iz), b = v(ix, z1), c = v(x1, z1), d = v(x1, iz);
-          index.push(a, b, d, d, b, c);
-          continue;
-        }
-        // transition cell: fan around its centre over the boundary polygon
-        const poly = [[ix, iz]];
-        if (left) poly.push([ix, iz + h]);
-        poly.push([ix, z1]);
-        if (top) poly.push([ix + h, z1]);
-        poly.push([x1, z1]);
-        if (right) poly.push([x1, iz + h]);
-        poly.push([x1, iz]);
-        if (bottom) poly.push([ix + h, iz]);
-        const c = v(ix + h, iz + h);
-        for (let k = 0; k < poly.length; k++) {
-          const p = poly[k], q = poly[(k + 1) % poly.length];
-          index.push(c, v(p[0], p[1]), v(q[0], q[1]));
-        }
-      }
+  /**
+   * One cell of size s at (ix, iz); e0/e1/f0/f1: its x0 / x1 / z0 / z1 edge
+   * borders a finer level (carries that edge's midpoint).
+   * (upward-facing order around a cell: (x0,z0) → (x0,z1) → (x1,z1) → (x1,z0))
+   */
+  const cell = (ix, iz, s, e0 = false, e1 = false, f0 = false, f1 = false) => {
+    const x1 = ix + s, z1 = iz + s, h = s / 2;
+    if (!(e0 || e1 || f0 || f1)) {
+      const a = v(ix, iz), b = v(ix, z1), c = v(x1, z1), d = v(x1, iz);
+      index.push(a, b, d, d, b, c);
+      return;
+    }
+    // transition cell: fan around its centre over the boundary polygon
+    const poly = [[ix, iz]];
+    if (e0) poly.push([ix, iz + h]);
+    poly.push([ix, z1]);
+    if (f1) poly.push([ix + h, z1]);
+    poly.push([x1, z1]);
+    if (e1) poly.push([x1, iz + h]);
+    poly.push([x1, iz]);
+    if (f0) poly.push([ix + h, iz]);
+    const c = v(ix + h, iz + h);
+    for (let k = 0; k < poly.length; k++) {
+      const p = poly[k], q = poly[(k + 1) % poly.length];
+      index.push(c, v(p[0], p[1]), v(q[0], q[1]));
+    }
+  };
+  // fine (0.5-unit) cells inside the ellipse
+  for (const key of fineSet) {
+    const bx = key % N, bz = (key - bx) / N;
+    for (let dz = 0; dz < 2; dz++) for (let dx = 0; dx < 2; dx++) cell(bx + dx, bz + dz, 1);
+  }
+  // mid (1-unit) cells: the rest of the mid rectangle
+  for (let iz = mid[2]; iz < mid[3]; iz += 2) {
+    for (let ix = mid[0]; ix < mid[1]; ix += 2) {
+      if (isFine(ix, iz)) continue;
+      cell(ix, iz, 2, isFine(ix - 2, iz), isFine(ix + 2, iz), isFine(ix, iz - 2), isFine(ix, iz + 2));
+    }
+  }
+  // coarse (2-unit) cells everywhere else
+  for (let iz = 0; iz < GRID_RES; iz += 4) {
+    for (let ix = 0; ix < GRID_RES; ix += 4) {
+      if (inMid(ix, iz)) continue;
+      cell(ix, iz, 4, inMid(ix - 4, iz), inMid(ix + 4, iz), inMid(ix, iz - 4), inMid(ix, iz + 4));
     }
   }
   return { lattice, index, N, CELL };
@@ -189,6 +216,8 @@ export default async function build(ctx) {
   geo.setAttribute('aSplat', new THREE.BufferAttribute(splat, 4));
   geo.setAttribute('aPatch', new THREE.BufferAttribute(patch, 4));
   geo.setAttribute('aRelief', new THREE.BufferAttribute(relief, 2));
+  // the flower drifts' wash (painted by the vegetation once it knows its drifts: paintBlooms)
+  geo.setAttribute('aBloom', new THREE.BufferAttribute(new Float32Array(count * 4), 4));
   geo.computeVertexNormals();
   geo.computeBoundingSphere();
 
@@ -203,18 +232,50 @@ export default async function build(ctx) {
 
   // flagstones along the paths
   let pathStones = [];
+  let stoneTris = 0;
   try {
     const stoneMat = ctx.materials.surface('rock', { mossy: 0.2, scale: 0.75, vertexColors: true, breakup: 0.6 });
     const res = buildPathStones(ctx, stoneMat);
     res.mesh.raycast = () => {};
     ctx.scene.add(res.mesh);
     pathStones = res.stones;
+    const sg = res.mesh.geometry;
+    stoneTris = ((sg.index ? sg.index.count : sg.attributes.position.count) / 3) * (res.mesh.isInstancedMesh ? res.mesh.count : 1);
   } catch (err) {
     console.warn('[terrain] path stones failed', err);
   }
 
-  const triangles = index.length / 3;
-  const stats = { triangles, vertices: count, tier, budget: TERRAIN_BUDGET[tier] ?? TERRAIN_BUDGET.high };
+  // (the budget covers the whole module, as moduleStats() counts it: ground + flagstones)
+  const groundTris = index.length / 3;
+  const triangles = Math.round(groundTris + stoneTris);
+  const stats = { triangles, ground: groundTris, stones: Math.round(stoneTris), vertices: count, tier, budget: TERRAIN_BUDGET[tier] ?? TERRAIN_BUDGET.high };
   stats.overBudget = triangles > stats.budget;
-  return { mesh, pathStones, stats, budget: TERRAIN_BUDGET };
+  /**
+   * Paint the flower drifts' wash into aBloom. zones: [{ x, z, ax, az (unit
+   * axis), hl, hw (half axes), color (THREE.Color, linear), k (0..1) }]. The
+   * strength fades to the ellipse's rim and frays with a little noise.
+   */
+  function paintBlooms(zones) {
+    const attr = geo.attributes.aBloom;
+    const a = attr.array;
+    for (let i = 0; i < count; i++) {
+      const x = posArr[i * 3], z = posArr[i * 3 + 2];
+      for (const d of zones) {
+        const dx = x - d.x, dz = z - d.z;
+        if (Math.abs(dx) > d.hl + 0.5 || Math.abs(dz) > d.hl + 0.5) continue;
+        const u = (dx * d.ax + dz * d.az) / d.hl, v = (dx * d.az - dz * d.ax) / d.hw;
+        const e = Math.sqrt(u * u + v * v);
+        const fray = 0.85 + 0.3 * fieldMid(x * 2.3, z * 2.3);
+        const k = d.k * (1 - smoothstep(0.45, 1.0, e / fray));
+        if (k <= a[i * 4 + 3]) continue;
+        a[i * 4] = d.color.r * k;
+        a[i * 4 + 1] = d.color.g * k;
+        a[i * 4 + 2] = d.color.b * k;
+        a[i * 4 + 3] = k;
+      }
+    }
+    attr.needsUpdate = true;
+  }
+
+  return { mesh, pathStones, stats, budget: TERRAIN_BUDGET, paintBlooms };
 }

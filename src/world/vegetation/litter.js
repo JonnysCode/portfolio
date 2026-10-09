@@ -46,10 +46,11 @@ const LEAF_TONES = ['#8a5a2a', '#a8692c', '#b8823a', '#6e4a26', '#c49a48', '#936
 const PEBBLE_TONES = ['#9a9488', '#8b867c', '#a59d8c', '#7e7a72', '#b0a690'];
 
 /**
- * Scatter the litter. trees: forest plan trees ({ x, z, radius }).
+ * Scatter the litter. trees: forest plan trees ({ x, z, radius }); extra:
+ * ready-made leaf placements to add to the leaf mesh (the leaf drifts).
  * Returns the meshes (caller adds them) and the instance counts.
  */
-export function buildLitter(ctx, rng, { trees = [], density = 1 } = {}) {
+export function buildLitter(ctx, rng, { trees = [], density = 1, extra = [] } = {}) {
   const M = ctx.materials;
   const leaves = [];
   const pebbles = [];
@@ -114,6 +115,8 @@ export function buildLitter(ctx, rng, { trees = [], density = 1 } = {}) {
     pebbles.push({ x, y: getHeight(x, z) - s * 0.25, z, ry: rng.range(0, TAU), tx: rng.jitter(0.3), tz: rng.jitter(0.3), s, sx: rng.range(0.8, 1.3), color: tone(PEBBLE_TONES, 0.08) });
   }
 
+  // (the ochre & russet leaf drifts of vegetation/drifts.js share the mesh)
+  for (const it of extra) leaves.push(it);
   const leafMat = M.surface('leaf', { vertexColors: true, side: THREE.DoubleSide });
   const pebbleMat = M.surface('rock', { vertexColors: true, mossy: 0.15, scale: 0.25 });
   const meshes = [

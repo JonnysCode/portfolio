@@ -8,9 +8,9 @@
 //                          frustum tightly covering the glen (±35 units) at the
 //                          map size of the tier — no swimming, no re-fitting
 //                          while the camera glides. By night it becomes the
-//                          moonlight (silver-lavender, back-right). On 'medium'
-//                          the shadow map is re-rendered every other frame and
-//                          small casters are left out of it.
+//                          moonlight (silver-lavender, back-right). The shadow
+//                          map is re-rendered every other frame (static sun)
+//                          and small casters are left out of it.
 //   hemi HemisphereLight   soft, cool teal-grey sky fill (the shade reads as
 //                          cool depth, never green felt) / warm golden ground
 //                          bounce.
@@ -57,7 +57,8 @@
 // (The returned light object is always valid during the build; afterwards
 // addPoint returns null once the budget is used up.)
 //
-// ctx.lights = { sun, hemi, rim, beam, keyDir, shadowExtent, shadowCenter, canopy, addPoint(position, opts), allocate(), points }
+// ctx.lights = { sun, hemi, rim, beam, keyDir, shadowExtent, shadowCenter, canopy, addPoint(position, opts), allocate(), points,
+//                pools ({ count, meshes, ms, list } — the night light pools), rigs, retune() }
 //   keyDir is live (world space, towards the current key light).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
@@ -275,7 +276,13 @@ export default async function build(ctx) {
   // Without shadow maps (low tier) the canopy no longer occludes the moon and
   // there is no post grade to cool & vignette the night: tone the moonlight
   // down so the glen still reads as night, not as an overcast day.
-  const lit = q.shadows ? { key: 1, rim: 1, hemi: 1, boost: 1, beam: 1 } : { key: 0.45, rim: 0.55, hemi: 0.8, boost: 0, beam: 0.7 };
+  // By day, likewise: nothing is in the canopy's shadow without a shadow map, so
+  // the sun key and the leaf-filtered half shade are toned down (the glen keeps
+  // the same value structure as on the other tiers instead of washing out).
+  const lit = q.shadows
+    ? { key: 1, rim: 1, hemi: 1, boost: 1, beam: 1, dayKey: 1, dayShade: 1 }
+    : { key: 0.45, rim: 0.55, hemi: 0.8, boost: 0, beam: 0.7, dayKey: 0.8, dayShade: 0.7 };
+  const dayKeyI = DAY.keyI * lit.dayKey;
   const nightKeyI = NIGHT.keyI * lit.key;
   const nightRimI = NIGHT.rimI * lit.rim;
   const nightHemiI = NIGHT.hemiI * lit.hemi;
@@ -451,11 +458,13 @@ export default async function build(ctx) {
     // characters. "What is below this point" is then a 2D point-in-triangle test.
     const CELL = 2;
     const cells = new Set();
+    const key = (i, k) => (i + 512) * 1024 + (k + 512);
     for (const p of [...requests.map((r) => r.light.position), ...extra]) {
       if (p.y - groundY(p.x, p.z) > 7.5) continue;
-      for (let i = -2; i <= 2; i++) for (let k = -2; k <= 2; k++) cells.add(`${Math.floor(p.x / CELL) + i},${Math.floor(p.z / CELL) + k}`);
+      for (let i = -2; i <= 2; i++) for (let k = -2; k <= 2; k++) cells.add(key(Math.floor(p.x / CELL) + i, Math.floor(p.z / CELL) + k));
     }
     const tri = []; // ax, az, ay, bx, bz, by, cx, cz, cy
+    const grid = new Map(); // cell key → offsets into tri
     {
       const roots = ['schreinerei', 'loft', 'cottage', 'riverside'].flatMap((id) => ctx.moduleRoots?.[id] ?? []);
       const m4 = new THREE.Matrix4();
@@ -480,7 +489,7 @@ export default async function build(ctx) {
           const minZ = Math.floor(Math.min(az, bz, cz) / CELL), maxZ = Math.floor(Math.max(az, bz, cz) / CELL);
           if (maxX - minX > 3 || maxZ - minZ > 3) continue; // a huge triangle is no floor of a lamp
           let hit = false;
-          for (let i = minX; i <= maxX && !hit; i++) for (let k = minZ; k <= maxZ && !hit; k++) hit = cells.has(`${i},${k}`);
+          for (let i = minX; i <= maxX && !hit; i++) for (let k = minZ; k <= maxZ && !hit; k++) hit = cells.has(key(i, k));
           if (!hit) continue;
           // flat-ish? (normal from the world-space edges)
           const e1x = bx - ax, e1y = wp[b + 1] - wp[a + 1], e1z = bz - az;
@@ -488,7 +497,17 @@ export default async function build(ctx) {
           const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
           const nl = Math.hypot(nx, ny, nz);
           if (nl < 1e-9 || Math.abs(ny) / nl < 0.75) continue;
+          const at = tri.length;
           tri.push(ax, az, wp[a + 1], bx, bz, wp[b + 1], cx, cz, wp[c + 1]);
+          // bucket it in every cell it touches (lookups only scan their own cell)
+          for (let i = minX; i <= maxX; i++) {
+            for (let k = minZ; k <= maxZ; k++) {
+              const kk = key(i, k);
+              let list = grid.get(kk);
+              if (!list) grid.set(kk, (list = []));
+              list.push(at);
+            }
+          }
         }
       };
       for (const r of roots) {
@@ -515,7 +534,9 @@ export default async function build(ctx) {
       const top = p.y - near;
       let best = gy;
       const x = p.x, z = p.z;
-      for (let t = 0; t < tri.length; t += 9) {
+      const list = grid.get(key(Math.floor(x / CELL), Math.floor(z / CELL)));
+      if (!list) return gy;
+      for (const t of list) {
         const ax = tri[t], az = tri[t + 1], bx = tri[t + 3], bz = tri[t + 4], cx = tri[t + 6], cz = tri[t + 7];
         // barycentric point-in-triangle (xz)
         const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
@@ -530,47 +551,60 @@ export default async function build(ctx) {
       return best;
     }
 
-    /** Does a flat floor at height y cover the ring of radius r around (x, z)? */
+    /**
+     * Does a flat floor at height y cover the ring of radius r around (x, z)?
+     * (6 of 8 probes — deck planks have gaps; arched bridge decks slope a little)
+     */
     const probe = new THREE.Vector3();
     function floorCovers(x, y, z, r) {
+      const tol = 0.12 + 0.1 * r;
+      let miss = 0;
       for (let i = 0; i < 8; i++) {
         const a = (i / 8) * Math.PI * 2;
         probe.set(x + Math.cos(a) * r, y + 0.4, z + Math.sin(a) * r);
-        const fy = surfaceBelow(probe, 0.25);
-        if (Math.abs(fy - y) > 0.12) return false;
+        if (Math.abs(surfaceBelow(probe, 0.25) - y) > tol && ++miss > 2) return false;
       }
       return true;
+    }
+    /**
+     * Where a pool under a lamp at p lies: the highest flat surface below it that
+     * is big enough (a flat pool must never overhang its deck — it would float in
+     * the air: shrink it until a ring at 85 % of its radius still finds that
+     * floor; a table top or a narrow step that is too small hands over to the
+     * next surface down), else the ground (a draped pool). → { y, size, flat }
+     */
+    function placePool(p, size0) {
+      const gy = groundY(p.x, p.z);
+      let y = surfaceBelow(p);
+      for (let level = 0; level < 3 && y - gy > 0.08; level++) {
+        let size = size0;
+        for (let k = 0; k < 3; k++, size *= 0.75) if (floorCovers(p.x, y, p.z, size * 0.85)) return { y, size, flat: true };
+        probe.set(p.x, y, p.z);
+        y = surfaceBelow(probe, 0.03);
+      }
+      return { y: gy, size: size0, flat: false };
     }
 
     // ① under every point request (live or not)
     for (const r of requests) {
       const l = r.light;
       const p = l.position;
-      const y = surfaceBelow(p);
-      const h = p.y - y;
-      if (h > 7) continue; // high in a giant: its light never reaches the ground as a pool
+      const h0 = p.y - surfaceBelow(p);
+      if (h0 > 7) continue; // high in a giant: its light never reaches the ground as a pool
       const night = l.userData.intensity.night;
       const reach = Math.sqrt((l.distance || 7) / 7);
       const warm = isWarmColor(l.color);
-      // high-up surfaces (decks, floors, the loft) get a flat pool, the ground a draped one
-      const flat = Math.abs(y - groundY(p.x, p.z)) > 0.05;
-      let size = THREE.MathUtils.clamp(0.9 + 0.38 * h, 1.15, 2.3) * reach;
-      // a flat pool must not overhang its deck (it would float in the air): shrink
-      // it until a ring at 85 % of its radius still finds the same floor
-      if (flat) {
-        let ok = false;
-        for (let k = 0; k < 4 && !ok; k++, size *= 0.72) ok = floorCovers(p.x, y, p.z, size * 0.85);
-        if (!ok) continue;
-        size /= 0.72;
-      }
+      const at = placePool(p, THREE.MathUtils.clamp(0.9 + 0.38 * h0, 1.15, 2.3) * reach);
+      const h = p.y - at.y;
       pools.push({
         x: p.x,
-        y,
+        y: at.y,
         z: p.z,
-        size,
+        size: at.size,
         color: l.color.getStyle(),
-        strength: (live.has(r) ? 0.45 : 1) * THREE.MathUtils.clamp(night / 4.5, 0.55, 1.25) * (warm ? 1 : 0.55) / (1 + 0.06 * h * h),
-        flat,
+        strength: ((live.has(r) ? 0.45 : 1) * THREE.MathUtils.clamp(night / 4.5, 0.55, 1.25) * (warm ? 1 : 0.55)) / (1 + 0.06 * h * h),
+        // decks, floors & the loft get a flat pool, the ground a draped one
+        flat: at.flat,
       });
     }
 
@@ -579,18 +613,11 @@ export default async function build(ctx) {
       const pt = new THREE.Vector3();
       for (const e of extra) {
         pt.set(e.x, e.y, e.z);
-        const y = surfaceBelow(pt);
-        const h = e.y - y;
-        if (h > 6) continue;
-        const flat = Math.abs(y - groundY(e.x, e.z)) > 0.05;
-        let size = THREE.MathUtils.clamp(0.75 + 0.35 * h, 0.95, 1.9);
-        if (flat) {
-          let ok = false;
-          for (let k = 0; k < 3 && !ok; k++, size *= 0.72) ok = floorCovers(e.x, y, e.z, size * 0.85);
-          if (!ok) continue;
-          size /= 0.72;
-        }
-        pools.push({ x: e.x, y, z: e.z, size, color: '#ffb35c', strength: 0.75 / (1 + 0.06 * h * h), flat });
+        const h0 = e.y - surfaceBelow(pt);
+        if (h0 > 6) continue;
+        const at = placePool(pt, THREE.MathUtils.clamp(0.7 + 0.35 * h0, 0.85, 1.8));
+        const h = e.y - at.y;
+        pools.push({ x: e.x, y: at.y, z: e.z, size: at.size, color: '#ffb35c', strength: 0.55 / (1 + 0.06 * h * h), flat: at.flat });
       }
     }
 
@@ -606,9 +633,12 @@ export default async function build(ctx) {
       const u = o.userData;
       if (o.name !== 'mushroomHouse' || !u?.doorTarget) return;
       c0.set(0, 0, 0).applyMatrix4(o.matrixWorld);
+      // only LIT doors (a lamp requested near the door, e.g. Jonny's door light) —
+      // the garden shed's dark door gets none
       if (u.door) {
         v.copy(u.door).applyMatrix4(o.matrixWorld);
-        doorway(v.x, v.z, v.x - c0.x, v.z - c0.z, { strength: 0.85 });
+        const lit = requests.some((r) => Math.hypot(r.light.position.x - v.x, r.light.position.z - v.z) < 3.5);
+        if (lit) doorway(v.x, v.z, v.x - c0.x, v.z - c0.z, { strength: 0.85 });
       }
       if (u.interior) {
         // the Wohnatelier's open arch: a wide pool over the terrace
@@ -616,7 +646,7 @@ export default async function build(ctx) {
         const s = Math.sin(I.phi ?? 0), cz = Math.cos(I.phi ?? 0);
         v.set(s * (I.facadeZ + 0.1), 0, cz * (I.facadeZ + 0.1)).applyMatrix4(o.matrixWorld);
         const d = new THREE.Vector3(s, 0, cz).transformDirection(o.matrixWorld);
-        doorway(v.x, v.z, d.x, d.z, { size: Math.max(1.5, (I.width ?? 2.6) * 0.62), stretch: 1.5, strength: 1.1, color: '#ffb465' });
+        doorway(v.x, v.z, d.x, d.z, { size: Math.max(1.6, (I.width ?? 2.6) * 0.7), stretch: 1.5, strength: 1.4, color: '#ffb465' });
       }
     });
     // the Velowerkstatt's double doors (riverside anchors) …
@@ -673,7 +703,7 @@ export default async function build(ctx) {
     /** The sunbeam (day) / moonbeam (night) geometry: { day: {pos, target}, night: {pos, target} }. */
     beams: { day: beamDay, night: beamNight },
     envMaps,
-    /** Live canopy-cookie parameters (env/canopy.js: a = time, strength, plane y, fade y; b = shade, gain, freq, detail octave). */
+    /** Live canopy-cookie parameters (env/canopy.js: a = time, strength, plane y, fade y; b = shade, gain, freq, detail octave; c = clearing x, z, radius, strength). */
     canopy: canopyParams,
     /** Live multipliers (debug & tuning): canopy = strength of the dappled-sunlight cookie. */
     settings: { canopy: 1 },
@@ -698,14 +728,14 @@ export default async function build(ctx) {
     keyDir.copy(SUN_LIGHT_DIR).lerp(MOON_LIGHT_DIR, smoothstep(0.3, 0.7, n)).normalize();
     rimDir.copy(RIM_DAY_DIR).lerp(RIM_NIGHT_DIR, n).normalize();
     sun.color.copy(DAY.key).lerp(NIGHT.key, n);
-    sun.intensity = (DAY.keyI + (nightKeyI - DAY.keyI) * n) * (1 - 0.75 * dusk);
+    sun.intensity = (dayKeyI + (nightKeyI - dayKeyI) * n) * (1 - 0.75 * dusk);
     hemi.color.copy(DAY.hemiSky).lerp(NIGHT.hemiSky, n);
     hemi.groundColor.copy(DAY.hemiGround).lerp(NIGHT.hemiGround, n);
     hemi.intensity = DAY.hemiI + (nightHemiI - DAY.hemiI) * n;
     rim.color.copy(DAY.rim).lerp(NIGHT.rim, n);
     rim.intensity = DAY.rimI + (nightRimI - DAY.rimI) * n;
     // the canopy cookie: deeper shade & brighter flecks by day, the clearing open
-    canopyParams.b[0] = DAY.canopyShade + (NIGHT.canopyShade - DAY.canopyShade) * n;
+    canopyParams.b[0] = DAY.canopyShade * lit.dayShade + (NIGHT.canopyShade - DAY.canopyShade * lit.dayShade) * n;
     canopyParams.b[1] = DAY.canopyFleck + (NIGHT.canopyFleck - DAY.canopyFleck) * n;
     canopyParams.c.set([CLEARING[0], CLEARING[1], CLEARING[2], DAY.clearing + (NIGHT.clearing - DAY.clearing) * n]);
     // the beam: golden sunbeam on the Schreinerei, fading out towards dusk, then
@@ -738,9 +768,10 @@ export default async function build(ctx) {
     renderer.shadowMap.needsUpdate = true;
   }
 
-  // 'medium' (phones): the sun is static, so the shadow maps are re-rendered
-  // only every other frame (swaying leaves & walking villagers still move them).
-  // q.shadowEvery (engine preset; the frame-time governor may raise it on 'high').
+  // The sun (and the moon) never move, so the shadow map is re-rendered only every
+  // q.shadowEvery-th frame (engine preset: 2 on 'high' and 'medium' — swaying
+  // leaves & walking villagers still update at 30 Hz; the frame-time governor may
+  // raise it). Any light change forces an immediate refresh (update()).
   let throttleShadows = false;
   function applyShadowRate() {
     throttleShadows = !!q.shadows && (q.shadowEvery ?? (q.tier === 'high' ? 1 : 2)) > 1;

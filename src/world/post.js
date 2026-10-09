@@ -117,6 +117,12 @@ const SETTINGS = {
    * into the mid tones. [gain, start, full].
    */
   highlightLiftDay: [0.55, 0.28, 0.55],
+  /**
+   * 'low' (grade-only pass): no canopy shadow map, so the unshadowed glen is
+   * brighter — a little less exposure and a softer highlight lift keep it from
+   * washing out. [exposure ×, highlight-lift gain ×]
+   */
+  gradeLow: [0.92, 0.55],
   /** Highlights keep their hue (0..1) instead of bleaching to white — warm lights stay warm. */
   highlightHueDay: 0.2,
   highlightHueNight: 0.55,
@@ -877,9 +883,11 @@ export default async function build(ctx) {
       fu.uGreenSatSun.value = SETTINGS.greenSaturationSunDay + (SETTINGS.greenSaturation - SETTINGS.greenSaturationSunDay) * n;
       fu.uSage.value = SETTINGS.sage;
       fu.uGreenShift.value.set(SETTINGS.greenShade, SETTINGS.greenSun, SETTINGS.greenPivot[0], SETTINGS.greenPivot[1]);
+      const low = mode === 'grade' ? SETTINGS.gradeLow : null;
       fu.uHiLift.value.set(...SETTINGS.highlightLiftDay);
+      if (low) fu.uHiLift.value.x *= low[1];
       fu.uPurkinje.value = SETTINGS.purkinje;
-      fu.uExposure.value = SETTINGS.exposureDay + (SETTINGS.exposure - SETTINGS.exposureDay) * n;
+      fu.uExposure.value = (SETTINGS.exposureDay + (SETTINGS.exposure - SETTINGS.exposureDay) * n) * (low ? low[0] : 1);
       fu.uHighlightHue.value = SETTINGS.highlightHueDay + (SETTINGS.highlightHueNight - SETTINGS.highlightHueDay) * n;
       fu.uWarmth.value = SETTINGS.warmth * (1 - n);
       const sd = SETTINGS.shadowTintDay, sn = SETTINGS.shadowTintNight;

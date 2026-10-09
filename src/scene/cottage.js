@@ -17,10 +17,11 @@
 // front-door leaf + Jonny's portrait in the window), contact (mailbox),
 // living-room (the sofa, picking the whole room), moodboards (easel),
 // small-space (model table), a secret cat.
-// Night: the caps' raised cream warts glow faintly mint (the glen's enchanted-agaric
-// spot material), warm "bounce" halos sit under the rims above lit windows and
-// the porch, and the fairy-light spiral keeps the tall red cap a landmark.
-// Perf (high): ≈ 228k triangles, 46 draw calls, 12 shadow casters (moduleStats).
+// Night: the caps' torn cream flakes dim to the moonlight with only a faint mint
+// glint on their rims, warm "bounce" halos sit under the rims above lit windows and
+// the porch, the fairy-light spiral keeps the tall red cap a landmark, and the
+// chimney smoke thins to a moonlit veil with an ember glow at its foot.
+// Perf (high): ≈ 250k triangles, 51 draw calls, 9 shadow casters (moduleStats).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { Batch, setCottageNight } from './cottage/kit.js';

@@ -11,6 +11,8 @@ export function buildViews() {
   const views = {
     overview: { position: [0, 34, 52], target: [0, 4, -2] },
     top: { position: [0, 70, 6], target: [0, 0, 0] },
+    // the intro's eye-level moment on the main path (cameraRig INTRO): tiny among the giants
+    eyelevel: { position: [0.1, 1.45, 21.2], target: [0, 6.9, -4], fov: 43 },
   };
   for (const s of SPOTS) {
     const p = s.camera.position, t = s.camera.target;
@@ -93,6 +95,20 @@ export function installDebug(ctx) {
       ctx.cameraRig.clearOverride();
       ctx.cameraRig.goTo(id);
       return api.settle(maxFrames);
+    },
+    /**
+     * Fly the intro (cameraRig.playIntro) and stop the clock `sec` seconds in —
+     * e.g. --eval "__woodland.debug.intro(7)" --views free (eye level on the path).
+     */
+    intro(sec = 7) {
+      const rig = ctx.cameraRig;
+      rig.clearOverride();
+      rig.holdIntro();
+      ctx.engine.step(1 / 60, false);
+      rig.playIntro();
+      const n = Math.max(1, Math.round(sec * 60));
+      for (let i = 0; i < n; i++) ctx.engine.step(1 / 60, i === n - 1);
+      return ctx.camera.position.toArray().map((x) => +x.toFixed(2));
     },
     /** Step the clock until no camera glide is running; returns the frames stepped. */
     settle(maxFrames = 600) {

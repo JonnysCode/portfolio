@@ -9,9 +9,10 @@
 //          over the stream and the pond, around the cottages, along the
 //          forest edge and at the glowing mushrooms; a glow-worm canopy of
 //          tiny cool lights hanging under the oak's limbs and the giants'
-//          crowns, twinkling slowly like a starry sky
-//   always: the Schneckenpost (a post snail with its rider) crawling from the
-//          main path over the stone bridge to the Velowerkstatt and back, and
+//          crowns, twinkling slowly like a starry sky; mint wisps rising
+//          slowly out of the fairy ring's heart
+//   always: the Schneckenpost (a caramel post snail with its rider) crawling
+//          from the main path over the stone bridge to the Velowerkstatt and back, and
 //          two tiny wild snails grazing on mossy stones (one is a secret)
 // Everything crossfades with ctx.env.night, is GPU-cheap (Points / small
 // instanced meshes, no per-frame allocations), scales with quality density
@@ -28,6 +29,7 @@ import { createMotes } from './ambient/motes.js';
 import { createLeaves } from './ambient/leaves.js';
 import { createFlappers } from './ambient/flappers.js';
 import { createSnailPost, createWildSnails } from './ambient/snailpost.js';
+import { createWisps } from './ambient/wisps.js';
 import { updatePointScale } from './ambient/points.js';
 import { STREAM, OAK } from './layout.js';
 
@@ -118,13 +120,15 @@ export default async function build(ctx) {
       reduced,
     }),
   );
+  // wisps rising out of the fairy ring at night
+  const wisps = safe('wisps', () => createWisps(ctx, { ring: veg.fairyRing ?? ctx.forest?.fairyRing, count: Math.round(16 * Math.min(1, Math.max(0.6, density))), reduced }));
   const post = safe('schneckenpost', () => createSnailPost(ctx, { reduced }));
   const wild = safe('wild snails', () => createWildSnails(ctx, { rocks: veg.mossyRocks ?? [], snailRocks: veg.snailRocks ?? [] }));
 
   const focus = new THREE.Vector3(0, 0, 4);
   return {
-    layers: { fireflies, glowworms, motes, leaves, flappers, post, wild },
-    stats: { fireflies: fireflies?.count ?? 0, glowworms: glowworms?.count ?? 0 },
+    layers: { fireflies, glowworms, motes, leaves, flappers, post, wild, wisps },
+    stats: { fireflies: fireflies?.count ?? 0, glowworms: glowworms?.count ?? 0, wisps: wisps?.count ?? 0 },
     update(dt) {
       const night = ctx.env?.night ?? 0;
       const target = ctx.cameraRig?.target;
@@ -132,6 +136,7 @@ export default async function build(ctx) {
       updatePointScale(ctx.engine.renderer, ctx.camera, ctx.scene.fog);
       fireflies?.update(night);
       glowworms?.update(night);
+      wisps?.update(night);
       motes?.update(night, focus);
       leaves?.update(dt, focus);
       flappers?.update(dt, focus, night);

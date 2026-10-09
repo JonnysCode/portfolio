@@ -1,13 +1,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The Wohnatelier — an ochre mushroom house opened up at the front by a big
 // arched loggia (folding glazed doors pushed back), revealing a beautifully
-// designed little living room behind crack-free warm limewash walls: warm oak
-// floor, a big Berber-ish rug under the front legs of the seating, a sage
-// velvet sofa with cushions and a knitted throw draped over its arm, a walnut
-// lounge chair with ottoman (the reading nook), a tripod lamp and a ribbed
-// rice-paper globe pendant that glow, a bookcase full of books and ceramics, a
-// joiner-made sideboard with a mushroom lamp, a tight gallery-wall cluster
-// over the sofa, a monstera and a hanging pothos.
+// designed little living room, styled 60/30/10: crack-free warm limewash walls
+// and an oak floor (60), sage and cognac upholstery (30) and INK as the accent
+// (10) — an ink velvet cushion and knitted throw, a black-metal tripod lamp, a
+// dark print anchoring a gallery of mixed black / brass / oak frames, ink
+// ceramics. A rectangular cream Berber rug with ink lozenges under the front
+// legs of the seating, a sage sofa, a walnut-and-cognac lounge chair with
+// ottoman and a little round side table (cup, open book) — the reading corner —
+// a ribbed rice-paper globe pendant, a bookcase full of books, a joiner-made
+// sideboard with a mushroom lamp under a small arched window (oak frame, linen
+// café curtain, daylight spilling onto the floor), a monstera and a pothos.
 //
 // On the stone terrace outside: a designer's easel with a mood board (colour
 // chips, fabric samples, sketches — hotspot 'moodboards'), a little trestle
@@ -20,10 +23,12 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { COTTAGE } from '../../world/layout.js';
 import { createRng } from '../../core/rng.js';
-import { makeMushroomHouse } from '../../props/mushroomHouse.js';
+import { makeMushroomHouse, paneGrid } from '../../props/mushroomHouse.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makePerson } from '../../props/index.js';
 import {
   Batch, mats, mat4, xf, board, boardBetween, rod, stoneGeo, mossGeo, tube, taperTube, leafGeo, Cards, deform, uvBox,
+  arcSegment, noiseA, lightSpillGeo, lightSpillMaterial,
   paintFn, addFlower, addFern, addGrass, addIvy, TAU, WOOD,
 } from './kit.js';
 import { local, hitProxy, pot, stringLights, flagstones } from './garden.js';
@@ -39,8 +44,14 @@ const PALETTE = {
   mustard: '#d6a23a',
   cream: '#efe4cf',
   navy: '#2f3e5c',
-  cognac: '#8a4a2a',
+  ink: '#2a3550',
+  inkVelvet: '#2f4474', // ink in upholstery: a touch lighter & bluer, so the velvet reads blue, not black
+  linen: '#e6ddca',
+  oat: '#d6c8ad',
+  cognac: '#7b4128',
   blush: '#e3b2a0',
+  black: '#1f1e1d',
+  brass: '#b38b45',
 };
 
 /** Build the Wohnatelier into batch B. Returns { hotspots, updates, lights, colliders }. */
@@ -80,7 +91,8 @@ export function buildAtelier(ctx, B, root, halos, smoke = [], rimHalos = null) {
       { phi: 1.75, y: 1.45, shape: 'arch', shutters: true, box: true, color: '#4f7a86' },
       { phi: -1.75, y: 1.45, shape: 'round', w: 0.55 },
       { phi: Math.PI + 0.2, y: 1.5, shape: 'arch', box: true },
-      { phi: 2.6, y: 1.4, shape: 'rect' },
+      // the reading corner's arched window (its inside: atelierWindow)
+      { phi: WIN_PHI, y: WIN_Y, shape: 'arch', w: 0.48, h: 0.86, shutters: false, box: false },
     ],
     open: { phi: 0, width: 2.9, height: 2.72, depth: 0.5 },
     detail: ctx.quality?.density ?? 1,
@@ -98,7 +110,9 @@ export function buildAtelier(ctx, B, root, halos, smoke = [], rimHalos = null) {
 
   // the sofa is its own little group: the 'living-room' hotspot bounces it on hover
   const sofaB = new Batch();
-  buildInterior(F, rng, I, halos, frame, sofaB);
+  const extras = [];
+  buildInterior(F, rng, I, halos, frame, sofaB, extras);
+  for (const m of extras) house.add(m);
   const sofaGroup = new THREE.Group();
   sofaGroup.name = 'living-room';
   for (const m of sofaB.build(sofaGroup, 'sofa')) m.castShadow = false; // deep in the cap's shade
@@ -190,7 +204,7 @@ export function buildAtelier(ctx, B, root, halos, smoke = [], rimHalos = null) {
 
   // a warm light inside (lamps) — the room is deep in the cap's shadow
   const lp = new THREE.Vector3(0.1, I.floorY + 1.9, -0.5).applyMatrix4(frame);
-  out.lights.push([lp, { color: '#ffc98a', day: 1.8, night: 3.2, distance: 6 }]);
+  out.lights.push([lp, { color: '#ffc98a', day: 1.1, night: 2.8, distance: 6 }]);
   // terrace, easel, designer, model table, flanking pots
   const zf = I.facadeZ;
   for (const [lx, lz, r] of [[0, zf + 0.9, 1.3], [-1.2, zf + 1.3, 0.9], [1.2, zf + 1.3, 0.9], [0, zf + 2.0, 1.1], [-2.05, zf + 1.45, 0.75], [-1.3, zf + 1.95, 0.45], [2.05, zf + 1.25, 0.75], [-I.width / 2 - 0.55, zf + 0.35, 0.35], [I.width / 2 + 0.75, zf + 0.4, 0.45]]) keepL(lx, lz, r);
@@ -203,9 +217,15 @@ export function buildAtelier(ctx, B, root, halos, smoke = [], rimHalos = null) {
 /** The sofa stands against the back wall (house-local z). */
 const SOFA_Z = -1.42;
 
-function buildInterior(F, rng, I, halos, frame, sofaB) {
+/** The reading corner's arched window on the back-right wall (house-local φ; centre height). */
+const WIN_PHI = Math.PI - 0.52;
+const WIN_Y = 1.64;
+
+function buildInterior(F, rng, I, halos, frame, sofaB, extras) {
   const M = mats();
   const y0 = I.floorY;
+  // (the round-4 additions draw from their own generator: the terrace outside keeps its layout)
+  const rng4 = createRng('wohnatelier-r4');
   const at = (x, z, rotY = 0, y = y0) => mat4([x, y, z], [0, rotY, 0]);
   const wallPos = (phi, y, inset = 0) => {
     const r = I.radiusAt(phi, y) - inset;
@@ -216,19 +236,21 @@ function buildInterior(F, rng, I, halos, frame, sofaB) {
     halos.push({ x: v.x, y: v.y, z: v.z, size });
   };
 
-  // rug: big enough (and far enough back) that the front legs of the sofa and the lounge chair stand on it
-  rug(F, rng, at(0, -0.8), 1.55, 1.08);
+  // rug: a rectangular cream Berber with ink lozenges, centred on the seating group — the
+  // sofa's front legs and the lounge chair's whole base stand on it
+  berberRug(F, rng4, at(-0.3, -0.47), 2.9, 1.56);
   // sofa against the back wall (into its own batch, local to the sofa group's origin)
   sofa(sofaB, rng, new THREE.Matrix4(), { len: 1.95, color: PALETTE.sage });
   // coffee table, a comfortable reach in front of the seat
   coffeeTable(F, rng, at(0.02, -0.36, 0.3));
-  // reading nook: lounge chair, ottoman, tripod lamp, side stack of books
+  // reading corner: lounge chair, ottoman, black-metal tripod lamp, a side table at the chair's arm
   loungeChair(F, rng, at(-1.32, -0.35, 1.05));
   ottoman(F, rng, at(-0.82, 0.12, 1.1));
   tripodLamp(F, rng, at(-1.72, -1.05, 0.5));
   halo(-1.72, y0 + 1.45, -1.05, 0.6);
+  sideTable(F, rng4, at(-1.2, -0.98, 0.4));
   bookStack(F, rng, at(-1.82, -0.15, 0.4), 5);
-  // bookcase on the left-back wall, sideboard on the right
+  // bookcase on the left-back wall, sideboard on the right (under the window)
   {
     const phi = Math.PI + 0.78;
     const [x, , z] = wallPos(phi, 1, 0.22);
@@ -241,6 +263,8 @@ function buildInterior(F, rng, I, halos, frame, sofaB) {
   }
   // gallery wall above the sofa
   gallery(F, rng, I, wallPos);
+  // the arched window with its café curtain, and the daylight it lets in
+  atelierWindow(F, rng4, I, extras);
   // the monstera by the opening (right) and a fiddle-leaf fig (left back)
   monstera(F, rng, at(1.62, 0.35, -0.6));
   fiddleFig(F, rng, at(-1.05, -1.75, 0.3));
@@ -254,8 +278,211 @@ function buildInterior(F, rng, I, halos, frame, sofaB) {
     halo(gx, gy, gz, 0.45);
     hangingPlant(F, rng, at(1.05, -1.25, 0, cy), cy - y0);
   }
-  // a little window seat feel: cushions & a basket of throws by the sofa
+  // a basket of throws by the sofa
   basket(F, rng, at(1.22, -1.15, 0.4));
+}
+
+/**
+ * The small arched window of the reading corner (inside face): an oak frame with a
+ * glazing-bar cross and a deep sill on the limewashed wall, daylight in the glass (sky over
+ * sunlit leaves; dark at night), a gathered linen café curtain on a brass rod over its lower
+ * half, and a soft additive patch of daylight on the floor and the wall around it.
+ */
+function atelierWindow(F, rng, I, extras) {
+  const M = mats();
+  const w = 0.46, h = 0.84, r = w / 2, hs = h - r;
+  // hang it where the concave, leaning wall comes closest anywhere behind it
+  const r0 = I.radiusAt(WIN_PHI, WIN_Y);
+  let dist = Infinity;
+  for (let i = 0; i <= 6; i++) {
+    for (let j = 0; j <= 4; j++) {
+      const dx = (i / 6 - 0.5) * (w + 0.2);
+      const y = WIN_Y + (j / 4 - 0.5) * (h + 0.12);
+      const d = Math.asin(THREE.MathUtils.clamp(dx / r0, -0.9, 0.9));
+      dist = Math.min(dist, I.radiusAt(WIN_PHI + d, y) * Math.cos(d));
+    }
+  }
+  dist -= 0.012;
+  const m = mat4([Math.sin(WIN_PHI) * dist, WIN_Y, Math.cos(WIN_PHI) * dist], [0, WIN_PHI + Math.PI, 0]);
+  const L = local(F, m);
+  const yb = -h / 2;
+  // the glass: daylight — pale sky in the head, soft blue-green, sunlit leaves below
+  const sky = new THREE.Color('#e3eef0'), mid = new THREE.Color('#bcd6c8'), leaf = new THREE.Color('#9dbd6c'), leafD = new THREE.Color('#6d9150');
+  const pane = paintFn(paneGrid(r, hs, yb, r, 6, 10), '#ffffff', (x, y, z, i, c) => {
+    const v = (y - yb) / h;
+    c.copy(leaf).lerp(mid, THREE.MathUtils.smoothstep(v, 0.3, 0.62)).lerp(sky, THREE.MathUtils.smoothstep(v, 0.6, 0.95));
+    const n = noiseA(x * 9 + 3.1, y * 7);
+    if (v < 0.6) c.lerp(leafD, Math.max(0, n) * 0.6 * (1 - v / 0.6));
+  });
+  L.add(M.daylight, pane.translate(0, 0, 0.008), { cast: false, color: null });
+  // oak frame: jambs, arched head, glazing bars, a deep sill
+  const fw = 0.06, fd = 0.085, wood = WOOD.oakLight;
+  for (const sx of [-1, 1]) L.add(M.wood, board(fw, hs + 0.01, fd, { along: 'y', rng }).translate(sx * (r + fw / 2), yb + hs / 2, fd / 2), { color: wood, cast: false });
+  L.add(M.wood, uvBox(arcSegment(r, r + fw, 0, Math.PI, fd, 10, 0.006), 'x').translate(0, yb + hs, fd / 2), { color: wood, cast: false });
+  L.add(M.wood, board(0.026, h - 0.02, 0.03, { along: 'y' }).translate(0, yb + (h - 0.02) / 2, 0.022), { color: wood, cast: false });
+  L.add(M.wood, board(w, 0.026, 0.03, { along: 'x' }).translate(0, yb + hs * 0.56, 0.022), { color: wood, cast: false });
+  L.add(M.wood, board(w + fw * 2 + 0.12, 0.04, 0.17, { along: 'x', rng }).translate(0, yb - 0.02, 0.07), { color: wood, cast: false });
+  // a little potted herb and a tiny vase on the sill
+  L.add(M.vc, new THREE.CylinderGeometry(0.045, 0.036, 0.075, 10).translate(-0.14, yb + 0.037, 0.08), { color: PALETTE.ink, cast: false });
+  addFern(L, rng, -0.14, yb + 0.075, 0.08, { size: 0.15, fronds: 5 });
+  vase(L, [0.16, yb, 0.085], 0.03, 0.11, '#e9e2d4');
+  // café curtain: gathered linen over the lower half, on a slim brass rod with finials
+  const rodY = yb + hs * 0.56 + 0.035;
+  L.add(M.metal, rod([-r - fw - 0.04, rodY, 0.05], [r + fw + 0.04, rodY, 0.05], 0.006, 0.006, 6), { color: PALETTE.brass, cast: false });
+  for (const sx of [-1, 1]) L.add(M.metal, new THREE.SphereGeometry(0.012, 6, 4).translate(sx * (r + fw + 0.045), rodY, 0.05), { color: PALETTE.brass, cast: false });
+  const cw = w + fw * 1.4, ch = rodY - (yb + 0.035);
+  const cur = new THREE.PlaneGeometry(cw, ch, 22, 4);
+  const cp = cur.attributes.position;
+  const ph = rng.range(0, 6);
+  for (let i = 0; i < cp.count; i++) {
+    const x = cp.getX(i), y = cp.getY(i);
+    const t = (y + ch / 2) / ch; // 0 hem … 1 rod
+    cp.setZ(i, 0.012 * Math.sin((x / cw) * Math.PI * 9 + ph) * (0.75 + 0.25 * (1 - t)) + 0.004 * Math.sin(x * 60));
+    cp.setY(i, y - (1 - t) * 0.006 * Math.sin(x * 23 + ph));
+  }
+  cur.computeVertexNormals();
+  uvBox(cur, 'z', 5);
+  L.add(M.fabric, cur.translate(0, rodY - ch / 2 - 0.008, 0.045), { color: PALETTE.linen, cast: false });
+  // curtain rings on the rod
+  for (let i = 0; i < 7; i++) L.add(M.metal, new THREE.TorusGeometry(0.011, 0.002, 3, 8).translate(-cw / 2 + 0.02 + (i / 6) * (cw - 0.04), rodY, 0.05), { color: PALETTE.brass, cast: false });
+
+  // daylight: a soft patch on the floor reaching into the room, and a glow on the wall around
+  // the window (one additive mesh; gone at night)
+  const inward = new THREE.Vector3(-Math.sin(WIN_PHI), 0, -Math.cos(WIN_PHI));
+  const floorP = new THREE.Vector3(Math.sin(WIN_PHI) * dist, I.floorY + 0.03, Math.cos(WIN_PHI) * dist).addScaledVector(inward, 0.95);
+  const floorPatch = lightSpillGeo(0.95, 1.5, { color: '#fff3dc', peak: 0.2, tilt: 0.8 });
+  floorPatch.rotateX(-Math.PI / 2); // +Y (the window end) → −Z
+  floorPatch.rotateY(WIN_PHI); // −Z → towards the window
+  floorPatch.translate(floorP.x, floorP.y, floorP.z);
+  const wallGlow = lightSpillGeo(1.3, 1.5, { color: '#fff6e6', peak: 0.1 });
+  wallGlow.translate(0, 0.04, 0.004).applyMatrix4(m);
+  const spill = new THREE.Mesh(mergeGeometries([floorPatch, wallGlow], false), lightSpillMaterial());
+  spill.name = 'atelier-daylight-spill';
+  spill.renderOrder = 3;
+  spill.castShadow = spill.receiveShadow = false;
+  spill.raycast = () => {};
+  extras.push(spill);
+}
+
+/**
+ * A rectangular Beni-Ourain-style Berber (frame-local, centred at the origin, length along x):
+ * a thick cream pile with soft hand-made edges, a hand-drawn ink lozenge lattice (every line
+ * a little wobbly) with the odd small ink diamond in a lozenge, and knotted fringes at both ends.
+ */
+function berberRug(F, rng, m, W, D) {
+  const M = mats();
+  const L = local(F, m);
+  const th = 0.016;
+  const base = cushion(W, th, D, 0.008, 0);
+  deform(base, (v) => {
+    v.x += 0.012 * Math.sin(v.z * 7 + 1.3);
+    v.z += 0.01 * Math.sin(v.x * 5.3);
+  });
+  L.add(M.fabric, base.translate(0, th / 2 + 0.002, 0), { color: '#ece3d0', cast: false });
+  const top = th + 0.0035;
+  // the lattice: two families of diagonal lines, clipped to the field inside a narrow margin
+  const ink = PALETTE.ink;
+  const mx = W / 2 - 0.08, mz = D / 2 - 0.07;
+  const cellX = 0.48, cellZ = 0.34; // a lozenge's width × depth
+  const lw = 0.022;
+  for (const sgn of [-1, 1]) {
+    for (let k = -7; k <= 7; k++) {
+      // line: z = sgn * (x - x0) * (cellZ / cellX)
+      const x0 = k * cellX + 0.11;
+      const slope = sgn * (cellZ / cellX);
+      // clip the line to |x| ≤ mx, |z| ≤ mz
+      let t0 = -mx, t1 = mx;
+      const zAt = (x) => slope * (x - x0);
+      const xAtZ = (z) => z / slope + x0;
+      const xa = xAtZ(-mz), xb = xAtZ(mz);
+      t0 = Math.max(t0, Math.min(xa, xb));
+      t1 = Math.min(t1, Math.max(xa, xb));
+      if (t1 - t0 < 0.05) continue;
+      const n = Math.max(2, Math.round((t1 - t0) / 0.12));
+      const pts = [];
+      for (let i = 0; i <= n; i++) {
+        const x = t0 + ((t1 - t0) * i) / n;
+        pts.push([x + rng.jitter(0.008), zAt(x) + rng.jitter(0.01)]);
+      }
+      // a flat strip along the polyline
+      const pos = [], idx = [];
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+        let tx = b[0] - a[0], tz = b[1] - a[1];
+        const tl = Math.hypot(tx, tz) || 1;
+        tx /= tl;
+        tz /= tl;
+        const ww = lw * (0.8 + 0.4 * Math.abs(Math.sin(i * 1.7 + k)));
+        pos.push(pts[i][0] - tz * ww / 2, top, pts[i][1] + tx * ww / 2, pts[i][0] + tz * ww / 2, top, pts[i][1] - tx * ww / 2);
+        if (i > 0) {
+          const q = (i - 1) * 2;
+          idx.push(q, q + 2, q + 1, q + 1, q + 2, q + 3);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      if (g.attributes.normal.getY(0) < 0) {
+        const ia = g.index.array;
+        for (let i = 0; i < ia.length; i += 3) [ia[i + 1], ia[i + 2]] = [ia[i + 2], ia[i + 1]];
+        g.computeVertexNormals();
+      }
+      uvBox(g, 'y', 3);
+      L.add(M.fabric, g, { color: ink, cast: false });
+    }
+  }
+  // a few small solid diamonds in the lozenges (the lozenge between lines a, a+1 and b, b+1
+  // is centred at x = (a + b + 1)·cellX/2 + 0.11, z = (b − a)·cellZ/2)
+  for (let i = 0; i < 12; i++) {
+    const a = rng.int(-4, 3), b = rng.int(-4, 3);
+    const x = ((a + b + 1) * cellX) / 2 + 0.11;
+    const z = ((b - a) * cellZ) / 2;
+    if (Math.abs(x) > mx - 0.12 || Math.abs(z) > mz - 0.1) continue;
+    const d = new THREE.CircleGeometry(0.035, 4).rotateX(-Math.PI / 2).scale(1.3, 1, 1);
+    L.add(M.fabric, uvBox(d, 'y', 3).translate(x, top + 0.0005, z), { color: ink, cast: false });
+  }
+  // knotted fringes at both short ends
+  for (const sx of [-1, 1]) {
+    for (let i = 0; i < 26; i++) {
+      const z = -D / 2 + 0.05 + ((D - 0.1) * i) / 25;
+      const len = rng.range(0.05, 0.075);
+      const x = sx * (W / 2 + len / 2 - 0.004);
+      const f = new THREE.BoxGeometry(len, 0.004, 0.012).rotateY(rng.jitter(0.25));
+      L.add(M.fabric, uvBox(f, 'y', 3).translate(x, 0.004, z), { color: '#e3d8c2', cast: false });
+    }
+  }
+}
+
+/** A small round side table (walnut top on three black-metal legs) with a cup on a saucer and an open book. */
+function sideTable(F, rng, m) {
+  const M = mats();
+  const L = local(F, m);
+  const hT = 0.5, rT = 0.17;
+  L.add(M.wood, uvBox(new THREE.CylinderGeometry(rT, rT - 0.005, 0.025, 24), 'x').translate(0, hT, 0), { color: WOOD.walnut });
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * TAU + 0.2;
+    L.add(M.metal, rod([Math.sin(a) * 0.07, hT - 0.012, Math.cos(a) * 0.07], [Math.sin(a) * 0.15, 0, Math.cos(a) * 0.15], 0.008, 0.007, 5), { color: PALETTE.black, cast: false });
+  }
+  L.add(M.metal, new THREE.TorusGeometry(0.09, 0.005, 4, 18).rotateX(Math.PI / 2).translate(0, 0.17, 0), { color: PALETTE.black, cast: false });
+  const top = hT + 0.0125;
+  // cup & saucer (cream, an ink rim)
+  L.add(M.vc, new THREE.CylinderGeometry(0.05, 0.042, 0.008, 16).translate(0.06, top + 0.004, 0.05), { color: '#f1ece2', cast: false });
+  const cup = new THREE.LatheGeometry([[0.0, 0], [0.026, 0], [0.032, 0.012], [0.036, 0.05], [0.034, 0.05]].map(([a, b]) => new THREE.Vector2(a, b)), 14);
+  L.add(M.vc, cup.translate(0.06, top + 0.008, 0.05), { color: '#f1ece2', cast: false });
+  L.add(M.vc, new THREE.CircleGeometry(0.031, 14).rotateX(-Math.PI / 2).translate(0.06, top + 0.05, 0.05), { color: '#5a3a24', cast: false });
+  L.add(M.vc, new THREE.TorusGeometry(0.035, 0.0025, 3, 16).rotateX(Math.PI / 2).translate(0.06, top + 0.058, 0.05), { color: PALETTE.ink, cast: false });
+  L.add(M.vc, new THREE.TorusGeometry(0.013, 0.003, 4, 8, Math.PI).rotateZ(-Math.PI / 2).translate(0.096, top + 0.033, 0.05), { color: '#f1ece2', cast: false });
+  // the open book: two page blocks leaning into the spine, in a cognac cover
+  const bm = new THREE.Matrix4().makeRotationY(0.5).setPosition(-0.05, top, -0.03);
+  const BL = local(L, bm);
+  for (const s of [-1, 1]) {
+    const cover = new THREE.BoxGeometry(0.09, 0.004, 0.13).translate(s * 0.046, 0, 0).rotateZ(s * -0.1);
+    BL.add(M.vc, cover.translate(0, 0.003, 0), { color: PALETTE.cognac, cast: false });
+    const pages = new THREE.BoxGeometry(0.085, 0.012, 0.122).translate(s * 0.044, 0, 0).rotateZ(s * -0.1);
+    BL.add(M.paper, pages.translate(0, 0.011, 0), { color: '#f3ecdc', cast: false });
+  }
+  void rng;
 }
 
 // ─── furniture ───────────────────────────────────────────────────────────────
@@ -301,10 +528,11 @@ function sofa(F, rng, m, { len = 1.9, depth = 0.82, color }) {
     L.add(M.fabric, c.translate(-len / 2 + 0.16 + cw * (i + 0.5), 0.66, -depth / 2 + 0.2), { color: shadeHex(color, 0.03) });
   }
   // throw pillows
+  // ink velvet, cognac and linen (the room's accent and its two supporting colours)
   const pillows = [
-    [-len / 2 + 0.3, PALETTE.terracotta, 0.45],
-    [-len / 2 + 0.52, PALETTE.mustard, 0.25],
-    [len / 2 - 0.32, PALETTE.cream, -0.4],
+    [-len / 2 + 0.3, PALETTE.inkVelvet, 0.45],
+    [-len / 2 + 0.52, PALETTE.cognac, 0.25],
+    [len / 2 - 0.32, PALETTE.linen, -0.4],
   ];
   for (const [x, c, rot] of pillows) {
     const p = cushion(0.34, 0.32, 0.11, 0.05, 0.35);
@@ -339,7 +567,7 @@ function knitThrow(rng, len, width) {
   const pos = g.attributes.position;
   const P = new THREE.Vector3(), T = new THREE.Vector3(), N = new THREE.Vector3();
   const col = new Float32Array(pos.count * 3);
-  const base = new THREE.Color('#ebe0cb');
+  const base = new THREE.Color('#3a5287'); // ink-blue knit
   const cc = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
@@ -358,7 +586,7 @@ function knitThrow(rng, len, width) {
     // the free ends gather a little (the throw narrows as it falls)
     const zz = z * (1 - 0.08 * free) + 0.015 * Math.sin(u * 9 + ph[0]) * free;
     pos.setXYZ(i, P.x + N.x * (y + fold), P.y + N.y * (y + fold), zz);
-    // chunky cable-knit ribs running down the throw, a cream with a hint of oat
+    // chunky cable-knit ribs running down the throw
     const rib = Math.abs(Math.sin(zn * 13));
     cc.copy(base).multiplyScalar(0.9 + 0.1 * rib - 0.05 * free * (fold < 0 ? 1 : 0));
     col[i * 3] = cc.r;
@@ -439,17 +667,17 @@ function coffeeTable(F, rng, m) {
     L.add(M.vc, tube([[0.17, 0.55, -0.08], [(0.17 + tip[0]) / 2, 0.75, (tip[2] - 0.08) / 2], tip], 0.004, 3, 6), { color: '#b49a6a', cast: false });
     L.add(M.vc, new THREE.SphereGeometry(0.03, 5, 4).scale(0.6, 1.6, 0.6).translate(...tip), { color: '#d9c7a0', cast: false });
   }
-  L.add(M.clay, new THREE.CylinderGeometry(0.035, 0.035, 0.08, 10).translate(0.02, 0.44, 0.22), { color: '#efe4cf', cast: false });
+  L.add(M.vc, new THREE.CylinderGeometry(0.035, 0.035, 0.08, 10).translate(0.02, 0.44, 0.22), { color: '#efe4cf', cast: false });
   L.add(M.lamp, new THREE.SphereGeometry(0.012, 5, 4).scale(1, 1.6, 1).translate(0.02, 0.5, 0.22), { cast: false });
   const bowl = new THREE.SphereGeometry(0.08, 12, 5, 0, TAU, Math.PI / 2, Math.PI / 2);
-  L.add(M.clay, bowl.translate(-0.16, 0.47, -0.2), { color: '#2f3e5c', cast: false });
+  L.add(M.vc, bowl.translate(-0.16, 0.47, -0.2), { color: PALETTE.ink, cast: false });
 }
 
 function vase(L, [x, y, z], r, h, color) {
   const M = mats();
   const prof = [[0, 0], [r * 0.7, 0], [r * 0.95, h * 0.2], [r, h * 0.45], [r * 0.6, h * 0.8], [r * 0.45, h * 0.92], [r * 0.55, h], [r * 0.45, h * 0.98]].map(([a, b]) => new THREE.Vector2(a, b));
   const g = new THREE.LatheGeometry(prof, 14);
-  L.add(M.glossy, g.translate(x, y, z), { color, cast: false });
+  L.add(M.vc, g.translate(x, y, z), { color, cast: false });
 }
 
 function bookStack(F, rng, m, n = 4, w = 0.26) {
@@ -475,12 +703,12 @@ function tripodLamp(F, rng, m) {
   const joint = [0, 1.15, 0];
   for (let i = 0; i < 3; i++) {
     const a = (i / 3) * TAU;
-    L.add(M.wood, taperTube([[Math.sin(a) * 0.32, 0, Math.cos(a) * 0.32], joint], 0.018, 0.012, 5, 2), { color: WOOD.oakLight, cast: false });
+    L.add(M.metal, taperTube([[Math.sin(a) * 0.32, 0, Math.cos(a) * 0.32], joint], 0.012, 0.009, 5, 2), { color: PALETTE.black, cast: false });
   }
-  L.add(M.metal, new THREE.CylinderGeometry(0.025, 0.025, 0.3, 6).translate(0, 1.3, 0), { color: '#b38b45', cast: false });
+  L.add(M.metal, new THREE.CylinderGeometry(0.02, 0.02, 0.3, 6).translate(0, 1.3, 0), { color: PALETTE.black, cast: false });
   const shade = new THREE.CylinderGeometry(0.25, 0.27, 0.32, 20, 1, false);
   L.add(M.lamp, shade.translate(0, 1.47, 0), { cast: false });
-  L.add(M.metal, new THREE.TorusGeometry(0.25, 0.008, 4, 20).rotateX(Math.PI / 2).translate(0, 1.63, 0), { color: '#b38b45', cast: false });
+  L.add(M.metal, new THREE.TorusGeometry(0.25, 0.008, 4, 20).rotateX(Math.PI / 2).translate(0, 1.63, 0), { color: PALETTE.black, cast: false });
 }
 
 /**
@@ -575,33 +803,43 @@ function sideboard(F, rng, m, halo) {
   }
   const top = legH + h + 0.015;
   // mushroom lamp (glowing dome on a slim stem)
-  L.add(M.clay, new THREE.CylinderGeometry(0.02, 0.07, 0.3, 12).translate(-0.42, top + 0.15, 0), { color: '#efe4cf', cast: false });
+  L.add(M.vc, new THREE.CylinderGeometry(0.02, 0.07, 0.3, 12).translate(-0.42, top + 0.15, 0), { color: PALETTE.ink, cast: false });
   const dome = new THREE.SphereGeometry(0.19, 18, 8, 0, TAU, 0, Math.PI / 2).scale(1, 0.7, 1);
   L.add(M.lamp, dome.translate(-0.42, top + 0.29, 0), { cast: false });
   const hp = new THREE.Vector3(-0.42, top + 0.3, 0).applyMatrix4(m);
   void hp;
   // vases, art books, a small plant
-  vase(L, [0.05, top, -0.04], 0.08, 0.3, PALETTE.terracotta);
+  vase(L, [0.05, top, -0.04], 0.08, 0.3, PALETTE.ink);
   vase(L, [0.22, top, 0.02], 0.06, 0.2, '#e9e2d4');
   bookStack(F, rng, m.clone().multiply(mat4([0.48, top, 0.02], [0, 0.2, 0])), 3, 0.3);
-  L.add(M.clay, new THREE.CylinderGeometry(0.06, 0.05, 0.1, 10).translate(0.5, top + 0.18, 0.02), { color: '#6e8a6a', cast: false });
+  L.add(M.vc, new THREE.CylinderGeometry(0.06, 0.05, 0.1, 10).translate(0.5, top + 0.18, 0.02), { color: '#e9e2d4', cast: false });
   addFern(L, rng, 0.5, top + 0.23, 0.02, { size: 0.25, fronds: 6 });
-  // two framed prints above
-  frameArt(L, [-0.25, legH + h + 0.75, -d / 2 + 0.02], 0.42, 0.55, 'botanical', rng);
-  frameArt(L, [0.32, legH + h + 0.65, -d / 2 + 0.02], 0.36, 0.36, 'circle', rng);
+  // a round print in a brass frame above (the arched window hangs beside it)
+  frameArt(L, [0.3, legH + h + 0.62, -d / 2 + 0.02], 0.34, 0.34, 'circle', rng, { frame: 'brass' });
 }
 
-/** A framed artwork facing +Z at p: kinds 'abstract' | 'botanical' | 'circle' | 'mirror'. */
-function frameArt(L, p, w, h, kind, rng) {
+/**
+ * A framed artwork facing +Z at p: kinds 'abstract' | 'botanical' | 'circle' | 'hills'.
+ * opts.frame: 'oak' | 'black' | 'brass' | 'walnut' (a gallery of mixed frames), opts.dark: an
+ * ink-ground print (the one dark piece that anchors a gallery wall).
+ */
+function frameArt(L, p, w, h, kind, rng, { frame = 'oak', dark = false } = {}) {
   const M = mats();
-  const fw = 0.03;
+  const fw = frame === 'brass' ? 0.022 : frame === 'black' ? 0.026 : 0.03;
   const [x, y, z] = p;
+  const [fm, fc] = frame === 'black' ? [M.vc, '#1d1c1b'] : frame === 'brass' ? [M.metal, PALETTE.brass] : frame === 'walnut' ? [M.wood, WOOD.walnut] : [M.wood, WOOD.oakLight];
   for (const s of [-1, 1]) {
-    L.add(M.wood, board(fw, h + fw * 2, 0.035, { along: 'y' }).translate(x + s * (w / 2 + fw / 2), y, z + 0.017), { color: WOOD.oakLight, cast: false });
-    L.add(M.wood, board(w + fw * 2, fw, 0.035, { along: 'x' }).translate(x, y + s * (h / 2 + fw / 2), z + 0.017), { color: WOOD.oakLight, cast: false });
+    L.add(fm, board(fw, h + fw * 2, 0.035, { along: 'y' }).translate(x + s * (w / 2 + fw / 2), y, z + 0.017), { color: fc, cast: false });
+    L.add(fm, board(w + fw * 2, fw, 0.035, { along: 'x' }).translate(x, y + s * (h / 2 + fw / 2), z + 0.017), { color: fc, cast: false });
+  }
+  // a cream mat around the dark print
+  if (dark) L.add(M.paper, new THREE.PlaneGeometry(w, h).translate(x, y, z + 0.005), { color: '#efe6d3', cast: false });
+  if (dark) {
+    w *= 0.8;
+    h *= 0.84;
   }
   const bg = new THREE.PlaneGeometry(w, h).translate(x, y, z + 0.006);
-  L.add(M.paper, bg, { color: '#efe6d3', cast: false });
+  L.add(M.paper, bg, { color: dark ? PALETTE.ink : '#efe6d3', cast: false });
   const shape = (s, color, dz = 0.008) => L.add(M.vc, new THREE.ShapeGeometry(s, 10).translate(x, y, z + dz), { color, cast: false });
   if (kind === 'abstract') {
     const arch = new THREE.Shape();
@@ -617,7 +855,7 @@ function frameArt(L, p, w, h, kind, rng) {
     const moon = new THREE.Shape();
     moon.absarc(w * 0.2, -h * 0.28, h * 0.12, 0, Math.PI, false);
     moon.lineTo(w * 0.2 - h * 0.12, -h * 0.28);
-    shape(moon, PALETTE.navy);
+    shape(moon, dark ? PALETTE.linen : PALETTE.navy);
     const dot = new THREE.Shape();
     dot.absarc(-w * 0.05, h * 0.3, h * 0.05, 0, TAU, false);
     shape(dot, PALETTE.mustard, 0.01);
@@ -671,12 +909,13 @@ function gallery(F, rng, I, wallPos) {
   const cw = 0.56; // centre piece (outer width)
   const sw = 0.34; // side columns (outer width)
   const sx = cw / 2 + GAP + sw / 2;
+  // mixed frames (black, brass, oak) around one dark ink print that anchors the cluster
   const art = [
-    { x: 0, y: y0 + H / 2, w: cw, h: H, kind: 'abstract' },
-    { x: -sx, y: y0 + 0.2, w: sw, h: 0.4, kind: 'botanical' },
-    { x: -sx, y: y0 + 0.4 + GAP + 0.15, w: sw, h: 0.3, kind: 'circle' },
-    { x: sx, y: y0 + H - 0.23, w: sw, h: 0.46, kind: 'botanical' },
-    { x: sx, y: y0 + 0.12, w: sw, h: 0.24, kind: 'hills' },
+    { x: 0, y: y0 + H / 2, w: cw, h: H, kind: 'abstract', frame: 'black', dark: true },
+    { x: -sx, y: y0 + 0.2, w: sw, h: 0.4, kind: 'botanical', frame: 'oak' },
+    { x: -sx, y: y0 + 0.4 + GAP + 0.15, w: sw, h: 0.3, kind: 'circle', frame: 'brass' },
+    { x: sx, y: y0 + H - 0.23, w: sw, h: 0.46, kind: 'botanical', frame: 'black' },
+    { x: sx, y: y0 + 0.12, w: sw, h: 0.24, kind: 'hills', frame: 'oak' },
   ];
   for (const a of art) {
     const yc = I.floorY + a.y;
@@ -695,7 +934,7 @@ function gallery(F, rng, I, wallPos) {
     }
     dist -= 0.014;
     const m = mat4([Math.sin(phi) * dist, yc, Math.cos(phi) * dist], [0, phi + Math.PI, 0]);
-    frameArt(local(F, m), [0, 0, 0], a.w - FW * 2, a.h - FW * 2, a.kind, rng);
+    frameArt(local(F, m), [0, 0, 0], a.w - FW * 2, a.h - FW * 2, a.kind, rng, a);
   }
   // round mirror with a brass frame
   {
@@ -759,7 +998,7 @@ function monstera(F, rng, m) {
   const M = mats();
   const L = local(F, m);
   const prof = [[0, 0], [0.2, 0], [0.24, 0.05], [0.25, 0.42], [0.27, 0.44], [0.24, 0.44]].map(([a, b]) => new THREE.Vector2(a, b));
-  L.add(M.glossy, new THREE.LatheGeometry(prof, 16), { color: '#ece6da', cast: false });
+  L.add(M.vc, new THREE.LatheGeometry(prof, 16), { color: '#ece6da', cast: false });
   L.add(M.soil, new THREE.CircleGeometry(0.235, 12).rotateX(-Math.PI / 2).translate(0, 0.42, 0), { cast: false });
   for (let i = 0; i < 9; i++) {
     const a = (i / 9) * TAU + rng.jitter(0.3);
@@ -777,7 +1016,7 @@ function monstera(F, rng, m) {
 function fiddleFig(F, rng, m) {
   const M = mats();
   const L = local(F, m);
-  L.add(M.clay, new THREE.CylinderGeometry(0.2, 0.16, 0.36, 14).translate(0, 0.18, 0), { color: '#b5633e', cast: false });
+  L.add(M.vc, new THREE.CylinderGeometry(0.2, 0.16, 0.36, 14).translate(0, 0.18, 0), { color: '#2b2a28', cast: false });
   const trunk = [[0, 0.3, 0], [0.03, 0.9, 0.02], [-0.02, 1.4, 0], [0.02, 1.75, 0.01]];
   L.add(M.wood, taperTube(trunk, 0.03, 0.015, 5, 8), { color: '#6b5440', cast: false });
   for (let i = 0; i < 16; i++) {
@@ -800,7 +1039,7 @@ function hangingPlant(F, rng, m, ceilH) {
     const a = (i / 4) * TAU;
     L.add(M.vc, tube([[0, 0, 0], [Math.sin(a) * 0.08, potY + 0.35, Math.cos(a) * 0.08], [Math.sin(a) * 0.15, potY + 0.1, Math.cos(a) * 0.15], [0, potY - 0.12, 0]], 0.006, 3, 10), { color: '#e6d9c2', cast: false });
   }
-  L.add(M.clay, new THREE.SphereGeometry(0.15, 14, 8, 0, TAU, Math.PI * 0.35, Math.PI * 0.65).translate(0, potY + 0.06, 0), { color: '#e9e2d4', cast: false });
+  L.add(M.vc, new THREE.SphereGeometry(0.15, 14, 8, 0, TAU, Math.PI * 0.35, Math.PI * 0.65).translate(0, potY + 0.06, 0), { color: '#e9e2d4', cast: false });
   const cards = new Cards();
   const FF = { add: (mat, geo, opts) => L.add(mat, geo, opts) };
   for (let i = 0; i < 6; i++) {
@@ -821,8 +1060,8 @@ function basket(F, rng, m) {
     v.z *= k;
   });
   L.add(M.wood, uvBox(g, 'y', 3).translate(0, 0.16, 0), { color: '#b8955e', cast: false });
-  L.add(M.fabric, cushion(0.34, 0.12, 0.3, 0.05, 0.4).rotateZ(0.3).translate(0.0, 0.33, 0), { color: PALETTE.blush, cast: false });
-  L.add(M.fabric, cushion(0.3, 0.1, 0.26, 0.05, 0.4).rotateZ(-0.4).translate(0.02, 0.4, 0.04), { color: '#e8dcc6', cast: false });
+  L.add(M.fabric, cushion(0.34, 0.12, 0.3, 0.05, 0.4).rotateZ(0.3).translate(0.0, 0.33, 0), { color: PALETTE.oat, cast: false });
+  L.add(M.fabric, cushion(0.3, 0.1, 0.26, 0.05, 0.4).rotateZ(-0.4).translate(0.02, 0.4, 0.04), { color: PALETTE.sage, cast: false });
 }
 
 // ─── easel & mood board ──────────────────────────────────────────────────────
@@ -1125,19 +1364,27 @@ function makeModelTable(rng) {
   B.add(M.wood, board(w - 0.2, 0.04, 0.04, { along: 'x' }).translate(0, 0.3, 0), { color: WOOD.spruce, cast: false });
   B.add(M.wood, board(w, 0.035, d, { along: 'x', rng }).translate(0, h, 0), { color: WOOD.spruce });
   const top = h + 0.018;
-  // the card model of a tiny flat on a base board
+  // the architect's model of a tiny flat: white foam board on a grey base board — thin walls
+  // (a 5 mm board ≈ 6 cm at 1:12) with their grey cut edges, a pale floor, a few coloured
+  // furniture blocks (sage sofa, cognac chair …) and a tiny scale figure
   const bx = -0.12, bz = 0.02;
   const mw = 0.52, md = 0.36;
-  B.add(M.wood, board(mw + 0.04, 0.02, md + 0.04, { along: 'x' }).translate(bx, top + 0.01, bz), { color: WOOD.maple ?? '#d6c39f', cast: false });
-  const wallH = 0.08, t = 0.008;
-  const card = '#f4f1ea';
+  const foam = '#f3f1ec', edge = '#c9c6bf';
+  B.add(M.vc, new THREE.BoxGeometry(mw + 0.06, 0.012, md + 0.06).translate(bx, top + 0.006, bz), { color: '#b9b6b0', cast: false });
+  const base = top + 0.012;
+  B.add(M.vc, new THREE.BoxGeometry(mw, 0.003, md).translate(bx, base + 0.0015, bz), { color: '#e9e2d4', cast: false });
+  const wallH = 0.075, t = 0.005;
   const wall = (x0, z0, x1, z1) => {
     const len = Math.hypot(x1 - x0, z1 - z0);
+    const rot = -Math.atan2(z1 - z0, x1 - x0);
     const geo = new THREE.BoxGeometry(len, wallH, t);
-    geo.rotateY(-Math.atan2(z1 - z0, x1 - x0));
-    B.add(M.wood, geo.translate(bx + (x0 + x1) / 2, top + 0.02 + wallH / 2, bz + (z0 + z1) / 2), { color: card, cast: false });
+    geo.rotateY(rot);
+    B.add(M.vc, geo.translate(bx + (x0 + x1) / 2, base + wallH / 2, bz + (z0 + z1) / 2), { color: foam, cast: false });
+    // the cut edge on top: grey foam core between the white facings
+    const cap = new THREE.BoxGeometry(len, 0.0012, t * 0.6).rotateY(rot);
+    B.add(M.vc, cap.translate(bx + (x0 + x1) / 2, base + wallH + 0.0006, bz + (z0 + z1) / 2), { color: edge, cast: false });
   };
-  // outer walls (front left open for view), inner partitions
+  // outer walls (front left open for the view), inner partitions with door gaps
   wall(-mw / 2, -md / 2, mw / 2, -md / 2);
   wall(-mw / 2, -md / 2, -mw / 2, md / 2);
   wall(mw / 2, -md / 2, mw / 2, md / 2);
@@ -1145,30 +1392,63 @@ function makeModelTable(rng) {
   wall(0.05, 0.08, 0.05, md / 2);
   wall(0.05, -0.02, mw / 2, -0.02);
   wall(-mw / 2, md / 2, -0.1, md / 2);
-  // floors (oak) & tiny furniture
-  B.add(M.wood, new THREE.PlaneGeometry(mw, md).rotateX(-Math.PI / 2).translate(bx, top + 0.021, bz), { color: '#c9a77a', cast: false });
-  const block = (x, z, sx, sy, sz, c) => B.add(M.wood, new THREE.BoxGeometry(sx, sy, sz).translate(bx + x, top + 0.021 + sy / 2, bz + z), { color: c, cast: false });
-  block(-0.14, -0.1, 0.16, 0.025, 0.07, '#6e8a6a'); // sofa
-  block(-0.14, 0.02, 0.07, 0.018, 0.07, '#8a6a4a'); // table
-  block(-0.2, 0.12, 0.08, 0.035, 0.03, '#c46a43'); // shelf
-  block(0.16, 0.1, 0.12, 0.02, 0.16, '#efe4cf'); // bed
-  block(0.16, -0.11, 0.16, 0.035, 0.05, '#b8a68a'); // kitchen
-  B.add(M.wood, new THREE.SphereGeometry(0.025, 6, 5).translate(bx - 0.23, top + 0.05, bz - 0.14), { color: '#4e7a34', cast: false });
-  // floor plan, scale ruler, pencil cup, a mug, rolled drawings
+  // a window opening in the back wall: a strip of clear acetate
+  B.add(M.glass, new THREE.PlaneGeometry(0.1, 0.035).translate(bx - 0.12, base + 0.045, bz - md / 2 + t * 0.6), { cast: false });
+  const block = (x, z, sx, sy, sz, c, rotY = 0) => B.add(M.vc, new THREE.BoxGeometry(sx, sy, sz).rotateY(rotY).translate(bx + x, base + 0.003 + sy / 2, bz + z), { color: c, cast: false });
+  block(-0.14, -0.13, 0.15, 0.022, 0.055, PALETTE.sage); // sofa
+  block(-0.14, -0.155, 0.15, 0.02, 0.012, shadeHex(PALETTE.sage, -0.06)); // its back
+  block(-0.04, -0.05, 0.055, 0.02, 0.05, PALETTE.cognac, 0.5); // lounge chair
+  block(-0.15, -0.03, 0.06, 0.014, 0.06, '#9a7a56'); // coffee table
+  block(-0.23, 0.12, 0.03, 0.05, 0.08, '#d9cfbd'); // shelf
+  block(0.16, 0.1, 0.12, 0.018, 0.16, '#efe8da'); // bed
+  block(0.16, 0.035, 0.12, 0.012, 0.03, PALETTE.ink); // its throw
+  block(0.16, -0.12, 0.16, 0.035, 0.045, '#bdb8ae'); // kitchen
+  B.add(M.vc, new THREE.SphereGeometry(0.02, 6, 5).translate(bx - 0.23, base + 0.025, bz - 0.14), { color: '#5e8a42', cast: false });
+  // the scale figure (1:12): a little grey person
+  B.add(M.vc, new THREE.CylinderGeometry(0.006, 0.007, 0.034, 6).translate(bx + 0.0, base + 0.02, bz + 0.1), { color: '#8f8c86', cast: false });
+  B.add(M.vc, new THREE.SphereGeometry(0.0065, 6, 4).translate(bx + 0.0, base + 0.043, bz + 0.1), { color: '#8f8c86', cast: false });
+  // floor plan (paper), a triangular scale ruler, a pencil cup, a mug, a roll of masking tape and
+  // rolled drawings (white paper and a blueprint, held by a rubber band)
   const plan = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.26).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: planTexture(), roughness: 0.9, name: 'floorplan' }));
   plan.position.set(0.3, top + 0.003, 0.08);
   plan.rotation.y = -0.15;
   plan.receiveShadow = true;
   g.add(plan);
-  B.add(M.wood, xf(new THREE.CylinderGeometry(0.012, 0.012, 0.3, 3), [0.32, top + 0.012, -0.12], [0, 0.3, Math.PI / 2]), { color: '#e8e0cc', cast: false });
-  B.add(M.wood, new THREE.CylinderGeometry(0.035, 0.032, 0.09, 10).translate(-0.4, top + 0.045, -0.2), { color: '#2f3e5c', cast: false });
+  {
+    // lying across the floor plan
+    const ruler = new THREE.CylinderGeometry(0.011, 0.011, 0.28, 3);
+    ruler.rotateY(Math.PI / 6);
+    B.add(M.vc, xf(ruler, [0.29, top + 0.009, 0.1], [0, -0.55, Math.PI / 2]), { color: '#eceae4', cast: false });
+    // its scales: coloured grooves along the three edges
+    for (const [k, c] of [[0, '#c9352a'], [1, '#3d6fa8'], [2, '#3e3a36']]) {
+      const a = (k / 3) * TAU + Math.PI / 6 + Math.PI / 3;
+      const strip = new THREE.BoxGeometry(0.24, 0.0012, 0.0016).translate(0, Math.cos(a) * 0.0058, Math.sin(a) * 0.0058);
+      B.add(M.vc, xf(strip.rotateX(-a), [0.29, top + 0.009, 0.1], [0, -0.55, 0]), { color: c, cast: false });
+    }
+  }
+  B.add(M.vc, new THREE.CylinderGeometry(0.035, 0.032, 0.09, 10).translate(-0.4, top + 0.045, -0.2), { color: PALETTE.ink, cast: false });
   for (let i = 0; i < 4; i++) B.add(M.wood, rod([-0.4 + rng.jitter(0.015), top + 0.05, -0.2 + rng.jitter(0.015)], [-0.4 + rng.jitter(0.05), top + 0.17, -0.2 + rng.jitter(0.05)], 0.005, 0.005, 4), { color: rng.pick(['#e8b33a', '#c9352a', '#3e3a36']), cast: false });
-  B.add(M.wood, new THREE.CylinderGeometry(0.04, 0.035, 0.08, 10).translate(0.42, top + 0.04, 0.22), { color: '#efe4cf', cast: false });
-  for (let i = 0; i < 2; i++) {
-    const r = new THREE.CylinderGeometry(0.03, 0.03, 0.5, 10);
+  B.add(M.vc, new THREE.CylinderGeometry(0.04, 0.035, 0.08, 12).translate(0.36, top + 0.04, 0.26), { color: '#efe4cf', cast: false });
+  {
+    // masking tape: a cream tape ring around a brown card core, lying flat
+    const tape = new THREE.LatheGeometry([[0.022, 0], [0.04, 0], [0.041, 0.006], [0.041, 0.018], [0.04, 0.024], [0.022, 0.024], [0.022, 0]].map(([a, b]) => new THREE.Vector2(a, b)), 18);
+    B.add(M.vc, tape.translate(0.42, top, -0.12), { color: '#e6d6a4', cast: false });
+    const core = new THREE.CylinderGeometry(0.022, 0.022, 0.025, 14, 1, true);
+    B.add(M.vc, core.translate(0.42, top + 0.0125, -0.12), { color: '#9a7b55', cast: false });
+  }
+  for (let i = 0; i < 3; i++) {
+    // behind the model: two rolls side by side and one on top
+    const r = new THREE.CylinderGeometry(0.024, 0.024, 0.44 - i * 0.05, 12);
+    const ry = 0.06 + i * 0.05;
     r.rotateZ(Math.PI / 2);
-    r.rotateY(0.2 + i * 0.15);
-    B.add(M.wood, r.translate(0.05, top + 0.03 + i * 0.05, -0.24 + i * 0.03), { color: '#f2ead8', cast: false });
+    r.rotateY(ry);
+    const pz = i === 2 ? -0.252 : -0.276 + i * 0.05, py = top + 0.024 + (i === 2 ? 0.042 : 0);
+    B.add(M.vc, r.translate(0.2, py, pz), { color: i === 1 ? '#3d6fa8' : '#f4f1e8', cast: false });
+    // a rubber band round the white roll
+    if (i === 0) {
+      const band = new THREE.TorusGeometry(0.0246, 0.0019, 4, 14).rotateY(Math.PI / 2).rotateY(ry);
+      B.add(M.vc, band.translate(0.2 + Math.cos(ry) * 0.07, py, pz - Math.sin(ry) * 0.07), { color: '#a34a2c', cast: false });
+    }
   }
   B.build(g, 'model-table', { mergeShadow: true });
   return g;

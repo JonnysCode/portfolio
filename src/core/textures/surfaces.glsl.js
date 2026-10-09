@@ -365,10 +365,10 @@ Surf kind_masonry(vec2 uv) {
   sc *= (0.78 + 0.38 * sat(bump * 0.8 + 0.5)) * 1.07;
   sc *= 1.0 + 0.1 * fine;
   // mineral grains: dark & pale specks
-  vec4 gv = voronoi(q * 70.0, vec2(70.0), 1.0);
-  float dot1 = 1.0 - smoothstep(0.1, 0.24, gv.x);
-  sc = mix(sc, sc * 0.58, step(0.8, gv.z) * dot1 * 0.75);
-  sc = mix(sc, sc * 1.22 + 0.03, step(0.9, gv.w) * dot1 * 0.6);
+  vec4 gv = voronoi(q * 110.0, vec2(110.0), 1.0);
+  float dot1 = 1.0 - smoothstep(0.06, 0.2, gv.x);
+  sc = mix(sc, sc * 0.7, step(0.82, gv.z) * dot1 * 0.5);
+  sc = mix(sc, sc * 1.12 + 0.015, step(0.93, gv.w) * dot1 * 0.35);
   sc *= 1.0 - 0.22 * pits;
   sc = mix(sc, sc * 1.17, sat(dot(-tc, tilt) * 2.0 + 0.3) * bevel);   // facets turned to the light
   sc = mix(sc, sc * 0.68, (1.0 - bevel) * 0.6);                        // grimy, worn edges

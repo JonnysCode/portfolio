@@ -25,7 +25,7 @@
 import * as THREE from 'three';
 import { OAK } from '../../world/layout.js';
 import { getHeight } from '../../world/ground.js';
-import { DEG, TAU, IRON, BRASS, OLD_OAK, OLD_POLE, BOUGH_BARK, DARK_OAK, LICHEN, addFlowerTuft, addToadstool, Batch, smallBitsRemap, polar, radial, board, timber, branch, tubeAlong, xf, stoneGeo, mossGeo, ivyCard, lashing, weatherPaint, lichenGeo, crookedPath, sagCurve } from './kit.js';
+import { DEG, TAU, IRON, BRASS, OLD_OAK, OLD_POLE, BOUGH_BARK, DARK_OAK, LICHEN, lodRadial, addFlowerTuft, addToadstool, Batch, smallBitsRemap, polar, radial, board, timber, branch, tubeAlong, xf, stoneGeo, mossGeo, ivyCard, lashing, weatherPaint, lichenGeo, crookedPath, sagCurve } from './kit.js';
 import { ELEVATOR_AZ, LIFT } from './deck.js';
 import { addSignPlate } from './props.js';
 
@@ -401,7 +401,7 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
       for (let j = 1; j < pts.length - 1; j += 3) {
         const p = pts[j];
         const along = pts[j + 1].clone().sub(pts[j - 1]).normalize();
-        B.add(railMat, xf(new THREE.CylinderGeometry(0.03, 0.035, 0.12, 6).rotateX(Math.PI / 2), [p.x - n.x * 0.04, p.y - 0.06, p.z - n.z * 0.04], [0, a, 0]), { cast: false });
+        B.add(railMat, xf(new THREE.CylinderGeometry(0.03, 0.035, 0.12, lodRadial(6, 5)).rotateX(Math.PI / 2), [p.x - n.x * 0.04, p.y - 0.06, p.z - n.z * 0.04], [0, a, 0]), { cast: false });
         for (const lg of lashing(p, along, 0.036, { turns: 2, thick: 0.012, gap: 0.03 })) B.add(ropeMat, lg, { cast: false });
       }
       // ivy twining up the rail here and there

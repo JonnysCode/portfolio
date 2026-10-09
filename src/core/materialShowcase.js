@@ -153,6 +153,23 @@ function buildLookDev(ctx) {
   // forest giant scale
   add(new THREE.CylinderGeometry(2.0, 2.5, 18, 72, 20), materials.surface('bark', { mossy: 0.3, scale: 1.8 }), -15.5, 9, Z - 1);
   tag('bark s1.8 m0.3', -15.5, 0.6, Z + 2);
+  // a silver birch the forest's way: bark + chalk-white vertex colours with dark
+  // patches (a near-white vertex colour turns the bark smooth & papery)
+  //   --custom "birch:-12.4,2.2,-14.5:-12.4,2.6,-19"
+  {
+    const g = new THREE.CylinderGeometry(0.42, 0.5, 9, 28, 30);
+    const p = g.attributes.position, col = [], w = new THREE.Color('#e9e4d6'), d = new THREE.Color('#2b2724'), c = new THREE.Color();
+    for (let i = 0; i < p.count; i++) {
+      const a = Math.atan2(p.getZ(i), p.getX(i)), y = p.getY(i);
+      const dash = Math.sin(a * 3 + y * 2.6) * Math.sin(y * 7.1 + a) > 0.55 ? 0.75 : 0;
+      const foot = THREE.MathUtils.smoothstep(-y, 2.5, 4.2) * 0.9;
+      c.copy(w).lerp(d, Math.max(dash, foot));
+      col.push(c.r, c.g, c.b);
+    }
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    add(g, materials.surface('bark', { vertexColors: true, mossy: 0.12, scale: 0.6 }), -12.4, 4.5, Z + 3);
+    tag('birch (vc white)', -12.4, 0.6, Z + 3.8);
+  }
   // boxy field stones: plain, mossy, rock — a little course + loose stones
   const kinds = [
     ['stone', {}], ['stone', { mossy: 0.3 }], ['stone', { mossy: 0.4 }], ['rock', { scale: 0.5, mossy: 0.1 }],

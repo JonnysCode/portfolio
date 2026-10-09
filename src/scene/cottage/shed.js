@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { COTTAGE } from '../../world/layout.js';
 import { createRng } from '../../core/rng.js';
 import { makeMushroomHouse } from '../../props/mushroomHouse.js';
-import { mats, mat4, xf, board, boardBetween, rod, deform, uvBox, addFern, addGrass, addFlower, addToadstool, mossGeo, TAU, WOOD, IRON } from './kit.js';
+import { mats, mat4, xf, board, boardBetween, rod, deform, uvBox, addFern, addGrass, addFlower, addToadstool, mossGeo, leafGeo, TAU, WOOD, IRON } from './kit.js';
 import { local, pot, wateringCan, stringLights } from './garden.js';
 
 /** World azimuth the shed's door faces (towards the cottage gardens). */
@@ -24,15 +24,15 @@ export function buildShed(ctx, B, root, halos = null, rimHalos = null) {
     seed: 'garden-shed',
     height: 3.9,
     capShape: 'dome',
-    capColor: '#93623a',
+    capColor: '#8c6446', // a penny bun: warm chestnut, mottled; no veil warts (no sprinkled cupcake)
     capRadius: 1.75,
     stemRadius: 0.98,
     stemHeight: 2.15,
     stem: 'plaster',
     stemColor: '#ece0c8',
-    warts: 26,
-    wartColor: '#d8c39a',
-    gillColor: '#d9c08a',
+    warts: false,
+    capLeaves: 0, // (its own, below)
+    gillColor: '#cbb46a', // olive-yellow pores
     door: { width: 0.74, height: 1.28, color: '#5d6f8f' },
     windows: [{ phi: 1.45, y: 1.15, shape: 'round', w: 0.36 }],
     chimney: false,
@@ -78,7 +78,7 @@ export function buildShed(ctx, B, root, halos = null, rimHalos = null) {
     }
     for (let i = 0; i < 7; i++) {
       const p = cp(rng.next() * TAU, rng.range(0.1, 0.6));
-      const lf = new THREE.PlaneGeometry(0.1, 0.14).rotateX(-Math.PI / 2 + 0.3).rotateY(rng.next() * TAU);
+      const lf = leafGeo(0.16, 0.62, 0.45, 3).translate(0, -0.07, 0).rotateX(-Math.PI / 2 + 0.3).rotateY(rng.next() * TAU);
       F.add(M.leafy, lf.translate(p.x, p.y + 0.015, p.z), { color: rng.pick(['#b8762e', '#c98a3a', '#9a5a2a']), cast: false });
     }
   }

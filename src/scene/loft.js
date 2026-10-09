@@ -17,7 +17,16 @@
 //                     lanterns and fairy lights along its rope handrail
 //   loft/elevator.js  the snail lift crawling up and down the bark between a
 //                     stilted boarding platform on the roots and the deck
-//   loft/kit.js       geometry helpers, materials and per-material batching
+//   loft/kit.js       geometry helpers, materials and per-material batching,
+//                     the per-tier level of detail (setDetail)
+//
+// Detail follows ctx.quality.tier (kit.setDetail): 'high' is the full
+// hand-made loft; 'medium' and 'low' build branches, ropes, lashings, moss,
+// toadstools and shakes with fewer segments and leave nail heads and tread
+// pegs off ('low' also squares the boards' chamfers) — see LOFT_BUDGET.
+// Shadows: the batches keep a material's non-casting bulk (flowers, lichen,
+// lashings…) out of the shadow pass (Batch.build splitShadow); the interior and
+// the duck never cast, and with shadows off ('low') nothing does.
 //
 // Hotspots (area 'code'): 'this-portfolio' (the workstation behind the big
 // window), 'project-backend' (the hollow-log server), 'project-side' (the
@@ -31,7 +40,7 @@
 import * as THREE from 'three';
 import { OAK } from '../world/layout.js';
 import { getHeight } from '../world/ground.js';
-import { Batch, Halos, smallBitsRemap, makeMats, makeBark, makeRootTop, deckFrame, mergeByMaterial } from './loft/kit.js';
+import { Batch, Halos, smallBitsRemap, makeMats, makeBark, makeRootTop, deckFrame, mergeByMaterial, setDetail } from './loft/kit.js';
 import { buildDeck } from './loft/deck.js';
 import { buildHouse, LIT_GLASS } from './loft/house.js';
 import { createScreens } from './loft/screens.js';
@@ -42,11 +51,21 @@ import { buildElevator } from './loft/elevator.js';
 import { makeSmoke } from './cottage/smoke.js';
 import { sharedUniforms } from '../core/materials.js';
 
+/**
+ * Triangle budget per tier (moduleStats: budget / overBudget). Measured with the
+ * shared props (lanterns, string lights, the snail, the coder) included:
+ * high ≈ 171k, medium ≈ 119k, low ≈ 90k triangles (before round 4: 171k / 169k /
+ * 168k); shadow-pass triangles high ≈ 63k, medium ≈ 40k (were 98k / 92k).
+ */
+export const LOFT_BUDGET = { high: 185000, medium: 130000, low: 110000 };
+
 export default async function build(ctx) {
   const root = new THREE.Group();
   root.name = 'code-loft';
   ctx.scene.add(root);
   const tick = () => new Promise((r) => window.setTimeout(r, 0));
+  const shadows = ctx.quality?.shadows !== false;
+  setDetail(ctx.quality?.tier ?? 'high');
 
   const mats = makeMats(ctx);
   const B = new Batch();
@@ -77,7 +96,7 @@ export default async function build(ctx) {
   const elevator = buildElevator(ctx, B, mats, env, { deck, updates });
 
   // ── merge the static geometry ─────────────────────────────────────────────
-  B.build(root, 'loft', { mergeShadow: true, remap: smallBitsRemap(mats) });
+  B.build(root, 'loft', { mergeShadow: true, splitShadow: shadows, remap: smallBitsRemap(mats) });
   const scr = screens.build(root);
   env.boards.build(root);
   halos.build(ctx, root, { day: 0.06, night: 0.5 });
@@ -158,6 +177,13 @@ export default async function build(ctx) {
 
   ctx.colliders?.addCircle?.(stairs.bottom.x, stairs.bottom.z, 0.5, 'loft-stair');
 
+  // shadow casters: the room's furniture and the duck sit under the house's own
+  // shadow (the walls and roof cast it); with shadows off nothing needs to cast
+  const noCast = (o) => o.isMesh && (o.castShadow = false);
+  house.interior.workstation?.traverse(noCast);
+  duck?.parent?.traverse(noCast);
+  if (!shadows) root.traverse(noCast);
+
   ctx.sites.loft = {
     root,
     deck,
@@ -195,6 +221,7 @@ export default async function build(ctx) {
   }
 
   return {
+    budget: LOFT_BUDGET,
     update(dt, t) {
       for (const u of updates) u(dt, t);
     },

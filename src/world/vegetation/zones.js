@@ -3,8 +3,9 @@
 //
 //   canGrow(x, z, { margin, padExtra })  free forest floor that belongs to the
 //        forest builder: off paths, pads (+ the dressed ring around them), the
-//        stream & its banks (riverside), the pond, the waterfall outcrop and
-//        the Great Oak's root zone (the oak builder dresses those).
+//        stream & its banks (riverside), the pond, the waterfall outcrop, the
+//        escarpment behind it (once setRidgeTest has registered it) and the
+//        Great Oak's root zone (the oak builder dresses those).
 //   blocksView(x, y, z, r)  would a sphere hide the subject of any spot camera
 //        (plain, -wide and -close shots, the overview)? Tall things (trees,
 //        giant mushrooms, big ferns, boulders) test a few spheres up their
@@ -49,6 +50,19 @@ export function onFallsRock(x, z, extra = 0) {
   return Math.hypot(x - f.x, z - f.z) < f.radius + extra;
 }
 
+// ─── the riverside escarpment ────────────────────────────────────────────────
+// The ridge the waterfall pours from (scene/riverside/ridge.js) now covers the
+// floor well beyond STREAM.falls.radius. The vegetation registers a test for
+// it at build time (setRidgeTest) — zones.js can't import the riverside
+// module itself (it imports the forest plan, which imports this file) — and
+// forestPlan() never sees it: the plan stays the one the riverside builder
+// gave its buried giants' roots.
+let ridgeTest = null;
+/** fn(x, z, margin) → true where the escarpment stands above the forest floor (null clears it). */
+export function setRidgeTest(fn) {
+  ridgeTest = fn;
+}
+
 /** Distance from the oak's trunk axis. */
 export const oakDist = (x, z) => Math.hypot(x - OAK.x, z - OAK.z);
 
@@ -63,6 +77,7 @@ export function canGrow(x, z, { margin = 0, path = 1.25, oak = OAK_KEEP, padExtr
   if (oakDist(x, z) < oak + margin) return false;
   if (nearWater(x, z, margin)) return false;
   if (onFallsRock(x, z, margin)) return false;
+  if (ridgeTest && ridgeTest(x, z, margin)) return false;
   return true;
 }
 

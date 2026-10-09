@@ -6,8 +6,9 @@
 // CPU. A few big, soft-edged puffs per chimney overlap into one wispy plume
 // (never a string of beads): each grows ~2.5× and thins out as it rises,
 // drifts off with the breeze and wobbles. They take the glen's fog (aerial
-// perspective) and turn from a warm sunlit grey by day to a cool moonlit blue
-// at night.
+// perspective) and turn from a warm sunlit grey by day to a thin, cool
+// moonlit veil at night (half as dense, the stove's ember glow in its first
+// fifth, silver on its wispy edges higher up).
 //
 //   const smoke = makeSmoke([{ x, y, z, scale }], { reducedMotion })
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,11 +78,18 @@ const FRAG = /* glsl */ `
     // light from above-left, darker bottom; warm by day, moonlit at night
     float lit = 0.72 + 0.28 * smoothstep(-0.8, 0.8, p.y - p.x * 0.4);
     vec3 day = mix(vec3(0.62, 0.6, 0.57), vec3(0.93, 0.89, 0.82), lit);
-    vec3 night = mix(vec3(0.1, 0.12, 0.17), vec3(0.24, 0.27, 0.36), lit);
+    vec3 night = mix(vec3(0.07, 0.085, 0.12), vec3(0.16, 0.18, 0.25), lit);
     vec3 col = mix(day, night, uNight);
     // fresh smoke near the chimney is a bit darker and denser
     col *= mix(0.82, 1.0, smoothstep(0.0, 0.35, vLife));
-    gl_FragColor = vec4(col, a * vAlpha * uOpacity);
+    // night: the first fifth of the plume carries the stove's ember glow; higher up only the
+    // wispy edges catch a silver moonlit rim — never an opaque grey pillar
+    float ember = (1.0 - smoothstep(0.04, 0.22, vLife)) * uNight;
+    col = mix(col, vec3(0.62, 0.3, 0.12), ember * 0.75);
+    float rimK = (1.0 - smoothstep(0.12, 0.6, a)) * smoothstep(0.25, 0.85, vLife) * smoothstep(-0.6, 0.6, p.y - p.x * 0.3);
+    col = mix(col, vec3(0.42, 0.48, 0.62), rimK * uNight * 0.7);
+    float op = uOpacity * mix(1.0, 0.5, uNight) * mix(1.0, 1.25, ember);
+    gl_FragColor = vec4(col, a * vAlpha * op);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #include <fog_fragment>

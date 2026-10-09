@@ -256,6 +256,10 @@ function moonlitCrownMaterial(base, bounce = []) {
     // night: a dark blue-green silhouette (not lit felt): 35 % towards a deep
     // blue-green of the same value, down to 40 %; the bellies near-black green
     float oakL = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+    // (the day's sun-kissed sprig tips are near white: at night the value
+    //  range is squeezed, or every lit tip turns into pale frost)
+    diffuseColor.rgb *= mix(1.0, min(1.0, (0.05 + 0.5 * oakL) / max(oakL, 0.02)), uOakNight);
+    oakL = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
     vec3 oakDeep = oakL * vec3(0.52, 1.0, 0.96);
     vec3 oakUpV = (viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz;
     oakUnder = smoothstep(0.1, -0.5, dot(normalize(vNormal), oakUpV));
@@ -263,7 +267,9 @@ function moonlitCrownMaterial(base, bounce = []) {
     //  silver edge, not a frosted, moon-lit felt)
     vec3 oakMoonV = normalize((viewMatrix * vec4(MOON_DIR, 0.0)).xyz);
     float oakMoonLit = clamp(dot(normalize(vNormal), oakMoonV), 0.0, 1.0);
-    diffuseColor.rgb = mix(diffuseColor.rgb, oakDeep, 0.35 * uOakNight) * mix(1.0, 0.4 * (1.0 - 0.62 * oakUnder) * (1.0 - 0.55 * oakMoonLit), uOakNight);
+    diffuseColor.rgb = mix(diffuseColor.rgb, oakDeep, 0.35 * uOakNight) * mix(1.0, 0.4 * (1.0 - 0.62 * oakUnder) * (1.0 - 0.7 * oakMoonLit), uOakNight);
+    // (green, not neutral grey, under the blue moonlight)
+    diffuseColor.rgb *= mix(vec3(1.0), vec3(0.86, 1.0, 0.9), uOakNight);
   }`
       )
       .replace(
@@ -276,9 +282,10 @@ function moonlitCrownMaterial(base, bounce = []) {
     // a thin silver rim on the edges of the masses that face the moon
     float oFres = 1.0 - clamp(abs(dot(oN, oV)), 0.0, 1.0);
     float oF2 = oFres * oFres;
-    float oRim = smoothstep(0.15, 0.8, dot(oN, oM)) * oF2 * oF2 * oF2;
+    float oF4 = oF2 * oF2;
+    float oRim = smoothstep(0.15, 0.8, dot(oN, oM)) * oF4 * oF4;
     float oLeaf = 0.55 + 2.2 * dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
-    totalEmissiveRadiance += vec3(0.5, 0.6, 0.72) * oRim * 0.2 * oLeaf * uOakNight;
+    totalEmissiveRadiance += vec3(0.46, 0.6, 0.74) * oRim * 0.1 * oLeaf * uOakNight;
     // warm bounce under the masses near the loft & the lanterns
     vec3 oW = (vec4(-vViewPosition, 0.0) * viewMatrix).xyz + cameraPosition;
     float oakWarm = 0.0;
@@ -288,7 +295,7 @@ function moonlitCrownMaterial(base, bounce = []) {
       );
   };
   const key = m.customProgramCacheKey();
-  m.customProgramCacheKey = () => `${key}|oak-crown-night6`;
+  m.customProgramCacheKey = () => `${key}|oak-crown-night8`;
   return m;
 }
 

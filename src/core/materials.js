@@ -303,7 +303,8 @@ export const materials = {
    *
    * Kinds (mapping in brackets — triplanar needs no UVs, it is WORLD space, so
    * use it for static things; uv kinds need UVs, see boxUV()):
-   *   bark [tri]      deep vertical furrows, fibrous plates, lichen
+   *   bark [tri]      deep vertical furrows, fibrous plates, lichen. In DIRECT light the furrows
+   *                   are lifted and the plates desaturated (no tiger stripes in the sun)
    *   wood [uv]       opts.species = oak|walnut|spruce|ash|cherry|maple; opts.planks → boards with seams.
    *                   Grain runs along U (opts.grain = 'v' to run along V). Scale: one UV unit =
    *                   1.4 world units (boxUV's tile) → ~8–11 growth rings per 10 cm, pores, light
@@ -340,7 +341,9 @@ export const materials = {
    *   grain      'u' (default) | 'v' — which UV axis the wood grain / fibres follow
    *   swapUV     same as grain: 'v' — swaps U and V for any uv kind (e.g. bark with
    *              triplanar: false on a TubeGeometry branch: furrows then run along the tube)
-   *   vertexColors  multiply by vertex colours (the texture is normalised to average white)
+   *   vertexColors  multiply by vertex colours (the texture is normalised to average white;
+   *              wood + species: per channel, so the vertex colour IS the average wood colour;
+   *              wood + color: luminance only, the redder late wood keeps a faint warm cast)
    *   bump       normal-map strength multiplier     breakup  painterly colour variation (0 = off)
    *   mossGain   brightness of the moss overlay (1). The moss ignores vertex colours: a
    *              vertex-coloured mossy rock gets the same velvet moss as any other surface

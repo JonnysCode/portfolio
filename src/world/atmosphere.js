@@ -8,8 +8,8 @@
 //                       (env/shafts.js, shadow-map driven) + the canopy-gap
 //                       sunbeam onto the Schreinerei (lighting's SpotLight);
 //                       by night two wide hero moonbeams (the fairy ring, and
-//                       from the moon's gap onto the plunge pool) + quieter
-//                       ones (lily pond, the path) stay on
+//                       from the moon's gap onto the plunge pool) + a quieter
+//                       one on the lily pond stay on
 //   sunbeam dust        glittering motes that only sparkle in sunlight
 //                       (env/sunmotes.js)
 //   pixie dust          bigger twinkling gold & mint sparkles swirling around
@@ -31,7 +31,7 @@ import * as THREE from 'three';
 import { installFog, fogParams } from './env/fog.js';
 import { STREAM } from './layout.js';
 import { getHeight } from './ground.js';
-import { dirFromAngles } from './env/celestial.js';
+import { dirFromAngles, SUN_LIGHT_DIR } from './env/celestial.js';
 import { updateSunlight } from './env/sunlight.js';
 import { buildShafts } from './env/shafts.js';
 import { buildSunMotes } from './env/sunmotes.js';
@@ -63,34 +63,72 @@ export default async function build(ctx) {
     const foot = dayBeam.target;
     shafts.addBeam(foot.x, foot.y - 0.4, foot.z, axis, { length: 22, width: 2.4, intensity: 0.75 });
   }
-  // moonbeams: placed on the first frame, once the lighting knows where the fairy ring is.
+  // two broad golden shafts slanting right across the glen's middle (the
+  // meadow in front of the oak, the path to the bridge) — chosen stages like
+  // the Schreinerei's beam, so the zoomed-out shots get their god rays too
+  if (shafts) {
+    for (const [x, z, w, i] of [[-1, 7, 3.6, 1.7], [6, 9, 3.0, 1.4]]) {
+      shafts.addBeam(x, getHeight(x, z), z, SUN_LIGHT_DIR, { length: 26, width: w, intensity: i });
+    }
+  }
+  // moonbeams: placed on the first frame after the build, once the fairy ring stands.
   // Two hero beams, wide and bright, each landing in a pool of glowing mist
   // with slow silver motes drifting down inside: one on the fairy ring (along
-  // the lighting's night beam, so it matches the light pool there — seen from
-  // the glen and the overview), one falling from the moon's canopy gap above
-  // the waterfall onto the plunge pool. The pond and the path get quieter ones.
+  // the lighting's night-beam direction — seen from the glen, the overview and
+  // the ring itself), one falling from the moon's canopy gap above the
+  // waterfall onto the plunge pool. The lily pond gets a quieter one.
   let moonbeams = false;
+  const ringBox = new THREE.Box3();
+  /**
+   * The fairy ring's centre on the ground: the centre of the vegetation's
+   * secret hotspot (or of its 'fairy-ring' group). Never the group's own
+   * position — its meshes are merged in world space, so that is the origin.
+   */
+  function ringCentre() {
+    const c = new THREE.Vector3();
+    const spot = ctx.interactions?.hotspots?.find((h) => /fairy ring/i.test(h.label ?? ''));
+    let found = false;
+    try {
+      if (spot?.center) {
+        spot.center(c);
+        found = Number.isFinite(c.x) && Math.hypot(c.x, c.z) > 0.5;
+      }
+    } catch {
+      found = false;
+    }
+    if (!found) {
+      const obj = scene.getObjectByName('fairy-ring');
+      if (!obj) return null;
+      ringBox.setFromObject(obj);
+      if (ringBox.isEmpty()) return null;
+      ringBox.getCenter(c);
+    }
+    c.y = getHeight(c.x, c.z);
+    return c;
+  }
   function placeMoonbeams() {
     moonbeams = true;
-    const ring = ctx.lights?.beams?.night;
-    // the pixie dust gathers on the fairy ring the lighting found (vegetation's hotspot)
-    if (ring && sparkles) sparkles.anchors.ring.set(ring.target.x, ring.target.y - 0.15, ring.target.z);
+    const night = ctx.lights?.beams?.night;
+    const ring = ringCentre();
+    // the pixie dust gathers on the fairy ring
+    if (ring && sparkles) sparkles.anchors.ring.set(ring.x, ring.y + 0.05, ring.z);
     if (!shafts) return;
     const heroes = [];
     if (ring) {
-      const axis = new THREE.Vector3().subVectors(ring.pos, ring.target).normalize();
-      const foot = new THREE.Vector3(ring.target.x, getHeight(ring.target.x, ring.target.z), ring.target.z);
-      shafts.addMoonbeam(foot.x, foot.z, { length: 24, width: 4.5, intensity: 1.8, axis });
-      heroes.push({ foot, axis, width: 4.5, length: 24 });
+      // (along the lighting's night beam: the moon's side, high)
+      const axis = night ? new THREE.Vector3().subVectors(night.pos, night.target).normalize() : dirFromAngles(62, 58);
+      shafts.addMoonbeam(ring.x, ring.z, { length: 24, width: 4.5, intensity: 1.8, axis });
+      heroes.push({ foot: ring, axis, width: 4.5, length: 24 });
     }
     {
+      // from the moon's canopy gap above the waterfall down onto the plunge pool
       const axis = dirFromAngles(64, 14);
       const foot = new THREE.Vector3(STREAM.pool.x, getHeight(STREAM.pool.x, STREAM.pool.z), STREAM.pool.z);
       shafts.addMoonbeam(foot.x, foot.z, { length: 30, width: 4.2, intensity: 1.7, axis });
       heroes.push({ foot, axis, width: 4.2, length: 30 });
     }
+    // a quieter one on the lily pond
     shafts.addMoonbeam(STREAM.pond.x, STREAM.pond.z, { length: 26, width: 3.4, intensity: 1.0 });
-    shafts.addMoonbeam(1.0, 8.6, { length: 24, width: 2.4, intensity: 0.7 });
     mist?.setBeams(heroes);
     sparkles?.setBeams(heroes);
   }
@@ -126,7 +164,8 @@ export default async function build(ctx) {
   return {
     update(dt, t) {
       updateSunlight(ctx);
-      if (!moonbeams) placeMoonbeams();
+      // (once the whole world is built: the fairy ring is the vegetation's)
+      if (!moonbeams && ctx.buildReport) placeMoonbeams();
       const n = ctx.env?.night ?? 0;
       shafts?.update(n, t);
       if (shafts) shafts.uniforms.uStrength.value *= settings.shafts;

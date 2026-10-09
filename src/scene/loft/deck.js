@@ -20,7 +20,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { OAK } from '../../world/layout.js';
-import { DEG, TAU, WOOD, IRON, BARK, polar, radial, board, timber, branch, tubeAlong, sagCurve, mossGeo, ivyCard, addToadstool, xf, alongX } from './kit.js';
+import { DEG, TAU, WOOD, IRON, BARK, LOD, lodRadial, lodSegs, polar, radial, board, timber, branch, tubeAlong, sagCurve, mossGeo, ivyCard, addToadstool, xf, alongX } from './kit.js';
 import { HOUSE } from './house.js';
 
 /** Azimuth (deg) of the snail lift's track on the bark. */
@@ -155,7 +155,7 @@ export function buildDeck(ctx, B, mats, env) {
     // bolt heads where the joist meets the ledger
     const side = new THREE.Vector3(Math.cos(a), 0, -Math.sin(a));
     const bp = polar(a, rIn + 0.3, yJ - 0.02).addScaledVector(side, 0.07);
-    const bolt = new THREE.CylinderGeometry(0.028, 0.028, 0.03, 6).rotateZ(Math.PI / 2);
+    const bolt = new THREE.CylinderGeometry(0.028, 0.028, 0.03, lodRadial(6, 5)).rotateZ(Math.PI / 2);
     alongX(bolt, bp.clone().addScaledVector(side, -0.015), bp.clone().addScaledVector(side, 0.015));
     B.add(ironMat, bolt, { cast: false });
   }
@@ -186,7 +186,7 @@ export function buildDeck(ctx, B, mats, env) {
       // lag bolts with big washers into the trunk
       if (Math.round(deg) % 18 === 6) {
         const n = radial(a);
-        const g = new THREE.CylinderGeometry(0.05, 0.05, 0.03, 8);
+        const g = new THREE.CylinderGeometry(0.05, 0.05, 0.03, lodRadial(8, 6));
         alongX(g.rotateZ(Math.PI / 2), p.clone().addScaledVector(n, 0.05), p.clone().addScaledVector(n, 0.09));
         B.add(ironMat, g, { cast: false });
       }
@@ -230,18 +230,19 @@ export function buildDeck(ctx, B, mats, env) {
     B.add(mats.wood(WOOD.frame), cleat);
     for (const s of [-1, 1]) {
       const bp = cleatC.clone().add(new THREE.Vector3(Math.cos(j.a) * 0.05 * s, 0.04 * s, -Math.sin(j.a) * 0.05 * s)).addScaledVector(n, 0.06);
-      B.add(ironMat, xf(new THREE.CylinderGeometry(0.022, 0.022, 0.03, 6), [bp.x, bp.y, bp.z], [Math.PI / 2, j.a, 0, 'YXZ']), { cast: false });
+      B.add(ironMat, xf(new THREE.CylinderGeometry(0.022, 0.022, 0.03, lodRadial(6, 5)), [bp.x, bp.y, bp.z], [Math.PI / 2, j.a, 0, 'YXZ']), { cast: false });
     }
     // the bolt through the brace head and the joist
     const tp = top.clone();
     const side = new THREE.Vector3(Math.cos(j.a), 0, -Math.sin(j.a));
-    const bolt = new THREE.CylinderGeometry(0.025, 0.025, 0.24, 6);
+    const bolt = new THREE.CylinderGeometry(0.025, 0.025, 0.24, lodRadial(6, 5));
     alongX(bolt.rotateZ(Math.PI / 2), tp.clone().addScaledVector(side, -0.12), tp.clone().addScaledVector(side, 0.12));
     B.add(ironMat, bolt, { cast: false });
     braces.push({ a: j.a, foot, top });
   }
 
-  // ── nail heads where the planks cross the joists ──────────────────────────
+  // ── nail heads where the planks cross the joists (only on 'high': below it
+  //    they are a few pixels each — the random stream stays the same) ─────────
   {
     const nailMat = mats.metal('#4a423a');
     const L0 = new THREE.Vector3(), L1 = new THREE.Vector3();
@@ -255,8 +256,8 @@ export function buildDeck(ctx, B, mats, env) {
         const z = L0.z + (L1.z - L0.z) * t;
         if (z < run.z0 + 0.04 || z > run.z1 - 0.04) continue;
         for (const s of [-1, 1]) {
-          const g = new THREE.CylinderGeometry(0.014, 0.014, 0.012, 5);
-          F.add(nailMat, xf(g, [run.x + s * 0.075 + rng.jitter(0.01), 0.003, z + rng.jitter(0.015)]), { cast: false });
+          const nx = run.x + s * 0.075 + rng.jitter(0.01), nz = z + rng.jitter(0.015);
+          if (LOD.minutiae) F.add(nailMat, xf(new THREE.CylinderGeometry(0.014, 0.014, 0.012, 5), [nx, 0.003, nz]), { cast: false });
         }
       }
     }
@@ -289,13 +290,13 @@ export function buildDeck(ctx, B, mats, env) {
     // lashing around the limb: a few turns
     const T = L.curve.getTangentAt(u);
     for (let k = -2; k <= 2; k++) {
-      const ring = new THREE.TorusGeometry(rr * 1.02, 0.03, 5, 18);
+      const ring = new THREE.TorusGeometry(rr * 1.02, 0.03, lodSegs(5, 3), lodRadial(18, 8));
       ring.lookAt(T);
       const c = P.clone().addScaledVector(T, k * 0.065);
       B.add(ropeMat, xf(ring, [c.x, c.y, c.z]), { cast: false });
     }
     // knot + iron ring at the rim
-    const knot = new THREE.TorusGeometry(0.07, 0.022, 5, 10);
+    const knot = new THREE.TorusGeometry(0.07, 0.022, lodSegs(5, 3), lodRadial(10, 6));
     B.add(ironMat, xf(knot, [low.x, low.y - 0.05, low.z], [0, a + Math.PI / 2, 0]), { cast: false });
     B.add(ropeMat, xf(new THREE.SphereGeometry(0.06, 6, 5), [low.x, low.y + 0.07, low.z], null, [1, 1.4, 1]), { cast: false });
     ropes.push({ top: hang, low });
