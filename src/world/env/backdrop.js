@@ -77,6 +77,30 @@ function farHeight(x, z) {
 
 const polar = (r, az) => ({ x: Math.sin(az) * r, z: -Math.cos(az) * r });
 
+// ─── the zoomed-out frames ───────────────────────────────────────────────────
+// No far crown may float into the top of the zoomed-out glen shots (the glen
+// camera pulled back: glen-wide, the phone's widest framing): seen from there
+// a crown is a pale lump on a pole. Every crown, limb tip and the leaf
+// ceiling is lifted until its underside clears that frame's top edge, so the
+// trunks leave the frame like cathedral columns. (The overview looks down,
+// its top edge is far lower; the glen shot itself is nearer, so it clears too.)
+const WIDE_CAM = new THREE.PerspectiveCamera(40, 16 / 9, 1, 1000);
+WIDE_CAM.position.set(7.2, 25.4, 73.6);
+WIDE_CAM.lookAt(0, 6.5, -2);
+WIDE_CAM.updateMatrixWorld();
+const _cp = new THREE.Vector3();
+/** Lowest height at (x, z) that stays just above the zoomed-out glen frame's top edge. */
+function clearY(x, z) {
+  let lo = -20, hi = 220;
+  for (let i = 0; i < 20; i++) {
+    const m = (lo + hi) * 0.5;
+    _cp.set(x, m, z).project(WIDE_CAM);
+    if (_cp.y > 1.1) hi = m;
+    else lo = m;
+  }
+  return hi;
+}
+
 // ─── geometry accumulator (one merged mesh, no per-part BufferGeometry merge) ─
 
 function makeAcc() {
@@ -280,7 +304,7 @@ function ceilingBase(x, z, r) {
 }
 
 /**
- * The high leaf ceiling: a polar sheet over the far forest (r ≈ 30 … 125),
+ * The high leaf ceiling: a polar sheet over the far forest (r ≈ 24 … 125),
  * sagging into hanging leaf masses. The gaps are cut in its shader.
  */
 function ceilingGeometry(tier) {
@@ -289,13 +313,14 @@ function ceilingGeometry(tier) {
   const pos = [];
   const idx = [];
   for (let j = 0; j <= radial; j++) {
-    const r = 30 + Math.pow(j / radial, 1.2) * 95;
+    const r = 24 + Math.pow(j / radial, 1.2) * 101;
     for (let i = 0; i <= around; i++) {
       const az = -ARC - 0.12 + (i / around) * (2 * ARC + 0.24);
       const { x, z } = polar(r, az);
       const lump = Math.max(0, noise(x * 0.045 + 3.1, z * 0.045 - 1.7));
       const y = ceilingBase(x, z, r) - 8 * Math.pow(lump, 1.3) - 1.8 * noise(x * 0.13, z * 0.13);
-      pos.push(x, y, z);
+      // (its hanging lumps never sag into the zoomed-out glen frame)
+      pos.push(x, Math.max(y, clearY(x, z) + 1.5), z);
     }
   }
   for (let j = 0; j < radial; j++) {
@@ -445,7 +470,7 @@ const CEIL_FRAG = /* glsl */ `
     // big ragged gaps between the crowns — more of them towards the glen
     // (the clearing) — with finer leafy edges
     float g = envFbm(vW.xz * 0.028 + 7.0) * 0.78 + envNoise(vW.xz * 0.09 - 3.0) * 0.22;
-    g += (1.0 - smoothstep(30.0, 46.0, r)) * 0.42;
+    g += (1.0 - smoothstep(24.0, 40.0, r)) * 0.42;
     for (int i = 0; i < 4; i++) {
       vec2 d = vW.xz - uGaps[i].xy;
       g += 0.38 * (1.0 - smoothstep(uGaps[i].z * 0.35, uGaps[i].z, length(d)));
@@ -704,12 +729,15 @@ export function buildBackdrop(ctx) {
     { r: [54, 66], count: tier === 'low' ? 12 : 17, radius: [2.2, 3.6], height: [42, 56] },
     { r: [72, 92], count: tier === 'low' ? 12 : 19, radius: [2.8, 4.6], height: [50, 66] },
     { r: [100, 135], count: tier === 'low' ? 7 : tier === 'medium' ? 14 : 22, radius: [3.5, 6], height: [60, 80], far: true },
-    // understory: smaller trees whose crowns sit low enough to be seen between the giants
-    { r: [50, 80], count: tier === 'low' ? 6 : 14, radius: [0.8, 1.4], height: [18, 28], under: true },
+    // understory: low bushy trees whose crowns sink into the mist between the
+    // giants' feet (dark leafy masses in the haze, never lumps on poles)
+    { r: [50, 80], count: tier === 'low' ? 6 : 14, radius: [0.7, 1.2], height: [9, 15], under: true },
   ];
   const lobes = tier === 'low' ? 0 : 1;
   const from = new THREE.Vector3();
   const to = new THREE.Vector3();
+  /** How far a set of crown masses [{ x, y, z, s }] must rise so no belly enters the zoomed-out frame. */
+  const liftFor = (masses) => masses.reduce((m, c) => Math.max(m, clearY(c.x, c.z) + c.s * 1.02 - c.y), 0);
   for (const row of rows) {
     for (let k = 0; k < row.count; k++) {
       const az = -ARC + ((k + rng.range(0.15, 0.85)) / row.count) * 2 * ARC;
@@ -717,15 +745,44 @@ export function buildBackdrop(ctx) {
       const { x, z } = polar(r, az);
       const y0 = farHeight(x, z);
       const radius = rng.range(row.radius[0], row.radius[1]);
-      const height = rng.range(row.height[0], row.height[1]);
+      let height = rng.range(row.height[0], row.height[1]);
       // the old giants lean and bend; a few lean a lot
       const lean = rng.next() < 0.2 ? rng.range(0.02, 0.035) : rng.range(0.004, 0.018);
       const leanAz = rng.range(0, Math.PI * 2);
       const bark = BARKS[rng.int(0, BARKS.length - 1)];
-      const topY = y0 + height - 3;
-      const bend = lean * height;
-      const tx = x + Math.sin(leanAz) * bend;
-      const tz = z - Math.cos(leanAz) * bend;
+      // crown: a cluster of lumpy, multi-lobed masses (offsets from the trunk
+      // top) — dense enough that, seen from above during the intro, the glen
+      // reads as a clearing in a closed canopy; towards the open front (the
+      // arc's ends) crowns thin out, so the intro's descent from above never
+      // looks through a blob
+      const side = 1 - 0.45 * THREE.MathUtils.smoothstep(Math.abs(az), THREE.MathUtils.degToRad(85), ARC);
+      const masses = [];
+      if (row.under) {
+        // understory crowns: a loose heap of round leafy lumps, low in the mist
+        const n = Math.round(rng.int(4, 5) * side);
+        for (let m = 0; m < n; m++) {
+          const ma = rng.range(0, Math.PI * 2);
+          const md = radius * rng.range(0.4, 3.2) * 1.5;
+          masses.push({ dx: Math.cos(ma) * md, dy: rng.range(-1.5, 2), dz: Math.sin(ma) * md, s: radius * rng.range(1.9, 3.0) * 1.4 * side });
+        }
+      } else {
+        const n = Math.round((row.far ? rng.int(3, 4) : rng.int(4, 6)) * side);
+        for (let m = 0; m < n; m++) {
+          const ma = rng.range(0, Math.PI * 2);
+          const md = radius * rng.range(1.2, 4.6);
+          masses.push({ dx: Math.cos(ma) * md, dy: rng.range(2, 9), dz: Math.sin(ma) * md, s: radius * rng.range(2.6, 4.0) * side });
+        }
+      }
+      // (the giants grow until their crowns clear the zoomed-out frame)
+      const at = (h) => {
+        const bend = lean * h;
+        return { tx: x + Math.sin(leanAz) * bend, tz: z - Math.cos(leanAz) * bend, topY: y0 + h - 3 };
+      };
+      if (!row.under) {
+        const { tx, tz, topY } = at(height);
+        height += liftFor(masses.map((c) => ({ x: tx + c.dx, y: topY + c.dy, z: tz + c.dz, s: c.s })));
+      }
+      const { tx, tz, topY } = at(height);
       // the moon window: no trunk where it would cover the moon from the glen
       let blocked = false;
       for (let s = 0; s <= 6 && !blocked; s++) {
@@ -738,16 +795,29 @@ export function buildBackdrop(ctx) {
       addGeo(acc, trunk, bark);
       // limbs: curved, tapering branches that arch up into the crown and end
       // in leaf sprays; now and then one forks off lower down (gnarled giants)
-      const limbs = row.far ? 0 : rng.int(2, 3);
+      const limbs = row.far || row.under ? 0 : rng.int(2, 3);
       for (let l = 0; l < limbs; l++) {
         const la = rng.range(0, Math.PI * 2);
-        const low = !row.under && l === 0 && rng.next() < 0.3;
-        const fromY = low ? y0 + height * rng.range(0.5, 0.65) : topY - height * rng.range(0.1, 0.24);
-        const tBend = (fromY - y0) / height;
-        from.set(x + (tx - x) * tBend * tBend, fromY, z + (tz - z) * tBend * tBend);
+        let low = l === 0 && rng.next() < 0.3;
         const reach = radius * rng.range(3, 4.8) * (low ? 1.3 : 1);
+        const highFrom = topY - height * rng.range(0.1, 0.24);
+        let fromY = low ? y0 + height * rng.range(0.5, 0.65) : highFrom;
+        // (a low limb's leafy end must clear the zoomed-out frame as well —
+        //  where it cannot, it grows from up in the crown instead)
+        const cs = radius * rng.range(1.8, 2.6);
+        if (low) {
+          const ex = x + Math.cos(la) * reach, ez = z + Math.sin(la) * reach;
+          fromY = Math.max(fromY, clearY(ex, ez) + cs * 0.62 - reach * 0.75);
+          if (fromY > y0 + height * 0.78) {
+            low = false;
+            fromY = highFrom;
+          }
+        }
+        const tBend = Math.min(1, (fromY - y0) / height);
+        from.set(x + (tx - x) * tBend * tBend, fromY, z + (tz - z) * tBend * tBend);
         to.set(from.x + Math.cos(la) * reach, low ? fromY + reach * 0.75 : topY + rng.range(2, 6), from.z + Math.sin(la) * reach);
         if (inMoonWindow(to.x, to.y, to.z, radius * 2)) continue;
+        if (!low && to.y - radius * 1.6 < clearY(to.x, to.z)) to.y = clearY(to.x, to.z) + radius * 1.6;
         addGeo(acc, branchGeometry(from, to, radius * (low ? 0.42 : 0.4), radius * 0.06, reach * (low ? 0.35 : 0.2)), bark);
         // leaf sprays along the outer half and at the tip
         const sprays = low ? 3 : 2;
@@ -757,37 +827,12 @@ export function buildBackdrop(ctx) {
           const ss = radius * rng.range(0.9, 1.5) * (low ? 1.4 : 1) * (s === 0 ? 1.2 : 0.8);
           addGeo(acc, blobGeometry(rng, sx, sy, sz, ss * 1.3, ss * 0.85, ss * 1.3, row.r[0] < coarseFrom ? blobCoarse : blobTiny), leaf());
         }
-        if (low) {
-          const s = radius * rng.range(1.8, 2.6);
-          crownMass(acc, rng, to.x, to.y + s * 0.4, to.z, s, leaf(), { lobes });
-        }
+        if (low) crownMass(acc, rng, to.x, to.y + cs * 0.4, to.z, cs, leaf(), { lobes });
       }
-      // crown: a cluster of lumpy, multi-lobed masses
-      // (dense enough that, seen from above during the intro, the glen reads as
-      // a clearing in a closed canopy); towards the open front (the arc's ends)
-      // crowns thin out, so the intro's descent from above never looks through a blob
-      const side = 1 - 0.45 * THREE.MathUtils.smoothstep(Math.abs(az), THREE.MathUtils.degToRad(85), ARC);
-      if (row.under) {
-        // understory crowns: a loose cluster of round leafy lumps
-        const n = Math.round(rng.int(4, 5) * side);
-        for (let m = 0; m < n; m++) {
-          const ma = rng.range(0, Math.PI * 2);
-          const md = radius * rng.range(0.4, 3.2) * 1.5;
-          const s = radius * rng.range(1.7, 2.8) * 1.4 * side;
-          const cx = tx + Math.cos(ma) * md, cy = topY + rng.range(-1.5, 3.5), cz = tz + Math.sin(ma) * md;
-          if (inMoonWindow(cx, cy, cz, s * 1.3)) continue;
-          crownMass(acc, rng, cx, cy, cz, s, leaf(), { lobes });
-        }
-      } else {
-        const masses = Math.round((row.far ? rng.int(3, 4) : rng.int(4, 6)) * side);
-        for (let m = 0; m < masses; m++) {
-          const ma = rng.range(0, Math.PI * 2);
-          const md = radius * rng.range(1.2, 4.6);
-          const s = radius * rng.range(2.6, 4.0) * side;
-          const cx = tx + Math.cos(ma) * md, cy = topY + rng.range(2, 9), cz = tz + Math.sin(ma) * md;
-          if (inMoonWindow(cx, cy, cz, s * 1.5)) continue;
-          crownMass(acc, rng, cx, cy, cz, s, leaf(), { fine: row.r[0] < coarseFrom, lobes: row.far ? 0 : lobes });
-        }
+      for (const c of masses) {
+        const cx = tx + c.dx, cy = topY + c.dy, cz = tz + c.dz;
+        if (inMoonWindow(cx, cy, cz, c.s * (row.under ? 1.3 : 1.5))) continue;
+        crownMass(acc, rng, cx, cy, cz, c.s, leaf(), { fine: !row.under && row.r[0] < coarseFrom, lobes: row.far ? 0 : lobes });
       }
       // undergrowth at the foot: leafy shrub cards (understorey mesh), no pillows
       if (tier !== 'low' && !row.far) {
@@ -801,7 +846,8 @@ export function buildBackdrop(ctx) {
     }
   }
   // young trees of the understorey band: slim trunks standing in front of the
-  // giants' feet, their small crowns lost up in the canopy ceiling
+  // giants' feet, their small crowns lost up in the canopy ceiling (out of the
+  // zoomed-out frame)
   const young = tier === 'low' ? 8 : tier === 'medium' ? 14 : 20;
   for (let k = 0; k < young; k++) {
     const az = -ARC + ((k + rng.range(0.1, 0.9)) / young) * 2 * ARC;
@@ -809,22 +855,28 @@ export function buildBackdrop(ctx) {
     const { x, z } = polar(r, az);
     const y0 = farHeight(x, z);
     const radius = rng.range(0.65, 1.15);
-    const height = rng.range(30, 42);
+    let height = rng.range(30, 42);
     const lean = rng.range(0.004, 0.03);
     const leanAz = rng.range(0, Math.PI * 2);
+    const n = rng.int(2, 3);
+    const masses = [];
+    for (let m = 0; m < n; m++) {
+      const ma = rng.range(0, Math.PI * 2);
+      const md = rng.range(0.3, 2.2);
+      masses.push({ dx: Math.cos(ma) * md, dy: rng.range(-1.5, 1.5), dz: Math.sin(ma) * md, s: rng.range(2.2, 3.4) });
+    }
+    {
+      const bend = lean * height;
+      const cx = x + Math.sin(leanAz) * bend, cz = z - Math.cos(leanAz) * bend, cy = y0 + height - 3;
+      height += liftFor(masses.map((c) => ({ x: cx + c.dx, y: cy + c.dy, z: cz + c.dz, s: c.s })));
+    }
     const bend = lean * height;
     const cx = x + Math.sin(leanAz) * bend, cz = z - Math.cos(leanAz) * bend, cy = y0 + height - 3;
     if (inMoonWindow(x, y0 + height * 0.3, z, radius * 2) || inMoonWindow(x, y0 + height * 0.7, z, radius * 2) || inMoonWindow(cx, cy, cz, 4)) continue;
     const trunk = trunkGeometry(rng, { radius, height, lean, leanAz, radial: 8, rings: 8 });
     trunk.translate(x, y0, z);
     addGeo(acc, trunk, BARKS[rng.int(0, BARKS.length - 1)]);
-    const n = rng.int(2, 3);
-    for (let m = 0; m < n; m++) {
-      const s = rng.range(2.2, 3.4);
-      const ma = rng.range(0, Math.PI * 2);
-      const md = rng.range(0.3, 2.2);
-      crownMass(acc, rng, cx + Math.cos(ma) * md, cy + rng.range(-1.5, 1.5), cz + Math.sin(ma) * md, s, leaf(), { lobes });
-    }
+    for (const c of masses) crownMass(acc, rng, cx + c.dx, cy + c.dy, cz + c.dz, c.s, leaf(), { lobes });
   }
   // the canopy between the crowns: big heaped leaf masses (rounded, several
   // bulges each — not flat discs) closing the roof over the far forest
@@ -834,7 +886,7 @@ export function buildBackdrop(ctx) {
     const r = rng.range(46, 95);
     const { x, z } = polar(r, az);
     const s = rng.range(6, 10);
-    const y = farHeight(x, z) + rng.range(38, 52);
+    const y = Math.max(farHeight(x, z) + rng.range(38, 52), clearY(x, z) + s * 1.02);
     if (inMoonWindow(x, y, z, s * 1.5)) continue;
     crownMass(acc, rng, x, y, z, s, leaf(), { fine: r < coarseFrom, lobes: lobes + 1 });
   }

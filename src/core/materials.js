@@ -602,12 +602,20 @@ function makeSurface(kindIn, opts) {
   if (colorize) {
     ({ a: colA, b: colB, c: colC } = colorizeColors(kind, opts));
     if (opts.vertexColors && (kind === 'wood' || kind === 'woodPlanks')) {
-      // wood: normalise PER CHANNEL so the grain averages to white and the
-      // vertex colour alone sets the hue. (A scalar mean kept the species' own
-      // orange, so species oak × an oak vertex colour came out as a doubly
-      // saturated butter-orange.) Weighted like the map: mostly early wood.
+      // wood (weighted like the map: mostly early wood)
       const mr = 0.62 * colA.r + 0.38 * colB.r || 1, mg = 0.62 * colA.g + 0.38 * colB.g || 1, mb = 0.62 * colA.b + 0.38 * colB.b || 1;
-      for (const c of [colA, colB, colC]) c.setRGB(c.r / mr, c.g / mg, c.b / mb);
+      if (opts.color === undefined) {
+        // a species + vertex colours: normalise PER CHANNEL so the grain averages
+        // to white and the vertex colour alone sets the hue (a scalar mean kept
+        // the species' own orange: species oak × an oak vertex colour came out a
+        // doubly saturated butter-orange)
+        for (const c of [colA, colB, colC]) c.setRGB(c.r / mr, c.g / mg, c.b / mb);
+      } else {
+        // a neutral colour + vertex colours (the Schreinerei): normalise the
+        // LUMINANCE only, so the redder late wood keeps a faint warm cast
+        const l = 0.2126 * mr + 0.7152 * mg + 0.0722 * mb || 1;
+        for (const c of [colA, colB, colC]) c.multiplyScalar(1 / l);
+      }
     } else if (opts.vertexColors) {
       // normalise so the texture averages to white and the vertex colour sets the hue
       const mean = (colA.r + colA.g + colA.b + colB.r + colB.g + colB.b) / 6 || 1;

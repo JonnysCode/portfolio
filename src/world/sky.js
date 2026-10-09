@@ -101,7 +101,7 @@ const domeFragment = /* glsl */ `
     vec3 mist = woodlandFogColor(d);
     col = mix(col, mist, 1.0 - smoothstep(-0.02, 0.16, y));
 
-    // ── the hero moon: a big soft disc in the canopy gap above the waterfall
+    // ── the hero moon: a soft bright disc in the canopy gap above the waterfall
     //    (the far forest keeps a window open for it), a wide silver-blue Mie
     //    halo and a luminous gradient round it, so the giants nearby stand as
     //    silhouettes; seen low through the mist, its lower rim is a touch
@@ -110,10 +110,10 @@ const domeFragment = /* glsl */ `
       float md = max(dot(d, uMoonDir), 0.0);
       vec3 mr = normalize(cross(uMoonDir, vec3(0.0, 1.0, 0.0)));
       vec3 mu = cross(mr, uMoonDir);
-      vec2 ml = vec2(dot(d, mr), dot(d, mu)) / 0.047;
+      vec2 ml = vec2(dot(d, mr), dot(d, mu)) / 0.029;
       float r = length(ml);
       float clear = smoothstep(-0.02, 0.12, y);
-      vec3 moonCol = vec3(1.55, 1.58, 1.7) * mix(vec3(1.08, 0.97, 0.86), vec3(1.0), clear);
+      vec3 moonCol = vec3(2.1, 2.15, 2.3) * mix(vec3(1.08, 0.97, 0.86), vec3(1.0), clear);
       // soft maria + a gentle limb darkening, the lit side towards the upper left
       moonCol *= 0.78 + 0.22 * smoothstep(0.25, 0.7, envNoise(ml * 2.1 + 4.0));
       moonCol *= mix(0.7, 1.0, smoothstep(-0.9, -0.2, dot(ml, vec2(-0.75, -0.2))));
@@ -122,7 +122,8 @@ const domeFragment = /* glsl */ `
       float haze = mix(0.6, 1.0, clear);
       vec3 halo = vec3(0.55, 0.66, 1.0) * (pow(md, 900.0) * 0.9 + pow(md, 90.0) * 0.5 + pow(md, 8.0) * 0.3 + pow(md, 2.5) * 0.07);
       col += halo * uNight * haze;
-      col = mix(col, moonCol, disc * uNight * haze);
+      // (low in the mist the disc dims and warms a little, but stays a solid disc)
+      col = mix(col, moonCol * mix(0.8, 1.0, clear), disc * uNight * mix(0.9, 1.0, clear));
     }
 
     // ── the endless forest beyond: two soft painted treelines dissolving in the mist ──

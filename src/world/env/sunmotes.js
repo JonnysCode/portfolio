@@ -5,7 +5,8 @@
 // the god rays and the sunny patches, and vanish in the shade. Brighter when
 // looking towards the sun (forward scattering). One draw call, pure GPU
 // animation (positions wrap inside a box), no CPU work per frame. By night a
-// faint, slower silver glitter in the moonlight.
+// faint, slower silver glitter in the moonlight — warm gold (and half as many)
+// round the Schreinerei, where it is lamplight they drift through.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../../core/rng.js';
@@ -20,7 +21,10 @@ const VERT = /* glsl */ `
   attribute vec4 aSeed; // phase, size, speed, sparkle rate
   uniform float uTime, uMotion, uScale, uStrength;
   uniform vec3 uCenter, uHalf, uAxis;
+  uniform vec4 uWarmAt;   // xyz: the Schreinerei, w: radius (night: warm sawdust motes there)
+  uniform float uNightK;
   varying float vA;
+  varying float vWarm;
   varying float vTw;
   varying float vSize;
   ${GLSL_NOISE}
@@ -49,6 +53,10 @@ const VERT = /* glsl */ `
     // drifting swirls of dust rather than an even sprinkle
     float swirl = smoothstep(0.42, 0.72, envNoise(p.xz * 0.16 + p.y * 0.1 + vec2(t * 0.015, -t * 0.01)));
     vA = lit * edge * near * swirl * (0.18 + 1.5 * fwd) * uStrength;
+    // by night, round the Schreinerei's door, deck and lamps: half as many,
+    // and warm — sawdust motes in lamplight, not silver snow
+    vWarm = (1.0 - smoothstep(uWarmAt.w * 0.6, uWarmAt.w, length(p - uWarmAt.xyz))) * uNightK;
+    vA *= 1.0 - vWarm * step(0.5, fract(aSeed.x * 7.31));
     gl_PointSize = clamp(aSeed.y * uScale / dist, 1.0, 9.0);
     vSize = gl_PointSize;
     if (vA < 0.01) gl_PointSize = 0.0;
@@ -56,8 +64,9 @@ const VERT = /* glsl */ `
 `;
 
 const FRAG = /* glsl */ `
-  uniform vec3 uColor;
+  uniform vec3 uColor, uWarmCol;
   varying float vA;
+  varying float vWarm;
   varying float vTw;
   varying float vSize;
   void main() {
@@ -65,7 +74,7 @@ const FRAG = /* glsl */ `
     float d = length(c) * 2.0;
     // (a 2–3 px speck only has pixels on its rim: small specks use a flat kernel)
     float a = mix(1.0 - smoothstep(0.6, 1.0, d), exp(-d * d * 4.0), smoothstep(3.0, 7.0, vSize)) * (1.0 - smoothstep(0.8, 1.0, d));
-    gl_FragColor = vec4(uColor * a * vA * vTw, 1.0);
+    gl_FragColor = vec4(mix(uColor, uWarmCol, vWarm) * a * vA * vTw, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -101,6 +110,10 @@ export function buildSunMotes(ctx) {
     uHalf: { value: HALF },
     uAxis: { value: envUniforms.uKeyDir.value },
     uColor: { value: new THREE.Color('#ffe2a8').multiplyScalar(1.6) },
+    // the Schreinerei (door, porch, deck): warm motes there by night
+    uWarmAt: { value: new THREE.Vector4(-1, 2, -0.5, 8) },
+    uWarmCol: { value: new THREE.Color('#ffb24a').multiplyScalar(1.6) },
+    uNightK: { value: 0 },
   };
   const dayColor = uniforms.uColor.value.clone();
   const moonColor = new THREE.Color('#c4d4ff').multiplyScalar(1.5);
@@ -135,6 +148,7 @@ export function buildSunMotes(ctx) {
       const k = 1 - THREE.MathUtils.smoothstep(night, 0.05, 0.4);
       const kn = THREE.MathUtils.smoothstep(night, 0.6, 0.95) * 0.3;
       uniforms.uStrength.value = Math.max(k, kn);
+      uniforms.uNightK.value = THREE.MathUtils.smoothstep(night, 0.5, 0.9);
       const isNight = night >= 0.5;
       if (isNight !== wasNight) {
         wasNight = isNight;
