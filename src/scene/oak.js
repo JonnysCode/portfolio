@@ -33,13 +33,13 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { OAK } from '../world/layout.js';
-import { trunkRadius, polar, DOOR_NICHE, FORK_Y } from './oak/shape.js';
+import { trunkRadius, polar, DOOR_NICHE, FORK_Y, GRAIN_TWIST } from './oak/shape.js';
 import { buildTrunkGeometry, buildTrunkMossGeometry, buildHollowCavities } from './oak/trunk.js';
 import { buildRoots } from './oak/roots.js';
 import { buildLimbs } from './oak/limbs.js';
 import { buildCrown } from './oak/crown.js';
 import { buildIvy } from './oak/ivy.js';
-import { buildDetails } from './oak/details.js';
+import { buildDetails, lanternHangs } from './oak/details.js';
 
 /**
  * Merge geometries that share the oak's attribute layout (position/normal/uv,
@@ -102,6 +102,21 @@ function oakBarkMaterial(materials) {
     fragment(shader) {
       const before = shader.fragmentShader;
       shader.fragmentShader = shader.fragmentShader
+        // the bole's bark grain spirals with its cords & furrows (shape.js
+        // GRAIN_TWIST): turn the triplanar lookup about the trunk axis by an
+        // angle that grows with height — the fissures lean ≈ 25°, the roots
+        // (trunk mask 0) keep their own grain
+        .replace(
+          'vec3 sfTP = sfWPos * sfTile.x;',
+          `vec3 sfTP;
+  {
+    vec2 oRel = sfWPos.xz - vec2(${OAK.x.toFixed(3)}, ${OAK.z.toFixed(3)});
+    float oTh = (-${GRAIN_TWIST.toFixed(4)} * max(sfWPos.y, 0.0) + 0.45 * (sfNoise3(vec3(oRel * 0.3, sfWPos.y * 0.07)) - 0.5)) * vOak.z;
+    float oC = cos(oTh), oS = sin(oTh);
+    vec2 oRot = vec2(oRel.x * oC + oRel.y * oS, oRel.y * oC - oRel.x * oS);
+    sfTP = vec3(oRot.x + ${OAK.x.toFixed(3)}, sfWPos.y, oRot.y + ${OAK.z.toFixed(3)}) * sfTile.x;
+  }`
+        )
         .replace('float thr = 1.15 - sfQ.x * 1.75;', 'float thr = 1.15 - clamp(sfQ.x + vOak.x, 0.0, 0.92) * 1.75;')
         .replace(
           'diffuseColor.rgb *= sfCol;',
@@ -197,13 +212,17 @@ export default async function build(ctx) {
 
   // ── ivy leaf cards (climbing the bark, running along the low limb, hanging) ─
   group.add(staticMesh(ivy.leaves, materials.foliage({ variant: 'ivy', color: '#3d6b2c' }), { cast: false, name: 'oak-ivy' }));
+  // ── pale beard moss hanging in tufts from the limbs ───────────────────────
+  if (ivy.beard) group.add(staticMesh(ivy.beard, materials.foliage({ variant: 'grass', color: '#a9b78e', volume: false, wrap: 0.8, translucency: 1 }), { cast: false, name: 'oak-beard-moss' }));
 
   // ── hollows: dark linings so they read as deep holes (merged with the details)
   const hollows = buildHollowCavities();
   await tick();
 
   // ── crown ────────────────────────────────────────────────────────────────
-  const crown = buildCrown(ctx, rng.fork('crown'), skeleton.clumps, { density, limbs: skeleton.limbs, branches: skeleton.branches });
+  // (the crown's bellies catch a warm bounce from the lanterns at night)
+  const bounce = lanternHangs(skeleton.limbs).map(({ glass }) => [glass.x, glass.y + 1.2, glass.z, 3.6, 0.7]);
+  const crown = buildCrown(ctx, rng.fork('crown'), skeleton.clumps, { density, limbs: skeleton.limbs, branches: skeleton.branches, bounce });
   if (!debug.includes('noleaves')) for (const m of crown.meshes) group.add(m);
 
   // ── the little things: fungi, toadstools, lanterns, fairy lights, swing,
@@ -233,6 +252,6 @@ export default async function build(ctx) {
     forkY: FORK_Y,
     lanterns: details.lanterns,
   };
-  group.userData.stats = { leafCards: crown.cards, clumps: skeleton.clumps.length, crownGaps: crown.gaps, gapFraction: +crown.gapFraction.toFixed(2), ivyCards: ivy.cards };
+  group.userData.stats = { leafCards: crown.cards, clumps: skeleton.clumps.length, crownGaps: crown.gaps, gapFraction: +crown.gapFraction.toFixed(2), ivyCards: ivy.cards, beardCards: ivy.beardCards };
   return { update: details.update };
 }

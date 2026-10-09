@@ -324,7 +324,7 @@ export default async function build(ctx) {
       chosen.add(r);
     }
     for (const r of requests) if (chosen.has(r)) enable(r.light);
-    if (q.tier === 'medium' && q.shadows) trimShadowCasters();
+    if (q.shadows) trimShadowCasters(q.tier === 'high' ? { mesh: 0.75, instance: 0.5, keepSkinned: true } : { mesh: 1.5, instance: 0.5, keepSkinned: false });
     ctx.lights.pointRequests = requests.map((r) => ({ spot: r.spot, priority: +r.priority.toFixed(1), on: chosen.has(r), p: r.light.position.toArray().map((v) => +v.toFixed(1)) }));
     // the moonbeam finds the fairy ring (a secret hotspot of the vegetation)
     try {
@@ -341,18 +341,24 @@ export default async function build(ctx) {
     }
   }
   /**
-   * 'medium' (phones): small casters (villagers, snails, furniture, props) and
-   * tiny instanced pieces (shingles, bulbs) leave the shadow map — on a phone
-   * screen their shadows are a few pixels, but each is a draw call in the
-   * shadow pass. Big shapes (trunks, crowns, canopy leaf clusters, houses,
-   * rocks, caps) keep casting the dappled light.
+   * Small casters leave the shadow pass — their shadow is a few texels, but each
+   * is a draw call (and its triangles again) in the shadow pass.
+   *   'medium' (phones): everything under 1.5 units (villagers, snails,
+   *            furniture, props) and tiny instanced pieces (shingles, bulbs).
+   *   'high':  small static pieces under 0.75 units (tools, signs, stools,
+   *            gadgets) and tiny instanced pieces (shingles); characters
+   *            (skinned: villagers, snails) keep theirs — they move, and their
+   *            shadow grounds them.
+   * Big shapes (trunks, crowns, canopy leaf clusters, houses, rocks, caps) keep
+   * casting the dappled light.
    */
-  function trimShadowCasters() {
+  function trimShadowCasters({ mesh = 1.5, instance = 0.5, keepSkinned = false } = {}) {
     scene.updateMatrixWorld();
     const sphere = new THREE.Sphere();
     let trimmed = 0;
     scene.traverse((o) => {
       if (!o.isMesh || !o.castShadow) return;
+      if (keepSkinned && o.isSkinnedMesh) return;
       const g = o.geometry;
       if (!g) return;
       if (!g.boundingSphere) g.computeBoundingSphere();
@@ -360,14 +366,14 @@ export default async function build(ctx) {
       if (o.isInstancedMesh) {
         // per-instance size (the instances' own geometry), e.g. a shingle
         const k = o.matrixWorld.getMaxScaleOnAxis();
-        if (g.boundingSphere.radius * k < 0.5) {
+        if (g.boundingSphere.radius * k < instance) {
           o.castShadow = false;
           trimmed++;
         }
         return;
       }
       sphere.copy(g.boundingSphere).applyMatrix4(o.matrixWorld);
-      if (sphere.radius < 1.5) {
+      if (sphere.radius < mesh) {
         o.castShadow = false;
         trimmed++;
       }
@@ -400,6 +406,11 @@ export default async function build(ctx) {
     canopy: canopyParams,
     /** Live multipliers (debug & tuning): canopy = strength of the dappled-sunlight cookie. */
     settings: { canopy: 1 },
+    /** The day / night light rigs (live-tunable; call retune() after a change). */
+    rigs: { day: DAY, night: NIGHT },
+    retune() {
+      lastNight = -1;
+    },
   };
 
   function place() {
@@ -454,12 +465,30 @@ export default async function build(ctx) {
 
   // 'medium' (phones): the sun is static, so the shadow maps are re-rendered
   // only every other frame (swaying leaves & walking villagers still move them).
-  const throttleShadows = q.shadows && q.tier !== 'high';
-  if (throttleShadows) {
-    renderer.shadowMap.autoUpdate = false;
+  // q.shadowEvery (engine preset; the frame-time governor may raise it on 'high').
+  let throttleShadows = false;
+  function applyShadowRate() {
+    throttleShadows = !!q.shadows && (q.shadowEvery ?? (q.tier === 'high' ? 1 : 2)) > 1;
+    renderer.shadowMap.autoUpdate = !throttleShadows;
     renderer.shadowMap.needsUpdate = true;
   }
+  applyShadowRate();
   let frameNo = 0;
+  // the governor stepped down: a smaller shadow map (re-allocated by three on the
+  // next shadow render) and/or a lower shadow refresh rate
+  engine.onQualityChange?.((qq) => {
+    const size = Math.min(qq.shadowMapSize || 1024, maxTex);
+    if (sun.castShadow && sun.shadow.mapSize.x !== size) {
+      sun.shadow.mapSize.set(size, size);
+      sun.shadow.normalBias = Math.max(0.02, ((2 * SHADOW_EXTENT) / size) * 1.4);
+      if (sun.shadow.map) {
+        sun.shadow.map.depthTexture?.dispose();
+        sun.shadow.map.dispose();
+        sun.shadow.map = null;
+      }
+    }
+    applyShadowRate();
+  });
 
   // the canopy cookie: leaves sway (time), a little softer by moonlight
   const settings = ctx.lights.settings;
@@ -475,7 +504,7 @@ export default async function build(ctx) {
       lastNight = n;
       update(n);
     }
-    if (throttleShadows && (frameNo++ & 1) === 0) renderer.shadowMap.needsUpdate = true;
+    if (throttleShadows && frameNo++ % (q.shadowEvery || 2) === 0) renderer.shadowMap.needsUpdate = true;
   }, 21);
 
   update(env?.night ?? 0);

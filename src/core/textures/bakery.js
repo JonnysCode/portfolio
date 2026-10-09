@@ -89,7 +89,7 @@ function getFinalize() {
       tAlbedo: { value: null },
       tData: { value: null },
       uSize: { value: new THREE.Vector2(1, 1) },
-      uBump: { value: 1 },
+      uBump: { value: new THREE.Vector2(1, 1) },
       uCavity: { value: 1 },
       uOut: { value: 0 },
       uAlpha: { value: 0 },
@@ -101,7 +101,7 @@ function getFinalize() {
       uniform sampler2D tAlbedo;
       uniform sampler2D tData;
       uniform vec2 uSize;
-      uniform float uBump;
+      uniform vec2 uBump;
       uniform float uCavity;
       uniform int uOut;
       uniform int uAlpha;
@@ -124,7 +124,7 @@ function getFinalize() {
         float bl = H(c + ivec2(-1, -1)), b = H(c + ivec2(0, -1)), br = H(c + ivec2(1, -1));
         float dx = (tr + 2.0 * r + br) - (tl + 2.0 * l + bl);
         float dy = (tl + 2.0 * t + tr) - (bl + 2.0 * b + br);
-        vec3 n = normalize(vec3(-dx * uBump, -dy * uBump, 1.0));
+        vec3 n = normalize(vec3(-dx * uBump.x, -dy * uBump.y, 1.0));
         // cavity: how far this texel sits below its neighbourhood (two rings)
         float h = d.x, acc = 0.0;
         for (int i = 0; i < 8; i++) {
@@ -232,7 +232,7 @@ function makeTarget(w, h, srgb, wrapT = THREE.RepeatWrapping, wrapS = THREE.Repe
 
 /**
  * Request the baked maps for a pattern definition:
- *   def = { glslKey, glsl, fn, mode: 'rgb'|'colorize'|'card', size: [w,h], bump, cavity, seed, wrapT, alpha }
+ *   def = { glslKey, glsl, fn, mode: 'rgb'|'colorize'|'card', size: [w,h], bump, bumpAspect, cavity, seed, wrapT, alpha }
  * Returns { map, detail, def } immediately (filled in once baked).
  */
 export function requestBake(key, def) {
@@ -289,7 +289,8 @@ function bakeNow(list) {
       fin.uniforms.tData.value = tmp.textures[1];
       fin.uniforms.uSize.value.set(w, h);
       // Sobel sums 4 texel differences per side → slope per tile = d·size/8
-      fin.uniforms.uBump.value = (e.def.bump ?? 0.02) * (w / 8);
+      // (bumpAspect: V texels are that much finer than U texels → steeper slope)
+      fin.uniforms.uBump.value.set(1, e.def.bumpAspect ?? 1).multiplyScalar((e.def.bump ?? 0.02) * (w / 8));
       fin.uniforms.uCavity.value = e.def.cavity ?? 2;
       fin.uniforms.uAlpha.value = e.def.alpha ? 1 : 0;
       quad.material = fin;

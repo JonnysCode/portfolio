@@ -39,12 +39,19 @@ export const SUN_SKY_DIR = dirFromAngles(16, 292);
 /** Moonlight: from the back-right, high enough to silver roofs & caps. */
 export const MOON_LIGHT_DIR = dirFromAngles(50, 62);
 /**
- * Where the moon disc is drawn: low over the far forest at the back-right,
- * glimpsed between the colossal trunks above the waterfall (top-right of the
- * glen shot). The canopy is closed overhead, so a high moon would never be
- * seen; the night mist's in-scatter glow also gathers around this direction.
+ * Where the moon disc is drawn: the hero moon, low over the far forest at the
+ * back-right, in the canopy gap right above the waterfall in the glen shot
+ * (≈ x 1000, y 65 of 1280 × 720 — between the oak's crown and the giant by
+ * the falls). The far forest (env/backdrop.js) keeps a window open along this
+ * direction as seen from the glen camera, and a little valley beyond it, so
+ * the disc rises clear of the trunks. (The glen frame's top edge is only ≈ 6°
+ * above the horizon and the overview looks down past it, so a higher moon
+ * would never be seen; there the moonlit in-scatter glow of the mist, which
+ * gathers around this direction, carries the night sky instead.)
  */
-export const MOON_SKY_DIR = dirFromAngles(4, 19);
+export const MOON_SKY_DIR = dirFromAngles(2.6, 14);
+/** The glen spot camera the moon window is cut for (layout.js SPOTS glen). */
+export const MOON_EYE = new THREE.Vector3(4, 17, 40);
 
 /** Day / night colour sets (sRGB hex — converted to linear by THREE.Color). */
 export const SKY_COLORS = {
@@ -71,7 +78,7 @@ export const SKY_COLORS = {
     cloudShade: '#1c2846',
     mountainFar: '#0f2030',
     mountainNear: '#0a1724',
-    snowLit: '#8ea6d8',
+    snowLit: '#b4c8f0', // silver rim of the far trunks against the moonlit mist
     snowShade: '#2a3c5c',
   },
 };

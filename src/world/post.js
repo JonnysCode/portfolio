@@ -77,10 +77,34 @@ const SETTINGS = {
   /** Extra exposure of the HDR path: additive light (shafts, halos, mist) is
    *  compressed by the tone curve here but not in the plain path — keep parity. */
   exposure: 1.06,
+  /** Day exposure (the night keeps `exposure`). */
+  exposureDay: 1.06,
+  /** Global saturation by day / night (night: the moonlit look, unchanged). */
+  saturationDay: 0.84,
   saturation: 1.12,
+  /** Warm hues (reds, wood, caps, lamplight) keep at least this saturation by day. */
+  warmSaturationDay: 1.06,
   /** Yellow-greens (hue 70–140°): saturation × this (sage, not neon) — 0..1 strength in `sage`. */
+  greenSaturationDay: 0.74,
   greenSaturation: 0.84,
   sage: 1,
+  /**
+   * Painterly greens by day (degrees of hue rotation, greens only): greens in
+   * shade turn towards a cool teal-blue depth, sunlit greens towards a warm
+   * yellow-green; `pivot` = display luminance [shade end, sun start].
+   */
+  greenShade: 62,
+  greenSun: -12,
+  greenPivot: [0.03, 0.2],
+  /** Night: Purkinje shift — mid & shadow greens drift towards moonlit blue-teal (0..1). */
+  purkinje: 0.3,
+  /**
+   * Highlight shoulder (day): a lift of the upper tones in perceptual space
+   * (v = √luminance; v += gain·v(1−v)·smoothstep(start, full, v)), so sunlit cap
+   * tops, roofs and path stones reach a real highlight instead of compressing
+   * into the mid tones. [gain, start, full].
+   */
+  highlightLiftDay: [0.55, 0.28, 0.55],
   /** Highlights keep their hue (0..1) instead of bleaching to white — warm lights stay warm. */
   highlightHueDay: 0.2,
   highlightHueNight: 0.55,
@@ -88,10 +112,10 @@ const SETTINGS = {
   /**
    * Shadow tint — MULTIPLICATIVE (hue-preserving: a dark red stays a dark red,
    * it is never subtracted to black) plus a tiny additive lift, weighted
-   * towards the shadows. Day: neutral-warm (golden afternoon, the teal lives
-   * only in the misty distance); night: a gentle moonlit blue.
+   * towards the shadows. Day: a cool teal-blue depth (warm hues are spared, so
+   * wood & caps stay warm in the shade); night: a gentle moonlit blue.
    */
-  shadowTintDay: { mul: [1.025, 1.0, 0.95], add: [0.004, 0.0025, 0.0] },
+  shadowTintDay: { mul: [0.95, 1.0, 1.07], add: [0.0, 0.002, 0.004] },
   shadowTintNight: { mul: [0.92, 1.0, 1.06], add: [0.0, 0.003, 0.008] },
   /** Warm hues (wood, red & ochre caps, lamplight) are protected from the cool night grade (0..1). */
   warmProtect: 0.7,
@@ -362,7 +386,11 @@ class FinishMaterial extends THREE.ShaderMaterial {
         uHighlightHue: { value: 0.2 },
         uSaturation: { value: SETTINGS.saturation },
         uGreenSat: { value: SETTINGS.greenSaturation },
+        uWarmSat: { value: SETTINGS.warmSaturationDay },
         uSage: { value: SETTINGS.sage },
+        uGreenShift: { value: new THREE.Vector4(SETTINGS.greenShade, SETTINGS.greenSun, ...SETTINGS.greenPivot) },
+        uHiLift: { value: new THREE.Vector3(...SETTINGS.highlightLiftDay) },
+        uPurkinje: { value: SETTINGS.purkinje },
         uWarmth: { value: SETTINGS.warmth },
         uShadowMul: { value: new THREE.Vector3(...SETTINGS.shadowTintDay.mul) },
         uShadowAdd: { value: new THREE.Vector3(...SETTINGS.shadowTintDay.add) },
@@ -382,8 +410,9 @@ class FinishMaterial extends THREE.ShaderMaterial {
         uniform sampler2D tColor, tBloom, tBokeh, tAO;
         uniform float uUseBloom, uUseDof, uAO;
         uniform float uExposure, uSaturation, uWarmth, uLift, uVignette, uGrain, uAspect, uNight, uTime, uHighlightHue;
-        uniform float uWarmProtect, uWoodGlow, uGreenSat, uSage;
-        uniform vec3 uShadowMul, uShadowAdd, uLiftColor, uVignetteColor;
+        uniform float uWarmProtect, uWoodGlow, uGreenSat, uWarmSat, uSage, uPurkinje;
+        uniform vec4 uGreenShift;
+        uniform vec3 uShadowMul, uShadowAdd, uLiftColor, uVignetteColor, uHiLift;
         varying vec2 vUv;
         ${COC_GLSL}
         float hash12(vec2 p) {
@@ -403,6 +432,12 @@ class FinishMaterial extends THREE.ShaderMaterial {
         float hueBand(float h, float centre, float full, float fade) {
           float dh = abs(fract(h - centre / 360.0 + 0.5) - 0.5) * 360.0;
           return 1.0 - smoothstep(full, fade, dh);
+        }
+        // rotate the hue (radians, + = red → green → blue) around the grey axis
+        vec3 hueRotate(vec3 c, float a) {
+          const vec3 k = vec3(0.57735027);
+          float cs = cos(a), sn = sin(a);
+          return c * cs + cross(k, c) * sn + k * dot(k, c) * (1.0 - cs);
         }
         void main() {
           vec3 col = texture2D(tColor, vUv).rgb;
@@ -436,20 +471,43 @@ class FinishMaterial extends THREE.ShaderMaterial {
           col = clamp(col, 0.0, 1.0);
 
           // grade (display-referred linear)
+          float day = 1.0 - uNight;
           float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+          // the highlight shoulder (day): a perceptual lift of the upper tones, so
+          // sunlit cap tops, roofs and path stones become real highlights (hue kept;
+          // 1.0 stays 1.0, the darks are untouched)
+          if (uHiLift.x > 0.0 && day > 0.0 && l > 1e-4) {
+            float v = sqrt(l);
+            float v2 = v + uHiLift.x * day * v * (1.0 - v) * smoothstep(uHiLift.y, uHiLift.z, v);
+            col = min(col * (v2 * v2 / l), vec3(1.0));
+            l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+          }
           float cmx = max(max(col.r, col.g), col.b), cmn = min(min(col.r, col.g), col.b);
           // warm hues (wood, red & ochre caps, lamplight): reds…ambers with some chroma
           float hue = hueOf(col);
           float chroma = smoothstep(0.06, 0.22, (cmx - cmn) / max(cmx, 1e-4));
           float warm = hueBand(hue, 22.0, 24.0, 40.0) * chroma;
-          // yellow-greens (≈ 70–140°: lawns, ferns, sunlit leaves): sage/olive, not neon
+          // yellow-greens (≈ 70–140°: lawns, ferns, sunlit leaves): sage/olive, not neon;
+          // by moonlight they lose even more colour (Purkinje: the eye's rods see no green)
           float green = hueBand(hue, 105.0, 35.0, 50.0) * chroma;
-          float sageK = uSage * green * (1.0 - 0.6 * uNight);
+          float sageK = uSage * green * (1.0 + 0.5 * uNight);
           // saturation with a soft floor: the boost may never push a channel
-          // below half its value (so dark reds are never clipped to black)
+          // below half its value (so dark reds are never clipped to black).
+          // Day: a painterly, lower overall saturation — warm hues (reds, wood,
+          // caps, lamplight) keep theirs.
           float sat = uSaturation * mix(1.0, uGreenSat, sageK);
+          sat = mix(sat, max(sat, uWarmSat), warm);
           if (sat > 1.0 && cmn < l) sat = min(sat, (l - 0.5 * cmn) / max(l - cmn, 1e-5));
           col = mix(vec3(l), col, sat);
+          // painterly greens (day): greens in shade turn towards a cool teal-blue
+          // depth, sunlit greens towards a warm yellow-green (luminance mostly kept)
+          if (green > 0.0 && day > 0.0) {
+            float sunK = smoothstep(uGreenShift.z, uGreenShift.w, l);
+            float ang = radians(mix(uGreenShift.x, uGreenShift.y, sunK)) * green * day;
+            col = max(hueRotate(col, ang), 0.0);
+            float l2 = dot(col, vec3(0.2126, 0.7152, 0.0722));
+            col *= mix(1.0, l / max(l2, 1e-5), 0.65);
+          }
           // the brightest acid yellow-greens settle a little (value, not hue) …
           col *= 1.0 - 0.07 * sageK * smoothstep(0.35, 0.8, l) * hueBand(hue, 85.0, 18.0, 30.0);
           // day: wood glows honey/amber instead of olive — warm hues get a touch
@@ -462,13 +520,16 @@ class FinishMaterial extends THREE.ShaderMaterial {
           // shadow tint: multiplicative + a tiny lift — hue-preserving; warm
           // hues keep most of their colour at night
           float sh = (1.0 - l) * (1.0 - l);
-          vec3 tintMul = mix(uShadowMul, vec3(1.0), warm * uWarmProtect * uNight);
+          vec3 tintMul = mix(uShadowMul, vec3(1.0), warm * uWarmProtect * mix(0.6, 1.0, uNight));
           col = mix(col, col * tintMul + uShadowAdd, sh);
           // … and green shadows cool a touch towards the misty blue-green depth
-          col *= mix(vec3(1.0), vec3(0.95, 1.0, 1.08), sageK * sh);
+          col *= mix(vec3(1.0), vec3(0.95, 1.0, 1.08), min(sageK, 1.0) * sh);
           col *= mix(vec3(1.0), vec3(1.0 + uWarmth, 1.0 + uWarmth * 0.35, 1.0 - uWarmth * 0.6), smoothstep(0.25, 0.9, l));
           // moonlight: cool the greens a little without crushing anything (reds & ochres keep their hue)
           col = mix(col, l * vec3(0.78, 0.9, 1.25), uNight * 0.18 * (1.0 - warm * uWarmProtect));
+          // Purkinje (night): mid & shadow greens drift towards a moonlit blue-teal;
+          // bright things (fireflies, lamps) and warm hues keep their colour
+          col = mix(col, l * vec3(0.7, 0.88, 1.2), uPurkinje * uNight * green * (1.0 - smoothstep(0.1, 0.35, l)));
           col = max(col, 0.0);
           // softly lifted blacks: neutral-warm by day, deep blue by night (never grey)
           col = col * (1.0 - uLift) + uLiftColor * uLift * 2.2;
@@ -670,9 +731,10 @@ export default async function build(ctx) {
     renderer.setRenderTarget(sceneRT);
     renderer.render(scene, camera);
 
-    const bloomTex = bloom.strength > 0.001 ? bloom.renderBloom(renderer, sceneRT.texture) : null;
+    // (quality.ao / dof / bloom: live flags the engine's frame-time governor may switch off)
+    const bloomTex = bloom && quality.bloom !== false && bloom.strength > 0.001 ? bloom.renderBloom(renderer, sceneRT.texture) : null;
 
-    const aoOn = useDof && SETTINGS.ao > 0.001;
+    const aoOn = useDof && SETTINGS.ao > 0.001 && quality.ao !== false;
     if (aoOn) {
       const H = sceneRT.height;
       const tanY = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
@@ -696,7 +758,7 @@ export default async function build(ctx) {
     fu.tAO.value = aoOn ? aoBlurRT.texture : null;
     fu.uAO.value = aoK;
 
-    const dofOn = useDof && SETTINGS.dof;
+    const dofOn = useDof && SETTINGS.dof && quality.dof !== false;
     if (dofOn) {
       const H = sceneRT.height;
       const pu = quads.pre.material.uniforms;
@@ -779,10 +841,15 @@ export default async function build(ctx) {
         fu.uNight.value = n;
       }
       fu.uVignette.value = SETTINGS.vignette * (1 + 0.3 * n);
-      fu.uSaturation.value = SETTINGS.saturation;
-      fu.uGreenSat.value = SETTINGS.greenSaturation;
+      // day ↔ night: the night end is the moonlit grade
+      fu.uSaturation.value = SETTINGS.saturationDay + (SETTINGS.saturation - SETTINGS.saturationDay) * n;
+      fu.uWarmSat.value = SETTINGS.warmSaturationDay + (SETTINGS.saturation - SETTINGS.warmSaturationDay) * n;
+      fu.uGreenSat.value = SETTINGS.greenSaturationDay + (SETTINGS.greenSaturation - SETTINGS.greenSaturationDay) * n;
       fu.uSage.value = SETTINGS.sage;
-      fu.uExposure.value = SETTINGS.exposure;
+      fu.uGreenShift.value.set(SETTINGS.greenShade, SETTINGS.greenSun, SETTINGS.greenPivot[0], SETTINGS.greenPivot[1]);
+      fu.uHiLift.value.set(...SETTINGS.highlightLiftDay);
+      fu.uPurkinje.value = SETTINGS.purkinje;
+      fu.uExposure.value = SETTINGS.exposureDay + (SETTINGS.exposure - SETTINGS.exposureDay) * n;
       fu.uHighlightHue.value = SETTINGS.highlightHueDay + (SETTINGS.highlightHueNight - SETTINGS.highlightHueDay) * n;
       fu.uWarmth.value = SETTINGS.warmth * (1 - n);
       const sd = SETTINGS.shadowTintDay, sn = SETTINGS.shadowTintNight;

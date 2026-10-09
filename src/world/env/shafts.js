@@ -84,11 +84,15 @@ const FRAG = /* glsl */ `
     float along = vUv.y;            // 0 at the ground … 1 up in the crowns
     float prof = 1.0 - smoothstep(0.25, 1.0, abs(across));
     prof *= prof;
-    float ends = smoothstep(0.0, 0.32, along) * (1.0 - smoothstep(0.55, 1.0, along));
+    // day shafts fade in above the ground; a moonbeam lands: bright right down
+    // to its foot, where it pools on the ground
+    float ends = mix(smoothstep(0.0, 0.32, along), smoothstep(0.0, 0.035, along) * (1.0 + 0.6 * (1.0 - smoothstep(0.0, 0.18, along))), vKind.y) * (1.0 - smoothstep(0.55, 1.0, along));
     // fine streaks across the beam, slowly drifting dust density along it
     float streak = 0.55 + 0.45 * envNoise(vec2(across * 4.5 + vSeed * 17.0, along * 0.8 + vSeed));
     // moonbeams drift slower
     float tm = uTime * mix(1.0, 0.45, vKind.y);
+    // (a moonbeam is a soft column with a brighter core, not a hard-edged strip)
+    prof = mix(prof, (1.0 - smoothstep(0.0, 1.0, abs(across))) * (0.55 + 0.45 * (1.0 - smoothstep(0.0, 0.45, abs(across)))), vKind.y);
     float drift = 0.65 + 0.35 * envNoise(vec2(along * 3.0 - tm * 0.07 + vSeed * 9.0, across * 1.5 + tm * 0.02));
     // four taps across the beam soften the canopy-cut edges into bundles of rays
     vec3 sideW = cross(vAxis, normalize(vW - cameraPosition));

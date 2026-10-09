@@ -1,7 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Ivy on the Great Oak: vines that wander up the bark from between the roots
 // (one climbs all the way into the low front-left limb and runs along it),
-// and curtains of ivy hanging from the limbs.
+// curtains of ivy hanging from the limbs, and wisps of pale beard moss
+// (lichen) hanging in tufts from the limbs' undersides — the old oak's
+// fairy-tale curtains (returned as their own card set, `beard`).
 //
 // Leaves are ivy CARDS (materials.foliage({ variant: 'ivy' }) — a trailing
 // strand whose stem starts at the bottom centre of the card and grows towards
@@ -48,8 +50,8 @@ class CardSet {
     this.uv = [];
     this.idx = [];
   }
-  /** A card with its stem at `base`, growing along `up`, facing `normal`, size s (height = width). */
-  add(base, up, normal, s, flip = false) {
+  /** A card with its stem at `base`, growing along `up`, facing `normal`, height s, width s × w. */
+  add(base, up, normal, s, flip = false, w = 1) {
     const across = new THREE.Vector3().crossVectors(up, normal).normalize();
     // never in front of the Schreinerei's EFZ certificate (base, tip and both top corners)
     if (inCertZone(base, 0.12)) return;
@@ -63,7 +65,7 @@ class CardSet {
       [-0.5, 1, 0, 1],
     ];
     for (const [cx, cy, tu, tv] of corners) {
-      this.pos.push(base.x + (across.x * cx + up.x * cy) * s, base.y + (across.y * cx + up.y * cy) * s, base.z + (across.z * cx + up.z * cy) * s);
+      this.pos.push(base.x + (across.x * cx * w + up.x * cy) * s, base.y + (across.y * cx * w + up.y * cy) * s, base.z + (across.z * cx * w + up.z * cy) * s);
       this.nor.push(normal.x, normal.y, normal.z);
       this.uv.push(flip ? 1 - tu : tu, tv);
     }
@@ -241,5 +243,38 @@ export function buildIvy(rng, limbs, { density = 1 } = {}) {
     }
   }
 
-  return { leaves: cards.geometry(), stems, cards: cards.count };
+  // ── beard moss: pale tufts of hanging lichen under the limbs ─────────────
+  // Tall strand cards (the 'grass' card hung upside down: its blades become
+  // thin hanging wisps), 3–6 per tuft, from the undersides of the limbs the
+  // glen looks at; every tuft stays out of the spot cameras' views.
+  const beard = new CardSet();
+  const tuftsPer = { 'front-left-low': 16, front: 9, 'left-high': 8, 'back-left': 6, right: 5, 'back-right': 5, 'front-right-high': 4 };
+  for (const limb of limbs) {
+    const n = Math.round((tuftsPer[limb.id] ?? 0) * clamp(density, 0.5, 1));
+    for (let k = 0; k < n; k++) {
+      const u = rng.range(0.1, 0.9);
+      const P = limb.curve.getPointAt(u);
+      const T = limb.curve.getTangentAt(u);
+      const r = limb.radiusAt(u);
+      const side = new THREE.Vector3(-T.z, 0, T.x).normalize();
+      const len = rng.range(0.8, limb.id === 'front-left-low' ? 2.2 : 1.7);
+      P.y -= r * 0.75;
+      if (P.y - len < 7.5) continue;
+      const mid = P.clone();
+      mid.y -= len * 0.5;
+      if (crownBlocked(mid, len * 0.5 + 0.3)) continue;
+      const m = rng.int(3, 6);
+      for (let i = 0; i < m; i++) {
+        const base = P.clone().addScaledVector(side, rng.range(-0.75, 0.75) * r).addScaledVector(T, rng.range(-0.35, 0.35));
+        base.y += rng.range(0, 0.12);
+        const ang = rng.range(0, TAU);
+        const face = new THREE.Vector3(Math.cos(ang), 0, Math.sin(ang));
+        const down = new THREE.Vector3(rng.range(-0.12, 0.12), -1, rng.range(-0.12, 0.12)).normalize();
+        face.addScaledVector(down, -face.dot(down)).normalize();
+        beard.add(base, down, face, len * rng.range(0.6, 1.05), rng.chance(0.5), 0.5);
+      }
+    }
+  }
+
+  return { leaves: cards.geometry(), stems, cards: cards.count, beard: beard.count ? beard.geometry() : null, beardCards: beard.count };
 }

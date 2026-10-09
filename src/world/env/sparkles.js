@@ -34,13 +34,15 @@ const HALF = new THREE.Vector3(22, 5.5, 20);
 
 const VERT = /* glsl */ `
   attribute vec4 aSeed;   // phase, size, speed, twinkle rate
-  attribute vec2 aKind;   // x: anchor index (≥ 4 = free shaft glint), y: 1 = mint
-  uniform vec3 uAnchors[4];
-  uniform vec4 uShapes[4]; // radius, height, rise speed, strength
-  uniform float uTime, uMotion, uPx, uStrength, uAnchorK, uShaftK;
+  attribute vec2 aKind;   // x: anchor index (0–3 swirl, 4–5 moonbeam, ≥ 6 = free shaft glint), y: 1 = mint
+  uniform vec3 uAnchors[6];
+  uniform vec4 uShapes[6]; // radius, height (beam: length), rise / fall speed, strength
+  uniform vec3 uBeamAxes[2];
+  uniform float uTime, uMotion, uPx, uStrength, uAnchorK, uShaftK, uBeamK, uNight;
   uniform vec3 uCenter, uHalf;
+  uniform vec3 uGold, uMint, uNightWarm, uMoonGold, uMoonMint;
   varying float vA;
-  varying float vMint;
+  varying vec3 vCol;
   varying float vSize;
   ${SUNLIGHT_GLSL}
   void main() {
@@ -48,6 +50,9 @@ const VERT = /* glsl */ `
     int k = int(aKind.x + 0.5);
     vec3 p;
     float a;
+    // twinkle rate: by night the lamp-lit motes by the workshop turn slowly
+    float rate = aSeed.w;
+    float sizeK = 1.0;
     if (k < 4) {
       vec3 base = uAnchors[0];
       vec4 shp = uShapes[0];
@@ -62,6 +67,28 @@ const VERT = /* glsl */ `
       p += vec3(sin(t * 0.7 + aSeed.x * 31.0), sin(t * 0.53 + aSeed.x * 17.0) * 0.6, cos(t * 0.61 + aSeed.x * 23.0)) * 0.12;
       // fade in at the bottom of the loop, out at the top
       a = smoothstep(0.0, 0.18, h) * (1.0 - smoothstep(0.62, 1.0, h)) * shp.w * uAnchorK;
+      if (k == 0) {
+        // by the Schreinerei at night: half as many, sawdust motes turning
+        // slowly in the lamplight — more varied in size
+        a *= 1.0 - uNight * step(0.5, fract(aSeed.x * 7.31));
+        rate *= mix(1.0, 0.4, uNight);
+        sizeK = mix(1.0, 0.55 + 0.9 * fract(aSeed.x * 13.7), uNight);
+      }
+    } else if (k < 6) {
+      // slow silver motes drifting down inside a hero moonbeam (night)
+      int b = k - 4;
+      vec3 base = b == 0 ? uAnchors[4] : uAnchors[5];
+      vec4 shp = b == 0 ? uShapes[4] : uShapes[5];
+      vec3 ax = normalize(b == 0 ? uBeamAxes[0] : uBeamAxes[1]);
+      vec3 u = normalize(cross(ax, vec3(0.0, 0.0, 1.0)));
+      vec3 w = cross(ax, u);
+      float h = fract(position.y - t * shp.z * (0.5 + aSeed.z) / max(shp.y, 0.1));
+      float ang = atan(position.z, position.x) + t * 0.05 * (aSeed.x - 0.5);
+      float r = length(position.xz) * shp.x;
+      p = base + ax * (h * shp.y) + (u * cos(ang) + w * sin(ang)) * r;
+      p += vec3(sin(t * 0.31 + aSeed.x * 19.0), 0.0, cos(t * 0.27 + aSeed.x * 11.0)) * 0.15;
+      a = smoothstep(0.0, 0.06, h) * (1.0 - smoothstep(0.35, 0.7, h)) * shp.w * uBeamK;
+      rate *= 0.45;
     } else {
       // free glints drifting through the glen; only where the sun gets through
       p = position + vec3(0.12, 0.06, 0.08) * t * aSeed.z;
@@ -71,25 +98,29 @@ const VERT = /* glsl */ `
       vec3 e = abs(rel - uHalf) / uHalf;
       a = sunVisibility(p) * (1.0 - smoothstep(0.75, 1.0, max(max(e.x, e.y), e.z))) * uShaftK;
     }
+    // colour: gold & mint by day; by night warm gold by the workshop and the
+    // falls pool (motes in lamplight), silver-mint only at the fairy ring and
+    // the pond, silver in the moonbeams
+    vec3 dayCol = mix(uGold, uMint, aKind.y);
+    vec3 nightCol = (k == 1 || k == 2) ? mix(uMoonGold, uMoonMint, aKind.y) : (k == 4 || k == 5) ? uMoonGold : uNightWarm;
+    vCol = mix(dayCol, nightCol, uNight);
     vec4 mv = viewMatrix * vec4(p, 1.0);
     gl_Position = projectionMatrix * mv;
     float dist = -mv.z;
     // twinkle: mostly a soft glow with sharp bright flashes (slower with reduced motion)
-    float s = 0.5 + 0.5 * sin(uTime * max(uMotion, 0.3) * aSeed.w + aSeed.x * 47.0);
+    float s = 0.5 + 0.5 * sin(uTime * max(uMotion, 0.3) * rate + aSeed.x * 47.0);
     float tw = 0.4 + 0.6 * pow(s, 5.0);
     a *= tw * smoothstep(0.6, 2.2, dist) * (1.0 - smoothstep(70.0, 110.0, dist)) * uStrength;
     vA = a;
-    vMint = aKind.y;
-    gl_PointSize = clamp(aSeed.y * 70.0 * uPx / dist, 2.0 * uPx, 4.2 * uPx) * (0.8 + 0.25 * tw);
+    gl_PointSize = clamp(aSeed.y * sizeK * 70.0 * uPx / dist, 2.0 * uPx, 4.2 * uPx * max(sizeK, 1.0)) * (0.8 + 0.25 * tw);
     vSize = gl_PointSize;
     if (a < 0.004) gl_PointSize = 0.0;
   }
 `;
 
 const FRAG = /* glsl */ `
-  uniform vec3 uGold, uMint;
   varying float vA;
-  varying float vMint;
+  varying vec3 vCol;
   varying float vSize;
   void main() {
     vec2 c = gl_PointCoord - 0.5;
@@ -99,7 +130,7 @@ const FRAG = /* glsl */ `
     float soft = exp(-d * d * 4.0) * 0.75 + exp(-d * d * 18.0) * 0.55;
     float disc = 1.0 - smoothstep(0.6, 1.0, d);
     float a = mix(disc, soft, smoothstep(3.0, 7.0, vSize)) * (1.0 - smoothstep(0.85, 1.0, d));
-    gl_FragColor = vec4(mix(uGold, uMint, vMint) * a * vA, 1.0);
+    gl_FragColor = vec4(vCol * a * vA, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -114,6 +145,9 @@ function anchorDefs() {
     { name: 'ring', p: [-4.5, getHeight(-4.5, 11.2) + 0.05, 11.2], radius: 1.7, height: 2.6, rise: 0.14, strength: 1.1, count: 60 },
     { name: 'pond', p: [STREAM.pond.x, getHeight(STREAM.pond.x, STREAM.pond.z) + 0.15, STREAM.pond.z], radius: STREAM.pond.radius * 0.85, height: 2.4, rise: 0.1, strength: 0.9, count: 80 },
     { name: 'pool', p: [STREAM.pool.x, getHeight(STREAM.pool.x, STREAM.pool.z) + 0.2, STREAM.pool.z], radius: STREAM.pool.radius * 1.1, height: 4.6, rise: 0.22, strength: 1, count: 70 },
+    // motes inside the two hero moonbeams (placed with the beams; night only)
+    { name: 'beamA', p: [0, -50, 0], radius: 1.6, height: 24, rise: 0.25, strength: 0.9, count: 45 },
+    { name: 'beamB', p: [0, -50, 0], radius: 1.5, height: 30, rise: 0.25, strength: 0.9, count: 45 },
   ];
 }
 
@@ -145,7 +179,7 @@ export function buildSparkles(ctx) {
     }
   });
   for (let n = 0; n < free; n++) {
-    put(CENTER.x + rng.range(-HALF.x, HALF.x), CENTER.y - HALF.y + Math.pow(rng.next(), 1.4) * HALF.y * 2, CENTER.z + rng.range(-HALF.z, HALF.z), 4);
+    put(CENTER.x + rng.range(-HALF.x, HALF.x), CENTER.y - HALF.y + Math.pow(rng.next(), 1.4) * HALF.y * 2, CENTER.z + rng.range(-HALF.z, HALF.z), defs.length);
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -165,15 +199,20 @@ export function buildSparkles(ctx) {
     uStrength: { value: 1 },
     uAnchorK: { value: 1 },
     uShaftK: { value: 1 },
+    uBeamK: { value: 0 },
+    uNight: { value: 0 },
     uAnchors: { value: anchors },
     uShapes: { value: shapes },
+    uBeamAxes: { value: [new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 1, 0)] },
     uCenter: { value: CENTER },
     uHalf: { value: HALF },
-    uGold: { value: gold.clone() },
-    uMint: { value: mint.clone() },
+    uGold: { value: gold },
+    uMint: { value: mint },
+    // night: warm sawdust-gold in the lamplight, silver & silver-mint in the moonlight
+    uNightWarm: { value: new THREE.Color('#ffb24a').multiplyScalar(1.7) },
+    uMoonGold: { value: new THREE.Color('#d8e4ff').multiplyScalar(1.6) },
+    uMoonMint: { value: new THREE.Color('#b4ffdc').multiplyScalar(1.7) },
   };
-  const moonGold = new THREE.Color('#d8e4ff').multiplyScalar(1.6);
-  const moonMint = new THREE.Color('#b4ffdc').multiplyScalar(1.7);
   const mat = new THREE.ShaderMaterial({
     name: 'pixie-dust',
     uniforms,
@@ -197,14 +236,24 @@ export function buildSparkles(ctx) {
     resize(pixelHeight) {
       uniforms.uPx.value = Math.max(0.5, pixelHeight / 720);
     },
+    /** The hero moonbeams: [{ foot: Vector3, axis: Vector3, width, length }] — motes drift down inside them. */
+    setBeams(beams) {
+      beams.slice(0, 2).forEach((b, i) => {
+        anchors[4 + i].copy(b.foot);
+        uniforms.uBeamAxes.value[i].copy(b.axis).normalize();
+        shapes[4 + i].x = b.width * 0.36;
+        shapes[4 + i].y = b.length;
+      });
+    },
     update(night) {
       // day: golden twinkles everywhere magic lives + glints in the sunbeams;
-      // night: a softer, silvery-mint shimmer around the anchors only
+      // night: a softer shimmer around the anchors (warm by the workshop,
+      // silver-mint at the ring and the pond) + motes in the moonbeams
       const day = 1 - THREE.MathUtils.smoothstep(night, 0.1, 0.5);
       uniforms.uShaftK.value = day;
       uniforms.uAnchorK.value = day + (1 - day) * 0.5;
-      uniforms.uGold.value.copy(gold).lerp(moonGold, night);
-      uniforms.uMint.value.copy(mint).lerp(moonMint, night);
+      uniforms.uBeamK.value = THREE.MathUtils.smoothstep(night, 0.6, 0.95);
+      uniforms.uNight.value = night;
     },
   };
 }

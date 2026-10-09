@@ -19,11 +19,22 @@ const _w = new THREE.Vector3();
  * the lit foliage beyond instead of one undivided green mass.
  */
 const CROWN_GAPS = {
-  right: [[0.2, 0.58]],
-  front: [[0.22, 0.6]],
-  'front-right-high': [[0.28, 0.62]],
-  'back-left': [[0.3, 0.5]],
+  right: [[0.2, 0.62]],
+  front: [[0.2, 0.66]],
+  'front-right-high': [[0.25, 0.66]],
+  'back-left': [[0.28, 0.56]],
+  'back-right': [[0.3, 0.52]],
+  'left-high': [[0.25, 0.55]],
+  leader: [[0.3, 0.6]],
 };
+/**
+ * The long low limb over the cottage path carries the lanterns, the ivy and
+ * the moss curtains — its leaves sit HIGH (only at its branch tips, above
+ * this height), so it reads as a great bare arm reaching over the glen
+ * instead of a low hedge hanging over the cottages.
+ */
+const LOW_LIMB = 'front-left-low';
+const LOW_LIMB_MIN_Y = 14.8;
 
 /** A main limb's curve and radius (u = arc-length fraction). */
 export function limbCurve(L) {
@@ -76,8 +87,14 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
   const clumps = [];
 
   let currentLimb = 0;
+  let lowLimb = false;
   function addClump(p, s, tier) {
     if (p.y < 12.2) return;
+    if (lowLimb) {
+      // lifted & thinned: no hanging skirt, small high clumps at the twig tips
+      if (tier === 3 || p.y < LOW_LIMB_MIN_Y) return;
+      s *= 0.92;
+    }
     if (crownBlocked(p, s * 0.85)) return;
     clumps.push({ p: p.clone(), s, tier, limb: currentLimb });
   }
@@ -154,7 +171,9 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
       const tip = bcurve.getPointAt(1);
       if (depth === 1) {
         grow(child, rng.int(2, 4), 2);
-        skirt(child, 0.35, 0.3, 0.85);
+        // (half the boughs carry a hanging skirt — the others leave windows
+        //  under the crown where the limbs and the sky show through)
+        if (rng.chance(0.72)) skirt(child, 0.4, 0.3, 0.85);
         addClump(tip.clone().add(new THREE.Vector3(0, 0.7, 0)), rng.range(2.3, 3.0), 1);
         // a fuller clump half-way out so the crown has body, not just a rim
         const mid = bcurve.getPointAt(0.62);
@@ -174,6 +193,7 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
     const side = new THREE.Vector3();
     for (let u = from + rng.range(0, step * 0.5); u < 0.98; u += step * rng.range(0.8, 1.2)) {
       if (gaps && gaps.some(([u0, u1]) => u > u0 && u < u1)) continue;
+      if (rng.chance(0.2)) continue; // a ragged, broken hem, not a hedge
       const P = b.curve.getPointAt(u);
       const T = b.curve.getTangentAt(u);
       side.set(-T.z, 0, T.x);
@@ -187,6 +207,7 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
 
   LIMBS.forEach((L, li) => {
     currentLimb = li;
+    lowLimb = L.id === LOW_LIMB;
     const { curve, radiusAt, radiusAtParam } = limbCurve(L);
     const len = curve.getLength();
     tubes.push(
@@ -210,7 +231,9 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
     const limb = { id: L.id, curve, radiusAt, length: len, depth: 0 };
     limbs.push(limb);
     grow(limb, L.branches, 1);
-    skirt(limb, 0.3, 0.1, 1, CROWN_GAPS[L.id]);
+    // the main limbs' skirts only hang from their outer halves: the inner
+    // limbs stay bare and dark against the lit masses beyond (the skeleton)
+    skirt(limb, 0.36, 0.1, 1, CROWN_GAPS[L.id]);
     const tip = curve.getPointAt(1);
     addClump(tip.add(new THREE.Vector3(0, 0.6, 0)), rng.range(2.6, 3.2), 0);
   });

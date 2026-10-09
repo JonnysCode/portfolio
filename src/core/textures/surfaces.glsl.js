@@ -254,9 +254,82 @@ Surf kind_soil(vec2 uv) {
   return surf(col, h, 0.95 - 0.1 * peb, ao);
 }`,
 
-  // ── STONE — rough fieldstone: varied stones, dark recessed earthy joints ──
+  // ── STONE — the face of ONE field / dressed stone. Builders model every stone
+  // of a wall, step, parapet or flag individually, so the texture must not cut
+  // a stone into cells: fine grain & mineral specks, pits, colour drifting
+  // across the stone (and from stone to stone — each samples its own patch of
+  // the world), a rare open-ended hairline crack, pale worn high spots, a few
+  // fresh chips, lichen crusts & rosettes, faint water streaks.
+  // (The wall texture with mortar joints lives on as 'masonry'.)
   stone: /* glsl */ `
 Surf kind_stone(vec2 uv) {
+  vec2 w = vec2(fbmu(uv, 3.0, 4), fbmu(uv + vec2(0.31, 0.77), 3.0, 4));
+  vec2 q = uv + w * 0.05;
+  float bump = fbm(q * 5.0 + 1.7, vec2(5.0), 5);
+  float bump2 = fbm(q * 14.0 + 3.1, vec2(14.0), 4);
+  float pits = smoothstep(0.3, 0.75, fbm(q * 52.0 + 1.3, vec2(52.0), 2));
+  float fine = gnoise(q * 150.0, vec2(150.0));
+  float grain = fbm(q * 40.0, vec2(40.0), 3);
+  // colour: blue-grey, warm sandstone, pale limestone, grey-brown — drifting
+  float t1 = sat(fbmu(q + vec2(0.71, 0.13), 3.0, 3) * 1.1 + 0.5);
+  float t2 = sat(fbmu(q + vec2(0.29, 0.57), 2.0, 3) * 1.1 + 0.5);
+  vec3 sc = mix(C(0x8e8f8c), C(0xa99677), smoothstep(0.3, 0.7, t1));
+  sc = mix(sc, C(0xb9b2a2), smoothstep(0.55, 0.85, t2) * 0.8);
+  sc = mix(sc, C(0x6f6b62), smoothstep(0.42, 0.12, t2) * 0.65);
+  sc *= 0.84 + 0.3 * sat(bump * 0.8 + 0.5);
+  sc *= 1.0 + 0.08 * fine + 0.06 * grain;
+  // mineral grains: dark & pale specks
+  vec4 gv = voronoi(q * 70.0, vec2(70.0), 1.0);
+  float dot1 = 1.0 - smoothstep(0.1, 0.24, gv.x);
+  sc = mix(sc, sc * 0.6, step(0.8, gv.z) * dot1 * 0.7);
+  sc = mix(sc, sc * 1.2 + 0.03, step(0.9, gv.w) * dot1 * 0.55);
+  sc *= 1.0 - 0.2 * pits;
+  float h = 0.5 + 0.16 * bump + 0.07 * bump2 - 0.05 * pits + 0.015 * fine;
+  // worn high spots: paler & smoother; damp hollows a little darker (soft, no lines)
+  float wear = smoothstep(0.56, 0.72, h);
+  sc = mix(sc, sc * 1.12 + 0.025, wear * 0.7);
+  sc = mix(sc, sc * 0.82, smoothstep(0.45, 0.33, h) * 0.6);
+  // a rare hairline crack: open-ended pieces of a coarse net (≈ 70 cm cells), faint, with a pale lip
+  vec4 cv = voronoi(q * 3.0 + vec2(0.4, 0.2), vec2(3.0), 0.9);
+  float cmask = smoothstep(0.12, 0.34, fbmu(q + vec2(0.55, 0.15), 4.0, 3));
+  float cw = 0.004 + 0.004 * cmask;
+  float crack = (1.0 - smoothstep(0.0, cw, cv.y + 0.006 * gnoise(q * 60.0, vec2(60.0)))) * cmask;
+  float lip = (1.0 - smoothstep(cw, cw * 3.5, cv.y)) * (1.0 - crack) * cmask;
+  sc = mix(sc, sc * 0.55, crack * 0.6);
+  sc = mix(sc, sc * 1.1, lip * 0.4);
+  h -= 0.05 * crack;
+  // fresh chips: small angular spots where a flake broke off — paler, cleaner, sunken, a shadowed rim
+  vec2 kc, ktc;
+  vec4 kv = voronoi(q * 9.0 + vec2(2.0, 5.0), vec2(9.0), 1.0, kc, ktc);
+  vec2 kr = rot2(ktc, kv.w * 6.2831);
+  float chipR = 0.16 + 0.1 * kv.w;
+  float chipD = max(abs(kr.x), abs(kr.y) * 1.4) + 0.35 * abs(kr.x + kr.y);
+  float hasChip = step(0.86, kv.z);
+  float chip = hasChip * (1.0 - smoothstep(chipR - 0.025, chipR, chipD));
+  float chipEdge = hasChip * (1.0 - smoothstep(chipR, chipR + 0.05, chipD)) * (1.0 - chip);
+  sc = mix(sc, mix(sc, C(0xc9c3b4), 0.5) * 1.06, chip);
+  sc = mix(sc, sc * 0.78, chipEdge * 0.55);
+  h -= 0.035 * chip;
+  // lichen: soft sage crusts on the high parts + small pale & yellow rosettes
+  float lich = fbm(q * 6.0 + vec2(9.0), vec2(6.0), 4) + 0.3 * gnoise(q * 50.0, vec2(50.0));
+  float lm = smoothstep(0.32, 0.46, lich) * smoothstep(0.45, 0.6, h);
+  sc = mix(sc, mix(C(0xa9b08c), C(0xc9c49a), sat(grain + 0.5)), lm * 0.55);
+  vec4 lv = voronoi(q * 24.0, vec2(24.0), 1.0);
+  float lic = step(0.86, lv.z) * (1.0 - smoothstep(0.12, 0.3, lv.x)) * (1.0 - chip);
+  sc = mix(sc, lv.w > 0.5 ? C(0xd6d2ba) : C(0xc4b25e), lic * 0.7);
+  h += 0.01 * (lm + lic);
+  // faint dark water streaks running down
+  float streak = sat(gnoise(vec2(q.x * 30.0, q.y * 3.0), vec2(30.0, 3.0)) * 1.4 - 0.5);
+  sc *= 1.0 - 0.14 * streak;
+  float rough = 0.9 - 0.08 * wear - 0.04 * chip;
+  float ao = mix(0.55, 1.0, smoothstep(0.3, 0.6, h)) * (1.0 - 0.35 * crack);
+  return surf(sc, sat(h), rough, ao);
+}`,
+
+  // ── MASONRY — a fieldstone WALL: varied stones, dark recessed earthy joints ──
+  // (for flat wall shells; individually modelled stones use 'stone')
+  masonry: /* glsl */ `
+Surf kind_masonry(vec2 uv) {
   vec2 w = vec2(fbmu(uv, 3.0, 4), fbmu(uv + vec2(0.31, 0.77), 3.0, 4));
   vec2 q = uv + w * 0.04;
   vec2 cell, tc;
@@ -359,26 +432,43 @@ Surf kind_rock(vec2 uv) {
   float s = q.y * 3.0 + fbmu(q, vec2(2.0, 3.0), 4) * 0.45;
   float fs = fract(s);
   float ledge = smoothstep(0.0, 0.07, fs) * (1.0 - 0.32 * fs);
-  // fractured blocks: each a tilted, slightly domed facet
+  // fractured blocks: big, gently tilted facets (cells twice as wide as before)
+  // — the joints are mostly read from the relief, not drawn as a dark net
   vec2 cell, tc;
-  vec4 v = voronoi(vec2(q.x * 4.0, s), vec2(4.0, 3.0), 0.95, cell, tc);
+  vec4 v = voronoi(vec2(q.x * 2.0, s), vec2(2.0, 3.0), 0.95, cell, tc);
   vec2 tilt = (hash2(cell, 91u) - 0.5) * 1.3;
-  float facet = dot(-tc, tilt) * 0.45 + 0.25 * sqrt(smoothstep(0.0, 0.4, v.y));
-  float crack = 1.0 - smoothstep(0.0, 0.045, v.y + 0.02 * gnoise(q * 40.0, vec2(40.0)));
-  // second, finer fracture net
-  vec4 v2 = voronoi(q * 11.0 + vec2(3.0), vec2(11.0), 1.0);
-  float crack2 = (1.0 - smoothstep(0.0, 0.03, v2.y)) * step(0.4, v2.z);
+  float facet = dot(-tc, tilt) * 0.3 + 0.1 * sqrt(smoothstep(0.0, 0.4, v.y));
+  // joints only along parts of the net (open-ended), thin; fading out along their length
+  float jmask = smoothstep(0.05, 0.3, fbm(q * 4.0 + vec2(7.0, 3.0), vec2(4.0), 3));
+  float crack = (1.0 - smoothstep(0.0, 0.025, v.y + 0.015 * gnoise(q * 40.0, vec2(40.0)))) * jmask;
+  // second, finer net: a few hairlines only
+  vec4 v2 = voronoi(q * 7.0 + vec2(3.0), vec2(7.0), 1.0);
+  float hmask = smoothstep(0.2, 0.4, fbm(q * 6.0 + vec2(1.0, 9.0), vec2(6.0), 3));
+  float crack2 = (1.0 - smoothstep(0.0, 0.016, v2.y)) * step(0.7, v2.z) * hmask;
   float grainy = fbm(q * 18.0, vec2(18.0), 5);
   float pits = smoothstep(0.45, 0.8, fbm(q * 40.0, vec2(40.0), 3)) * 0.6;
   float h = 0.42 + 0.3 * ledge + facet + 0.07 * grainy - 0.06 * pits;
-  h = mix(h, 0.12, crack) - 0.12 * crack2;
+  h = mix(h, h - 0.22, crack) - 0.05 * crack2;
+  // fresh chips: small angular, paler spots, slightly sunken
+  vec2 kc, ktc;
+  vec4 kv = voronoi(q * 10.0 + vec2(5.0, 1.0), vec2(10.0), 1.0, kc, ktc);
+  vec2 kr = rot2(ktc, kv.w * 6.2831);
+  float chipR = 0.15 + 0.1 * kv.w;
+  float chipD = max(abs(kr.x), abs(kr.y) * 1.4) + 0.35 * abs(kr.x + kr.y);
+  float hasChip = step(0.88, kv.z);
+  float chip = hasChip * (1.0 - smoothstep(chipR - 0.025, chipR, chipD));
+  float chipEdge = hasChip * (1.0 - smoothstep(chipR, chipR + 0.05, chipD)) * (1.0 - chip);
+  h -= 0.03 * chip;
   h = sat(h);
   vec3 hs = hash3(cell + 5.0);
   vec3 base = mix(C(0x8b9096), C(0xa49784), hs.x);
   base = mix(base, C(0x9c9a8e), hs.y * 0.5);
-  vec3 col = base * (0.8 + 0.22 * grainy + 0.25 * facet);
-  col = mix(col, C(0xc4bfb0), smoothstep(0.62, 0.9, h) * 0.45);
-  col = mix(col, C(0x37383a), crack * 0.85 + crack2 * 0.5);
+  vec3 col = base * (0.8 + 0.22 * grainy + 0.3 * facet);
+  // worn, sun-bleached high edges of the ledges & facets (the freed contrast)
+  col = mix(col, C(0xc8c3b4), smoothstep(0.6, 0.86, h) * 0.55);
+  col = mix(col, col * 0.62, crack * 0.55 + crack2 * 0.3);
+  col = mix(col, mix(col, C(0xcac4b6), 0.5) * 1.05, chip);
+  col = mix(col, col * 0.8, chipEdge * 0.5);
   col *= 1.0 - 0.18 * pits;
   // mineral grains: dark & pale specks, so close-ups read as real, rough stone
   vec4 gv = voronoi(q * 64.0, vec2(64.0), 1.0);
@@ -391,6 +481,10 @@ Surf kind_rock(vec2 uv) {
   float lich = fbm(q * 6.0 + vec2(9.0), vec2(6.0), 4) + 0.35 * gnoise(q * 50.0, vec2(50.0));
   float lm = smoothstep(0.3, 0.44, lich) * smoothstep(0.4, 0.6, h);
   col = mix(col, mix(C(0xa9b08c), C(0xd5cb8e), sat(grainy + 0.5)), lm * 0.7);
+  // lichen rosettes: small pale & yellow spots
+  vec4 lv = voronoi(q * 22.0 + vec2(4.0), vec2(22.0), 1.0);
+  float lic = step(0.87, lv.z) * (1.0 - smoothstep(0.12, 0.3, lv.x)) * (1.0 - crack);
+  col = mix(col, lv.w > 0.5 ? C(0xd6d2ba) : C(0xc4b25e), lic * 0.65);
   float rough = 0.9 - 0.06 * lm;
   float ao = mix(0.3, 1.0, smoothstep(0.08, 0.5, h));
   return surf(col, h, rough, ao);
@@ -463,53 +557,68 @@ Surf kind_timber(vec2 uv) {
 }`,
 
   // ── WOOD (colorize) — sawn boards, grain along U; optional planks ──
-  // Growth rings are the integer level sets of a ring field F, built per BOARD:
-  // with planks one board per plank (the seams separate them); plain wood cuts
-  // the tile into 6 invisible "virtual boards" across V, so every part (placed
-  // at a random UV offset) gets its own figure & tone, and a part straddling
-  // two cross-fades between them. Most boards are rift-like: dense, nearly
-  // straight lines. A third are flat-sawn through the crown of the log:
-  // F = N·(√(Y² + ε²) + kY²) + adv·x — nested cathedral arches whose legs
-  // tighten and straighten towards the edges, tips advancing |adv| rings per
-  // tile along U (adv is a whole number, so the map tiles seamlessly).
+  // Scale: one tile = 1.4 world units (KINDS.wood.tile = boxUV's default), baked
+  // at 512 (U, along the grain) × 1024 (V, across — where the rings are).
+  // Growth rings come at ~125–160 per tile across the grain (≈ 90–115 per unit:
+  // 8–11 rings on a 10 cm board) — a believable miniature grain, never one giant
+  // flame across a chest front. Rings are the integer level sets of a ring field
+  // F, built per BOARD: with planks one board per plank (the seams separate
+  // them); plain wood cuts the tile into 6 invisible "virtual boards" across V
+  // (≈ 23 cm), so every part (placed at a random UV offset) gets its own figure &
+  // tone, and a part straddling two cross-fades between them. Most boards are
+  // rift-like: dense, nearly straight lines whose spacing breathes from year to
+  // year. A third are flat-sawn through the crown of the log:
+  // F = N·(0.35·√(Y² + ε²) + kY²) + adv·x — ~12 nested, rounded cathedral arches per half
+  // board whose legs tighten and straighten towards the edges, tips advancing
+  // |adv| rings per tile along U (adv is a whole number, so the map tiles
+  // seamlessly). Ring-porous pores (oak, ash) sit as fine dark dashes in each
+  // ring's early wood. Ray flecks and END GRAIN are drawn analytically by the
+  // material (surfaceShader.js, SF_WOOD), crisp at any distance.
   wood: /* glsl */ `
 // One board's ring field. x along the grain (tile units), Y across (tile units
 // from the board centre), bw board width, cath = flat-sawn crown, h/h2 hashes.
 // rp: period of the per-ring hash (a whole divisor of the x winding).
 float woodRings(float x, float Y, float bw, float cath, vec3 h, vec3 h2, float bid, out float rp) {
-  // a slow meander well below one ring spacing: straight grain, never ripples
-  float warp = 0.22 * gnoise(vec2(x, Y * 3.0 + bid * 3.7), vec2(1.0, 1000.0))
-             + 0.06 * gnoise(vec2(x * 3.0, Y * 9.0 + bid * 1.3), vec2(3.0, 1000.0));
+  // a slow meander of about one ring: straight grain, never ripples
+  float warp = 0.8 * gnoise(vec2(x, Y * 3.0 + bid * 3.7), vec2(1.0, 1000.0))
+             + 0.22 * gnoise(vec2(x * 3.0, Y * 9.0 + bid * 1.3), vec2(3.0, 1000.0));
   if (cath > 0.5) {
     // the crown line wanders a little; the arch tips come at an uneven pace
     float Yc = Y - (h.y - 0.5) * 0.45 * bw - 0.06 * bw * gnoise(vec2(x * 2.0, bid * 1.7 + 0.5), vec2(2.0, 1000.0));
-    float eps = bw * (0.14 + 0.12 * h.z);
-    float adv = floor(2.0 + 2.99 * h2.y) * (h2.z < 0.5 ? 1.0 : -1.0);
+    float eps = bw * (0.08 + 0.1 * h.z);
+    float adv = floor(22.0 + 18.99 * h2.y) * (h2.z < 0.5 ? 1.0 : -1.0);
     rp = abs(adv);
-    return (18.0 + 6.0 * h2.x) * (sqrt(Yc * Yc + eps * eps) + 1.1 / bw * Yc * Yc)
-         + adv * (x + 0.048 * sin(6.2831853 * (x + h.z))) + warp + h.x * 9.0;
+    // mostly quadratic across the board → broad, rounded U-arches (not chevrons)
+    float F0 = (105.0 + 30.0 * h2.x) * (0.35 * sqrt(Yc * Yc + eps * eps) + 2.2 / bw * Yc * Yc)
+             + adv * (x + 0.02 * sin(6.2831853 * (x + h.z)));
+    // year-to-year ring width: a swell periodic in F0 (whole periods per tile → seamless)
+    float m = max(1.0, floor(rp / 6.0));
+    return F0 + 0.6 * sin(6.2831853 * (F0 * m / rp + h.z)) + warp + h.x * 9.0;
   }
   rp = 16.0;
-  return (30.0 + 8.0 * h.y) * Y + warp + h.x * 9.0;
+  float k = 125.0 + 35.0 * h.y;
+  return k * Y + 2.0 * gnoise(vec2(Y * 10.0 + bid * 3.1, bid * 1.7 + 0.5), vec2(1000.0)) + warp + h.x * 9.0;
 }
-// Thin, crisp late-wood line at the end of each ring; strength varies per ring
-// and slowly along it.
-float woodLate(float F, float rp, float x, float Y, float bid) {
+// x: late wood — darkening through the ring to a crisp line at its end (strength
+// varies per ring and slowly along it); y: early wood band (where oak's big pores are).
+vec2 woodRing(float F, float rp, float x, float Y, float bid) {
   float ring = fract(F);
   float ri = hash1(vec2(mod(floor(F), rp), bid * 3.0 + 7.0), 63u);
   float rn = gnoise(vec2(x * 4.0, Y * 40.0 + bid * 5.3), vec2(4.0, 1000.0));
-  float late = smoothstep(0.6, 0.9, ring) * (1.0 - smoothstep(0.93, 1.0, ring));
-  return late * sat(0.42 + 0.38 * ri + 0.22 * rn);
+  float late = smoothstep(0.5, 0.86, ring) * (1.0 - smoothstep(0.88, 1.0, ring));
+  late *= sat(0.45 + 0.4 * ri + 0.22 * rn);
+  float early = smoothstep(0.0, 0.05, ring) * (1.0 - smoothstep(0.16, 0.32, ring));
+  return vec2(late, early);
 }
 Surf kind_wood(vec2 uv) {
   float seam = 1.0, x = uv.x;
-  // knots: the rings swirl around them (tile space, shared by every board)
+  // knots: the rings swirl tightly around them (tile space, shared by every board)
   vec2 kc, ktc;
   vec4 kv = voronoi(uv * vec2(2.0, 3.0), vec2(2.0, 3.0), 0.8, kc, ktc);
   float hasKnot = step(0.86, kv.z);
   float kd = length(ktc * vec2(2.6, 1.0));
-  float kSwirl = hasKnot * 1.6 * exp(-kd * kd * 30.0);
-  float late = 0.0, tone = 0.0, hue = 0.0, rp;
+  float kSwirl = hasKnot * 7.0 * exp(-kd * kd * 26.0);
+  float late = 0.0, early = 0.0, tone = 0.0, hue = 0.0, rp;
 #ifdef WOOD_PLANKS
   const float ROWS = 4.0;
   float rr = uv.y * ROWS;
@@ -523,7 +632,9 @@ Surf kind_wood(vec2 uv) {
     vec3 h = hash3(vec2(pid, 3.0)), h2 = hash3(vec2(pid, 4.0));
     float Y = (fr - 0.5) / ROWS;
     float F = woodRings(uu, Y, 1.0 / ROWS, (pid == 1.0 || pid == 2.0) ? 1.0 : 0.0, h, h2, pid, rp) + kSwirl;
-    late = woodLate(F, rp, uu, Y, pid);
+    vec2 le = woodRing(F, rp, uu, Y, pid);
+    late = le.x;
+    early = le.y;
     tone = h2.x - 0.5;
     hue = h2.y - 0.5;
   }
@@ -533,7 +644,7 @@ Surf kind_wood(vec2 uv) {
   const float NB = 6.0;
   float yb = uv.y * NB;
   float bi = floor(yb), fy = fract(yb);
-  float wn = 0.5 * (1.0 - smoothstep(0.0, 0.12, min(fy, 1.0 - fy)));
+  float wn = 0.5 * (1.0 - smoothstep(0.0, 0.08, min(fy, 1.0 - fy)));
   for (int k = 0; k < 2; k++) {
     float b = k == 0 ? bi : (fy < 0.5 ? bi - 1.0 : bi + 1.0);
     float w = k == 0 ? 1.0 - wn : wn;
@@ -541,28 +652,32 @@ Surf kind_wood(vec2 uv) {
     vec3 h = hash3(vec2(bm, 3.0)), h2 = hash3(vec2(bm, 4.0));
     float Y = (yb - b - 0.5) / NB;
     float F = woodRings(x, Y, 1.0 / NB, (bm == 1.0 || bm == 4.0) ? 1.0 : 0.0, h, h2, bm, rp) + kSwirl;
-    late += w * woodLate(F, rp, x, Y, bm);
+    vec2 le = woodRing(F, rp, x, Y, bm);
+    late += w * le.x;
+    early += w * le.y;
     tone += w * (h2.x - 0.5);
     hue += w * (h2.y - 0.5);
   }
 #endif
-  float pores = smoothstep(0.5, 0.9, gnoise(vec2(x * 36.0, uv.y * 420.0), vec2(36.0, 420.0))) * (1.0 - late);
-  float fibre = gnoise(vec2(x * 5.0, uv.y * 170.0), vec2(5.0, 170.0));
+  // ring-porous pores: fine dark dashes in the early wood (a few anywhere)
+  float pn = gnoise(vec2(x * 64.0, uv.y * 520.0), vec2(64.0, 520.0));
+  float pores = smoothstep(0.3, 0.8, pn) * (0.2 + 0.8 * early);
+  float fibre = gnoise(vec2(x * 5.0, uv.y * 260.0), vec2(5.0, 260.0));
   float fibre2 = gnoise(vec2(x * 2.0, uv.y * 60.0), vec2(2.0, 60.0));
-  float streaks = gnoise(vec2(x * 3.0, uv.y * 260.0), vec2(3.0, 260.0));
+  float streaks = gnoise(vec2(x * 3.0, uv.y * 400.0), vec2(3.0, 400.0));
   float figure = fbm(vec2(x * 3.0, uv.y * 5.0), vec2(3.0, 5.0), 3);
   float knot = hasKnot * (1.0 - smoothstep(0.035, 0.06, kd));
   float knotRim = hasKnot * (1.0 - smoothstep(0.06, 0.16, kd)) * (1.0 - knot);
   // per board: ±6 % value and a slight shift towards the darker, redder tone
-  float R = sat(late * 0.78 + 0.18 * pores + 0.1 * fibre2 + 0.06 * figure + 0.35 * knotRim + 0.12 * hue);
-  float G = 0.5 + 0.03 * fibre + 0.035 * fibre2 + 0.04 * streaks + 0.025 * figure + 0.06 * tone;
+  float R = sat(late * 0.8 + 0.4 * pores + 0.1 * fibre2 + 0.06 * figure + 0.35 * knotRim + 0.12 * hue);
+  float G = 0.5 + 0.025 * fibre + 0.035 * fibre2 + 0.035 * streaks + 0.025 * figure + 0.06 * tone - 0.03 * pores;
   float B = sat(knot * 0.9 + 0.25 * knotRim);
   R = mix(1.0, R, seam);
   G = mix(0.24, G, seam);
-  float h = 0.6 - 0.03 * late + 0.015 * fibre - 0.025 * pores + 0.02 * knot;
+  float h = 0.6 - 0.02 * late + 0.01 * fibre - 0.035 * pores + 0.02 * knot;
   h = mix(0.15, h, seam);
   float ao = mix(0.3, 1.0, seam);
-  return surf(vec3(R, G, B), h, 0.6 + 0.1 * late + 0.1 * pores, ao);
+  return surf(vec3(R, G, B), h, 0.58 + 0.1 * late + 0.14 * pores, ao);
 }`,
 
   // ── SHINGLES — staggered rows of split wooden shakes ──

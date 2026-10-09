@@ -197,6 +197,52 @@ function buildLookDev(ctx) {
   add(ground, materials.surface('moss'), 9, 0.015, Z2);
   add(new THREE.BoxGeometry(0.9, 0.18, 0.5), materials.surface('stone', { mossy: 0.3 }), 9.4, 0.09, Z2 - 0.6);
   tag('moss ground', 9, 0.9, Z2 + 1.5);
+
+  // row 7 (z = -36.5) — end grain & small joinery at the Schreinerei's scale, and
+  // vertex-coloured mossy rocks next to plain ones (the moss must look the same)
+  //   --custom "chest:-1.3,0.95,-35.2:-1.6,0.55,-36.5"  --custom "endgrain:0.3,0.8,-35.1:0.2,0.2,-36.5"
+  //   --custom "vcmoss:5,1.1,-34.6:5,0.25,-36.6"
+  const Z3 = -36.5;
+  const part = (w, h, d, grain) => materials.boxUV(new THREE.BoxGeometry(w, h, d), 1.4, { grain, offset: [rand() * 7, rand() * 7] });
+  // a little oak chest (62 cm): front/back boards run along x, the sides along z
+  // → the side boards' end grain shows at the front corners, like through-dovetails
+  const chest = new THREE.Group();
+  const T = 0.022, CW = 0.62, CH = 0.3, CD = 0.36;
+  for (const zz of [-1, 1]) chest.add(new THREE.Mesh(part(CW, CH, T, 'x'), oak).translateZ(zz * (CD / 2 - T / 2)));
+  for (const xx of [-1, 1]) chest.add(new THREE.Mesh(part(T, CH, CD, 'z'), oak).translateX(xx * (CW / 2 - T / 2)));
+  chest.add(new THREE.Mesh(part(CW, T, CD, 'x'), oak).translateY(-CH / 2 + T / 2));
+  chest.position.set(-1.6, 0.42 + CH / 2, Z3);
+  chest.rotation.y = 0.35;
+  chest.traverse((o) => o.isMesh && (o.castShadow = o.receiveShadow = true));
+  ctx.scene.add(chest);
+  add(new THREE.BoxGeometry(0.5, 0.42, 0.3), materials.surface('wood', { species: 'walnut' }), -1.6, 0.21, Z3);
+  tag('oak chest 62 cm', -1.6, 1.05, Z3);
+  // Hirnholz: a stack of board offcuts showing their ends, a post, a beam
+  for (let i = 0; i < 6; i++) add(part(0.13 + 0.03 * (i % 3), 0.032, 0.5, 'z'), materials.surface('wood', { species: i % 2 ? 'spruce' : 'oak' }), -0.25 + (i % 3) * 0.17, 0.016 + Math.floor(i / 3) * 0.034, Z3);
+  add(part(0.12, 0.9, 0.12, 'y'), oak, 0.45, 0.45, Z3 - 0.2);
+  add(part(0.9, 0.16, 0.16, 'x'), materials.surface('timber'), 0.2, 0.3, Z3 + 0.45, 0.6);
+  tag('end grain', 0.1, 1.05, Z3);
+  // the shared vertex-coloured wood the Schreinerei uses (neutral colour + species on the vertices)
+  const vcWood = materials.surface('wood', { color: '#bdbdbd', vertexColors: true });
+  [['#a88c68', 'oak'], ['#d2bb90', 'spruce'], ['#5c4334', 'walnut'], ['#9c5a43', 'cherry']].forEach(([c, n], i) => {
+    const g = part(0.16, 0.5, 0.05, 'y');
+    const col = new THREE.Color(c);
+    g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count).fill(0).flatMap(() => [col.r, col.g, col.b]), 3));
+    add(g, vcWood, 1.0 + i * 0.2, 0.25, Z3 + 0.1);
+  });
+  tag('vc wood', 1.3, 0.75, Z3 + 0.1);
+  // vertex-coloured mossy rocks (grey, dark) beside plain mossy rocks
+  const rockVC = materials.surface('rock', { vertexColors: true, mossy: 0.6 });
+  const rockPlain = materials.surface('rock', { mossy: 0.6 });
+  [['#6d6a64', rockVC], ['#3a3833', rockVC], [null, rockPlain]].forEach(([c, mat], i) => {
+    const g = fieldStone(30 + i, 0.55, 0.4, 0.45);
+    if (c) {
+      const col = new THREE.Color(c);
+      g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count).fill(0).flatMap(() => [col.r, col.g, col.b]), 3));
+    }
+    add(g, mat, 4.2 + i * 0.75, 0.18, Z3, i);
+  });
+  tag('rock m0.6: vc grey · vc dark · plain', 5, 0.9, Z3);
 }
 
 export default async function build(ctx) {
