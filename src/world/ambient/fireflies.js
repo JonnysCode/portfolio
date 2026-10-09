@@ -199,8 +199,8 @@ export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = fa
 
   // ── the swarms ──
   const swarms = [];
-  swarms.push({ id: 'pond', x: STREAM.pond.x, z: STREAM.pond.z, r: STREAM.pond.radius * 0.7, h: [0.25, 1.6], k: 1.2 });
-  swarms.push({ id: 'bend', x: 12.4, z: 11.2, r: 2.2, h: [0.25, 1.8], k: 0.9 });
+  swarms.push({ id: 'pond', x: STREAM.pond.x, z: STREAM.pond.z, r: STREAM.pond.radius * 0.62, h: [0.3, 1.7], k: 0.95 });
+  swarms.push({ id: 'bend', x: 12.4, z: 11.2, r: 1.7, h: [0.25, 1.6], k: 0.6 });
   if (ring) swarms.push({ id: 'ring', x: ring.x, z: ring.z, r: (ring.r ?? 1.2) * 1.5, h: [0.2, 1.5], k: 1 });
   {
     // under the Great Oak's left limb (as the glen's camera sees it: −x)
@@ -245,7 +245,7 @@ export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = fa
       x = OAK.x + Math.sin(a) * d;
       z = OAK.z + Math.cos(a) * d;
       sw = [OAK.x, OAK.z, rng.range(0.03, 0.08) * (rng.chance(0.85) ? 1 : -1)];
-    } else if (mode < 0.48) {
+    } else if (mode < 0.42) {
       // over the stream
       const p = spts[Math.floor(rng.next() * spts.length)];
       x = p.x + rng.jitter(2.2);

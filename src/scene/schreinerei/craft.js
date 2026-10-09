@@ -31,7 +31,8 @@
 // +Z the object's front.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { board, timber, xf, mat4, uvBox, tube, mossGeo, stoneGeo, noiseA, noiseB, addHandSaw, addFClamp, doubleFace, LOD, segs, count } from './kit.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { board, timber, xf, mat4, uvBox, tube, mossGeo, mossPadGeo, stoneGeo, noiseA, noiseB, addHandSaw, addFClamp, doubleFace, LOD, segs, count } from './kit.js';
 import { barkMount } from './door.js';
 import { shavingGeo } from './fx.js';
 
@@ -258,7 +259,8 @@ export function addHandcart(F, mats, rng) {
     }
     const fel = new THREE.TorusGeometry(R - 0.018, 0.019, segs(5, 4), segs(22, 12));
     fel.scale(1, 1, 1.25);
-    add(oak, uvBox(fel.rotateY(Math.PI / 2), 'z'));
+    // (bent segments: long grain all round, no end grain on the rim)
+    add(oak, uvBox(fel.rotateY(Math.PI / 2), 'z', undefined, [0, 0], { endGrain: false }));
     add(iron, new THREE.TorusGeometry(R - 0.002, 0.007, segs(4, 3), segs(26, 12)).rotateY(Math.PI / 2), { cast: false });
   };
   for (const s of [-1, 1]) {
@@ -498,7 +500,32 @@ export function addBesom(B, mats, rng, foot, top) {
     return g.applyQuaternion(q).translate(p.x, p.y, p.z);
   };
   const bundle = 0.42;
-  B.add(mats.wood('ash'), place(uvBox(new THREE.CylinderGeometry(0.014, 0.016, len - bundle * 0.55, 6), 'y'), bundle * 0.45 + (len - bundle * 0.55) / 2));
+  // the handle: a cut hazel stick, bark left on (grey-brown, never a turned
+  // white rod), a little bent as hazel grows, thinning towards the top
+  {
+    const y0 = bundle * 0.45, y1 = len;
+    const n = 7, bow = 0.018 + rng.next() * 0.01, ph = rng.jitter(0.6);
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      pts.push(new THREE.Vector3(Math.sin(t * Math.PI) * bow * Math.cos(ph), y0 + (y1 - y0) * t, Math.sin(t * Math.PI) * bow * Math.sin(ph) + Math.sin(t * 7.3) * 0.003));
+    }
+    const curve = new THREE.CatmullRomCurve3(pts);
+    const g = new THREE.TubeGeometry(curve, segs(14, 6), 0.0135, 6, false);
+    // taper: thinner towards the top end
+    const pa = g.attributes.position;
+    const c = new THREE.Vector3();
+    for (let i = 0; i < pa.count; i++) {
+      const t = Math.floor(i / 7) / segs(14, 6);
+      curve.getPointAt(Math.min(1, t), c);
+      const k = 1.12 - 0.3 * t;
+      pa.setXYZ(i, c.x + (pa.getX(i) - c.x) * k, pa.getY(i), c.z + (pa.getZ(i) - c.z) * k);
+    }
+    g.computeVertexNormals();
+    B.add(mats.wood('#6b5443'), place(uvBox(g, 'y', 1 / 1.4, [rng.next() * 5, 0], { endGrain: false }), 0));
+    // the cut top: pale end grain
+    B.add(mats.wood('#c9ae86'), place(xf(new THREE.CircleGeometry(0.0115, 6), [pts[n].x, y1 + 0.0005, pts[n].z], [-Math.PI / 2, 0, 0]), 0), { cast: false });
+  }
   // the twig bundle: a flared, ragged cone of thin twigs
   for (let i = 0, n = count(26, 12); i < n; i++) {
     const a = rng.next() * Math.PI * 2, rr = rng.range(0.005, 0.03);
@@ -702,7 +729,7 @@ export function addStickeredStack(F, mats, rng, { len = 0.9, layers = 4, width =
  * `pts` ([{x, z}] world, conformed to the ground by gh), thinning out towards
  * the end: shavings the wind carried off the Hobelbank. n on high.
  */
-export function addShavingTrail(B, mats, rng, gh, pts, { n = 26, spread = 0.22 } = {}) {
+export function addShavingTrail(B, mats, rng, gh, pts, { n = 26, spread = 0.22, scale = 1 } = {}) {
   const curls = [doubleFace(shavingGeo(0.03, 0.02, 1.3)), doubleFace(shavingGeo(0.038, 0.024, 1.9)), doubleFace(shavingGeo(0.026, 0.018, 1.1))];
   const tones = ['#c99c63', '#bd8f58', '#d3aa74', '#e6d3a4', '#ddc690'];
   const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p.x, 0, p.z)));
@@ -713,8 +740,173 @@ export function addShavingTrail(B, mats, rng, gh, pts, { n = 26, spread = 0.22 }
     const p = curve.getPointAt(u);
     const x = p.x + rng.jitter(spread * (0.6 + u)), z = p.z + rng.jitter(spread * (0.6 + u));
     const y = gh(x, z) + 0.012;
-    B.add(mats.wood(rng.pick(tones)), xf(rng.pick(curls).clone(), [x, y, z], [rng.jitter(0.7) + (rng.next() < 0.5 ? Math.PI / 2 : 0), rng.next() * 6.28, rng.jitter(0.7)], rng.range(0.85, 1.25)), { cast: false });
+    B.add(mats.wood(rng.pick(tones)), xf(rng.pick(curls).clone(), [x, y, z], [rng.jitter(0.7) + (rng.next() < 0.5 ? Math.PI / 2 : 0), rng.next() * 6.28, rng.jitter(0.7)], rng.range(0.85, 1.25) * scale), { cast: false });
     out.push({ x, z });
   }
   return out;
+}
+
+// ─── flagstones ──────────────────────────────────────────────────────────────
+/**
+ * A flat flagstone (Steinplatte): an irregular, slightly lumpy polygon of
+ * dressed stone, a flat top with the faintest dome, a chamfered (worn) top
+ * edge and a body sunk into the soil. Origin on the ground under its middle,
+ * top at y = top. ≈ 7·n triangles (n = 7…9 corners).
+ * opts: { r, sx, sz, top (height of the top above the ground), c (chamfer), depth }
+ */
+export function flagstoneGeo(rng, { r = 0.18, sx = 1, sz = 1, top = 0.03, c = 0.012, depth = 0.08 } = {}) {
+  // an irregular split slab: 5–8 corners at uneven angles and radii, now and
+  // then a corner knocked in (never a tidy hexagon tile)
+  const n = rng.int(5, 8);
+  const ph = rng.next() * Math.PI * 2;
+  const bite = rng.next() < 0.45 ? rng.int(0, n - 1) : -1;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const a = ph + ((i + rng.jitter(0.36)) / n) * Math.PI * 2;
+    const k = (i === bite ? 0.72 : 1) * rng.range(0.78, 1.16);
+    out.push([Math.cos(a) * r * sx * k, Math.sin(a) * r * sz * k]);
+  }
+  const dome = rng.range(0.002, 0.006);
+  // centroid & an inset ring for the chamfer
+  let cx = 0, cz = 0;
+  for (const [x, z] of out) {
+    cx += x / n;
+    cz += z / n;
+  }
+  const inset = (f, dd = 0) => out.map(([x, z]) => {
+    const dx = x - cx, dz = z - cz, l = Math.hypot(dx, dz) || 1;
+    return [cx + dx * f - (dx / l) * dd, cz + dz * f - (dz / l) * dd];
+  });
+  const ringTop = inset(1, c), ringMid = inset(0.55), ringBot = inset(1.04);
+  const geos = [];
+  // the top: centre + a mid ring (faint dome, a little uneven) + the chamfer's upper edge
+  {
+    const pos = [cx, top + dome, cz];
+    for (const [x, z] of ringMid) pos.push(x, top + dome * 0.6 + rng.jitter(0.0015), z);
+    for (const [x, z] of ringTop) pos.push(x, top, z);
+    const idx = [];
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      idx.push(0, 1 + j, 1 + i);
+      idx.push(1 + i, 1 + j, 1 + n + i, 1 + j, 1 + n + j, 1 + n + i);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    geos.push(g);
+  }
+  // the chamfer band, then the sides down into the soil (own vertices: crisp edges)
+  for (const [ra, ya, rb, yb] of [[ringTop, top, out, top - c], [out, top - c, ringBot, -depth]]) {
+    const pos = [];
+    for (let i = 0; i < n; i++) pos.push(ra[i][0], ya, ra[i][1], rb[i][0], yb, rb[i][1]);
+    const idx = [];
+    for (let i = 0; i < n; i++) {
+      const a = i * 2, b = ((i + 1) % n) * 2;
+      idx.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    geos.push(g);
+  }
+  const g = mergeGeometries(geos.map((x) => x.toNonIndexed()), false);
+  g.computeVertexNormals();
+  return uvBox(g, 'x', 1.6, [rng.next() * 9, rng.next() * 9], { endGrain: false });
+}
+
+/**
+ * A flagged apron: flagstones laid on a jittered grid with 2–4 cm joints,
+ * a low moss underlay showing green in every joint (and creeping over the
+ * apron's ragged rim), the odd clover sprig in a joint. F: a frame whose
+ * ground is y = 0 (`gy(x, z)` gives the ground height if it isn't flat).
+ * cells: { x0, x1, z0, z1, cw, cd }. Returns [{ x, z, r }] (local).
+ */
+export function addFlagApron(F, mats, rng, { x0, x1, z0, z1, cw = 0.3, cd = 0.27 }, gy = () => 0) {
+  const stones = [];
+  const nx = Math.max(1, Math.round((x1 - x0) / cw)), nz = Math.max(1, Math.round((z1 - z0) / cd));
+  const w = (x1 - x0) / nx, d = (z1 - z0) / nz;
+  for (let j = 0; j < nz; j++) {
+    for (let i = 0; i < nx; i++) {
+      // a ragged rim: corners and the odd edge stone left out
+      const edge = i === 0 || j === 0 || i === nx - 1 || j === nz - 1;
+      if (edge && rng.next() < 0.22) continue;
+      const x = x0 + w * (i + 0.5 + (j % 2) * 0.25) + rng.jitter(w * 0.08);
+      const z = z0 + d * (j + 0.5) + rng.jitter(d * 0.08);
+      if (x > x1) continue;
+      const g = flagstoneGeo(rng, { r: 0.5, sx: w * 0.86, sz: d * 0.86, top: 0.036 + rng.jitter(0.005), c: 0.011 });
+      F.add(mats.stone(), xf(g, [x, gy(x, z), z], [rng.jitter(0.025), rng.jitter(0.3), rng.jitter(0.025)]), { cast: false });
+      stones.push({ x, z, r: Math.max(w, d) * 0.42 });
+    }
+  }
+  // the moss in the joints: a low cushion under the whole apron
+  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  F.add(mats.moss(), xf(mossPadGeo(rng, { r: 0.5, h: 0.016, sx: (x1 - x0) * 1.06, sz: (z1 - z0) * 1.14, lobes: 0.5 }), [cx, gy(cx, cz) - 0.002, cz]), { cast: false });
+  return stones;
+}
+
+// ─── chopping block ──────────────────────────────────────────────────────────
+/**
+ * A chopping block (Spaltstock): a short oak round with its bark on, the top
+ * end grain (rings, a drying check) scarred by the axe, the axe stuck in it
+ * at an angle, split kindling lying round it and a scatter of chips. Frame F
+ * origin on the ground. Returns { r } (footprint radius).
+ */
+export function addChoppingBlock(F, mats, rng, { r = 0.21, h = 0.4 } = {}) {
+  const blk = new THREE.CylinderGeometry(r, r * 1.12, h, segs(12, 8), 1, true);
+  F.add(mats.bark(), uvBox(blk, 'y', 1 / 2.6, [rng.next() * 5, 0], { endGrain: false }).translate(0, h / 2, 0));
+  // the top: real end grain (rings & a check) — a slightly tilted cut
+  const top = new THREE.CircleGeometry(r * 0.98, segs(12, 8)).rotateX(-Math.PI / 2);
+  uvBox(top, 'y', 1 / 1.4, [rng.next() * 3, rng.next() * 3], { endGrain: true });
+  F.add(mats.wood('#b0916c'), xf(top, [0, h + 0.002, 0], [0.03, 0, -0.02]), { cast: false });
+  // a few axe scars (dark short cuts on the end grain)
+  const vc = mats.vc();
+  for (let i = 0; i < 4; i++) F.add(vc, xf(new THREE.BoxGeometry(rng.range(0.05, 0.1), 0.001, 0.0035), [rng.jitter(r * 0.5), h + 0.0045, rng.jitter(r * 0.5)], [0, rng.next() * 3, 0]), { color: '#5a4430', cast: false, receive: false });
+  // the axe: hickory-pale haft, the head bitten into the block
+  {
+    const a = -0.62; // haft lean (towards −x)
+    const m = mat4([0.02, h + 0.015, 0.01], [0.12, 0.35, a]);
+    F.add(mats.wood('#c4a272'), xf(board(0.032, 0.6, 0.022, { along: 'y', rng, r: 0.009 }), [0, 0.3, 0]).applyMatrix4(m));
+    const head = new THREE.Shape([[-0.02, 0.0], [0.03, 0.0], [0.11, -0.03], [0.12, 0.05], [0.11, 0.075], [0.03, 0.05], [-0.02, 0.05]].map(([x, y]) => new THREE.Vector2(x, y)));
+    const hg = new THREE.ExtrudeGeometry(head, { depth: 0.022, bevelEnabled: false });
+    hg.translate(0, -0.03, -0.011).rotateZ(-Math.PI / 2 - 0.0);
+    // (the head sits at the haft's lower end, its bit buried in the end grain)
+    F.add(mats.metal('#6d6f72'), hg.translate(0.0, 0.035, 0).applyMatrix4(m), { cast: false });
+  }
+  // split kindling round its foot, a couple leaning on it, chips
+  for (let i = 0, n = count(8, 4); i < n; i++) {
+    const a = rng.next() * Math.PI * 2, rr = r + rng.range(0.08, 0.32);
+    const half = new THREE.CylinderGeometry(0.045, 0.045, rng.range(0.22, 0.32), 5, 1, false, 0, Math.PI);
+    uvBox(half, 'y', 1 / 1.4, [rng.next() * 5, 0]);
+    F.add(mats.wood(rng.pick(['#a98a66', '#b5966f', '#9c7d5a'])), xf(half, [Math.cos(a) * rr, 0.03, Math.sin(a) * rr], [Math.PI / 2, rng.next() * 6, rng.jitter(0.25)]), { cast: false });
+  }
+  for (const a of [2.1, 2.6]) {
+    const half = new THREE.CylinderGeometry(0.04, 0.04, 0.34, 5, 1, false, 0, Math.PI);
+    uvBox(half, 'y', 1 / 1.4, [rng.next() * 5, 0]);
+    F.add(mats.wood('#b08f68'), xf(half, [Math.cos(a) * (r + 0.07), 0.16, Math.sin(a) * (r + 0.07)], [0, -a, 0.32]), { cast: false });
+  }
+  for (let i = 0, n = LOD.small ? 16 : 6; i < n; i++) {
+    const a = rng.next() * Math.PI * 2, rr = r + rng.range(0.02, 0.4);
+    F.add(mats.wood('#d2b88c'), xf(new THREE.BoxGeometry(rng.range(0.025, 0.05), 0.006, rng.range(0.012, 0.022)), [Math.cos(a) * rr, 0.004, Math.sin(a) * rr], [rng.jitter(0.3), rng.next() * 6, 0]), { cast: false });
+  }
+  return { r: r + 0.3 };
+}
+
+/**
+ * Sawdust swept out of a doorway: a few soft heaps and a fan of 3D shaving
+ * curls thinning out from `from` towards `to` (world [{x, z}], conformed to
+ * the ground by gh). Low and flat: they lie on a path without blocking it.
+ */
+export function addSweptShavings(B, mats, rng, gh, from, to, { n = 24, heaps = 3, spread = 0.35, scale = 1.35 } = {}) {
+  const vc = mats.vc();
+  // soft sawdust heaps by the threshold (the broom stopped there), a thin drift between them
+  for (let i = 0; i < heaps; i++) {
+    const t = rng.range(0, 0.3);
+    const x = from.x + (to.x - from.x) * t + rng.jitter(spread), z = from.z + (to.z - from.z) * t + rng.jitter(spread * 0.5);
+    // (mounded, a warm tan: sawdust, not paper)
+    B.add(vc, xf(mossGeo(rng, { r: rng.range(0.07, 0.11), h: rng.range(0.03, 0.045), sx: 1.35 }), [x, gh(x, z), z], [0, rng.next() * 3, 0]), { color: rng.pick(['#c9a46e', '#bf9963', '#cfac78']), cast: false });
+  }
+  const mid = { x: (from.x + to.x) / 2 + rng.jitter(0.2), z: (from.z + to.z) / 2 };
+  return addShavingTrail(B, mats, rng, gh, [from, mid, to], { n, spread, scale });
 }

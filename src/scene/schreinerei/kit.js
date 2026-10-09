@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { createNoise2D } from '../../core/noise.js';
+import { END_GRAIN_V } from '../../core/materials.js';
 
 const noiseA = createNoise2D(91731);
 const noiseB = createNoise2D(5531);
@@ -125,7 +126,7 @@ export function makeMats(ctx) {
  * clearly red-brown, maple cream, spruce straw, beech pinkish.
  */
 export const SPECIES = {
-  oak: '#a88c68',
+  oak: '#9c7a55',
   walnut: '#5c4334',
   spruce: '#d2bb90',
   ash: '#cdc2a8',
@@ -354,14 +355,36 @@ export const TILE = { wood: 1.4, timber: 1.6, plaster: 2.2, shingles: 1.4, rope:
  * 1 / wood tile), so a texture keeps the same density on every part. The
  * grain (texture U — the look-dev convention) runs along `along`. `off`
  * shifts the UVs (vary it per board so neighbours differ).
+ *
+ * Real end grain: faces that cut ACROSS the grain (normal along `along`: a
+ * board's ends, a tenon's end, a peg's head, a dovetail's end) get the
+ * END_GRAIN_V marker added to V (after scale & offset), so the wood & timber
+ * surfaces draw them as Hirnholz (darker, ring arcs, a drying check on
+ * timber); every other surface kind strips the marker again.
+ * opts.endGrain: 'ends' (default) marks only faces lying at the part's
+ * extremes along the grain (the cut ends of boards, beams, posts, pegs,
+ * flat inlays) — curved outlines that merely turn towards the grain axis
+ * (an arch segment's flank, a ring) keep long grain; true marks every face
+ * across the grain (a carved backrest's top edge, a heart cut-out); false
+ * never marks (ropes, twigs, bent parts).
  */
-export function uvBox(geo, along = 'y', scale = 1 / TILE.wood, off = [0, 0]) {
+export function uvBox(geo, along = 'y', scale = 1 / TILE.wood, off = [0, 0], { endGrain = 'ends' } = {}) {
   const pos = geo.attributes.position;
   if (!geo.attributes.normal) geo.computeVertexNormals();
   const nor = geo.attributes.normal;
   const A = AX[along];
   const uv = new Float32Array(pos.count * 2);
   const p = [0, 0, 0];
+  // the part's extent along the grain (for 'ends': a cut end lies at an extreme)
+  let lo = Infinity, hi = -Infinity;
+  if (endGrain === 'ends') {
+    for (let i = 0; i < pos.count; i++) {
+      const a = A === 0 ? pos.getX(i) : A === 1 ? pos.getY(i) : pos.getZ(i);
+      if (a < lo) lo = a;
+      if (a > hi) hi = a;
+    }
+  }
+  const tol = Math.max(1e-4, (hi - lo) * 0.015);
   for (let i = 0; i < pos.count; i++) {
     p[0] = pos.getX(i);
     p[1] = pos.getY(i);
@@ -370,18 +393,20 @@ export function uvBox(geo, along = 'y', scale = 1 / TILE.wood, off = [0, 0]) {
     let dom = 0;
     if (ny > nx && ny >= nz) dom = 1;
     else if (nz > nx && nz > ny) dom = 2;
-    let u, v;
+    let u, v, end = 0;
     if (dom === A) {
-      // end grain: any two other axes
+      // end grain: the two other axes
       u = p[(A + 1) % 3];
       v = p[(A + 2) % 3];
+      if (endGrain === true) end = END_GRAIN_V;
+      else if (endGrain === 'ends' && (A === 0 ? nx : A === 1 ? ny : nz) > 0.9 && (p[A] - lo < tol || hi - p[A] < tol)) end = END_GRAIN_V;
     } else {
       const across = 3 - A - dom;
       u = p[A];
       v = p[across];
     }
     uv[i * 2] = u * scale + off[0];
-    uv[i * 2 + 1] = v * scale + off[1];
+    uv[i * 2 + 1] = v * scale + off[1] + end;
   }
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   return geo;
@@ -639,7 +664,8 @@ export function sagCurve(a, b, sag, segments = 12) {
 export function tube(points, radius = 0.01, radial = 4, tubular = null) {
   const curve = new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(p[0], p[1], p[2])));
   const g = new THREE.TubeGeometry(curve, tubular ?? Math.max(4, points.length * 3), radius, radial, false);
-  return uvBox(g, 'y', 3);
+  // (ropes, wires, twigs: no end grain on a bent part)
+  return uvBox(g, 'y', 3, [0, 0], { endGrain: false });
 }
 
 /** An ivy leaf (3-lobed, slightly cupped) in the XY plane facing +Z, stem at the origin. */

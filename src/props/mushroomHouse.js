@@ -391,7 +391,7 @@ function buildHouse(F, o, rng) {
   // (per tier: the low tier keeps about two thirds of the columns and rows)
   const capNU = Math.round((50 + 18 * Rc) * (0.4 + 0.6 * det));
   const capTopRows = Math.round((22 + 3.2 * capH) * (0.45 + 0.55 * det));
-  const capCurlRows = 5;
+  const capCurlRows = det < 0.4 ? 3 : 5; // (the rolled rim: 3 rows are enough on the low tier)
   const VTOP = capTopRows / (capTopRows + capCurlRows);
   const cw = [rng.range(0, 6), rng.range(0, 6), rng.range(0.025, 0.045), rng.range(0.015, 0.03)];
   const tilt = [rng.jitter(0.05), rng.jitter(0.05)];
@@ -1276,7 +1276,7 @@ function buildWarts(put, o, houseRng, { capRaw, capFrame, capReserved, capPaint,
     const roll = rng.next();
     const size = sizeAt(s) * (roll < 0.28 ? rng.range(0.3, 0.55) : roll < 0.9 ? rng.range(0.7, 1.2) : rng.range(1.25, 1.5)) * (s < 0.1 ? 0.8 : 1);
     const k = Math.max(6, Math.round((size > Rc * 0.05 ? 12 : size > Rc * 0.03 ? 10 : 8) * (0.5 + 0.5 * det)));
-    const w = { c: capRaw(phi, s), size, s, phi, ao: size > Rc * 0.022, k, ...makeOutline(k) };
+    const w = { c: capRaw(phi, s), size, s, phi, ao: size > Rc * (det < 0.4 ? 0.03 : 0.022), k, ...makeOutline(k) };
     if (!free(w, size * 0.1)) continue;
     placed.push(w);
     n++;

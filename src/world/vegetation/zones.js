@@ -4,8 +4,10 @@
 //   canGrow(x, z, { margin, padExtra })  free forest floor that belongs to the
 //        forest builder: off paths, pads (+ the dressed ring around them), the
 //        stream & its banks (riverside), the pond, the waterfall outcrop, the
-//        escarpment behind it (once setRidgeTest has registered it) and the
-//        Great Oak's root zone (the oak builder dresses those).
+//        escarpment behind it (once setRidgeTest has registered it), the
+//        Great Oak's root zone (the oak builder dresses those) and the
+//        footprints of the other builders' props (setPropKeep: the colliders
+//        registered before the vegetation — sawhorses, drying stack …).
 //   blocksView(x, y, z, r)  would a sphere hide the subject of any spot camera
 //        (plain, -wide and -close shots, the overview)? Tall things (trees,
 //        giant mushrooms, big ferns, boulders) test a few spheres up their

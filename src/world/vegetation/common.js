@@ -12,6 +12,10 @@
 //                     silhouette at night, with a silver rim on its upper edges
 //                     (the old mossBalanced() patch is gone: the surface shader's
 //                     moss now ignores vertex colours itself — opts.mossGain)
+//   moonRim(mat)      a clone of a surface material with a narrow silver moon
+//                     rim at night (giant trunks' bark, mushroom domes, petals)
+//   nightPetals(mat)  moonRim + blue petals desaturating/darkening by night
+//   freeAfterUpload   drop static meshes' CPU vertex arrays once on the GPU
 //   noise helpers     seeded 2D simplex fields shared by terrain & scatter,
 //                     groundPatches() (cushions, drifts, clover, soil) and
 //                     microRelief() — the floor and the undergrowth agree
@@ -416,7 +420,7 @@ export function moonRim(base, { rim = 0.05, pow = 4, up = 0, side = 1, color = [
 #include <opaque_fragment>`);
   };
   const key = m.customProgramCacheKey();
-  m.customProgramCacheKey = () => `${key}|moonrim-${rim}-${pow}-${up}-${side}${extraKey ? '-' + extraKey : ''}`;
+  m.customProgramCacheKey = () => `${key}|moonrim-${rim}-${pow}-${up}-${side}-${color.join(',')}${extraKey ? '-' + extraKey : ''}`;
   return m;
 }
 

@@ -34,7 +34,7 @@ import { getHeight } from '../../world/ground.js';
 import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, mossPadGeo, uvBox, uvCyl, paintBy, addToadstool, addFern, addLanternPost, SPECIES, LOD, segs, count } from './kit.js';
 import { SPOTS } from '../../world/layout.js';
 import { ANNEX, annexFrame, annexToWorld } from './annex.js';
-import { addTrack, addHandcart, addDowelBucket, addOffcuts, addLeaningBoards, addBesom, addRipVignette, addStickeredStack, addShavingTrail, leafGeo } from './craft.js';
+import { addTrack, addHandcart, addDowelBucket, addOffcuts, addLeaningBoards, addBesom, addRipVignette, addStickeredStack, addShavingTrail, leafGeo, flagstoneGeo, addFlagApron, addChoppingBlock, addSweptShavings } from './craft.js';
 
 export function buildYard(ctx, B, mats) {
   const rng = createRng('yard');
@@ -177,26 +177,19 @@ export function buildYard(ctx, B, mats) {
     addToadstool(F, mats, rng, c[0] + 0.5, c[1], c[2] + 0.55, { size: 0.1 });
   }
 
-  // ── chopping block, axe, split logs ───────────────────────────────────────
+  // ── split firewood & chips by the Holzbeige (the chopping block itself
+  // stands by the oak door now, in the woodworking frame) ─────────────────
   {
     const c = [-2.62, 0, hz + 1.38];
     const g0 = groundY(c[0], c[2]);
-    const blk = new THREE.CylinderGeometry(0.22, 0.26, 0.42, 12);
-    uvBox(blk, 'y', 1 / 2.6);
-    F.add(mats.bark(), xf(blk, [c[0], g0 + 0.21, c[2]]));
-    F.add(mats.wood('oak'), xf(new THREE.CircleGeometry(0.2, 12), [c[0], g0 + 0.422, c[2]], [-Math.PI / 2, 0, 0]), { color: '#c2a886', cast: false });
-    // the axe, stuck in the block
-    F.add(mats.wood('ash'), xf(board(0.03, 0.55, 0.04, { along: 'y', rng }), [c[0] + 0.12, g0 + 0.6, c[2] + 0.02], [0.1, 0, -0.75]));
-    F.add(iron, xf(new THREE.BoxGeometry(0.16, 0.08, 0.025), [c[0] - 0.03, g0 + 0.43, c[2] + 0.0], [0.1, 0, -0.75 + Math.PI / 2]), { cast: false });
-    // split logs scattered + a small pile
     for (let i = 0; i < 9; i++) {
-      const a = rng.next() * Math.PI * 2, r = rng.range(0.35, 0.75);
+      const a = rng.next() * Math.PI * 2, r = rng.range(0.15, 0.6);
       const half = new THREE.CylinderGeometry(0.06, 0.06, 0.3, 6, 1, false, 0, Math.PI);
       uvBox(half, 'y');
       F.add(mats.wood(rng.pick(['oak', 'ash', 'spruce'])), xf(half, [c[0] + Math.cos(a) * r, g0 + 0.05, c[2] + Math.sin(a) * r], [Math.PI / 2, rng.next() * 6, rng.jitter(0.3)]), { cast: false });
     }
-    for (let i = 0, n = LOD.small ? 18 : 6; i < n; i++) {
-      const a = rng.next() * Math.PI * 2, r = rng.range(0.25, 0.6);
+    for (let i = 0, n = LOD.small ? 14 : 5; i < n; i++) {
+      const a = rng.next() * Math.PI * 2, r = rng.range(0.1, 0.55);
       F.add(mats.wood('ash'), xf(new THREE.BoxGeometry(0.04, 0.006, 0.02), [c[0] + Math.cos(a) * r, g0 + 0.004, c[2] + Math.sin(a) * r], [0, rng.next() * 6, 0]), { color: '#d9c39a', cast: false });
     }
   }
@@ -349,10 +342,13 @@ export function buildYard(ctx, B, mats) {
     const n = 11;
     for (let i = 0; i < n; i++) {
       const p = curve.getPointAt(i / (n - 1));
-      const sx = rng.range(0.2, 0.28), sz = rng.range(0.17, 0.24);
-      const g = stoneGeo(rng, { r: 1, sx, sy: 0.05, sz, lump: 0.12, detail: 0 });
+      // flat, irregular, chamfered flagstones (dressed, worn at the edges),
+      // set into the track with moss creeping round them in the joint
+      const sx = rng.range(0.2, 0.27), sz = rng.range(0.16, 0.22);
       const x = p.x + rng.jitter(0.08), z = p.z + rng.jitter(0.08);
-      B.add(mats.stone(), xf(g, [x, getHeight(x, z) + 0.015, z], [0, rng.next() * 3, 0]), { cast: false });
+      const gy = getHeight(x, z) + 0.008, yaw = rng.next() * 3;
+      B.add(mats.stone(), xf(flagstoneGeo(rng, { r: 1, sx, sz, top: 0.034, c: 0.012 }), [x, gy, z], [rng.jitter(0.045), yaw, rng.jitter(0.045)]), { cast: false });
+      B.add(mats.moss(), xf(mossPadGeo(rng, { r: 1.3, sx, sz, h: 0.028, lobes: 0.7 }), [x, gy - 0.004, z], [0, yaw + rng.jitter(0.5), 0]), { cast: false });
       stones.push({ x, z, r: Math.max(sx, sz) });
     }
     // the bare, trodden track the stones are set in (it runs on into the
@@ -368,13 +364,9 @@ export function buildYard(ctx, B, mats) {
     tracks.push(addTrack(B, mats, rng, getHeight, tp, { width: 0.78 }));
     const a = annexToWorld(1.75, 0, hz + 2.0), b = annexToWorld(1.6, 0, hz + 2.55), c = curve.getPointAt(0.43);
     tracks.push(addTrack(B, mats, rng, getHeight, [{ x: a.x, z: a.z }, { x: b.x, z: b.z }, { x: c.x, z: c.z }], { width: 0.52, lift: 0.011 }));
-    // a flagged apron in front of the workshop door
-    for (let i = 0; i < 14; i++) {
-      const x = -1.15 + rng.next() * 1.75, z = hz + 0.15 + rng.next() * 0.6;
-      if (!LOD.small && i % 3 === 2) continue;
-      const g = stoneGeo(rng, { r: 1, sx: rng.range(0.16, 0.26), sy: 0.035, sz: rng.range(0.14, 0.22), lump: 0.1, detail: 0 });
-      F.add(mats.stone(), xf(g, [x, 0.012, z], [0, rng.next() * 3, 0]), { cast: false });
-    }
+    // a flagged apron in front of the workshop door: flat chamfered flags
+    // laid with 2–4 cm joints, moss green in every joint
+    addFlagApron(F, mats, rng, { x0: -1.2, x1: 0.62, z0: hz + 0.1, z1: hz + 0.82, cw: 0.32, cd: 0.25 });
   }
 
   tally('track');
@@ -389,8 +381,11 @@ export function buildYard(ctx, B, mats) {
     // porch's dressed ring, off the stepping-stone track)
     const cam = SPOTS.find((s) => s.id === 'woodworking')?.camera.position ?? [1.6, 3.05, 12.3];
     // (a touch over-sized, like the deck's pieces, so it reads from the spot)
+    // (2 units further back than round 4 — between the stepping-stone track
+    // and the chest, inside the spot's depth-of-field focus band, so it reads
+    // sharp from the woodworking camera instead of as a foreground blur)
     const k = 1.1;
-    let x = -2.7, z = 3.86;
+    let x = -2.25, z = 1.9;
     for (let i = 0; i < 12 && getPathDistance(x + 0.55, z - 0.38) < 1.42; i++) x -= 0.04;
     const yaw = Math.atan2(cam[0] - x, cam[2] - z) + 0.12;
     const M = mat4([x, getHeight(x, z), z], [0, yaw, 0], k);
@@ -433,9 +428,22 @@ export function buildYard(ctx, B, mats) {
     const b = addDowelBucket(B.at(mat4([bx, getHeight(bx, bz), bz], [0, rng.next() * 6, 0])), mats, rng);
     keep.push({ x: bx, z: bz, r: b.r });
     ctx.colliders?.addCircle?.(bx, bz, 0.16, 'dowel-bucket');
-    const ox = -2.58, oz = 1.42;
+  }
+  {
+    // by the oak door (the close shot's floor): the chopping block with its axe
+    // left of the path, a heap of offcuts right of it, and the shavings &
+    // sawdust swept out over the threshold onto the path
+    let bx = -1.6, bz = -0.3;
+    for (let i = 0; i < 12 && getPathDistance(bx, bz) < 1.45; i++) bx -= 0.05;
+    const blk = addChoppingBlock(B.at(mat4([bx, getHeight(bx, bz), bz], [0, 0.5, 0])), mats, rng);
+    keep.push({ x: bx, z: bz, r: blk.r });
+    ctx.colliders?.addCircle?.(bx, bz, 0.26, 'chopping-block');
+    let ox = -2.2, oz = -0.75;
+    for (let i = 0; i < 12 && getPathDistance(ox, oz) < 1.5; i++) ox -= 0.05;
     const o = addOffcuts(B.at(mat4([ox, getHeight(ox, oz), oz], [0, 0.6, 0])), mats, rng);
     keep.push({ x: ox, z: oz, r: o.r });
+    const D0 = ctx.layout.OAK.door;
+    addSweptShavings(B, mats, rng, getHeight, { x: D0.x - 0.2, z: D0.z + 1.75 }, { x: D0.x + 0.15, z: D0.z + 3.6 }, { n: 28, heaps: 4, spread: 0.34 });
   }
   {
     // rough boards seasoning against the oak, left of the door (past its root)
@@ -710,7 +718,10 @@ function scatterGround(ctx, B, mats, rng, { chest = null, keep = [], stones = []
         else clumps.clover(x, z);
       } else {
         // the open middle of the yard: litter with drifts, a moss carpet, clover
-        if (roll < 0.45) clumps.leaves(x, z);
+        // (in front of the oak door half as many leaf drifts: the swept
+        // shavings, the chopping block and the moss carry that floor)
+        const nearDoor = Math.hypot(x - OAK.door.x, z - (OAK.door.z + 1.8)) < 3;
+        if (roll < (nearDoor ? 0.22 : 0.45)) clumps.leaves(x, z);
         else if (roll < 0.75) clumps.moss(x, z, rng.range(1.0, 1.5));
         else clumps.clover(x, z);
       }

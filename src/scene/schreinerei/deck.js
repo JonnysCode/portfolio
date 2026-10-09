@@ -48,29 +48,63 @@ export function buildDeck(ctx, B, mats) {
   const oak = mats.wood('oak');
   const tim = mats.timber();
 
-  // ── structure: stone footings, posts, beams, joists, decking, fascia ──────
-  for (const x of [-hw + 0.15, 0, hw - 0.15]) {
-    for (const z of [-hd + 0.15, hd - 0.15]) {
+  // ── structure: a Schreiner's own deck ────────────────────────────────────
+  // stone footings → two bearers → nine joists across them → oiled larch boards
+  // across the joists (every board its own tone, a slight cup, 5 mm gaps, the
+  // ends trimmed flush 1.5 cm past the rim), a pair of screws on every joist
+  // line, short drying checks only where the boards end; rim boards in the same
+  // larch with a chamfered top edge.
+  for (const x of [-hw + 0.18, 0, hw - 0.18]) {
+    for (const z of [-hd + 0.2, hd - 0.2]) {
       F.add(mats.stone(), xf(stoneGeo(rng, { r: 1, sx: 0.17, sy: 0.12, sz: 0.17 }), [x, 0.05, z]));
-      F.add(tim, xf(board(0.12, h - 0.14, 0.12, { along: 'y', rng }), [x, (h - 0.14) / 2 + 0.08, z]), { cast: false });
     }
   }
-  for (const z of [-hd + 0.15, hd - 0.15]) F.add(tim, xf(board(hw * 2, 0.1, 0.12, { along: 'x', rng }), [0, h - 0.1, z]));
-  const boardW = 0.16;
-  for (let z = -hd + boardW / 2; z < hd; z += boardW) {
-    const bw = boardW - 0.012;
-    const g = board(hw * 2 + 0.04 + rng.jitter(0.03), 0.035, bw, { along: 'x', rng, scale: 1 / 1.6 });
-    F.add(tim, xf(g, [rng.jitter(0.015), h - 0.0175, z], [0, rng.jitter(0.004), 0]));
-    // nail heads at the joists (flush little discs)
-    if (LOD.small) for (const x of [-hw + 0.15, 0, hw - 0.15]) for (const s of [-1, 1]) F.add(mats.metal('#3a332d'), xf(new THREE.CircleGeometry(0.008, 5), [x + rng.jitter(0.01), h + 0.0012, z + s * 0.04], [-Math.PI / 2, 0, 0]), { cast: false, receive: false });
+  const tBoard = 0.035, joistH = 0.09, bearerH = 0.08;
+  for (const z of [-hd + 0.2, hd - 0.2]) F.add(tim, xf(board(hw * 2 - 0.1, bearerH, 0.1, { along: 'x', rng }), [0, h - tBoard - joistH - bearerH / 2, z]), { cast: false });
+  const nJ = 8;
+  const joists = [];
+  for (let k = 0; k <= nJ; k++) {
+    const x = -hw + 0.045 + ((hw * 2 - 0.09) * k) / nJ;
+    joists.push(x);
+    F.add(tim, xf(board(0.045, joistH, hd * 2 - 0.06, { along: 'z', rng }), [x, h - tBoard - joistH / 2, 0]), { cast: false });
   }
-  // fascia boards
-  F.add(oak, xf(board(hw * 2 + 0.08, 0.14, 0.03, { along: 'x', rng }), [0, h - 0.08, hd + 0.015]));
-  for (const s of [-1, 1]) F.add(oak, xf(board(0.03, 0.14, hd * 2 + 0.06, { along: 'z', rng }), [s * (hw + 0.035), h - 0.08, 0]));
-  // two steps down at the front-left (towards the door path)
+  // (larch oiled a few summers ago: silvering at the surface, still warm
+  // underneath — a quieter, greyer honey than the furniture standing on it)
+  const LARCH = ['#9a8670', '#91806c', '#a08b73', '#8b7a66', '#968269', '#9d8a75'];
+  const nB = 24;
+  const pitch = (hd * 2 + 0.015) / nB, gap = 0.005, bw = pitch - gap;
+  const bLen = hw * 2 + 0.03;
+  const vcD = mats.vc();
+  const screw = mats.metal('#45403a');
+  for (let i = 0; i < nB; i++) {
+    const z = -hd + pitch * (i + 0.5);
+    const c = LARCH[rng.int(0, LARCH.length - 1)];
+    const g = deckBoardGeo(bLen, tBoard, bw, { cup: 0.0012 + rng.next() * 0.0008 });
+    uvBox(g, 'x', 1 / 1.4, [rng.next() * 7, rng.next() * 7]);
+    F.add(mats.wood(c), xf(g, [0, h - tBoard / 2 + rng.jitter(0.0006), z], [0, rng.jitter(0.002), rng.jitter(0.004)]));
+    // a pair of screws on every joist line (each pair a hair off square: driven by hand)
+    if (LOD.small) {
+      for (const x of joists) {
+        const jx = x + rng.jitter(0.004);
+        for (const sz of [-1, 1]) F.add(screw, xf(new THREE.CircleGeometry(0.0055, 6), [jx + rng.jitter(0.002), h + 0.0013, z + sz * (bw / 2 - 0.024)], [-Math.PI / 2, 0, rng.next() * 6]), { cast: false, receive: false });
+      }
+    }
+    // short drying checks along the grain, only in from the board ends
+    for (const sx of [-1, 1]) {
+      if (rng.next() > 0.38) continue;
+      const len = rng.range(0.03, 0.09), cz = z + rng.jitter(bw * 0.3);
+      F.add(vcD, xf(new THREE.BoxGeometry(len, 0.0008, rng.range(0.0012, 0.0022)), [sx * (bLen / 2 - len / 2 - 0.003), h + 0.0011, cz], [0, rng.jitter(0.03), 0]), { color: '#3b2a1b', cast: false, receive: false });
+    }
+  }
+  // rim boards (the same larch, chamfered top edge), front and both sides
+  const rimH = 0.14, rimT = 0.025;
+  const rimY = h - tBoard - rimH / 2;
+  F.add(mats.wood(LARCH[1]), xf(board(hw * 2, rimH, rimT, { along: 'x', rng, r: 0.007 }), [0, rimY, hd - rimT / 2 - 0.004]));
+  for (const s of [-1, 1]) F.add(mats.wood(LARCH[3]), xf(board(rimT, rimH, hd * 2 - 0.008, { along: 'z', rng, r: 0.007 }), [s * (hw - rimT / 2), rimY, -0.004]));
+  // two steps down at the front-left (towards the door path): larch treads on stringers
   for (let i = 0; i < 2; i++) {
     const sy = h * (1 - (i + 1) / 3);
-    F.add(oak, xf(board(0.9, 0.035, 0.26, { along: 'x', rng }), [-hw + 0.55, sy, hd + 0.16 + i * 0.25]));
+    F.add(mats.wood(LARCH[2]), xf(board(0.9, 0.035, 0.26, { along: 'x', rng, r: 0.006 }), [-hw + 0.55, sy, hd + 0.16 + i * 0.25]));
     for (const s of [-1, 1]) F.add(tim, xf(board(0.05, sy, 0.2, { along: 'y', rng }), [-hw + 0.55 + s * 0.4, sy / 2, hd + 0.16 + i * 0.25]), { cast: false });
   }
 
@@ -304,7 +338,7 @@ function buildDiningTable(ctx, mats, rng) {
     // the shoulder line where the top's tongue goes into the breadboard
     Bt.add(mats.vc(), xf(new THREE.BoxGeometry(0.0022, 0.0012, W + 0.004), [s * (L / 2 - be), H + 0.0012, 0]), { color: '#3a2a1c', cast: false });
     // walnut draw-bore pegs through the breadboard (the outer ones in slotted holes)
-    for (const z of [-0.22, 0, 0.22]) Bt.add(walnut, xf(new THREE.CylinderGeometry(0.0125, 0.0125, 0.004, segs(10, 6)), [s * (L / 2 - be / 2), H + 0.0026, z], null, [z === 0 ? 1 : 1, 1, z === 0 ? 1 : 1.25]), { cast: false });
+    for (const z of [-0.22, 0, 0.22]) Bt.add(walnut, uvBox(xf(new THREE.CylinderGeometry(0.0125, 0.0125, 0.004, segs(10, 6)), [s * (L / 2 - be / 2), H + 0.0026, z], null, [1, 1, z === 0 ? 1 : 1.25]), 'y', 1 / 1.4, [s * 0.3, z]), { cast: false });
   }
   // legs (chamfered) with aprons; pegs show the mortise & tenon joints
   const lx = L / 2 - 0.13, lz = W / 2 - 0.07;
@@ -322,11 +356,15 @@ function buildDiningTable(ctx, mats, rng) {
   }
   for (const sz of [-1, 1]) Bt.add(oak, xf(board(L - 0.32, 0.09, 0.03, { along: 'x', rng }), [0, H - T - 0.06, sz * lz]));
   // low stretchers: one across each end, and the long one through them with
-  // wedged through-tenons standing proud (two dark walnut wedges in each)
+  // wedged through-tenons standing proud (two dark walnut wedges in each,
+  // upright; the tenons' end grain shows — real end grain from the box UVs)
   for (const sx of [-1, 1]) Bt.add(oak, xf(board(0.045, 0.06, W - 0.2, { along: 'z', rng, r: 0.008 }), [sx * lx, 0.1, 0]));
   const tl = lx + 0.0225 + 0.03; // the tenon stands 3 cm proud of the end stretcher
   Bt.add(oak, xf(board(2 * tl, 0.05, 0.036, { along: 'x', rng, r: 0.006 }), [0, 0.1, 0]));
-  for (const sx of [-1, 1]) for (const dy of [-0.013, 0.013]) Bt.add(walnut, xf(new THREE.BoxGeometry(0.03, 0.005, 0.038), [sx * (tl - 0.014), 0.1 + dy, 0]), { cast: false });
+  // the wedges stand VERTICAL in the tenon (kerfs in the tenon's height): they
+  // spread it along the end stretcher's grain, against the mortise's end-grain
+  // walls — never across the grain, which would split the end stretcher
+  for (const sx of [-1, 1]) for (const dz of [-0.009, 0.009]) Bt.add(walnut, uvBox(xf(new THREE.BoxGeometry(0.03, 0.044, 0.005), [sx * (tl - 0.014), 0.1, dz]), 'y', 1 / 1.4, [sx * 0.2, dz * 9]), { cast: false });
 
   // chairs: two behind the table (guests), one at each end
   const seats = [];
@@ -365,13 +403,13 @@ function chairGeos(Bt, mats, rng, m) {
   // battens (Gratleisten) under the seat, across its grain
   for (const x of [-0.105, 0.105]) add(oak, board(0.032, 0.026, sd - 0.05, { along: 'z', rng, r: 0.006 }).translate(x, seatY - st / 2 - 0.013, 0), { cast: false });
   // legs: from through the seat (flush with its top) splayed down and out
-  const endGrain = mats.wood('#6a4c30');
+  const endGrain = mats.wood('#86643f', OIL);
   const vc = mats.vc();
   for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
     const a = [sx * 0.118, top - 0.002, sz * 0.105], b = [sx * 0.175, 0, sz * (0.16 + (sz < 0 ? 0.02 : 0))];
     add(oak, timber(a, b, 0.036, 0.036, { r: 0.011, wobble: 0 }));
     // the wedged tenon on the seat: end grain, a dark wedge across the seat's grain
-    add(endGrain, xf(new THREE.CircleGeometry(0.0175, segs(8, 6)), [a[0], top + 0.0006, a[2]], [-Math.PI / 2, 0, 0]), { cast: false });
+    add(endGrain, uvBox(xf(new THREE.CircleGeometry(0.0175, segs(8, 6)), [a[0], top + 0.0006, a[2]], [-Math.PI / 2, 0, 0]), 'y', 1 / 1.4, [sx * 0.31, sz * 0.17]), { cast: false });
     add(vc, new THREE.BoxGeometry(0.0035, 0.001, 0.03).translate(a[0], top + 0.0011, a[2]), { color: '#2a1c12', cast: false });
   }
   // the backrest
@@ -396,7 +434,8 @@ function chairGeos(Bt, mats, rng, m) {
     sh.holes.push(heart);
     const g = new THREE.ExtrudeGeometry(sh, { depth: 0.028, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.004, bevelSegments: 1, curveSegments: segs(5, 3) });
     g.translate(0, 0, -0.014);
-    backrestProto = uvBox(g, 'y');
+    // (the scalloped top and the heart's edges cut across the grain: end grain all round)
+    backrestProto = uvBox(g, 'y', 1 / 1.4, [0, 0], { endGrain: true });
   }
   add(oak, xf(backrestProto.clone(), [0, top, -sd / 2 + 0.045], [-0.2, 0, 0]));
   return { seatY: top + 0.012 };
@@ -472,18 +511,44 @@ function buildRecordCabinet(ctx, mats, rng) {
   // carcass
   Bc.add(walnut, xf(board(W, t, Dp, { along: 'x', rng, r: 0.004 }), [0, y0 + Hc - t / 2, 0]));
   Bc.add(walnut, xf(board(W, t, Dp, { along: 'x', rng, r: 0.004 }), [0, y0 + t / 2, 0]));
-  for (const s of [-1, 1]) Bc.add(walnut, xf(board(t, Hc, Dp, { along: 'y', rng, r: 0.004 }), [s * (W / 2 - t / 2), y0 + Hc / 2, 0]));
+  // (the sides a hair proud of the top's & bottom's ends, their own ends a hair
+  // below the top: no coplanar faces fighting at the corners)
+  for (const s of [-1, 1]) Bc.add(walnut, xf(board(t, Hc - 0.002, Dp, { along: 'y', rng, r: 0.004 }), [s * (W / 2 - t / 2 + 0.0008), y0 + Hc / 2, 0]));
   Bc.add(walnut, xf(board(W - 2 * t, Hc - 2 * t, 0.01, { along: 'x', rng }), [0, y0 + Hc / 2, -Dp / 2 + 0.005]));
   Bc.add(walnut, xf(board(0.015, Hc - 2 * t, Dp - 0.02, { along: 'y', rng }), [0, y0 + Hc / 2, 0]), { cast: false });
-  // through-dovetails at the top corners: the tails' end grain shows on the
-  // sides — darker than the walnut's long grain (one species, no contrast inlay)
-  const tailEnd = mats.wood('#35251b');
-  for (const s of [-1, 1]) {
-    for (let k = 0; k < 4; k++) {
-      const z = -Dp / 2 + 0.04 + k * ((Dp - 0.08) / 3);
-      const tail = new THREE.Shape([new THREE.Vector2(-0.012, 0), new THREE.Vector2(0.012, 0), new THREE.Vector2(0.018, t), new THREE.Vector2(-0.018, t)]);
-      const tg = new THREE.ShapeGeometry(tail);
-      Bc.add(tailEnd, xf(tg, [s * (W / 2 + 0.0005), y0 + Hc - t, z], [0, s * Math.PI / 2, 0]), { cast: false });
+  // through-dovetails at the top corners (tails on the top, pins on the
+  // sides). On each side's outer face the tails come through as RECTANGLES of
+  // end grain (full board thickness × the tail's widest width) between the
+  // pins' long grain; on the top the pins' end grain shows as narrow wedges
+  // between the fanned tails, narrowing towards the corner (1:6 hardwood
+  // slope). One species — the end grain reads by itself (real end grain from
+  // the box UVs: across the grain, darker, rings).
+  {
+    const nT = 4;
+    const pitch = Dp / nT; // one tail + one pin per pitch, half pins at the edges
+    const pinOut = 0.016, slope = t / 6; // pin width at the corner; flare per side over the joint depth
+    const yTop = y0 + Hc;
+    for (const s of [-1, 1]) {
+      for (let k = 0; k < nT; k++) {
+        const zc = -Dp / 2 + pitch * (k + 0.5);
+        const tw = pitch - pinOut; // the tail at its widest (the corner)
+        // tail end grain on the side face: a rectangle, grain along x (the top's grain)
+        const r = new THREE.PlaneGeometry(tw - 0.002, t - 0.002).rotateY(s * Math.PI / 2).translate(s * (W / 2 + 0.0016), yTop - t / 2, zc);
+        Bc.add(walnut, uvBox(r, 'x', 1 / 1.4, [k * 0.37, s * 0.21]), { cast: false });
+      }
+      // the pins' end grain on the top: between the tails and at the edges (half pins)
+      for (let k = 0; k <= nT; k++) {
+        const zc = -Dp / 2 + pitch * k;
+        const xo = s * (W / 2), xi = s * (W / 2 - t);
+        const half = (w) => [Math.max(-Dp / 2, zc - w / 2), Math.min(Dp / 2, zc + w / 2)];
+        const [o0, o1] = half(pinOut), [i0, i1] = half(pinOut + 2 * slope);
+        const sh = new THREE.Shape([[xo, o0], [xi, i0], [xi, i1], [xo, o1]].map(([x, z]) => new THREE.Vector2(x, z)));
+        const g = new THREE.ShapeGeometry(sh).rotateX(Math.PI / 2);
+        // (rotateX(+π/2) turns shape y into +z but faces down: flip the winding up)
+        flipWinding(g);
+        g.translate(0, yTop + 0.0006, 0);
+        Bc.add(walnut, uvBox(g, 'y', 1 / 1.4, [s * 0.3, k * 0.17]), { cast: false });
+      }
     }
   }
   // sliding doors: two panels with a finger pull; the left one slid right
@@ -548,6 +613,9 @@ function buildRecordPlayer(ctx, mats, rng, { idleSpin = true } = {}) {
   const armBase = new THREE.Vector3(0.12, PH + 0.012, -0.08);
   Bp.add(steel, xf(new THREE.CylinderGeometry(0.02, 0.024, 0.03, 12), [armBase.x, armBase.y + 0.015, armBase.z]), { cast: false });
   Bp.add(steel, xf(new THREE.CylinderGeometry(0.005, 0.005, 0.04, 6), [0.13, PH + 0.03, 0.08]), { cast: false });
+  // the cueing lever beside the arm post: a little pillar with its flat lever, set down (arm lowered)
+  Bp.add(steel, xf(new THREE.CylinderGeometry(0.0045, 0.0055, 0.022, 6), [armBase.x + 0.034, PH + 0.023, armBase.z + 0.012]), { cast: false });
+  Bp.add(mats.metal('#2a2624'), xf(new THREE.BoxGeometry(0.026, 0.004, 0.007), [armBase.x + 0.043, PH + 0.035, armBase.z + 0.012], [0, -0.35, -0.12]), { cast: false });
   // dust cover, hinged open at the back (opened past upright, resting on its
   // hinges' stops — clear of the platter) with two little hinge blocks
   const cover = new THREE.BoxGeometry(PW - 0.01, 0.04, PD - 0.03);
@@ -580,12 +648,15 @@ function buildRecordPlayer(ctx, mats, rng, { idleSpin = true } = {}) {
   armTube.rotateX(Math.PI / 2);
   armTube.translate(0, 0.004, 0.1);
   Ba.add(steel, armTube, { cast: false });
-  Ba.add(mats.metal('#2a2624'), xf(new THREE.BoxGeometry(0.026, 0.01, 0.036), [0, 0.0, 0.208]), { cast: false });
-  Ba.add(mats.metal('#e8e2d0'), xf(new THREE.BoxGeometry(0.004, 0.012, 0.004), [0, -0.008, 0.216]), { cast: false });
+  // the headshell, tipped down a little towards the groove, the stylus under its nose
+  Ba.add(mats.metal('#2a2624'), xf(new THREE.BoxGeometry(0.026, 0.01, 0.036), [0, -0.001, 0.208], [0.14, 0, 0]), { cast: false });
+  Ba.add(mats.metal('#e8e2d0'), xf(new THREE.BoxGeometry(0.004, 0.012, 0.004), [0, -0.01, 0.216], [0.14, 0, 0]), { cast: false });
   Ba.add(steel, xf(new THREE.CylinderGeometry(0.016, 0.016, 0.028, 10), [0, 0.006, -0.032], [Math.PI / 2, 0, 0]), { cast: false });
   Ba.build(arm, 'tonearm', { mergeShadow: true });
   g.add(arm);
-  const REST = 0.12, PLAY = -0.58;
+  // PLAY: the stylus sits ≈ 0.088 from the spindle — mid-record, in the grooves
+  // (the vinyl's radius is 0.1, the label's 0.04), never on the platter's rim
+  const REST = 0.12, PLAY = -0.7;
   // start in the playing pose when the record turns idly
   let target = idleSpin ? 1 : 0;
   let spin = target, armK = target;
@@ -677,7 +748,7 @@ function buildCoffeeTable(ctx, mats, rng) {
   // the slab: square-cut ends, wavy live edges along both long sides
   {
     const sh = new THREE.Shape();
-    const n = 12, ox = rng.next() * 30;
+    const n = segs(26, 14), ox = rng.next() * 30;
     const edge = (u, side) => side * (W / 2 + 0.018 * noiseA(u * 4.1 + ox + side * 7, side) + 0.012 * Math.sin(u * 9 + side * 2));
     sh.moveTo(-L / 2, edge(0, -1));
     for (let i = 1; i <= n; i++) sh.lineTo(-L / 2 + (L * i) / n, edge(i / n, -1));
@@ -690,23 +761,57 @@ function buildCoffeeTable(ctx, mats, rng) {
   }
   const top = H + 0.0045;
   const vc = mats.vc();
-  // the natural split: a dark, wandering check running in from the near live edge
+  // the natural split: a drying check that opened ALONG the grain from the
+  // slab's right square end (where wood checks: the end grain dries first),
+  // wandering a little with the fibres and closing towards its tip at ~35 %
+  // of the length; a dark sliver shows where it breaks through the end
+  const zc0 = 0.045;
+  const check = [];
   {
-    let x = 0.02, z = W / 2 + 0.01;
-    for (let i = 0; i < 6; i++) {
-      const nx = x + rng.jitter(0.025), nz = z - 0.045;
-      const len = Math.hypot(nx - x, nz - z);
-      Bk.add(vc, xf(new THREE.BoxGeometry(0.0045 * (1 - i / 7), 0.001, len), [(x + nx) / 2, top + 0.0003, (z + nz) / 2], [0, Math.atan2(nx - x, nz - z), 0]), { color: '#24170e', cast: false, receive: false });
-      x = nx;
-      z = nz;
+    const xEnd = L / 2 - 0.0005, xTip = L / 2 - L * 0.35;
+    const n = 9;
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      check.push({ x: xEnd + (xTip - xEnd) * t, z: zc0 + 0.007 * Math.sin(t * 5.2 + 0.6) + 0.004 * t * t, w: 0.0055 * (1 - t) + 0.0007 });
     }
+    for (let i = 0; i < n; i++) {
+      const p = check[i], q = check[i + 1];
+      const len = Math.hypot(q.x - p.x, q.z - p.z) + 0.0015;
+      // (each piece a thin wedge: as wide as the crack where it starts, a hair narrower where it ends)
+      const g = new THREE.BoxGeometry(len, 0.001, 1, 1, 1, 1);
+      const pa = g.attributes.position;
+      for (let k = 0; k < pa.count; k++) pa.setZ(k, pa.getZ(k) * (pa.getX(k) < 0 ? p.w : q.w));
+      Bk.add(vc, xf(g, [(p.x + q.x) / 2, top + 0.0003, (p.z + q.z) / 2], [0, -Math.atan2(q.z - p.z, q.x - p.x), 0]), { color: '#1f140c', cast: false, receive: false });
+    }
+    // where it breaks through the square end: a dark notch down the end grain
+    Bk.add(vc, xf(new THREE.BoxGeometry(0.001, T * 0.7, check[0].w * 1.2), [L / 2 + 0.0045, H - T * 0.38, check[0].z]), { color: '#1f140c', cast: false, receive: false });
   }
-  // two walnut butterfly keys (bow ties) across the split
+  // two walnut butterfly keys (bow ties) holding it: each waist centred ON the
+  // crack, the long axis across it, let into a routed recess a hair proud of
+  // the oiled top (the recess shows as a fine dark outline round each key)
   {
-    const bow = new THREE.Shape([[-0.034, -0.019], [0, -0.0065], [0.034, -0.019], [0.034, 0.019], [0, 0.0065], [-0.034, 0.019]].map(([a, b]) => new THREE.Vector2(a, b)));
-    const key = new THREE.ShapeGeometry(bow).rotateX(-Math.PI / 2);
-    for (const [x, z, a] of [[0.02, W / 2 - 0.06, 0.1], [0.025, W / 2 - 0.16, -0.08]]) {
-      Bk.add(mats.wood('#3e2a1e', OIL), xf(key.clone(), [x, top + 0.0006, z], [0, Math.PI / 2 + a, 0]), { cast: false, receive: true });
+    const bow = (k) => new THREE.Shape([[-0.034, -0.019], [0, -0.0065], [0.034, -0.019], [0.034, 0.019], [0, 0.0065], [-0.034, 0.019]].map(([a, b]) => new THREE.Vector2(a * k, b * k)));
+    const key = new THREE.ShapeGeometry(bow(1)).rotateX(-Math.PI / 2);
+    // (the key's grain runs along its length, across the slab's: box UVs along its long axis)
+    uvBox(key, 'x', 1 / 1.4, [0.3, 0.7]);
+    const recess = new THREE.ShapeGeometry(bow(1.09)).rotateX(-Math.PI / 2);
+    const at = (x) => {
+      // the crack's centre line and direction at x
+      for (let i = 0; i < check.length - 1; i++) {
+        const p = check[i], q = check[i + 1];
+        if ((x - p.x) * (x - q.x) <= 0) {
+          const t = (x - p.x) / (q.x - p.x);
+          return { z: p.z + (q.z - p.z) * t, a: Math.atan2(q.z - p.z, q.x - p.x) };
+        }
+      }
+      return { z: zc0, a: 0 };
+    };
+    for (const x of [L / 2 - 0.075, L / 2 - 0.185]) {
+      const c = at(x);
+      // long axis across the crack: the shape's x turned onto the slab's z (square to the crack's run)
+      const yaw = Math.PI / 2 - c.a;
+      Bk.add(vc, xf(recess.clone(), [x, top + 0.0001, c.z], [0, yaw, 0]), { color: '#24160d', cast: false, receive: false });
+      Bk.add(mats.wood('#3e2a1e', OIL), xf(key.clone(), [x, top + 0.0005, c.z], [0, yaw, 0]), { cast: false, receive: true });
     }
   }
   // walnut legs, through-tenoned into the slab and wedged with maple
@@ -716,7 +821,8 @@ function buildCoffeeTable(ctx, mats, rng) {
     for (const sz of [-1, 1]) {
       Bk.add(walnut, xf(board(0.044, H - T, 0.044, { along: 'y', rng, r: 0.008 }), [sx * lx, (H - T) / 2, sz * lz]));
       // the tenon's end grain flush in the top, the wedge across the slab's grain
-      Bk.add(mats.wood('#2e1f15'), xf(new THREE.PlaneGeometry(0.032, 0.032), [sx * lx, top + 0.0004, sz * lz], [-Math.PI / 2, 0, 0]), { cast: false });
+      // (real end grain: box UVs mark the face across the leg's grain)
+      Bk.add(mats.wood('#5a3e2c', OIL), uvBox(xf(new THREE.PlaneGeometry(0.032, 0.032), [sx * lx, top + 0.0004, sz * lz], [-Math.PI / 2, 0, 0]), 'y', 1 / 1.4, [sx * 0.37, sz * 0.21]), { cast: false });
       Bk.add(mats.wood('#e2cfa8'), xf(new THREE.BoxGeometry(0.0045, 0.001, 0.034), [sx * lx, top + 0.0009, sz * lz]), { cast: false });
     }
     Bk.add(walnut, xf(board(0.03, 0.034, W - 0.15 + 0.04, { along: 'z', rng, r: 0.006 }), [sx * lx, 0.065, 0]), { cast: false });
@@ -747,12 +853,13 @@ function buildCoffeeTable(ctx, mats, rng) {
   return g;
 }
 
-/** A Schreiner-made armchair: oak frame, loose cushions. */
+/** A Schreiner-made armchair: ash frame, loose cushions. */
 function buildArmchair(ctx, mats, rng) {
   const g = new THREE.Group();
   g.name = 'armchair';
   const Ba = new Batch();
-  const oak = mats.wood('oak');
+  // (ash: pale and creamy beside the oak table, the walnut cabinet and the cherry plinth)
+  const oak = mats.wood('ash');
   const W = 0.5, Dp = 0.46, seat = 0.24;
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) Ba.add(oak, xf(board(0.04, sz < 0 ? 0.6 : 0.38, 0.04, { along: 'y', rng }), [sx * (W / 2 - 0.03), (sz < 0 ? 0.6 : 0.38) / 2, sz * (Dp / 2 - 0.03)], [sz < 0 ? -0.12 : 0, 0, 0]));
@@ -844,4 +951,83 @@ function makeSleepingCat(ctx) {
       breath.updateMatrix();
     },
   };
+}
+
+/** Reverse a geometry's triangle winding and normals in place (a flat shape turned face-down → face-up). */
+function flipWinding(g) {
+  if (g.index) {
+    const idx = g.index.array;
+    for (let i = 0; i < idx.length; i += 3) {
+      const t = idx[i + 1];
+      idx[i + 1] = idx[i + 2];
+      idx[i + 2] = t;
+    }
+    g.index.needsUpdate = true;
+  }
+  const n = g.attributes.normal;
+  if (n) for (let i = 0; i < n.array.length; i++) n.array[i] = -n.array[i];
+  return g;
+}
+
+/**
+ * A deck board along X: len × t × w, chamfered long edges (c), the top cupped
+ * (edges up by `cup`, smooth normals across), flat end caps. ≈ 44 triangles.
+ */
+function deckBoardGeo(len, t, w, { c = 0.004, cup = 0.0015 } = {}) {
+  const hh = t / 2, hw = w / 2;
+  const nTop = 4;
+  const yTop = (z) => hh - cup / 2 + cup * (z / (hw - c)) ** 2;
+  const dTop = (z) => (2 * cup * z) / (hw - c) ** 2;
+  // the section (y, z) counter-clockwise seen from +X, with a normal per point (per facet edge)
+  const pts = [];
+  const nrm = (ny, nz) => {
+    const l = Math.hypot(ny, nz) || 1;
+    return [ny / l, nz / l];
+  };
+  const facet = (a, b, na = null, nb = null) => {
+    const n = nrm(b[1] - a[1], -(b[0] - a[0]));
+    pts.push([a, b, na ?? n, nb ?? n]);
+  };
+  const L0 = [-hh + c, -hw], L1 = [hh - c, -hw];
+  const T0 = [yTop(-hw + c), -hw + c], T1 = [yTop(hw - c), hw - c];
+  const R0 = [hh - c, hw], R1 = [-hh + c, hw];
+  const B0 = [-hh, hw - c], B1 = [-hh, -hw + c];
+  facet(L0, L1);
+  facet(L1, T0);
+  for (let j = 0; j < nTop; j++) {
+    const za = -hw + c + ((2 * hw - 2 * c) * j) / nTop, zb = -hw + c + ((2 * hw - 2 * c) * (j + 1)) / nTop;
+    facet([yTop(za), za], [yTop(zb), zb], nrm(1, -dTop(za)), nrm(1, -dTop(zb)));
+  }
+  facet(T1, R0);
+  facet(R0, R1);
+  facet(R1, B0);
+  facet(B0, B1);
+  facet(B1, L0);
+  const pos = [], nor = [], idx = [];
+  for (const [a, b, na, nb] of pts) {
+    const base = pos.length / 3;
+    for (const x of [-len / 2, len / 2]) {
+      pos.push(x, a[0], a[1], x, b[0], b[1]);
+      nor.push(0, na[0], na[1], 0, nb[0], nb[1]);
+    }
+    idx.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+  }
+  // end caps: a fan over the section outline
+  const outline = pts.map((p) => p[0]);
+  for (const sx of [-1, 1]) {
+    const base = pos.length / 3;
+    for (const [y, z] of outline) {
+      pos.push((sx * len) / 2, y, z);
+      nor.push(sx, 0, 0);
+    }
+    for (let i = 1; i < outline.length - 1; i++) {
+      if (sx > 0) idx.push(base, base + i, base + i + 1);
+      else idx.push(base, base + i + 1, base + i);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setIndex(idx);
+  return g;
 }

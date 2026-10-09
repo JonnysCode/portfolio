@@ -8,19 +8,23 @@
 // ferns, ivy and toadstools on them — flank worn stone steps. Forged strap
 // hinges, a ring pull, a bullseye window, a lantern on a scroll bracket, the
 // carved "Schreinerei" sign swinging above and the framed EFZ certificate
-// under its own little roof (hotspot 'efz-certificate').
+// under its own little roof (hotspot 'efz-certificate'). Through the gap a
+// real little stair hall, lit by a candle: oak winder treads climbing round a
+// turned newel with a rope handrail, a shelf of jars, a try-square on a peg.
+// The steps up to it are single worn field stones, moss in their joints.
 //
 // The frame stands DOOR.z proud of the bark; the oak builder carves a niche
-// behind it (scene/oak/shape.js DOOR_NICHE) and rolls its own bark lip around
-// it. Our burl collar reaches ~1 unit into the trunk so the two always blend,
-// and the lit doorway is a shallow niche in front of the bark, never inside it.
+// behind it (scene/oak/shape.js DOOR_NICHE, ~0.95 behind the frame face) and
+// rolls its own bark lip around it. Our burl collar reaches ~1 unit into the
+// trunk so the two always blend; the stair hall fills the niche, inside the
+// frame's 0.9-deep jambs and arch, and its far wall closes it at 0.86.
 // Things on the bark (lantern bracket, sign brackets, certificate) are placed
 // with barkMount(), which follows the sculpted bark when ctx.oak provides it.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { OAK, oakRadiusAt } from '../../world/layout.js';
 import { createRng } from '../../core/rng.js';
-import { Batch, board, uvBox, xf, deform, mat4, mossGeo, mossPadGeo, tube, archShape, arcSegment, addIvy, addToadstool, addFern, addLantern, pushHalo, peg, noiseA, noiseB, turned, LOD } from './kit.js';
+import { Batch, board, uvBox, xf, deform, mat4, mossGeo, mossPadGeo, tube, archShape, arcSegment, addIvy, addToadstool, addFern, addLantern, pushHalo, peg, noiseA, noiseB, turned, LOD, segs } from './kit.js';
 
 /** Door dimensions (exported so others can align to it). */
 export const DOOR = {
@@ -54,6 +58,13 @@ export function buildDoor(ctx, B, mats) {
   const oak = mats.wood('oak');
   const oakDark = mats.wood('walnut');
   const iron = mats.metal(IRON);
+  // (triangles each part adds to the shared batch — ctx.sites.schreinerei.door.cost)
+  const cost = {};
+  let costMark = B.added;
+  const mark = (name) => {
+    cost[name] = Math.round(B.added - costMark);
+    costMark = B.added;
+  };
 
   // ── frame: two jambs, five bent arch segments, a keystone, the sill ────────
   for (const s of [-1, 1]) {
@@ -116,6 +127,7 @@ export function buildDoor(ctx, B, mats) {
     D.add(oak, xf(th, [0, y0 - 0.045, -0.2]));
   }
 
+  mark('frame');
   // ── the lit stair hall behind the door ─────────────────────────────────────
   // The oak builder carves its niche ~0.95 behind the frame face and the
   // frame's jambs & arch (0.9 deep) line its sides, so there is a real little
@@ -146,6 +158,7 @@ export function buildDoor(ctx, B, mats) {
     group.add(m);
   }
 
+  mark('room');
   // ── the door leaf: 6 V-grooved boards, ledges & brace, strap hinges ──────
   // Boards of slightly different widths and tones (real stock), chamfered
   // where they meet so each joint reads as a V-groove, nailed to the ledges
@@ -197,8 +210,11 @@ export function buildDoor(ctx, B, mats) {
       const head = new THREE.SphereGeometry(0.0085, 6, 3, 0, Math.PI * 2, 0, Math.PI / 2);
       head.rotateX(Math.PI / 2);
       leaf.add(iron, xf(head, [x + rng.jitter(0.004), y + rng.jitter(0.004), LT + 0.009]), { cast: false });
-      const tip = new THREE.TorusGeometry(0.008, 0.0022, 3, 6, Math.PI);
-      leaf.add(iron, xf(tip, [x, y, -0.04], [0, Math.PI / 2, rng.next() < 0.5 ? 0 : Math.PI]), { cast: false });
+      // (the clinched tips on the back: only where a close-up could catch them)
+      if (LOD.small) {
+        const tip = new THREE.TorusGeometry(0.008, 0.0022, 3, 6, Math.PI);
+        leaf.add(iron, xf(tip, [x, y, -0.04], [0, Math.PI / 2, rng.next() < 0.5 ? 0 : Math.PI]), { cast: false });
+      }
     };
     for (const [xa, xb] of boardX) {
       const xc = (xa + xb) / 2, q = (xb - xa) * 0.26;
@@ -272,6 +288,7 @@ export function buildDoor(ctx, B, mats) {
     leaf.lists.clear();
   }
 
+  mark('leaf');
   // ── bark collar: the trunk has grown around the frame ──────────────────────
   {
     const outer = R + F + 0.42;
@@ -316,6 +333,7 @@ export function buildDoor(ctx, B, mats) {
     }
   }
 
+  mark('collar');
   // ── two roots flanking the steps ───────────────────────────────────────────
   // Fissured bark with moss only along the top ridge (mossy 0.22: the bark
   // reads through and nothing competes with the lit door), dark vertex-colour
@@ -368,6 +386,7 @@ export function buildDoor(ctx, B, mats) {
     }
   }
 
+  mark('roots');
   // ── glowing toadstools at the roots' feet (they wake up at night) ─────────
   {
     const glowCap = ctx.materials.glow('#8af0d8', { day: 0.12, night: 1.5 });
@@ -387,6 +406,7 @@ export function buildDoor(ctx, B, mats) {
     }
   }
 
+  mark('glowCaps');
   // ── a broom leaning by the door ───────────────────────────────────────────
   {
     // foot on the ground beside the steps, handle resting against the collar
@@ -401,6 +421,7 @@ export function buildDoor(ctx, B, mats) {
     D.add(mats.metal('#6a4a2a'), place(new THREE.CylinderGeometry(0.037, 0.037, 0.03, 8), 0.27), { cast: false });
   }
 
+  mark('broom');
   // ── worn stone steps up to the threshold ──────────────────────────────────
   // Individual field stones, not cast slabs: each its own width, height and
   // tone, the arrises rounded and here and there chipped, the treads dished
@@ -452,6 +473,7 @@ export function buildDoor(ctx, B, mats) {
     }
   }
 
+  mark('steps');
   // ── forged lantern bracket + lantern (left) ─────────────────────────────────
   const lanternPos = new THREE.Vector3();
   {
@@ -472,6 +494,7 @@ export function buildDoor(ctx, B, mats) {
     lanternPos.set(bx, by - 0.35, DOOR.z + 0.4);
   }
 
+  mark('lantern');
   // ── the hanging sign above the door (two forged brackets + a rod) ──────────
   let sign = null;
   {
@@ -495,6 +518,7 @@ export function buildDoor(ctx, B, mats) {
     group.add(sign);
   }
 
+  mark('sign');
   // ── the EFZ certificate under its little roof (hotspot) ────────────────────
   // An important credential: big enough to read from the woodworking close
   // view, at eye height beside the door, lit by a little forged picture lamp.
@@ -533,6 +557,7 @@ export function buildDoor(ctx, B, mats) {
     pushHalo(at(0, ly - 0.12, 0.2), 0.32);
   }
 
+  mark('cert');
   // ── ivy creeping over the collar and down the bark ─────────────────────────
   {
     const ivyF = D;
@@ -547,6 +572,7 @@ export function buildDoor(ctx, B, mats) {
     for (const s of starts) addIvy(ivyF, mats, rng, [s.p[0], s.p[1], zf(s.p[1])], s.d, { length: s.len, droop: 0.7, size: 0.085, normal: [0, 0.06, 1] });
   }
 
+  mark('ivy');
   // ── warm light from inside (budgeted; may be null) ─────────────────────────
   const light = ctx.lights?.addPoint?.(new THREE.Vector3(OAK.door.x + 0.25, y0 + 0.9, DOOR.z + 0.05), { color: '#ffb35c', day: 0.6, night: 5.5, distance: 5.5 });
   // light spill on the steps (additive decal, mostly at night)
@@ -558,8 +584,8 @@ export function buildDoor(ctx, B, mats) {
   function update(dt, t) {
     const n = ctx.env?.night ?? 0;
     const flicker = Math.sin(t * 7.3) * 0.03 * n + Math.sin(t * 13.1) * 0.02 * n;
-    glimpse.emissiveIntensity = 0.5 + n * 1.3 + flicker;
-    room.glow.value = ROOM_GLOW.day + (ROOM_GLOW.night - ROOM_GLOW.day) * n + flicker * 2;
+    glimpse.emissiveIntensity = 0.5 + n * 0.75 + flicker;
+    room.glow.value = ROOM_GLOW.day + (ROOM_GLOW.night - ROOM_GLOW.day) * n + flicker * 1.5;
     spill.material.uniforms.uK.value = 0.05 + n * 0.6;
     // the parchment catches the picture lamp (a little by day, warmly at night)
     paper.emissiveIntensity = 0.3 + n * 0.45;
@@ -570,12 +596,13 @@ export function buildDoor(ctx, B, mats) {
     cert,
     update,
     anchors: { lantern: lanternPos, sign },
+    cost,
   };
 }
 
 // ─── the stair hall behind the door ──────────────────────────────────────────
 /** Self-glow of the stair hall (× its baked vertex colours) by day / at night. */
-const ROOM_GLOW = { day: 0.42, night: 1.05 };
+const ROOM_GLOW = { day: 0.4, night: 0.68 };
 let roomMat = null;
 /**
  * One material for everything in the stair hall: vertex colours carry the
@@ -624,7 +651,7 @@ function buildNicheRoom(D, mats, rng, { R, y0, archY, depth }) {
       const d2 = p.distanceToSquared(sconce);
       const deep = THREE.MathUtils.clamp(-p.z / depth, 0, 1);
       const low = THREE.MathUtils.smoothstep(p.y, y0, y0 + 0.5);
-      let k = 0.34 + 0.95 * Math.exp(-d2 / 0.5) + 0.26 * deep + 0.12 * low;
+      let k = 0.34 + 0.72 * Math.exp(-d2 / 0.45) + 0.24 * deep + 0.1 * low;
       k *= 0.68 + 0.32 * (nor.getY(i) * 0.5 + 0.5);
       col.copy(base).multiplyScalar(k);
       arr[i * 3] = col.r;
@@ -722,8 +749,8 @@ function buildNicheRoom(D, mats, rng, { R, y0, archY, depth }) {
     const jars = [['#d9a441', 0.1, 0.028], ['#86a06a', 0.08, 0.025], ['#b5633e', 0.07, 0.03], ['#e8dcc0', 0.11, 0.024]];
     jars.forEach(([c, h, r], i) => {
       const x = sx0 + 0.04 + i * 0.065 + rng.jitter(0.006);
-      add(xf(new THREE.CylinderGeometry(r, r * 1.05, h, 9), [x, sy + 0.011 + h / 2, zw + 0.05]), c);
-      add(xf(new THREE.CylinderGeometry(r * 0.8, r * 0.8, 0.012, 9), [x, sy + 0.011 + h + 0.006, zw + 0.05]), i === 2 ? '#e8dcc0' : '#6b4a2e');
+      add(xf(new THREE.CylinderGeometry(r, r * 1.05, h, segs(9, 6)), [x, sy + 0.011 + h / 2, zw + 0.05]), c);
+      add(xf(new THREE.CylinderGeometry(r * 0.8, r * 0.8, 0.012, segs(9, 6)), [x, sy + 0.011 + h + 0.006, zw + 0.05]), i === 2 ? '#e8dcc0' : '#6b4a2e');
     });
     // a try-square hung by its stock on a peg
     const qx = 0.47, qy = sy + 0.3;

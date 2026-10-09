@@ -1278,7 +1278,8 @@ export function addIvy(F, rng, start, dir, { length = 1.2, droop = 0.6, size = 0
     d.addScaledVector(nrm, -d.dot(nrm)).normalize();
     p.addScaledVector(d, step);
   }
-  if (pts.length >= 2) F.add(mats().vc, tube(pts, 0.007, 3, Math.max(4, pts.length)), { color: stemColor, cast: false });
+  // (the woody stem: one segment per step, every other step on the lower tiers)
+  if (pts.length >= 2) F.add(mats().vc, tube(pts, 0.007, 3, Math.max(4, KIT.detail < 0.6 ? pts.length >> 1 : pts.length)), { color: stemColor, cast: false });
   const C = cards ?? new Cards();
   const count = Math.round(n * 0.75 * density);
   const up = new THREE.Vector3();

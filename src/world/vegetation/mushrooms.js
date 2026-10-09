@@ -14,7 +14,10 @@
 //   glowgills / glowwarts  enchanted fly agarics: the gills (and, faintly,
 //          the spots) glow soft mint at night — clones of the gills / wart
 //          materials with an emissive that follows ctx.env.night
-//          (updateMushroomGlow), near-invisible by day
+//          (updateMushroomGlow), near-invisible by day. The gill glow is
+//          graded (bright by the stem → ≈ 25 % at the rim, faint lamellae);
+//   sheath additive night glow over the upper stem, the skirt and the cap
+//          rim of every enchanted mushroom taller than 0.6 (one draw)
 // Kits can share their cheap parts (gills, warts, glow …): new MushroomKit(rng,
 // { share: otherKit }) — the sharing kit then only emits caps & stems, so a
 // whole family of kits costs caps + stems per kit + one draw per shared part.
@@ -191,17 +194,24 @@ export function mushroomGlowMaterials(ctx) {
   warts.emissive = new THREE.Color('#e4ffd8');
   // (the forest giants' spots: a faint milky-mint glint and a silver moon catch,
   //  so the dome reads above the glowing gills — the cottages clone `warts`)
-  const wartsMoon = moonRim(M.standard('#ffffff', { roughness: 0.9, vertexColors: true }), { rim: 0.05, pow: 2, up: 0.5 });
+  const wartsMoon = moonRim(M.standard('#ffffff', { roughness: 0.9, vertexColors: true }), { rim: 0.04, pow: 2, up: 0.5, color: [0.8, 0.86, 0.9] });
   wartsMoon.name = 'warts-glow-moon';
   wartsMoon.emissive = new THREE.Color('#e4ffd8');
+  // (and the plain spots of every forest giant: a faint milky glow at night — soft
+  //  pale dots that keep the dome readable, never blue-grey gravel)
+  const wartsPlain = moonRim(M.standard('#ffffff', { roughness: 0.9, vertexColors: true }), { rim: 0.04, pow: 2, up: 0.5, color: [0.8, 0.86, 0.9] });
+  wartsPlain.name = 'warts-moon';
+  wartsPlain.emissive = new THREE.Color('#eef2e6');
   set = {
     gills,
     warts,
     wartsMoon,
+    wartsPlain,
     levels: [
       [gills, 0.03, 1.0],
       [warts, 0.0, 0.42],
       [wartsMoon, 0.0, 0.52],
+      [wartsPlain, 0.0, 0.1],
     ],
   };
   glowSets.set(M, set);
@@ -264,6 +274,9 @@ function glowSheathMaterial() {
     polygonOffset: true,
     polygonOffsetFactor: -1,
     polygonOffsetUnits: -2,
+    // (the skirt's band winds the other way round: both faces — whatever lies
+    //  behind is depth-tested away by the stem / cap it wraps)
+    side: THREE.DoubleSide,
     fog: false,
   });
   return sheathMat;
@@ -489,7 +502,7 @@ export class MushroomKit {
           const p = stemPts[k];
           const a = stemPts[Math.max(0, k - 1)], b = stemPts[Math.min(rings, k + 1)];
           const SF = frameFor(p, b.clone().sub(a));
-          const g = Math.pow(THREE.MathUtils.smoothstep(t, 0.4, 0.97), 1.6) * 0.42;
+          const g = Math.pow(THREE.MathUtils.smoothstep(t, 0.4, 0.97), 1.6) * 0.36;
           const c = SHEATH.clone().multiplyScalar(g);
           const r = stemProfile[k] * 1.06 + R * 0.004;
           for (let i = 0; i <= ss; i++) {
@@ -516,12 +529,16 @@ export class MushroomKit {
             { r: r0 * 1.41, y: -drop * 0.99, v: 1 },
           ], ss, { wob, color: (k) => SHEATH.clone().multiplyScalar(0.3 - k * 0.07) });
         }
-        // … and the thin cap rim glowing through (a band over the rim roll)
-        const band = prof.slice(0, Math.min(prof.length, 3)).map((p, k) => ({ r: p.r * 1.012 + R * 0.004, y: p.y + R * 0.004, v: p.v, k }));
-        if (!upturned) {
-          lathe(S, F, band, Math.max(10, Math.round(seg * 0.75)), {
-            wob: (th, k) => capWob(th, k),
-            color: (k) => SHEATH.clone().multiplyScalar(k === 0 ? 0.34 : k === 1 ? 0.2 : 0),
+        // … and the thin cap rim glowing through: a narrow band over the rim
+        //    roll only (the cap's own facets, lifted off the surface), fading out
+        //    a little way up the side — the dome above stays the cap's own red
+        if (!upturned && prof.length > 2) {
+          const p0 = prof[0], p1 = prof[1], p2 = prof[2];
+          const up = { r: p1.r + (p2.r - p1.r) * 0.3, y: p1.y + (p2.y - p1.y) * 0.3, v: 0 };
+          const band = [p0, p1, up].map((p) => ({ r: p.r * 1.006 + R * 0.008, y: p.y + R * 0.006, v: 0 }));
+          lathe(S, F, band, seg, {
+            wob: (th, k) => capWob(th, k === 2 ? 1 : k),
+            color: (k) => SHEATH.clone().multiplyScalar(k === 0 ? 0.24 : k === 1 ? 0.1 : 0),
           });
         }
       }
@@ -938,8 +955,7 @@ export class MushroomKit {
     add(this.stems, M.surface('mushroomStem', { vertexColors: true }), 'stems');
     if (this.shared) return out;
     add(this.gills, M.surface('gills', { vertexColors: true }), 'gills', false);
-    const wartMat = M.standard('#ffffff', { roughness: 0.9, vertexColors: true });
-    add(this.warts, moon ? moonRim(wartMat, { rim: 0.06, pow: 2, up: 0.5 }) : wartMat, 'warts', false);
+    add(this.warts, moon ? mushroomGlowMaterials(ctx).wartsPlain : M.standard('#ffffff', { roughness: 0.9, vertexColors: true }), 'warts', false);
     if (this.sheath.count) {
       const m = staticMesh(`${name}-glow-sheath`, this.sheath.build(), glowSheathMaterial(), { cast: false, receive: false });
       m.renderOrder = 3;

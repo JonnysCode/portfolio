@@ -3,13 +3,16 @@
 // any more: the visitor explores by gliding the camera between spots
 // (cameraRig.js) and clicking the little things they discover.
 //
-// • Markers: small golden firefly wisps with two or three circling motes (one
-//   Points draw call for all) drift above the hotspots of the CURRENT spot; in
-//   the 'glen' overview only the featured pieces get one. A thin ring appears
-//   round a wisp only while it is hovered / keyboard-focused. By night they
-//   turn silver-mint, smaller and fainter (the lamps own the night); far ones
-//   fade. Visited entries turn into a little leaf. Markers pop in one by one
-//   after the camera lands and hide while their panel is open.
+// • Markers: a ✦ — a cream four-point star with a mint glow inside a thin ring
+//   (one Points draw call for all) — stands above every page of the CURRENT
+//   spot; in the 'glen' overview only the featured pieces get one. Unread ones
+//   send a slow ping ring out every ~4 s (the first as they pop in); hovered /
+//   keyboard-focused, the ring brightens. Shape, colour and stillness set them
+//   apart from the warm round glows around them (fairy-light bulbs, lanterns,
+//   sun motes, fireflies), and a marker that would sit among bulbs is lifted
+//   clear of them. By night they glow mint-white, as bright as the lamps; far
+//   ones fade a little. Visited entries turn into a little leaf. Markers pop in
+//   one by one after the camera lands and hide while their panel is open.
 // • Secret tells: lingering at a place (~20 s untouched), or having read all
 //   its pages, makes one unfound secret in plain view twitch and glimmer once
 //   (with a soft twinkle) — remembered, never repeated; secrets stay markerless.
@@ -75,6 +78,8 @@ const TOLD_KEY = 'woodland:secret-tells';
 
 /** Marker kinds (shader). */
 const K_SPARKLE = 0, K_LEAF = 1, K_SECRET = 2, K_FEATURED = 3;
+/** An unread ✦ sends a ping ring out this often (s). */
+const PING_EVERY = 4;
 
 export function createInteractions(ctx) {
   const { engine, camera } = ctx;
@@ -154,6 +159,7 @@ export function createInteractions(ctx) {
     attr('aPhase', 1);
     attr('aKind', 1);
     attr('aHot', 1);
+    attr('aPing', 1);
     markers.geometry = markerGeo;
   }
   ensureCapacity(48);
@@ -212,10 +218,38 @@ export function createInteractions(ctx) {
       out.x += tw.dx ?? 0;
       out.z += tw.dz ?? 0;
       out.y += tw.y;
-      return out;
-    }
-    out.y += h.markerHeight !== undefined ? h.markerHeight : b.top + 0.45;
+    } else out.y += h.markerHeight !== undefined ? h.markerHeight : b.top + 0.45;
+    out.y += bulbLift(h, out);
     return out;
+  }
+
+  /**
+   * A ✦ hanging among fairy-light bulbs or right by a lantern reads as one more
+   * bulb: lift it (once, remembered per hotspot) until no glowing bulb is
+   * within BULB_CLEAR of it. Uses the camera's soft-occluder list (every
+   * fairy-light bulb and lantern halo, cameraObstacles.js).
+   */
+  const BULB_CLEAR = 0.6;
+  function bulbLift(h, p) {
+    if (h.__bulbLift !== undefined) return h.__bulbLift;
+    const decor = ctx.cameraRig?.obstacles?.shapes?.decor;
+    if (!decor) return 0; // (the world is still being built: ask again next frame)
+    let lift = 0;
+    for (let step = 0; step < 8; step++) {
+      let hit = false;
+      for (const d of decor) {
+        if (d.kind !== 's') continue;
+        const dy = p.y + lift - d.y;
+        if (Math.abs(dy) < BULB_CLEAR && Math.hypot(p.x - d.x, dy, p.z - d.z) < BULB_CLEAR) {
+          hit = true;
+          break;
+        }
+      }
+      if (!hit) break;
+      lift += 0.15;
+    }
+    h.__bulbLift = lift;
+    return lift;
   }
 
   // ─── picking ───────────────────────────────────────────────────────────────
@@ -401,9 +435,12 @@ export function createInteractions(ctx) {
       if (v.z > 1) continue;
       const sx = r.left + ((v.x + 1) / 2) * r.width, sy = r.top + ((1 - v.y) / 2) * r.height;
       const pr = engine.renderer.getPixelRatio() || 1;
-      // (the sprite's size as the marker shader draws it; the wisp itself is its middle ~60 %)
-      const px = Math.min(56 * pr, Math.max(16 * (h.__size ?? 1) * pr, ((h.__size ?? 1) * markerScale() * 0.5) / Math.max(dist, 0.1))) / pr;
-      const reach = px * 0.5 + (generous ? 24 : 9);
+      // (the sprite's size as the marker shader draws it: a ✦ sprite holds its ring at ~¾ of its
+      // radius; a leaf fills its sprite) — touch reaches ≥ 28 px round a ✦ whatever its size
+      const sz = h.__size ?? 1;
+      const star = h.__kind === K_SPARKLE || h.__kind === K_FEATURED;
+      const px = Math.min(64 * pr, Math.max((star ? 34 : 16) * sz * pr, (sz * markerScale() * (star ? 0.6 : 0.5)) / Math.max(dist, 0.1))) / pr;
+      const reach = px * (star ? 0.4 : 0.5) + (generous ? 22 : 7);
       const d = Math.hypot(sx - clientX, sy - clientY);
       if (d < reach && d < bestD) {
         bestD = d;
@@ -592,6 +629,7 @@ export function createInteractions(ctx) {
     const phase = markerGeo.attributes.aPhase.array;
     const kind = markerGeo.attributes.aKind.array;
     const hotA = markerGeo.attributes.aHot.array;
+    const pingA = markerGeo.attributes.aPing.array;
     const kUp = damp(6, dt), kDown = damp(10, dt), kHot = damp(9, dt);
     const sinceLanding = t - settledAt;
     featuredSeen.clear();
@@ -643,7 +681,13 @@ export function createInteractions(ctx) {
       h.__hot = (h.__hot ?? 0) + (hot - (h.__hot ?? 0)) * kHot;
       const a0 = h.__alpha ?? 0;
       h.__alpha = a0 + (want - a0) * (want > a0 ? kUp : kDown);
-      if (h.__alpha < 0.01) continue;
+      if (h.__alpha < 0.01) {
+        h.__bornAt = undefined;
+        continue;
+      }
+      // the ping: the first one as the ✦ pops in, then every PING_EVERY seconds
+      if (h.__bornAt === undefined) h.__bornAt = t;
+      h.__kind = k;
       h.__size = (h.__size ?? targetSize) + (targetSize - (h.__size ?? targetSize)) * damp(8, dt);
       markerWorld(h, v);
       pos[n * 3] = v.x;
@@ -655,10 +699,12 @@ export function createInteractions(ctx) {
       phase[n] = (h.id * 1.618) % (Math.PI * 2);
       kind[n] = k;
       hotA[n] = h.__hot;
+      // (reduced motion: no ping rolling out — a still ring)
+      pingA[n] = reduced || !(k === K_SPARKLE || k === K_FEATURED) ? 99 : (t - h.__bornAt) % (k === K_FEATURED ? PING_EVERY * 1.5 : PING_EVERY);
       n++;
     }
     markerGeo.setDrawRange(0, n);
-    for (const key of ['position', 'aAlpha', 'aSize', 'aPhase', 'aKind', 'aHot']) markerGeo.attributes[key].needsUpdate = n > 0;
+    for (const key of ['position', 'aAlpha', 'aSize', 'aPhase', 'aKind', 'aHot', 'aPing']) markerGeo.attributes[key].needsUpdate = n > 0;
     markers.visible = n > 0;
     markerMat.uniforms.uTime.value = reduced ? 0 : t;
     markerMat.uniforms.uTimeF.value = reduced ? 0 : t;
@@ -989,10 +1035,14 @@ function saveSet(key, set) {
 }
 
 /**
- * Marker point sprites: a golden firefly wisp with orbiting motes (unvisited;
- * a thin ring around it only while hovered / keyboard-focused), a little
- * green leaf (visited), a pale secret twinkle. By night they turn silver-mint,
- * smaller and fainter (the warm lamps own the night), and far ones fade.
+ * Marker point sprites. Unvisited pages: a ✦ — a cream four-point star with a
+ * mint glow inside a thin ring that is always there (not only on hover), and
+ * a slow "ping" ring rolling out of it every few seconds (the first one as it
+ * pops in) — so it reads as "the ✦ sparkles" of the help text, never as one
+ * more amber fairy-light bulb, lantern, sun mote or firefly (those are warm
+ * round glows that drift; the ✦ is cool, pointed, ringed and stays put).
+ * Visited: a little green leaf. Secrets: a pale twinkling cross. By night the
+ * ✦ turns mint-white and glows as bright as the lamps; far ones fade a little.
  */
 function makeMarkerMaterial() {
   const c = (hex) => new THREE.Color(hex);
@@ -1002,13 +1052,13 @@ function makeMarkerMaterial() {
       uTimeF: { value: 0 },
       uScale: { value: 600 },
       uNight: { value: 0 },
-      uGold: { value: c(palette.postYellow ?? '#ffcc33') },
+      uCream: { value: c('#fff3d2') },
       uCore: { value: c(palette.spots) },
-      uEdge: { value: c(palette.capBrown) },
+      uEdge: { value: c('#3b2a1c') },
       uLeaf: { value: c(palette.leafLight) },
       uLeafDark: { value: c(palette.leafDark) },
-      uMint: { value: c('#c8fff0') },
-      uSilver: { value: c('#dff7ff') },
+      uMint: { value: c('#9ff2d6') },
+      uSilver: { value: c('#e4fbff') },
       uPx: { value: 1 },
     },
     vertexShader: /* glsl */ `
@@ -1017,6 +1067,7 @@ function makeMarkerMaterial() {
       attribute float aPhase;
       attribute float aKind;
       attribute float aHot;
+      attribute float aPing;
       uniform float uTime;
       uniform float uScale;
       uniform float uPx;
@@ -1028,35 +1079,36 @@ function makeMarkerMaterial() {
       varying float vPh;
       varying float vHot;
       varying float vGrow;
+      varying float vPing;
       void main() {
         vec3 p = position;
         vPh = aPhase;
-        // fireflies drift a little more than they bob
-        p.y += sin(uTime * 1.7 + aPhase) * 0.07;
-        p.x += sin(uTime * 0.9 + aPhase * 2.3) * 0.03;
+        float star = aKind < 0.5 || aKind > 2.5 ? 1.0 : 0.0;
+        // the ✦ hangs still with a slow breath; leaves and secrets bob a little
+        p.y += sin(uTime * 1.3 + aPhase) * mix(0.06, 0.025, star);
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
         float dist = max(0.1, -mv.z);
-        float pulse = 1.0 + 0.06 * sin(uTime * 2.6 + aPhase * 1.7);
-        float night = aKind > 1.5 && aKind < 2.5 ? 0.0 : uNight;
-        // never smaller than a readable firefly, never a blob filling the screen
-        float px = clamp(aSize * pulse * uScale * 0.5 / dist, 16.0 * aSize * uPx, 56.0 * uPx) * (1.0 - 0.28 * night);
-        // hovered / focused: the sprite grows to make room for its ring (the wisp keeps its size)
-        float wisp = aKind < 0.5 || aKind > 2.5 ? 1.0 : 0.0;
-        vGrow = 1.0 + 0.5 * aHot * wisp;
+        // ✦ sprites hold a ring and a ping: never smaller than ~34 CSS px (a ≥ 17 px star
+        // on a phone), never a blob filling the screen
+        float lo = mix(16.0, 34.0, star) * aSize;
+        float px = clamp(aSize * uScale * mix(0.5, 0.6, star) / dist, lo * uPx, 64.0 * uPx);
+        // hovered / focused: the sprite grows a little (the ring brightens)
+        vGrow = 1.0 + 0.22 * aHot * star;
         gl_PointSize = px * vGrow * step(0.001, aAlpha);
-        // far away (the overview's featured pieces): quieter
-        vAlpha = aAlpha * mix(1.0, 0.6, smoothstep(24.0, 58.0, dist)) * (1.0 - 0.42 * night);
+        // far away (the overview's featured pieces): a little quieter
+        vAlpha = aAlpha * mix(1.0, 0.72, smoothstep(24.0, 58.0, dist));
         vKind = aKind;
         vHot = aHot;
-        vSpin = aKind > 0.5 && aKind < 1.5 ? 0.5 + 0.25 * sin(uTime * 1.6 + aPhase) : sin(uTime * 0.9 + aPhase) * 0.35 + uTime * (aKind > 1.5 && aKind < 2.5 ? 0.8 : 0.0);
-        vTw = 0.7 + 0.3 * sin(uTime * 5.3 + aPhase * 3.0);
+        vPing = aPing;
+        vSpin = aKind > 0.5 && aKind < 1.5 ? 0.5 + 0.25 * sin(uTime * 1.6 + aPhase) : star > 0.5 ? 0.12 * sin(uTime * 0.7 + aPhase) : sin(uTime * 0.9 + aPhase) * 0.35 + uTime * 0.8;
+        vTw = 0.82 + 0.18 * sin(uTime * 2.3 + aPhase * 3.0);
       }
     `,
     fragmentShader: /* glsl */ `
-      uniform vec3 uGold;
       uniform float uTimeF;
       uniform float uNight;
+      uniform vec3 uCream;
       uniform vec3 uCore;
       uniform vec3 uEdge;
       uniform vec3 uLeaf;
@@ -1070,10 +1122,10 @@ function makeMarkerMaterial() {
       varying float vPh;
       varying float vHot;
       varying float vGrow;
+      varying float vPing;
       void main() {
         vec2 uv0 = gl_PointCoord * 2.0 - 1.0;
         uv0.y = -uv0.y;
-        // (the wisp keeps its pixel size inside a sprite grown for the hover ring)
         vec2 uv = uv0 * vGrow;
         float cs = cos(vSpin), sn = sin(vSpin);
         vec2 q = mat2(cs, -sn, sn, cs) * uv;
@@ -1081,34 +1133,38 @@ function makeMarkerMaterial() {
         float a;
         float r = length(uv);
         if (vKind < 0.5 || vKind > 2.5) {
-          // firefly wisp: a small hot core in a soft golden glow, a faint
-          // four-point glint, and two or three motes circling it
+          // ✦: a four-point star with concave sides (|x|^p + |y|^p = R^p, p < 1)
           float featured = step(2.5, vKind);
-          float br = 0.5 + 0.5 * sin(uTimeF * 1.4 + vPh);
-          float core = exp(-r * r * 30.0);
-          float glow = exp(-r * r * 5.5) * (0.42 + 0.16 * br + 0.1 * featured);
-          float glint = (exp(-abs(q.x) * 15.0) * (1.0 - smoothstep(0.08, 0.72, abs(q.y)))
-                      + exp(-abs(q.y) * 15.0) * (1.0 - smoothstep(0.08, 0.72, abs(q.x)))) * 0.6 * vTw;
-          float motes = 0.0;
-          for (int i = 0; i < 3; i++) {
-            float fi = float(i);
-            float an = uTimeF * (0.85 + 0.3 * fi) * (mod(fi, 2.0) < 0.5 ? 1.0 : -1.0) + vPh * 2.0 + fi * 2.094;
-            float rr = 0.56 + 0.1 * sin(uTimeF * 1.3 + fi * 1.7 + vPh);
-            vec2 dm = uv - vec2(cos(an), sin(an) * 0.72) * rr;
-            motes += exp(-dot(dm, dm) * 95.0) * (0.55 + 0.45 * sin(uTimeF * 3.7 + fi * 2.0 + vPh)) * (fi < 1.5 + featured ? 1.0 : 0.0); // two motes, three round a featured piece
-          }
-          a = clamp(core + glow + glint + motes * 0.85, 0.0, 1.0);
-          col = mix(uGold * 1.15, uCore * 1.3, clamp(core * 1.3 + glint * 0.25, 0.0, 1.0));
-          // (pale motes: not one more amber bulb among the fairy lights)
-          col = mix(col, mix(uCore, uMint, 0.35) * 1.3, clamp(motes, 0.0, 1.0) * 0.8);
-          // by night: silver-mint, apart from the amber lamps
-          col = mix(col, mix(uSilver, uMint, 0.5) * (0.75 + 0.6 * core), uNight * 0.75);
-          // the ring: only while hovered / focused
-          float ring = exp(-pow((length(uv0) - 0.84) / 0.05, 2.0)) * 0.8 * vHot;
-          if (ring > 0.0) {
-            col = mix(mix(uGold, uSilver, uNight * 0.6) * 1.2, col, clamp(a, 0.0, 1.0));
-            a = max(a, ring);
-          }
+          float R = 0.5 + 0.06 * vHot;
+          vec2 s = abs(q) / R;
+          float sd = pow(s.x, 0.62) + pow(s.y, 0.62);
+          float aa = 0.1;
+          float star = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, sd);
+          // a thin dark keyline round the star: it holds on sunlit plaster and pale stone
+          float keyline = (1.0 - smoothstep(1.12, 1.45, sd)) * (1.0 - star) * 0.42 * (1.0 - uNight * 0.7);
+          float core = exp(-dot(q, q) * 26.0);
+          float glow = exp(-r * r * 5.0) * (0.34 + 0.12 * vTw + 0.08 * featured);
+          // the ring: always there (thin), brighter and fuller while hovered / focused
+          float rr = 0.74;
+          float ringW = 0.035 + 0.025 * vHot;
+          float ring = exp(-pow((length(uv0) - rr) / ringW, 2.0)) * (0.55 + 0.45 * vHot);
+          // the ping: a ring rolling out of the star, fading (vPing = seconds since this ping began)
+          float pt = clamp(vPing / 1.5, 0.0, 1.0);
+          float pr = mix(0.42, 0.98, 1.0 - (1.0 - pt) * (1.0 - pt));
+          float ping = exp(-pow((length(uv0) - pr) / 0.045, 2.0)) * (1.0 - pt) * (1.0 - pt) * step(vPing, 1.5) * 0.85;
+          vec3 starCol = mix(uCream, uCore * 1.15, clamp(core * 1.6, 0.0, 1.0));
+          vec3 glowCol = mix(uMint, uSilver, 0.3);
+          vec3 ringCol = mix(uCream, uMint, 0.55);
+          // by night: mint-white and as bright as the lamps (bloom picks the core up)
+          float lift = 1.25 + uNight * 0.9;
+          starCol = mix(starCol, mix(uSilver, uMint, 0.25), uNight * 0.6) * lift * (0.92 + 0.08 * vTw);
+          glowCol *= 1.0 + uNight * 0.6;
+          ringCol *= 1.05 + uNight * 0.55;
+          a = clamp(star + glow * 0.75 + ring + ping + keyline, 0.0, 1.0);
+          col = glowCol;
+          col = mix(col, ringCol, clamp((ring + ping) / max(a, 1e-3), 0.0, 1.0));
+          col = mix(col, uEdge, clamp(keyline / max(a, 1e-3), 0.0, 1.0));
+          col = mix(col, starCol, star);
         } else if (vKind < 1.5) {
           // leaf: a lens shape with a midrib
           vec2 l = q * vec2(1.6, 1.0);
@@ -1116,7 +1172,7 @@ function makeMarkerMaterial() {
           float leaf = 1.0 - smoothstep(1.0, 1.08, d);
           float edge = smoothstep(0.86, 0.98, d);
           float rib = (1.0 - smoothstep(0.0, 0.06, abs(q.x))) * step(abs(q.y), 0.75);
-          col = mix(uLeaf, uLeafDark, max(edge, rib * 0.7));
+          col = mix(uLeaf, uLeafDark, max(edge, rib * 0.7)) * (1.0 + uNight * 0.5);
           float halo = exp(-r * r * 6.0) * 0.3;
           a = max(leaf, halo);
           col = mix(uCore, col, leaf);

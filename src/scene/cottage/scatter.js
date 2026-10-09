@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { getHeight, getPathDistance } from '../../world/ground.js';
 import { materials } from '../../core/materials.js';
-import { mats, xf, mossGeo, stoneGeo, leafGeo, addFern, addGrass, addFlower, addToadstool, TAU } from './kit.js';
+import { mats, xf, mossGeo, stoneGeo, leafGeo, addFern, addGrass, addFlower, addToadstool, TAU, KIT } from './kit.js';
 
 let glowCapMat = null;
 /** Pale, bioluminescent caps: barely tinted by day, softly glowing teal at night. */
@@ -105,7 +105,8 @@ export function glowShrooms(F, rng, x, y, z, count = 5, halos = null) {
     F.add(M.stem, xf(new THREE.CylinderGeometry(0.008, 0.014, h, 5).translate(0, h / 2, 0), [px, y, pz], lean), { color: '#e8f0e4', cast: false });
     const tip = new THREE.Vector3(0, h, 0).applyEuler(new THREE.Euler(lean[0], 0, lean[2]));
     const cr = rng.range(0.03, 0.06);
-    const cap = new THREE.SphereGeometry(cr, 8, 4, 0, TAU, 0, Math.PI / 2).scale(1, rng.range(0.6, 1.1), 1);
+    const lo = KIT.detail < 0.6;
+    const cap = new THREE.SphereGeometry(cr, lo ? 6 : 8, lo ? 3 : 4, 0, TAU, 0, Math.PI / 2).scale(1, rng.range(0.6, 1.1), 1);
     F.add(glowCap(), cap.translate(px + tip.x, y + tip.y - cr * 0.1, pz + tip.z), { cast: false });
   }
   if (halos) halos.push({ x, y: y + 0.18, z, size: 0.55 });

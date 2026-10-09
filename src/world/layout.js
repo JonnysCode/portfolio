@@ -159,13 +159,14 @@ export const SPOTS = [
     areas: [],
     focus: [0, 4, -2],
     camera: { position: [4, 17, 40], target: [0, 6.5, -2], fov: 40 },
-    // phones: the whole village on one tall screen — seen from high over the
-    // stream's bank (front right, a giant's trunk framing the right edge) the
-    // houses line up down the frame: the cottages and the Wohnatelier at the back
-    // left, the oak with its loft and the Schreinerei in the middle, the bridge and
-    // the Velowerkstatt in front, the lily pond lower left. (No 16:9-style frame
-    // fits ~45 units of village on a 390 px wide screen; this diagonal does.)
-    portrait: { position: [36.9, 34, 23.5], target: [6.8, 7.5, 7.5], fov: 64, focus: [-2, 2.5, 3] },
+    // phones: the village on one tall screen, seen from the east over the far bank
+    // (seen from there the houses line up in a band only ~10 units wide — from the
+    // front they spread over 25): the red caps of the cottages on the left, the
+    // Schreinerei annex and the oak door in the middle, the deck with the finished
+    // pieces below, the trunk with its loft rising to the top of the frame. Low
+    // enough that nothing stands between the lens and the village (no bank, stream
+    // or Velowerkstatt cap in the foreground), and focused on the village itself.
+    portrait: { position: [27, 18.7, 11.7], target: [-7.4, 7.4, -2], fov: 51, focus: [-4.5, 2.4, 0.4] },
   },
   {
     id: 'woodworking',
@@ -178,11 +179,12 @@ export const SPOTS = [
     focus: [-1.4, 1.1, -0.8],
     // (trucked right and a step back: the deck's four pieces sit inside the right third, not on the edge)
     camera: { position: [1.6, 3.05, 12.3], target: [0.0, 2.2, -0.8], fov: 40 },
-    // phones: at eye level in front of the workshop — the annex and its porch with
-    // Jonny at the Hobelbank, the door, and the giant trunk towering above (the
-    // ground is seen at a grazing angle: no band of blurred cobbles); the deck's
-    // pieces are a swipe (or the '4 more' edge chip) away on the right
-    portrait: { position: [-1.2, 2.4, 14.0], target: [-2.2, 5.0, -1.2], fov: 62, focus: [-2.0, 1.2, -0.6] },
+    // phones: a 3/4 view from the front right, where the porch, the door and the
+    // deck line up in a band narrow enough for a tall screen — Jonny at the
+    // Hobelbank on the left, the round door and the EFZ certificate in the middle,
+    // the deck with its four pieces in front, the trunk towering above: all six
+    // pages in one frame (from the front the porch and the deck lie 9 units apart)
+    portrait: { position: [9.0, 6.4, 12.8], target: [0.55, 1.5, -0.4], fov: 60, focus: [0.6, 1.0, 0.2] },
   },
   {
     id: 'code',
@@ -226,8 +228,10 @@ export const SPOTS = [
     areas: ['bikes'],
     focus: [16, 1.6, 6.6],
     camera: { position: [8.5, 4.6, 16.5], target: [15.2, 1.8, 6.2], fov: 40 },
-    // phones: from above the bank — the open door and the bikes, the stream in front (no fern blur)
-    portrait: { position: [10.6, 9.6, 17.2], target: [16.4, 1.8, 7.6], fov: 48 },
+    // phones: at eye level beside the bridge — the hero bike, the mechanic and the
+    // open door fill the frame, the bell cap crops off at the top (from above, the
+    // cap filled the screen and the bikes were a few pixels tall)
+    portrait: { position: [12.6, 2.5, 13.4], target: [15.6, 1.25, 7.4], fov: 55, focus: [15.0, 0.9, 7.6] },
     close: { position: [11.0, 6.6, 13.4], target: [16.2, 1.6, 6.8] },
   },
 ];

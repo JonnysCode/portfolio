@@ -38,6 +38,8 @@ export const KINDS = {
   timber: { mode: 'rgb', size: [512, 512], bump: 0.012, cavity: 2, mapping: 'uv', tile: 1.6, normal: 1, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#755d48', woody: true },
   shingles: { mode: 'rgb', size: [512, 512], bump: 0.035, cavity: 1.5, mapping: 'uv', tile: 1.4, normal: 1.2, ao: 1, breakup: 0.9, wrap: 0.1, mean: '#694e3b' },
   plaster: { mode: 'rgb', size: [512, 512], bump: 0.006, cavity: 2, mapping: 'uv', tile: 2.2, normal: 0.9, ao: 0.8, breakup: 0.8, wrap: 0.2, mean: '#ede1c6' },
+  // (stone's measured mean is ~#999380; '#867d6e' is kept on purpose: every vertex-coloured
+  //  stone — bridge, cottage walls, door steps — is tuned against this normalisation)
   stone: { mode: 'rgb', size: [512, 512], bump: 0.04, cavity: 1.6, mapping: 'triplanar', tile: 2, normal: 1.2, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#867d6e' },
   masonry: { mode: 'rgb', size: [512, 512], bump: 0.045, cavity: 1.8, mapping: 'triplanar', tile: 2, normal: 1.25, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#867d6e' },
   cobble: { mode: 'rgb', size: [512, 512], bump: 0.035, cavity: 0.9, mapping: 'triplanar', tile: 1.8, normal: 1.1, ao: 1, breakup: 0.8, wrap: 0.1, mean: '#8c8671' },

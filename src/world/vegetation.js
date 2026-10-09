@@ -33,11 +33,18 @@
 //                 cushions, litter drifts, clover mats, bare soil & pebbles:
 //                 common.groundPatches, shared with the terrain shader); plus
 //                 lush beds  (vegetation/plants.js, instanced, wind)
+//   lawn wedges   the open lawns between the paths (what the overview and the
+//                 glen's camera look down on) get real 3D dressing, not paint:
+//                 moss hummocks on the floor's velvet cushions, clover mats on
+//                 its clover patches, dense warm grass tufts, low ferns in the
+//                 shade, little mossy stone groups, a few small mushroom families
 //   colour        flower drifts of one species each — forget-me-not & bluebell
 //                 blue, wood-anemone white, campion pink, buttercup yellow —
 //                 along the paths' edges, at the houses' feet and in the lawn
-//                 wedges (cushions of oversized heads, the ground under them
-//                 washed with their colour so a drift reads from the overview),
+//                 wedges (cushions of oversized heads; the ground right under
+//                 them faintly tinted with their colour — round 4's wide wash
+//                 read as pastel paint smears); by night blue petals fade grey
+//                 and catch a moon glint (common.nightPetals),
 //                 hydrangeas by the cottages, ochre & russet leaf drifts, a
 //                 little signpost at the path fork
 //                                  (vegetation/drifts.js, vegetation/blooms.js)
@@ -50,7 +57,11 @@
 //                 drifts, broad leaves and bushes
 //   tree feet     mossy root runs snaking out of the giants' bases, stones the
 //                 roots have lifted, shelf fungi under the broken snags
-//   night magic   enchanted giants (gills glow soft mint, spots shimmer),
+//   night magic   enchanted giants that read as mushrooms: gill glow graded
+//                 from the stem (bright) to the rim (≈ 30 %) with faint lamellae,
+//                 the upper stem, skirt and cap rim lit by it (an additive glow
+//                 sheath), a halo tucked under the cap, milky spots and a silver
+//                 moon rim on the dome, a teal light pool on the moss beneath;
 //                 will-o'-the-wisp mushroom clusters along the paths, the
 //                 fairy ring (a true circle of glowing bonnets in graded sizes
 //                 on a band of glowing moss, cool light pooling on the ground),
@@ -60,6 +71,12 @@
 //                 (vegetation/lanterns.js); the canopy dims to moonlit
 //                 silhouettes with a silver rim (common.moonlit)
 //   secrets       a fairy ring (hotspot), snail stones for the wild snails
+//
+// Memory: our static meshes drop their CPU vertex arrays once uploaded
+// (common.freeAfterUpload) and the builders / placement lists are released at
+// the end of the build (the closures handed out keep this scope alive).
+// Props: nothing grows through the colliders registered before us (the
+// Schreinerei yard's sawhorses, drying stack … — zones.setPropKeep).
 //
 // Quality tiers: medium & low draw far less — counts follow density, the
 // tree-foot & framing loops √density, and detailK / FERN_T thin trunk, cap and
@@ -256,7 +273,8 @@ export default async function build(ctx) {
   const nearRing = (x, z, d) => !!ringSite && Math.hypot(x - ringSite.x, z - ringSite.z) < ringSite.r + d;
   lap('trees');
   // the canopy clump template (also used for the forest-edge bushes below)
-  const clumpGeo = clumpTemplate(rng.fork('clump'), tier === 'low' ? 44 : tier === 'medium' ? 52 : 70, { size: tier === 'low' ? [0.37, 0.52] : tier === 'medium' ? [0.35, 0.49] : [0.32, 0.46] });
+  // (round 5: 62 cards on high, a touch bigger — the canopy & bushes read as masses from afar)
+  const clumpGeo = clumpTemplate(rng.fork('clump'), tier === 'low' ? 44 : tier === 'medium' ? 52 : 62, { size: tier === 'low' ? [0.37, 0.52] : tier === 'medium' ? [0.35, 0.49] : [0.33, 0.48] });
 
   // ── 2. giant fly agarics ──────────────────────────────────────────────────
   // (the small kit writes its gills, warts and glowing parts into the giant
@@ -1163,7 +1181,7 @@ export default async function build(ctx) {
           }
         }
         // (d) a little group of mossy stones
-        if (lrng.chance(0.075)) {
+        if (lrng.chance(0.12)) {
           const n = lrng.int(1, 3);
           for (let i = 0; i < n; i++) {
             const a = lrng.range(0, TAU), d = i ? lrng.range(0.25, 0.55) : 0;
@@ -1567,7 +1585,14 @@ export default async function build(ctx) {
   }[tier] ?? null;
   const fT = FERN_T ?? { L: { fronds: [14, 15], segs: 4, young: [2, 2], youngSegs: 5 }, M: { fronds: [10, 11] } };
   addMesh(instanced('ferns-large', fernTemplate(fernRng, { fronds: fT.L.fronds, length: [1.05, 1.4], e0: [0.62, 1.0], segs: fT.L.segs, young: fT.L.young, youngSegs: fT.L.youngSegs, width: 0.2 }), fernMat, fernL));
-  addMesh(instanced('ferns-medium', fernTemplate(fernRng, { fronds: fT.M.fronds, length: [0.8, 1.05], e0: [0.66, 1.02], segs: 3, young: [1, 1], youngSegs: tier === 'low' ? 3 : 4, flat: true, width: 0.23 }), fernMat, fernM));
+  // (round 5 headroom: the far ring's medium ferns — no lens comes within 25
+  //  units — are lighter cards: fewer fronds, two-segment arches, no fiddlehead)
+  //  (the threshold is 23 units: the far ring is ≥ 25 units from every pose)
+  const fernNear = [], fernFar = [];
+  for (const it of fernM) (viewDistance(it.x, it.y + it.s * 0.4, it.z, it.s * 0.7) > 23 ? fernFar : fernNear).push(it);
+  addMesh(instanced('ferns-medium', fernTemplate(fernRng, { fronds: fT.M.fronds, length: [0.8, 1.05], e0: [0.66, 1.02], segs: 3, young: [1, 1], youngSegs: tier === 'low' ? 3 : 4, flat: true, width: 0.23 }), fernMat, fernNear));
+  addMesh(instanced('ferns-far', fernTemplate(createRng('vegetation:fern-far'), { fronds: tier === 'high' ? [7, 8] : [6, 7], length: [0.8, 1.05], e0: [0.66, 1.02], segs: 2, young: [0, 0], flat: true, width: 0.25 }), fernMat, fernFar));
+  stats.fernsFar = fernFar.length;
   const grassRng = createRng('vegetation:grass-templates');
   addMesh(instanced('grass', grassTemplate(grassRng, { cards: tier === 'high' ? [4, 5] : [3, 4], height: [0.4, 0.6], spread: 0.1 }), grassMat, grassA));
   addMesh(instanced('clover', cloverTemplate(createRng('vegetation:clover'), { count: tier === 'high' ? [6, 8] : [5, 6], radius: 0.24 }), flowerMat, clover));
@@ -1644,10 +1669,14 @@ export default async function build(ctx) {
   //    (the fairy ring — a hotspot — and the props' meshes are not in `owned`),
   //    and the builders' plain-JS vertex arrays and placement lists must not
   //    outlive the build (the closures we hand out keep this scope alive)
-  stats.freed = freeAfterUpload(owned);
-  for (const B of [builders.bark, builders.birch, builders.ivy, rockB, moundB, stumpFaceB]) B.release();
-  smallKit.release();
-  giantKit.release();
+  //    (?vegcpu=keep skips all of it — for A/B heap checks and debugging)
+  const keepCpu = ctx.engine?.params?.get?.('vegcpu') === 'keep';
+  if (!keepCpu) {
+    stats.freed = freeAfterUpload(owned);
+    for (const B of [builders.bark, builders.birch, builders.ivy, rockB, moundB, stumpFaceB]) B.release();
+    smallKit.release();
+    giantKit.release();
+  }
 
   // ── API ───────────────────────────────────────────────────────────────────
   const trees = plan.trees.map((t) => ({
@@ -1690,12 +1719,14 @@ export default async function build(ctx) {
   // leaf masses of the forest canopy as spheres (camera obstacles, leaf sources)
   const canopy = clumps.map((c) => ({ x: c.x, y: c.y, z: c.z, r: c.s * 1.05 }));
   ctx.forest = { trees, giants, canopy, glowSpots, flowerPatches, mossyRocks, snailRocks, logs, stumps, fairyRing: ringInfo };
-  for (const l of [fernL, fernM, grassA, clover, bushes, bilberry, bramble, broad, shrubs, clumps, vigFerns, vigFox, vigBroad, glowMoss, glowPools, troops, logFamilies]) l.length = 0;
-  for (const k of FLOWER_KINDS) flowers[k].length = 0;
-  drifts.cover.length = 0;
-  drifts.leaves.length = 0;
-  occ.map.clear();
-  recipeCache.clear();
+  if (!keepCpu) {
+    for (const l of [fernL, fernM, grassA, clover, bushes, bilberry, bramble, broad, shrubs, clumps, vigFerns, vigFox, vigBroad, glowMoss, glowPools, troops, logFamilies]) l.length = 0;
+    for (const k of FLOWER_KINDS) flowers[k].length = 0;
+    drifts.cover.length = 0;
+    drifts.leaves.length = 0;
+    occ.map.clear();
+    recipeCache.clear();
+  }
   return {
     group, trees, giants, canopy, glowSpots, flowerPatches, mossyRocks, snailRocks, logs, stumps, fairyRing: ringInfo, treesNear, stats, budget: VEG_BUDGET,
     update() {

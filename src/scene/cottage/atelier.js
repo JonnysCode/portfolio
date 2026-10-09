@@ -43,8 +43,8 @@ const PALETTE = {
   // the sofa's sage (on the neutral textile, kit.js mats().textile: the plain fabric's beige
   // cast turned the old sage olive-mustard); a muted grey-green that stays sage under the
   // warm lamps and turns a little cooler in the daylight from the loggia
-  sofaSage: '#7f9776',
-  archInk: '#435d8f', // the painted arch behind the bookcase (limewash in ink blue: lighter than the ink itself, it sits in the deepest shade)
+  sofaSage: '#789a70',
+  archInk: '#4466ab', // the painted arch behind the bookcase (limewash in ink blue: lighter than the ink itself, it sits in the deepest shade)
   terracotta: '#c46a43',
   mustard: '#d6a23a',
   cream: '#efe4cf',
@@ -424,7 +424,7 @@ function berberRug(F, rng, m, W, D) {
     v.z += 0.01 * Math.sin(v.x * 5.3);
   });
   // (a warm wool cream, not paper white: under the lamps a near-white pile clipped to white)
-  L.add(M.textile, base.translate(0, th / 2 + 0.002, 0), { color: '#d9cdb5', cast: false });
+  L.add(M.textile, base.translate(0, th / 2 + 0.002, 0), { color: '#d3c7ae', cast: false });
   const top = th + 0.0035;
   // a woven ink border just inside the edge frames the field
   {

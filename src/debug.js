@@ -110,6 +110,32 @@ export function installDebug(ctx) {
       for (let i = 0; i < n; i++) ctx.engine.step(1 / 60, i === n - 1);
       return ctx.camera.position.toArray().map((x) => +x.toFixed(2));
     },
+    /**
+     * QA: plan the glide between every pair of spots (as a visitor would fly it,
+     * at the current screen shape) and report the worst frame occupancy by caps
+     * (share of 5 rays from the lens hitting a cap within 4 units) and the
+     * closest shave past a cap rim. No frames are rendered.
+     */
+    auditGlides(ids = SPOTS.map((s) => s.id)) {
+      const rig = ctx.cameraRig;
+      rig.clearOverride();
+      const out = [];
+      for (const a of ids)
+        for (const b of ids) {
+          if (a === b) continue;
+          rig.goTo(a, { instant: true });
+          ctx.engine.step(1 / 60, false);
+          rig.goTo(b);
+          const g = rig.glide;
+          if (!g) continue;
+          const [p0, p1, p2, p3] = g.handles;
+          const r = rig.obstacles.auditGlide(p0, p1, p2, p3, g.t0, g.t3, g.fov, ctx.camera.aspect);
+          out.push({ glide: `${a}>${b}`, ...r });
+          rig.snap();
+          ctx.engine.step(1 / 60, false);
+        }
+      return out;
+    },
     /** Step the clock until no camera glide is running; returns the frames stepped. */
     settle(maxFrames = 600) {
       let i = 0;

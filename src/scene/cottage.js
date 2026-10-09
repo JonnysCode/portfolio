@@ -39,7 +39,7 @@ import { createRng } from '../core/rng.js';
  * warts, flakes, gill fins and lamellae thin out, and the kit's small parts (stones, moss,
  * toadstools, fern fronds, fairy-light bulbs) drop facets (setCottageDetail).
  */
-const COTTAGE_BUDGET = { high: 240000, medium: 160000, low: 120000 };
+const COTTAGE_BUDGET = { high: 240000, medium: 160000, low: 124000 };
 
 export default async function build(ctx) {
   const root = new THREE.Group();

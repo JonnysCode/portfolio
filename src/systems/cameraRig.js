@@ -113,10 +113,21 @@ function monotone(xs, ys) {
  * chairs, so their close-ups stood far back — framed on the piece itself, a
  * little from above. (Clear sight lines past the fairy lights, the rose arch
  * and the lamp posts are found by the search below, not by tweaks.)
+ *   quiet: frame the entry's marker-less sibling hotspot instead (About Me: the
+ *          portrait in the window, not the door leaf — the big arch stones and
+ *          the stepping-stone slabs read as smeared slabs this close)
+ *   offset: [x, y, z] world offset of the look point (from the window down to
+ *          the bench under it, where the cat sleeps)
  */
 const FRAMING = {
   'coffee-table': { radius: 0.62, lift: 0.08, polar: 1.1 },
   'dining-table': { radius: 1.05, polar: 1.12 },
+  'about-me': { quiet: true, offset: [0.25, -0.95, -0.2], radius: 1.35, azimuth: 0.32, polar: 1.3, distance: 3.6 },
+  // the hero bike, swung away from the mechanic at its rear wheel (his head filled the left of the frame)
+  'bike-build': { azimuth: 0.45 },
+  // This Woodland: the lens sits in the big window's opening, so the casement
+  // frames and the transom (within a hand's width) dissolve in the near fade
+  'this-portfolio': { distance: 1.75 },
 };
 
 /** How much of the free part of the screen a framed detail may fill (its bounding sphere). */
@@ -309,7 +320,8 @@ export function createCameraRig(ctx) {
       p1.y += hop * 0.08;
       p2.y += hop * 0.08;
     } else {
-      const plan = obstacles.plan(p0, p3, { lift: Math.min(5, hop * 0.1) });
+      // (the look points ride along: the planner rejects arcs on which a cap fills the frame)
+      const plan = obstacles.plan(p0, p3, { lift: Math.min(5, hop * 0.1), t0, t3: dest.target, fov: Math.max(fov, dest.fov ?? fov), aspect: camera.aspect || 16 / 9 });
       p1 = plan.p1;
       p2 = plan.p2;
     }
@@ -324,6 +336,8 @@ export function createCameraRig(ctx) {
         dest,
         fov0: fov,
         position: (k, out) => obstacles.bezier(p0, p1, p2, p3, k, out),
+        handles: [p0, p1, p2, p3],
+        look0: t0,
         // the eye leads the body a little: the look point travels slightly ahead
         target: (k, out) => out.lerpVectors(t0, dest.target, Math.min(1, k * 1.08 - 0.08 * k * k)),
         f0,
@@ -454,6 +468,11 @@ export function createCameraRig(ctx) {
     get transitioning() {
       return !!transition;
     },
+    /** Debug / QA: the running glide's Bézier handles and look points (null when not gliding a planned arc). */
+    get glide() {
+      const tr = transition;
+      return tr?.handles ? { handles: tr.handles, t0: tr.look0, t3: tr.dest.target, fov: Math.max(tr.fov0, tr.dest.fov ?? tr.fov0) } : null;
+    },
     obstacles,
     onSpotChange(fn) {
       spotListeners.add(fn);
@@ -501,7 +520,13 @@ export function createCameraRig(ctx) {
      */
     focus(what, opts = {}) {
       const entryId = what?.isObject3D ? what.userData?.__hotspot?.entryId : null;
-      if (entryId && FRAMING[entryId]) opts = { ...opts, ...FRAMING[entryId] };
+      if (entryId && FRAMING[entryId]) {
+        opts = { ...opts, ...FRAMING[entryId] };
+        if (opts.quiet) {
+          const sib = ctx.interactions?.hotspots?.find((h) => h.entryId === entryId && h.marker === false && h.enabled);
+          if (sib) what = sib.object;
+        }
+      }
       const p = new THREE.Vector3();
       let radius = opts.radius ?? 0;
       let facing = null;
@@ -525,6 +550,7 @@ export function createCameraRig(ctx) {
         if (opts.height) p.y += opts.height;
       }
       p.y += opts.lift ?? 0;
+      if (opts.offset) p.add(fV.set(opts.offset[0], opts.offset[1], opts.offset[2]));
       // clicked from another spot (e.g. the overview): that spot becomes current
       if (opts.spot && SPOT_BY_ID[opts.spot] && opts.spot !== spot) {
         const prev = spot;
@@ -711,6 +737,7 @@ export function createCameraRig(ctx) {
       camera.lookAt(override.lookAt);
       target.copy(override.lookAt);
       rig.focusDistance = camera.position.distanceTo(override.lookAt);
+      applyDofScale();
       return;
     }
     idle += dt;
@@ -860,7 +887,35 @@ export function createCameraRig(ctx) {
     }
     glideFocusW = 0;
     rig.focusDistance = fd;
+    applyDofScale();
   }, 80);
+
+  /**
+   * A tall phone screen holds a deep slice of the glen (from the bank at the
+   * bottom of the frame to the crown at the top): the 16:9 lens blur turned
+   * half of it into soft bokeh. On portrait the depth of field is gentler —
+   * rig.dofScale (1 on landscape → PORTRAIT_DOF on a phone, a touch less by
+   * night when the lit village must read) scales the post chain's aperture
+   * (ctx.post.settings, live-tunable: a value someone else sets is adopted as
+   * the new base). Only the 'full' post tier has depth of field at all.
+   */
+  const PORTRAIT_DOF = 0.5;
+  const PORTRAIT_DOF_NIGHT = 0.42;
+  let apBase = null;
+  let apWritten = null;
+  rig.dofScale = 1;
+  function applyDofScale() {
+    const p = portrait();
+    const n = ctx.env?.night ?? 0;
+    const k = 1 - p * (1 - (PORTRAIT_DOF + (PORTRAIT_DOF_NIGHT - PORTRAIT_DOF) * n));
+    rig.dofScale = k;
+    const S = ctx.post?.settings;
+    if (!S || typeof S.aperture !== 'number') return;
+    if (apBase === null || S.aperture !== apWritten) apBase = S.aperture;
+    const want = apBase * k;
+    if (S.aperture !== want) S.aperture = want;
+    apWritten = S.aperture;
+  }
 
   /** Distance along the line of sight camera → look point to the first solid thing (analytic, cheap). */
   const chDir = new THREE.Vector3();

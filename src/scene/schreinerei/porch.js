@@ -1,5 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// The porch (SCHREINEREI.porch): a shingled lean-to on the annex front with a
+// The porch (SCHREINEREI.porch): a shingled lean-to on the annex front — its
+// right end carried by the oak's great root (annex.js), the left by a timber
+// post; clustered, domed moss cushions in the damp places on its shakes — with a
 // traditional Swiss Hobelbank at real working height — a light beech top over
 // a dark steamed-beech trestle base, the front vise and the tail vise with fat
 // threaded wooden spindles and long tommy bars (Knebel), a row of dog holes,
@@ -18,7 +20,7 @@ import * as THREE from 'three';
 import { createRng, clamp } from '../../core/rng.js';
 import { SPOTS } from '../../world/layout.js';
 import {
-  Batch, board, timber, xf, mat4, stoneGeo, mossGeo, mossPadGeo, ShingleField, layShingles, shingleGeo, uvBox, doubleFace,
+  Batch, board, timber, xf, mat4, stoneGeo, mossPadGeo, ShingleField, layShingles, shingleGeo, uvBox, doubleFace,
   addLantern, addIvy, paint, SPECIES, noiseA, addBowSaw, turned, pushHalo, count,
 } from './kit.js';
 import { mossVCMaterial, paintMoss, mossTone } from './door.js';
@@ -290,8 +292,8 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
       }
     }
     // lichen rosettes on the dry shakes (pale grey-green, the odd orange one)
-    const lichen = ['#9ea283', '#959d78', '#a8a88a', '#9ea283', '#b08a3c'];
-    for (let k = 0; k < count(30, 10); k++) {
+    const lichen = ['#8c9174', '#858d6a', '#949478', '#8c9174', '#a07d38'];
+    for (let k = 0; k < count(18, 8); k++) {
       const g = new THREE.CircleGeometry(mRng.range(0.01, 0.022), 7);
       g.rotateX(-Math.PI / 2);
       g.scale(1, 1, mRng.range(0.6, 1));
