@@ -652,7 +652,7 @@ function makeSurface(kindIn, opts) {
     sfQ: { value: new THREE.Vector4(mossy, 1 / (KINDS.moss.tile * 0.9), kd.velvet ?? 0, kd.metalRust ?? 0) },
     sfR: { value: new THREE.Vector4(opts.grain === 'v' || opts.swapUV ? 1 : 0, kd.polar ? (opts.gills === 'cone' ? 2 : 1) : 0, opts.metalness ?? kd.metalness ?? 0, triplanar ? kd.antiTile ?? 0 : 0) },
     sfLight: { value: new THREE.Vector4(opts.wrap ?? kd.wrap ?? 0, 0, 0, 0) },
-    sfS: { value: new THREE.Vector4(opts.mossGain ?? 1, rays, 1, kind === 'bark' ? 0.4 * meanLum(kd, colA) : 0) },
+    sfS: { value: new THREE.Vector4(opts.mossGain ?? 1, rays, 1, kind === 'bark' ? meanLum(kd, colA) : 0) },
   };
   if (moss) {
     _mossMaps ??= surfaceMaps('moss');
