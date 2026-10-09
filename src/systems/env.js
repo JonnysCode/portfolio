@@ -35,8 +35,11 @@ export function createEnv(engine) {
       return () => listeners.delete(fn);
     },
   };
+  // Day ↔ night eases slowly enough that the blue hour (night ≈ 0.3–0.7: the
+  // crown still readable, lamps catching one by one, blue-green air) lingers
+  // for a couple of seconds instead of flashing past (λ 1.3 → 0.45).
   engine.addUpdate((dt, t) => {
-    env.night += (env.target - env.night) * damp(1.3, dt);
+    env.night += (env.target - env.night) * damp(0.45, dt);
     if (Math.abs(env.target - env.night) < 1e-3) env.night = env.target;
     materials.update(dt, t, env.night);
   }, 5);

@@ -13,7 +13,7 @@ import { paintWood, whenFontsReady, FONT_DISPLAY, FONT_HAND } from '../../props/
 import {
   Batch, mats, xf, mat4, board, boardBetween, rod, stoneGeo, blockStone, mossGeo, tube, taperTube, sagCurve, leafGeo,
   Cards, addFlower, addGrass, addFern, addToadstool, addIvy, uvBox, paintFn, deform, TAU, WOOD, IRON, FLOWER_COLORS,
-  noiseA,
+  noiseA, KIT,
 } from './kit.js';
 
 const _v = new THREE.Vector3();
@@ -163,7 +163,8 @@ export function addRose(F, rng, p, s, color) {
   const M = mats();
   const c = new THREE.Color(color);
   for (let k = 0; k < 3; k++) {
-    const ring = new THREE.SphereGeometry(s * (1 - k * 0.25), 6, 3, 0, TAU, 0, Math.PI * (0.55 - k * 0.08));
+    const lo = KIT.detail < 0.6;
+    const ring = new THREE.SphereGeometry(s * (1 - k * 0.25), lo ? 5 : 6, lo ? 2 : 3, 0, TAU, 0, Math.PI * (0.55 - k * 0.08));
     ring.scale(1, 0.7, 1);
     ring.rotateX(-0.6 + rng.jitter(0.3));
     ring.rotateY(rng.next() * TAU);
@@ -193,13 +194,15 @@ export function stringLights(F, lines, halos, { spacing = 0.28, sag = 0.08, tran
     if (path.length < 2) continue;
     const curve = new THREE.CatmullRomCurve3(path, false, 'centripetal');
     const len = curve.getLength();
-    F.add(M.vc, new THREE.TubeGeometry(curve, Math.max(8, Math.round(len * 12)), 0.007, 3, false), { color: '#2e2a25', cast: false });
+    // (the wire: ≈ 8 segments a unit, 5 on the lower tiers — it sags smoothly between the posts)
+    F.add(M.vc, new THREE.TubeGeometry(curve, Math.max(6, Math.round(len * (KIT.detail < 0.6 ? 5 : 8))), 0.007, 3, false), { color: '#2e2a25', cast: false });
     const n = Math.max(1, Math.floor(len / spacing));
+    const lo = KIT.detail < 0.6; // (lower tiers: fewer facets on the tiny bulbs & sockets)
     for (let k = 0; k < n; k++) {
       const p = curve.getPointAt((k + 0.5) / n);
-      F.add(M.metal, new THREE.CylinderGeometry(bulb * 0.45, bulb * 0.45, bulb * 0.7, 4, 1, true).translate(p.x, p.y - bulb * 0.5, p.z), { color: '#3a332c', cast: false });
+      F.add(M.metal, new THREE.CylinderGeometry(bulb * 0.45, bulb * 0.45, bulb * 0.7, lo ? 3 : 4, 1, true).translate(p.x, p.y - bulb * 0.5, p.z), { color: '#3a332c', cast: false });
       // (round enough not to read as little pennants by day)
-      F.add(M.bulb, new THREE.SphereGeometry(bulb, 7, 4).scale(1, 1.25, 1).translate(p.x, p.y - bulb * 1.35, p.z), { cast: false });
+      F.add(M.bulb, new THREE.SphereGeometry(bulb, lo ? 5 : 7, lo ? 3 : 4).scale(1, 1.25, 1).translate(p.x, p.y - bulb * 1.35, p.z), { cast: false });
       if (halos) {
         _v.set(p.x, p.y - bulb * 1.35, p.z);
         if (transform) _v.applyMatrix4(transform);
@@ -421,7 +424,7 @@ export function makeWoodlandSign(rng, { text = "Jonny's\nWoodland", F = null } =
       const r = 0.2 * (1 - t * 0.75);
       pts.push([s * (0.05 + t * 0.32 + Math.sin(a) * r * 0.4), 1.25 + t * 0.12 - Math.cos(a) * r * 0.25 + 0.05, 0.02]);
     }
-    B.add(M.metal, tube(pts, 0.016, 5, 40), { color: gold, cast: false });
+    B.add(M.metal, tube(pts, 0.016, KIT.detail < 0.6 ? 4 : 5, KIT.detail < 0.6 ? 24 : 40), { color: gold, cast: false });
   }
   // the board (carved & painted oak, own textured material)
   const tex = signTexture(text);
@@ -436,7 +439,7 @@ export function makeWoodlandSign(rng, { text = "Jonny's\nWoodland", F = null } =
   g.add(face);
   // ornate frame: a rope-like moulding around the board + corner scrolls + crest
   const outline = roundedRectShape(bw + 0.05, bh + 0.05, 0.14).getSpacedPoints(64).slice(0, -1).map((p) => [p.x, by + p.y, 0.035]);
-  B.add(M.metal, tube(outline, 0.028, 5, 96, true), { color: gold, cast: true });
+  B.add(M.metal, tube(outline, 0.028, KIT.detail < 0.6 ? 4 : 5, KIT.detail < 0.6 ? 64 : 96, true), { color: gold, cast: true });
   const scroll = (cx, cy, sx, sy, size) => {
     const pts = [];
     for (let i = 0; i <= 18; i++) {
@@ -445,7 +448,7 @@ export function makeWoodlandSign(rng, { text = "Jonny's\nWoodland", F = null } =
       const r = size * (1 - t * 0.8);
       pts.push([cx + sx * (Math.cos(a) * r), cy + sy * (Math.sin(a) * r), 0.04]);
     }
-    B.add(M.metal, tube(pts, 0.017, 5, 26), { color: gold, cast: false });
+    B.add(M.metal, tube(pts, 0.017, KIT.detail < 0.6 ? 4 : 5, KIT.detail < 0.6 ? 16 : 26), { color: gold, cast: false });
   };
   for (const sx of [-1, 1]) {
     for (const sy of [-1, 1]) scroll(sx * (bw / 2 + 0.06), by + sy * (bh / 2 + 0.04), sx, sy, 0.11);

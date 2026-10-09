@@ -20,7 +20,7 @@
 import * as THREE from 'three';
 import { OAK, oakRadiusAt } from '../../world/layout.js';
 import { createRng } from '../../core/rng.js';
-import { Batch, board, uvBox, xf, deform, mat4, mossGeo, tube, archShape, arcSegment, addIvy, addToadstool, addFern, addLantern, pushHalo, peg, noiseA, noiseB } from './kit.js';
+import { Batch, board, uvBox, xf, deform, mat4, mossGeo, mossPadGeo, tube, archShape, arcSegment, addIvy, addToadstool, addFern, addLantern, pushHalo, peg, noiseA, noiseB, turned, LOD } from './kit.js';
 
 /** Door dimensions (exported so others can align to it). */
 export const DOOR = {
@@ -116,22 +116,17 @@ export function buildDoor(ctx, B, mats) {
     D.add(oak, xf(th, [0, y0 - 0.045, -0.2]));
   }
 
-  // ── the lit niche behind the door: reveals + a painted glimpse inside ──────
-  const nicheDepth = 0.3;
-  {
-    // reveal lining (inside the frame) — warm-lit planks
-    const lining = mats.wood('spruce');
-    for (const s of [-1, 1]) {
-      const p = board(0.04, Hs, nicheDepth, { along: 'y', rng });
-      D.add(lining, xf(p, [s * (R - 0.02), y0 + Hs / 2, -nicheDepth / 2 - 0.01]), { cast: false });
-    }
-    for (let i = 0; i < 8; i++) {
-      const a0 = (i / 8) * Math.PI, a1 = ((i + 1) / 8) * Math.PI;
-      const seg = arcSegment(R - 0.04, R, a0, a1, nicheDepth, 2);
-      D.add(lining, xf(uvBox(seg, 'z'), [0, archY, -nicheDepth / 2 - 0.01]), { cast: false });
-    }
-  }
-  // the glimpse: a painted interior (spiral stair, shelves, lamp) that glows
+  // ── the lit stair hall behind the door ─────────────────────────────────────
+  // The oak builder carves its niche ~0.95 behind the frame face and the
+  // frame's jambs & arch (0.9 deep) line its sides, so there is a real little
+  // room in there: plank reveals, an oak floor, the first turns of a spiral
+  // stair winding up round a turned newel with a rope handrail, a shelf of
+  // jars and a try-square on a peg on the back wall, a candle sconce. Only the
+  // far wall is still a painted card (the warm gradient and the lamp's glow).
+  const nicheDepth = 0.86;
+  const room = buildNicheRoom(D, mats, rng, { R, y0, archY, depth: nicheDepth });
+  pushHalo(room.sconce.clone().applyMatrix4(D.matrix), 0.26);
+  // the far wall: a painted, softly glowing card (lamp-lit planks)
   const glimpse = makeGlimpseMaterial();
   {
     const shape = archShape(W - 0.06, Hs, { y: 0 });
@@ -145,8 +140,9 @@ export function buildDoor(ctx, B, mats) {
     }
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     const m = new THREE.Mesh(g, glimpse);
-    m.position.set(OAK.door.x, y0, DOOR.z - nicheDepth);
+    m.position.set(OAK.door.x, y0, DOOR.z - nicheDepth - 0.005);
     m.name = 'door-glimpse';
+    m.castShadow = false;
     group.add(m);
   }
 
@@ -406,24 +402,52 @@ export function buildDoor(ctx, B, mats) {
   }
 
   // ── worn stone steps up to the threshold ──────────────────────────────────
+  // Individual field stones, not cast slabs: each its own width, height and
+  // tone, the arrises rounded and here and there chipped, the treads dished
+  // where feet have worn them (deepest on the walking line through the open
+  // half of the doorway), damp and darker down their sides, moss in the
+  // joints and tufts at the ends.
   {
-    const stepH = y0 / 2;
+    const stepMat = stepStoneMaterial(ctx);
+    const walk = 0.18; // the walking line (x) through the open half of the doorway
     const rows = [
-      { top: y0, z0: -0.02, depth: 0.5, w: W + F * 2 + 0.25, n: 2 },
-      { top: stepH, z0: 0.48, depth: 0.46, w: W + F * 2 + 0.7, n: 3 },
+      { top: y0, z0: -0.04, depth: 0.52, w: W + F * 2 + 0.22, n: 3 },
+      { top: y0 / 2, z0: 0.47, depth: 0.5, w: W + F * 2 + 0.72, n: 4 },
     ];
     for (const row of rows) {
-      const segW = row.w / row.n;
+      const ws = [];
+      for (let i = 0; i < row.n; i++) ws.push(1 + rng.jitter(0.3));
+      const sum = ws.reduce((a, b) => a + b, 0);
+      let x = -row.w / 2;
+      const joints = [];
       for (let i = 0; i < row.n; i++) {
-        const sw = segW - 0.035 + rng.jitter(0.04);
-        const cx = -row.w / 2 + (i + 0.5) * segW + rng.jitter(0.02);
-        const g = slab(rng, sw, row.top + 0.04, row.depth + rng.jitter(0.04));
-        D.add(mats.stone(), xf(g, [cx, row.top / 2 - 0.02, row.z0 + row.depth / 2], [0, rng.jitter(0.04), 0]));
+        const full = (ws[i] / sum) * row.w;
+        const cx = x + full / 2 + rng.jitter(0.01);
+        const sw = full - 0.035 - rng.next() * 0.02;
+        const h = row.top + 0.08;
+        const d = row.depth + rng.jitter(0.05);
+        const top = row.top + rng.jitter(0.012);
+        const g = wornStone(rng, sw, h, d, { walkX: walk - cx, tone: rng.pick(STEP_TONES) });
+        D.add(stepMat, xf(g, [cx, top - h / 2, row.z0 + d / 2 + rng.jitter(0.015)], [0, rng.jitter(0.05), 0]));
+        x += full;
+        if (i < row.n - 1) joints.push(x);
       }
-      // moss in the joints and on the outer ends
-      for (let i = 0; i <= row.n; i++) {
-        const x = -row.w / 2 + i * segW;
-        D.add(mats.moss(), xf(mossGeo(rng, { r: 0.06, h: 0.03 }), [x, row.top, row.z0 + row.depth * rng.range(0.3, 0.8)], null, [0.6, 1, 2.2]), { cast: false });
+      // moss in the joints and at the outer ends, a fern tuft at each end
+      for (const jx of joints) {
+        for (let k = 0; k < 2; k++) {
+          const m = mossPadGeo(rng, { r: 0.05, h: 0.022, sx: 0.55, sz: 2.4, lobes: 1 });
+          D.add(mats.moss(), xf(m, [jx + rng.jitter(0.01), row.top - 0.012, row.z0 + row.depth * (0.3 + k * 0.42)], [0, rng.jitter(0.15), 0]), { cast: false });
+        }
+      }
+      for (const s of [-1, 1]) {
+        const ex = s * (row.w / 2 + 0.02);
+        D.add(mats.moss(), xf(mossPadGeo(rng, { r: 0.11, h: 0.05, sx: 0.9, sz: 1.8 }), [ex, row.top - 0.035, row.z0 + row.depth * 0.5], [0, rng.jitter(0.3), s * 0.25]), { cast: false });
+      }
+    }
+    // a few fallen leaves on the treads (not on the walking line)
+    if (LOD.small) {
+      for (const [lx, lz, ly] of [[-0.62, 0.15, y0], [0.72, 0.62, y0 / 2], [-0.85, 0.75, y0 / 2]]) {
+        D.add(mats.vc(), xf(new THREE.CircleGeometry(0.035, 6).scale(1, 0.6, 1), [lx, ly + 0.004, lz], [-Math.PI / 2, 0, rng.next() * 6]), { color: rng.pick(['#b8742f', '#c99a3e', '#9a5a2a']), cast: false });
       }
     }
   }
@@ -533,7 +557,9 @@ export function buildDoor(ctx, B, mats) {
   const paper = cert.userData.paper;
   function update(dt, t) {
     const n = ctx.env?.night ?? 0;
-    glimpse.emissiveIntensity = 0.55 + n * 1.6 + Math.sin(t * 7.3) * 0.03 * n + Math.sin(t * 13.1) * 0.02 * n;
+    const flicker = Math.sin(t * 7.3) * 0.03 * n + Math.sin(t * 13.1) * 0.02 * n;
+    glimpse.emissiveIntensity = 0.5 + n * 1.3 + flicker;
+    room.glow.value = ROOM_GLOW.day + (ROOM_GLOW.night - ROOM_GLOW.day) * n + flicker * 2;
     spill.material.uniforms.uK.value = 0.05 + n * 0.6;
     // the parchment catches the picture lamp (a little by day, warmly at night)
     paper.emissiveIntensity = 0.3 + n * 0.45;
@@ -547,6 +573,173 @@ export function buildDoor(ctx, B, mats) {
   };
 }
 
+// ─── the stair hall behind the door ──────────────────────────────────────────
+/** Self-glow of the stair hall (× its baked vertex colours) by day / at night. */
+const ROOM_GLOW = { day: 0.42, night: 1.05 };
+let roomMat = null;
+/**
+ * One material for everything in the stair hall: vertex colours carry the
+ * candle light baked in (bright near the sconce, dim towards the door), and
+ * the surfaces glow a little by themselves (emission = albedo × uRoomGlow),
+ * so the room reads lit even when no point light reaches it.
+ */
+function nicheRoomMaterial() {
+  if (roomMat) return roomMat;
+  const glow = { value: ROOM_GLOW.day };
+  roomMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.78, metalness: 0, name: 'door-stair-hall' });
+  roomMat.userData.glow = glow;
+  roomMat.onBeforeCompile = (sh) => {
+    sh.uniforms.uRoomGlow = glow;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uRoomGlow;')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n\ttotalEmissiveRadiance += diffuseColor.rgb * uRoomGlow;');
+  };
+  roomMat.customProgramCacheKey = () => 'door-stair-hall';
+  return roomMat;
+}
+
+/**
+ * Build the stair hall into the door frame D (x across the opening, y up,
+ * z out of the door; the opening spans |x| < R from the sill y0 up to the
+ * arch, the room reaches `depth` behind the frame face). From the spot only
+ * the right part of the opening shows past the ajar leaf, so the stair winds
+ * up from the front-right round the newel towards the back, and the shelf,
+ * the square and the sconce hang on the back wall on that side.
+ * Returns { glow (uniform), sconce (frame-space point) }.
+ */
+function buildNicheRoom(D, mats, rng, { R, y0, archY, depth }) {
+  const mat = nicheRoomMaterial();
+  const sconce = new THREE.Vector3(0.3, archY + 0.27, -depth + 0.07);
+  const base = new THREE.Color(), col = new THREE.Color();
+  const p = new THREE.Vector3();
+  // bake the candle into the vertex colours: bright near it, dimmer towards
+  // the door and in the low corners, undersides darker
+  const lit = (geo, color) => {
+    if (!geo.attributes.normal) geo.computeVertexNormals();
+    base.set(color);
+    const pos = geo.attributes.position, nor = geo.attributes.normal;
+    const arr = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      p.fromBufferAttribute(pos, i);
+      const d2 = p.distanceToSquared(sconce);
+      const deep = THREE.MathUtils.clamp(-p.z / depth, 0, 1);
+      const low = THREE.MathUtils.smoothstep(p.y, y0, y0 + 0.5);
+      let k = 0.34 + 0.95 * Math.exp(-d2 / 0.5) + 0.26 * deep + 0.12 * low;
+      k *= 0.68 + 0.32 * (nor.getY(i) * 0.5 + 0.5);
+      col.copy(base).multiplyScalar(k);
+      arr[i * 3] = col.r;
+      arr[i * 3 + 1] = col.g;
+      arr[i * 3 + 2] = col.b;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+    return geo;
+  };
+  const add = (geo, color) => D.add(mat, lit(geo, color), { cast: false });
+  const nx = 0.13, nz = -0.46; // the newel
+  // ── floor: wide oak planks running in from the threshold ──────────────────
+  {
+    const tones = ['#b58a55', '#a57a48', '#bb9160', '#9f7445'];
+    const n = 4, pw = (2 * R) / n;
+    for (let i = 0; i < n; i++) {
+      add(xf(board(pw - 0.008, 0.03, depth - 0.42, { along: 'z', rng }), [-R + pw * (i + 0.5), y0 - 0.015, -(depth + 0.42) / 2]), tones[i]);
+    }
+  }
+  // ── the reveals: three vertical planks a side, and the planked soffit ─────
+  {
+    const n = 3, pd = depth / n;
+    for (const s of [-1, 1]) {
+      for (let i = 0; i < n; i++) {
+        add(xf(board(0.035, archY - y0 + 0.02, pd - 0.006, { along: 'y', rng }), [s * (R - 0.018), (archY + y0) / 2, -0.01 - pd * (i + 0.5)]), rng.pick(['#d6bd8c', '#cdb281', '#dcc496']));
+      }
+    }
+    for (let i = 0; i < 8; i++) {
+      const a0 = (i / 8) * Math.PI, a1 = ((i + 1) / 8) * Math.PI;
+      add(xf(arcSegment(R - 0.035, R, a0, a1, depth, 2), [0, archY, -depth / 2 - 0.01]), i % 2 ? '#d2b887' : '#c9ad7c');
+    }
+  }
+  // ── the newel: a turned oak post with beads, a carved acorn foot ──────────
+  {
+    const prof = [[0, y0], [0.062, y0], [0.064, y0 + 0.05], [0.05, y0 + 0.09], [0.044, y0 + 0.12]];
+    for (let y = y0 + 0.42; y < archY + 0.75; y += 0.38) prof.push([0.044, y - 0.03], [0.054, y], [0.044, y + 0.03]);
+    prof.push([0.044, archY + 0.85], [0, archY + 0.85]);
+    add(xf(turned(prof, 12), [nx, 0, nz]), '#9a6c42');
+  }
+  // ── the winder treads: oak pie slices housed in the newel and the wall ───
+  const rise = 0.165, th = 0.042;
+  const tread0 = -0.45, dTheta = 0.42;
+  const reach = (a) => {
+    // the outer end stops at the reveals, the back wall and the door plane
+    let r = 0.5;
+    const c = Math.cos(a), s = Math.sin(a);
+    if (c > 0.01) r = Math.min(r, (R - 0.04 - nx) / c);
+    if (c < -0.01) r = Math.min(r, (R - 0.04 + nx) / -c);
+    if (s > 0.01) r = Math.min(r, (depth - 0.03 + nz) / s);
+    if (s < -0.01) r = Math.min(r, (-nz - 0.06) / -s);
+    return r;
+  };
+  const treadTones = ['#b98d58', '#ad8150', '#c09462', '#a77b4b'];
+  const nTreads = 9;
+  for (let i = 0; i < nTreads; i++) {
+    const a = tread0 + i * dTheta;
+    const aa = a - dTheta * 0.62, ab = a + dTheta * 0.5; // each tread laps under the next one's nosing
+    const sh = new THREE.Shape();
+    const steps = 5;
+    sh.moveTo(Math.cos(aa) * 0.05, Math.sin(aa) * 0.05);
+    for (let k = 0; k <= steps; k++) {
+      const t = aa + ((ab - aa) * k) / steps;
+      const r = reach(t);
+      sh.lineTo(Math.cos(t) * r, Math.sin(t) * r);
+    }
+    sh.lineTo(Math.cos(ab) * 0.05, Math.sin(ab) * 0.05);
+    const g = new THREE.ExtrudeGeometry(sh, { depth: th, bevelEnabled: true, bevelSize: 0.008, bevelThickness: 0.008, bevelSegments: 1, curveSegments: 2 });
+    g.rotateX(-Math.PI / 2); // shape y → −z (back), extrusion → up
+    const y = y0 + rise * (i + 1) - th - 0.008;
+    add(xf(g, [nx, y, nz]), treadTones[i % treadTones.length]);
+  }
+  // ── a rope handrail on iron eyes along the wall side ──────────────────────
+  {
+    const pts = [];
+    for (let a = tread0 - 0.2; a <= tread0 + dTheta * 5; a += 0.2) {
+      const r = Math.max(0.12, reach(a) - 0.07);
+      const yy = y0 + rise * ((a - tread0) / dTheta + 1) + 0.6;
+      pts.push([nx + Math.cos(a) * r, yy, nz - Math.sin(a) * r]);
+    }
+    add(tube(pts, 0.011, 5, pts.length * 3), '#c9a86e');
+    for (const k of [1, 5, 9]) {
+      if (k >= pts.length - 1) continue;
+      const q = pts[k];
+      add(xf(new THREE.TorusGeometry(0.02, 0.005, 4, 8), [q[0], q[1] + 0.012, q[2]], [Math.PI / 2, 0, 0]), '#3a3430');
+    }
+    // the rope's end knotted round the newel's foot
+    add(xf(new THREE.TorusGeometry(0.06, 0.012, 5, 12), [nx, y0 + 0.3, nz], [Math.PI / 2, 0, 0.2]), '#c9a86e');
+  }
+  // ── on the back wall, right of the stair: a shelf of jars, a square on a peg, the sconce
+  {
+    const zw = -depth + 0.01;
+    const sy = y0 + 1.0, sx0 = 0.27, sx1 = R - 0.05;
+    add(xf(board(sx1 - sx0, 0.022, 0.1, { along: 'x', rng }), [(sx0 + sx1) / 2, sy, zw + 0.05]), '#a37648');
+    for (const x of [sx0 + 0.05, sx1 - 0.05]) add(xf(board(0.018, 0.07, 0.08, { along: 'y', rng }), [x, sy - 0.045, zw + 0.045]), '#8f6440');
+    const jars = [['#d9a441', 0.1, 0.028], ['#86a06a', 0.08, 0.025], ['#b5633e', 0.07, 0.03], ['#e8dcc0', 0.11, 0.024]];
+    jars.forEach(([c, h, r], i) => {
+      const x = sx0 + 0.04 + i * 0.065 + rng.jitter(0.006);
+      add(xf(new THREE.CylinderGeometry(r, r * 1.05, h, 9), [x, sy + 0.011 + h / 2, zw + 0.05]), c);
+      add(xf(new THREE.CylinderGeometry(r * 0.8, r * 0.8, 0.012, 9), [x, sy + 0.011 + h + 0.006, zw + 0.05]), i === 2 ? '#e8dcc0' : '#6b4a2e');
+    });
+    // a try-square hung by its stock on a peg
+    const qx = 0.47, qy = sy + 0.3;
+    add(xf(new THREE.CylinderGeometry(0.006, 0.006, 0.04, 6), [qx, qy + 0.07, zw + 0.02], [Math.PI / 2, 0, 0]), '#7a5539');
+    add(xf(board(0.024, 0.15, 0.014, { along: 'y', rng }), [qx, qy, zw + 0.012], [0, 0, 0.06]), '#5c4334');
+    add(xf(new THREE.BoxGeometry(0.12, 0.016, 0.003), [qx + 0.066, qy - 0.064, zw + 0.012], [0, 0, 0.06]), '#d4d9dc');
+    // the candle sconce: an iron cup on a little arm, a cream candle
+    const c = sconce;
+    add(xf(new THREE.BoxGeometry(0.012, 0.012, 0.06), [c.x, c.y - 0.06, zw + 0.03]), '#3a3430');
+    add(xf(new THREE.CylinderGeometry(0.026, 0.018, 0.02, 8), [c.x, c.y - 0.055, c.z]), '#3a3430');
+    add(xf(new THREE.CylinderGeometry(0.012, 0.013, 0.06, 8), [c.x, c.y - 0.018, c.z]), '#f2e6c8');
+    D.add(mats.glow('#ffd79a', 0.9), xf(new THREE.SphereGeometry(0.013, 6, 4), [c.x, c.y + 0.022, c.z], null, [1, 1.6, 1]), { cast: false, receive: false });
+  }
+  return { glow: mat.userData.glow, sconce };
+}
+
 /** The shared vertex-coloured, lightly mossy root bark (door roots & annex roots: one draw call). */
 export function rootBarkMaterial(ctx) {
   return ctx.materials.surface('bark', { mossy: 0.22, vertexColors: true });
@@ -557,16 +750,18 @@ const BARK_MEAN = new THREE.Color('#6a5845');
  * A root along `pts` (frame space): an oval tube tapering r0 → r1 (`flat` =
  * height / width), with long bark ridges and furrows that wander a little.
  * Vertex colours carry the AO for rootBarkMaterial: dark in the furrows,
- * underneath and near the ground (y = `ground`). Returns { geo, curve, radiusAt(t) }.
+ * underneath and near the ground (y = `ground`). `radius(t)` overrides the
+ * plain taper (a buttress that swells where it leaves the bole, a knee, a
+ * foot that spreads into the soil). Returns { geo, curve, radiusAt(t) }.
  */
-export function rootGeo(rng, pts, { r0 = 0.3, r1 = 0.08, flat = 0.75, radial = 14, tubular = 28, ground = 0 } = {}) {
+export function rootGeo(rng, pts, { r0 = 0.3, r1 = 0.08, flat = 0.75, radial = 14, tubular = 28, ground = 0, radius = null } = {}) {
   const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p[0], p[1], p[2])));
   const g = new THREE.TubeGeometry(curve, tubular, 1, radial, false);
   const pos = g.attributes.position;
   const col = new Float32Array(pos.count * 3);
   const c = new THREE.Vector3(), d = new THREE.Vector3();
   const ox = rng.next() * 50;
-  const radiusAt = (t) => r0 + (r1 - r0) * Math.pow(t, 0.8);
+  const radiusAt = radius ?? ((t) => r0 + (r1 - r0) * Math.pow(t, 0.8));
   for (let j = 0; j <= tubular; j++) {
     const t = j / tubular;
     curve.getPointAt(t, c);
@@ -598,6 +793,103 @@ export function rootGeo(rng, pts, { r0 = 0.3, r1 = 0.08, flat = 0.75, radial = 1
   return { geo: g, curve, radiusAt };
 }
 
+/**
+ * A moss shell over the top of a root (rootGeo's curve & radius): a partial
+ * tube round the up-facing side, lifted off the bark by a lumpy thickness
+ * that thins to nothing — and dips back under the bark — towards its flanks,
+ * so the rim is broken and fuzzy rather than a painted stripe. Thickest on
+ * the near-level stretches, gone where the root runs steeply up or down.
+ * `t0..t1` limits it along the root; `cover` (0..1) how far round it reaches.
+ */
+export function mossCapGeo(rng, curve, radiusAt, { flat = 0.75, t0 = 0.05, t1 = 0.95, cover = 0.55, thick = 0.05, radial = 12, tubular = 22 } = {}) {
+  const pos = [];
+  const col = [];
+  const idx = [];
+  const P = new THREE.Vector3(), T = new THREE.Vector3(), N = new THREE.Vector3(), Bn = new THREE.Vector3();
+  const UP = new THREE.Vector3(0, 1, 0);
+  const ox = rng.next() * 40;
+  const span = Math.PI * cover;
+  for (let j = 0; j <= tubular; j++) {
+    const t = t0 + ((t1 - t0) * j) / tubular;
+    curve.getPointAt(t, P);
+    curve.getTangentAt(t, T);
+    N.copy(UP).addScaledVector(T, -T.dot(UP));
+    if (N.lengthSq() < 1e-4) N.set(1, 0, 0);
+    N.normalize();
+    Bn.crossVectors(T, N).normalize();
+    const r = radiusAt(t);
+    // moss settles where the root is level, not on its steep stretches
+    const level = 1 - THREE.MathUtils.smoothstep(Math.abs(T.y), 0.45, 0.85);
+    const ends = THREE.MathUtils.smoothstep(j / tubular, 0, 0.12) * THREE.MathUtils.smoothstep(1 - j / tubular, 0, 0.12);
+    for (let k = 0; k <= radial; k++) {
+      const u = k / radial;
+      const phi = (u * 2 - 1) * span;
+      const c = Math.cos(phi), s = Math.sin(phi);
+      // lumpy cushions along the root, the rim bitten into lobes
+      const lump = 0.55 + 0.45 * noiseA(t * 9 + ox, phi * 1.7) + 0.3 * noiseB(t * 23 - ox, phi * 4.1);
+      const rim = Math.pow(Math.max(0, 1 - Math.abs(phi) / span), 0.55);
+      const lift = thick * Math.max(0, lump) * rim * level * ends - (1 - rim) * 0.012 - 0.004;
+      const rr = r + lift;
+      pos.push(P.x + (N.x * c * flat + Bn.x * s) * rr, P.y + (N.y * c * flat + Bn.y * s) * rr, P.z + (N.z * c * flat + Bn.z * s) * rr);
+      // sunlit yellow-green on the crowns of the cushions, dark olive at the rim
+      mossTone(THREE.MathUtils.clamp(lift / thick, 0, 1) * (0.75 + 0.25 * c), _mc);
+      col.push(_mc.r, _mc.g, _mc.b);
+    }
+  }
+  const cols = radial + 1;
+  for (let j = 0; j < tubular; j++) {
+    for (let k = 0; k < radial; k++) {
+      const a = j * cols + k, b = (j + 1) * cols + k;
+      // (B = T × N, so (a, a+1, b) winds outwards)
+      idx.push(a, a + 1, b, a + 1, b + 1, b);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  uvBox(g, 'y', 2, [ox, ox]);
+  return g;
+}
+
+// ─── warm, vertex-coloured moss (roots, porch roof) ─────────────────────────
+/**
+ * Moss with its colour in the vertex colours: one shared material for the
+ * cushions that need to grade from a sunlit yellow-green crown to a dark
+ * olive rim (the plain moss surface reads flat and cool on a roof).
+ */
+export function mossVCMaterial(ctx) {
+  return ctx.materials.surface('moss', { vertexColors: true, scale: 1.1, bump: 0.8 });
+}
+const MOSS_RIM = new THREE.Color('#3b4620'), MOSS_MID = new THREE.Color('#6f7f2e'), MOSS_TOP = new THREE.Color('#a6ad50');
+const _mc = new THREE.Color();
+/** Moss tone for k = 0 (rim, shade) … 1 (sunlit crown). */
+export function mossTone(k, out = new THREE.Color()) {
+  return k < 0.5 ? out.copy(MOSS_RIM).lerp(MOSS_MID, k * 2) : out.copy(MOSS_MID).lerp(MOSS_TOP, (k - 0.5) * 2);
+}
+/**
+ * Paint a moss cushion lying on y = 0 (mossGeo / mossPadGeo, before it is
+ * placed): crown → rim by height, a little darker on its flanks, a few
+ * paler, sunnier tufts. `sun` (0..1) lifts the whole cushion.
+ */
+export function paintMoss(geo, h, { sun = 0.7, seed = 0 } = {}) {
+  if (!geo.attributes.normal) geo.computeVertexNormals();
+  const pos = geo.attributes.position, nor = geo.attributes.normal;
+  const arr = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const y = THREE.MathUtils.clamp(pos.getY(i) / Math.max(1e-3, h), 0, 1);
+    const n = noiseA(pos.getX(i) * 11 + seed, pos.getZ(i) * 11) * 0.5 + 0.5;
+    const k = THREE.MathUtils.clamp(Math.pow(y, 0.7) * (0.55 + 0.45 * Math.max(0, nor.getY(i))) * (0.6 + 0.5 * sun) + (n - 0.5) * 0.25, 0, 1);
+    mossTone(k, _mc);
+    arr[i * 3] = _mc.r;
+    arr[i * 3 + 1] = _mc.g;
+    arr[i * 3 + 2] = _mc.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return geo;
+}
+
 /** World z of the oak's (nominal) bark surface in front of the trunk at x, y. */
 export function barkZAt(x, y) {
   const r = oakRadiusAt(y);
@@ -622,88 +914,136 @@ export function barkMount(ctx, x, y, { spreadA = 0.05, spreadY = 0.25 } = {}) {
   return { a, r, point, normal };
 }
 
-/** A thick worn stone slab (rounded, lumpy edges, dished top). */
-function slab(rng, w, h, d) {
-  const g = new THREE.BoxGeometry(w, h, d, 6, 2, 4);
+/** Field-stone tones of the door steps (warm greys, one a little greener, one browner). */
+const STEP_TONES = ['#8f897c', '#9a9282', '#857f72', '#a1988a', '#8a8a7a', '#968a78'];
+/** The vertex-coloured stone of the steps & thresholds (one draw call for all of them). */
+export function stepStoneMaterial(ctx) {
+  return ctx.materials.surface('stone', { vertexColors: true, mossy: 0.05 });
+}
+
+/**
+ * A worn step stone (w × h × d, centred): rounded arrises, a tread dished by
+ * feet along `walkX` (most at the nosing), one or two chipped corners, lumpy
+ * sides; vertex colours (for stepStoneMaterial) — the stone's own `tone`,
+ * paler and smoother where it is worn, darker and greener down the damp
+ * sides and towards the ground.
+ */
+export function wornStone(rng, w, h, d, { walkX = 0, tone = '#928b7e', dish = 0.022, chips = 2 } = {}) {
+  const sx = Math.max(3, Math.round((w / 0.07) * LOD.k)), sz = Math.max(3, Math.round((d / 0.07) * LOD.k));
+  const g = new THREE.BoxGeometry(w, h, d, sx, 2, sz);
   const ox = rng.next() * 40;
-  deform(g, (v) => {
-    const ex = Math.abs(v.x) / (w / 2), ez = Math.abs(v.z) / (d / 2);
-    const edge = Math.max(ex, ez);
-    // round the top edges
-    if (v.y > 0) {
-      v.y -= Math.pow(Math.max(0, edge - 0.6) / 0.4, 2) * 0.05;
-      // worn dip near the middle of the front
-      v.y -= 0.016 * Math.exp(-(v.x * v.x) / 0.06) * (1 - ez * 0.6);
+  const hw = w / 2, hd = d / 2, hh = h / 2;
+  // chipped corners: a bevel plane cut across a top corner
+  const cuts = [];
+  for (let i = 0; i < chips; i++) cuts.push({ cx: rng.next() < 0.5 ? -1 : 1, cz: rng.next() < 0.6 ? 1 : -1, r: rng.range(0.05, 0.09) });
+  const rr = Math.min(0.05, hw * 0.3, hd * 0.3);
+  const topK = [];
+  deform(g, (v, i) => {
+    const ex = Math.abs(v.x) / hw, ez = Math.abs(v.z) / hd;
+    const top = THREE.MathUtils.smoothstep(v.y, hh - 0.06, hh);
+    // rounded arrises: the rim of the top sinks and draws in
+    const edge = Math.max(THREE.MathUtils.smoothstep(ex, 1 - rr / hw, 1), THREE.MathUtils.smoothstep(ez, 1 - rr / hd, 1));
+    v.y -= edge * edge * rr * 0.75 * top;
+    v.x -= Math.sign(v.x) * rr * 0.35 * top * THREE.MathUtils.smoothstep(ex, 0.8, 1);
+    v.z -= Math.sign(v.z) * rr * 0.35 * top * THREE.MathUtils.smoothstep(ez, 0.8, 1);
+    // the worn dish: along the walking line, deepest towards the nosing (+z)
+    let wear = 0;
+    if (v.y > hh - 0.03) {
+      const front = THREE.MathUtils.smoothstep(v.z, -hd, hd);
+      wear = Math.exp(-((v.x - walkX) ** 2) / 0.07) * (0.45 + 0.55 * front) * (1 - edge * 0.5);
+      v.y -= dish * wear;
+      // the nosing itself rounded off where feet land
+      v.y -= 0.02 * Math.exp(-((v.x - walkX) ** 2) / 0.09) * THREE.MathUtils.smoothstep(v.z, hd * 0.55, hd);
     }
-    v.x += noiseA(v.z * 4 + ox, v.y * 4) * 0.025;
-    v.z += noiseB(v.x * 4 + ox, v.y * 4) * 0.025;
-    v.y += noiseA(v.x * 6 - ox, v.z * 6) * 0.006;
+    // chips
+    for (const c of cuts) {
+      const px = c.cx * hw, pz = c.cz * hd;
+      const dd = Math.abs(v.x - px) + Math.abs(v.z - pz) + (hh - v.y) * 1.4;
+      if (dd < c.r) {
+        const k = (c.r - dd) / c.r;
+        v.x -= c.cx * k * c.r * 0.35;
+        v.z -= c.cz * k * c.r * 0.35;
+        v.y -= k * c.r * 0.6;
+      }
+    }
+    // lumpy, hand-split sides; a slightly uneven top
+    v.x += noiseA(v.z * 5 + ox, v.y * 5) * 0.012 * (1 - top * 0.7);
+    v.z += noiseB(v.x * 5 + ox, v.y * 5) * 0.012 * (1 - top * 0.7);
+    v.y += noiseA(v.x * 7 - ox, v.z * 7) * 0.004 * top;
+    topK[i] = top * (1 - edge * 0.6) + wear * 0.5;
   });
+  // vertex colours
+  const base = new THREE.Color(tone), c = new THREE.Color(), damp = new THREE.Color('#5d6148'), worn = new THREE.Color('#b9b0a0');
+  const pos = g.attributes.position;
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    const t = topK[i] ?? 0;
+    c.copy(base).multiplyScalar(0.72 + 0.28 * t + noiseB(pos.getX(i) * 9 + ox, pos.getZ(i) * 9) * 0.05);
+    // worn tread paler and smoother
+    c.lerp(worn, THREE.MathUtils.clamp((t - 0.9) * 2.5, 0, 0.35));
+    // damp, greener sides towards the ground
+    c.lerp(damp, (1 - t) * THREE.MathUtils.smoothstep(-y, -hh * 0.2, hh) * 0.3);
+    col[i * 3] = c.r;
+    col[i * 3 + 1] = c.g;
+    col[i * 3 + 2] = c.b;
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   uvBox(g, 'x', 1.4, [rng.next() * 9, rng.next() * 9]);
   return g;
 }
 
 /**
- * Painted interior glimpse: warm gradient, the first turns of a spiral stair
- * going up inside the oak, a shelf with jars and a hanging lamp.
+ * The stair hall's far wall, painted: warm planks lit by the candle sconce
+ * (upper right), darker towards the floor and the corners. Everything in
+ * front of it — stair, newel, shelf, jars, the square — is real geometry.
+ * The card spans the opening: u across, v from the sill up to the arch top.
  */
 function makeGlimpseMaterial() {
   const c = document.createElement('canvas');
   c.width = 256;
   c.height = 384;
   const g = c.getContext('2d');
-  const grd = g.createRadialGradient(150, 250, 10, 128, 220, 260);
-  grd.addColorStop(0, '#fff0c2');
-  grd.addColorStop(0.35, '#ffc274');
-  grd.addColorStop(0.75, '#b8662c');
-  grd.addColorStop(1, '#4a2614');
-  g.fillStyle = grd;
+  const r = createRng('door-glimpse');
+  // planks of slightly different widths & tones, soft seams between them
+  let x = 0;
+  while (x < 256) {
+    const w = 26 + r.next() * 14;
+    const l = 58 + r.next() * 10;
+    g.fillStyle = `hsl(${30 + r.next() * 6}, ${48 + r.next() * 10}%, ${l}%)`;
+    g.fillRect(x, 0, w, 384);
+    // faint grain
+    g.fillStyle = 'rgba(120,70,30,0.08)';
+    for (let k = 0; k < 5; k++) g.fillRect(x + r.next() * w, 0, 1 + r.next() * 2, 384);
+    g.fillStyle = 'rgba(70,35,12,0.35)';
+    g.fillRect(x + w - 2, 0, 2, 384);
+    x += w;
+  }
+  // the candle's pool of light (upper right) …
+  const sx = 195, sy = 73;
+  const lg = g.createRadialGradient(sx, sy, 4, sx, sy, 150);
+  lg.addColorStop(0, 'rgba(255,246,214,0.95)');
+  lg.addColorStop(0.3, 'rgba(255,214,150,0.45)');
+  lg.addColorStop(1, 'rgba(255,190,120,0)');
+  g.fillStyle = lg;
   g.fillRect(0, 0, 256, 384);
-  // floor
-  g.fillStyle = 'rgba(90,45,20,0.55)';
-  g.fillRect(0, 330, 256, 54);
-  // spiral stair steps (silhouettes) on the right
-  g.fillStyle = 'rgba(70,35,15,0.75)';
-  for (let i = 0; i < 9; i++) {
-    const y = 330 - i * 34;
-    const x = 150 + Math.sin(i * 0.8) * 40;
-    g.beginPath();
-    g.moveTo(x, y);
-    g.lineTo(x + 90, y - 10);
-    g.lineTo(x + 90, y - 2);
-    g.lineTo(x, y + 9);
-    g.closePath();
-    g.fill();
-  }
-  g.fillRect(232, 0, 10, 384);
-  // shelf with jars on the left
-  g.fillRect(8, 150, 90, 7);
-  g.fillRect(8, 220, 90, 7);
-  const jar = ['rgba(120,70,25,0.7)', 'rgba(150,90,30,0.65)', 'rgba(90,50,20,0.7)'];
-  for (let i = 0; i < 5; i++) {
-    g.fillStyle = jar[i % 3];
-    g.fillRect(14 + i * 17, 124 + (i % 2) * 6, 12, 26 - (i % 2) * 6);
-    g.fillRect(16 + i * 17, 196, 13, 24);
-  }
-  // hanging lamp (bright)
-  g.strokeStyle = 'rgba(60,30,10,0.8)';
-  g.lineWidth = 2;
-  g.beginPath();
-  g.moveTo(110, 0);
-  g.lineTo(110, 70);
-  g.stroke();
-  const lamp = g.createRadialGradient(110, 86, 2, 110, 86, 40);
-  lamp.addColorStop(0, 'rgba(255,255,235,1)');
-  lamp.addColorStop(0.4, 'rgba(255,220,150,0.6)');
-  lamp.addColorStop(1, 'rgba(255,200,120,0)');
-  g.fillStyle = lamp;
-  g.fillRect(60, 40, 100, 100);
-  // vignette near the jambs
+  // … falling off into warm shade away from it and towards the floor
+  const sh = g.createRadialGradient(sx, sy, 60, sx, sy + 40, 330);
+  sh.addColorStop(0, 'rgba(60,26,8,0)');
+  sh.addColorStop(1, 'rgba(60,26,8,0.62)');
+  g.fillStyle = sh;
+  g.fillRect(0, 0, 256, 384);
+  const fl = g.createLinearGradient(0, 300, 0, 384);
+  fl.addColorStop(0, 'rgba(50,22,8,0)');
+  fl.addColorStop(1, 'rgba(50,22,8,0.45)');
+  g.fillStyle = fl;
+  g.fillRect(0, 300, 256, 84);
+  // corners in shade
   const v = g.createLinearGradient(0, 0, 256, 0);
-  v.addColorStop(0, 'rgba(40,20,8,0.55)');
-  v.addColorStop(0.18, 'rgba(40,20,8,0)');
-  v.addColorStop(0.82, 'rgba(40,20,8,0)');
-  v.addColorStop(1, 'rgba(40,20,8,0.5)');
+  v.addColorStop(0, 'rgba(40,18,6,0.5)');
+  v.addColorStop(0.2, 'rgba(40,18,6,0)');
+  v.addColorStop(0.88, 'rgba(40,18,6,0)');
+  v.addColorStop(1, 'rgba(40,18,6,0.35)');
   g.fillStyle = v;
   g.fillRect(0, 0, 256, 384);
   const tex = new THREE.CanvasTexture(c);

@@ -17,14 +17,14 @@
 // front-door leaf + Jonny's portrait in the window), contact (mailbox),
 // living-room (the sofa, picking the whole room), moodboards (easel),
 // small-space (model table), a secret cat.
-// Night: the caps' torn cream flakes dim to the moonlight with only a faint mint
-// glint on their rims, warm "bounce" halos sit under the rims above lit windows and
-// the porch, the fairy-light spiral keeps the tall red cap a landmark, and the
-// chimney smoke thins to a moonlit veil with an ember glow at its foot.
-// Perf (high): ≈ 250k triangles, 51 draw calls, 9 shadow casters (moduleStats).
+// Night: the caps' torn cream flakes read as soft milky dots (a faint warm-milk glow
+// over each flake, never grey gravel, never LEDs), warm "bounce" halos sit under the
+// rims above lit windows and the porch, the fairy-light spiral keeps the tall red cap
+// a landmark, and the chimney smoke thins to a moonlit veil with an ember glow at its foot.
+// Perf: see COTTAGE_BUDGET below (moduleStats reports budget / overBudget per tier).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { Batch, setCottageNight } from './cottage/kit.js';
+import { Batch, setCottageNight, setCottageDetail } from './cottage/kit.js';
 import { buildHome } from './cottage/home.js';
 import { buildAtelier } from './cottage/atelier.js';
 import { buildShed } from './cottage/shed.js';
@@ -33,10 +33,19 @@ import { makeSmoke } from './cottage/smoke.js';
 import { scatterPad } from './cottage/scatter.js';
 import { createRng } from '../core/rng.js';
 
+/**
+ * Triangle budget per tier (moduleStats: budget / overBudget). The tiers really differ: the
+ * caps, stems and gills tessellate by ctx.quality.density (makeMushroomHouse `detail`), the
+ * warts, flakes, gill fins and lamellae thin out, and the kit's small parts (stones, moss,
+ * toadstools, fern fronds, fairy-light bulbs) drop facets (setCottageDetail).
+ */
+const COTTAGE_BUDGET = { high: 240000, medium: 160000, low: 120000 };
+
 export default async function build(ctx) {
   const root = new THREE.Group();
   root.name = 'cottage';
   ctx.scene.add(root);
+  setCottageDetail(ctx.quality?.density ?? 1);
   const B = new Batch();
   const halos = [];
   const reduced = !!ctx.engine?.reducedMotion;
@@ -76,6 +85,7 @@ export default async function build(ctx) {
   return {
     /** Static triangles in the merged cottage batch (debug). */
     tris: B.tris,
+    budget: COTTAGE_BUDGET,
     update(dt, t) {
       for (const u of updates) u(dt, t);
     },

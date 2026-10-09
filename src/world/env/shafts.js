@@ -8,7 +8,10 @@
 // gaps into bundles of thinner beams and simply vanish under dense foliage.
 // On top: drifting noise streaks, a forward-scattering phase (much brighter
 // when looking towards the sun), soft ends, fades when seen end-on, when the
-// camera gets too close, and at night.
+// camera gets too close, when the camera looks steeply down on the glen (the
+// phone's high glen shot, the top view: there a shaft stands against the
+// ground and would read as a pale pole) and at night. Without depth of field
+// (medium, low) and on portrait screens the falloff across a shaft is wider.
 //
 // A few big far shafts stand in the back-left forest (outside the shadow map:
 // always lit) to give the misty depth its golden slant.
@@ -18,6 +21,9 @@
 // By night a handful of shafts (addMoonbeam: the fairy ring, the lily pond,
 // the plunge pool …) stay on as cool silver moonbeams along the moonlight
 // (~35 % of the day strength, slower drift); everything else fades at dusk.
+// A moonbeam is a broad, soft glow of moonlit dust with no bright core: it
+// appears out of the dark (nothing at its top) and grows towards its foot,
+// where it pools — never a searchlight column out of the sky.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../../core/rng.js';
@@ -34,6 +40,7 @@ const VERT = /* glsl */ `
   attribute vec4 aMode;   // xyz: own axis (0 = follow the key light), w: 1 = night moonbeam
   uniform vec3 uAxis;     // towards the sun
   uniform float uDayK, uNightK;
+  uniform float uHigh;    // 0 … 1: how steeply the camera looks down on the glen
   varying vec2 vUv;
   varying vec3 vW;
   varying float vI;
@@ -62,6 +69,12 @@ const VERT = /* glsl */ `
     vSeed = aShape.w;
     // seen end-on the quad degenerates — fade it; also fade when the camera is inside it
     vView = (1.0 - pow(abs(dot(axis, toCam)), 6.0)) * smoothstep(aShape.y * 0.6, aShape.y * 2.2, camDist);
+    // seen from high above (the phone's glen shot, the top view) a day shaft
+    // stands against the ground, not against the dark forest: there it would
+    // read as a pale pole planted in the village — let it thin to a soft veil.
+    // (Looking along a shaft towards the light is its most beautiful view —
+    //  the eye-level intro — so that is left alone.)
+    vView *= 1.0 - 0.6 * uHigh * (1.0 - aMode.w);
     vI = aShape.z * k;
     gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
   }
@@ -70,6 +83,7 @@ const VERT = /* glsl */ `
 const FRAG = /* glsl */ `
   uniform vec3 uColor, uMoonColor;
   uniform float uTime, uStrength;
+  uniform float uSoft;  // 1: a wider, softer falloff across the shafts (no depth of field to blur them; portrait)
   varying vec2 vUv;
   varying vec3 vW;
   varying float vI;
@@ -82,17 +96,22 @@ const FRAG = /* glsl */ `
   void main() {
     float across = vUv.x;           // −1 … 1
     float along = vUv.y;            // 0 at the ground … 1 up in the crowns
-    float prof = 1.0 - smoothstep(0.25, 1.0, abs(across));
+    float prof = 1.0 - smoothstep(0.25 * (1.0 - uSoft), 1.0, abs(across));
     prof *= prof;
-    // day shafts fade in above the ground; a moonbeam lands: bright right down
-    // to its foot, where it pools on the ground
-    float ends = mix(smoothstep(0.0, 0.32, along), smoothstep(0.0, 0.035, along) * (1.0 + 0.6 * (1.0 - smoothstep(0.0, 0.18, along))), vKind.y) * (1.0 - smoothstep(0.55, 1.0, along));
+    // day shafts fade in above the ground and out towards the crowns; a
+    // moonbeam appears out of the dark — nothing at its top, growing towards
+    // the ground — and lands, pooling bright at its foot (never a searchlight
+    // column from the sky)
+    float dayEnds = smoothstep(0.0, 0.32, along) * (1.0 - smoothstep(0.55, 1.0, along));
+    float moonTop = 1.0 - smoothstep(0.05, 0.82, along);
+    float moonEnds = smoothstep(0.0, 0.03, along) * (1.0 + 0.5 * (1.0 - smoothstep(0.0, 0.15, along))) * moonTop * sqrt(moonTop);
+    float ends = mix(dayEnds, moonEnds, vKind.y);
     // fine streaks across the beam, slowly drifting dust density along it
     float streak = 0.55 + 0.45 * envNoise(vec2(across * 4.5 + vSeed * 17.0, along * 0.8 + vSeed));
     // moonbeams drift slower
     float tm = uTime * mix(1.0, 0.45, vKind.y);
-    // (a moonbeam is a soft column with a brighter core, not a hard-edged strip)
-    prof = mix(prof, (1.0 - smoothstep(0.0, 1.0, abs(across))) * (0.55 + 0.45 * (1.0 - smoothstep(0.0, 0.45, abs(across)))), vKind.y);
+    // (a moonbeam is a broad soft glow of moonlit dust: no core, no edges)
+    prof = mix(prof, 1.0 - smoothstep(0.0, 1.0, abs(across)), vKind.y);
     float drift = 0.65 + 0.35 * envNoise(vec2(along * 3.0 - tm * 0.07 + vSeed * 9.0, across * 1.5 + tm * 0.02));
     // four taps across the beam soften the canopy-cut edges into bundles of rays
     vec3 sideW = cross(vAxis, normalize(vW - cameraPosition));
@@ -105,6 +124,9 @@ const FRAG = /* glsl */ `
       // moonbeams are chosen stages: carved by the canopy, but never gone entirely
       lit = mix(lit, max(lit, bundles * 0.75), vKind.y);
     }
+    // (a moonbeam is dust in the moonlight: its ray bundles stay faint, so it
+    //  never shows the hard parallel stripes of a lamp's beam)
+    lit = mix(lit, 0.55 + 0.45 * lit, vKind.y);
     // (no shadow map — low tier — or a beam with its own axis: noise bundles fake the canopy cut)
     // forward scattering: brighter when looking into the light
     vec3 v = normalize(vW - cameraPosition);
@@ -223,7 +245,10 @@ export function buildShafts(ctx) {
     uStrength: { value: 1 },
     uDayK: { value: 1 },
     uNightK: { value: 0 },
+    uSoft: { value: tier === 'high' ? 0 : 1 },
+    uHigh: { value: 0 },
   };
+  const camDir = new THREE.Vector3();
   const mat = new THREE.ShaderMaterial({
     name: 'godrays',
     uniforms,
@@ -274,6 +299,13 @@ export function buildShafts(ctx) {
       const k = 1 - THREE.MathUtils.smoothstep(night, 0.05, 0.45);
       const kn = THREE.MathUtils.smoothstep(night, 0.6, 0.95);
       uniforms.uStrength.value = base;
+      // (no depth of field below 'high' — and a portrait screen sees the shafts
+      //  from the high phone camera: a wider, softer falloff across them)
+      uniforms.uSoft.value = tier !== 'high' || (ctx.camera?.aspect ?? 2) < 1 ? 1 : 0;
+      if (ctx.camera) {
+        ctx.camera.getWorldDirection(camDir);
+        uniforms.uHigh.value = THREE.MathUtils.smoothstep(-camDir.y, 0.45, 0.75);
+      }
       uniforms.uDayK.value = k;
       uniforms.uNightK.value = kn * 0.35 * NIGHT_BOOST;
       mesh.visible = k > 0.002 || kn > 0.002;

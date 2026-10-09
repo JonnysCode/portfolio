@@ -328,7 +328,8 @@ export const materials = {
    *   leaf [uv]       one leaf over the UV square (base V=0, tip V=1, midrib U=0.5)
    *   fabric [uv]     plain weave (opts.color)   rope [uv] twisted strands (TubeGeometry UVs)
    *   metal [tri]     forged iron with rust (opts.color)   glass [uv] old crown glass (transparent)
-   *   paper [uv]      clay [uv] terracotta with throwing rings (opts.color)
+   *   paper [uv]      clay [uv] terracotta with throwing rings; opts.color = any body / glaze colour
+   *                   (celadon, grey stoneware, white…), opts.glaze = true → glossy glazed ceramic
    *
    * opts: {
    *   color      tint: for colorize kinds (wood, mushroomCap, fabric, metal, clay) the base colour;
@@ -343,7 +344,11 @@ export const materials = {
    *              triplanar: false on a TubeGeometry branch: furrows then run along the tube)
    *   vertexColors  multiply by vertex colours (the texture is normalised to average white;
    *              wood + species: per channel, so the vertex colour IS the average wood colour;
-   *              wood + color: luminance only, the redder late wood keeps a faint warm cast)
+   *              wood + color: luminance only, the redder late wood keeps a faint warm cast;
+   *              leaf: the leaf map's value only (veins, midrib) — the vertex colour sets the
+   *              hue, so petals, autumn leaves and blossoms keep theirs (no olive cast);
+   *              clay: a neutral body, the vertex colour is the glaze / body colour)
+   *   glaze      clay: glossy glazed ceramic (lower roughness)
    *   bump       normal-map strength multiplier     breakup  painterly colour variation (0 = off)
    *   mossGain   brightness of the moss overlay (1). The moss ignores vertex colours: a
    *              vertex-coloured mossy rock gets the same velvet moss as any other surface
@@ -572,13 +577,24 @@ function colorizeColors(kind, opts) {
     return { a: base, b: base.clone().multiplyScalar(0.45), c: lin('#8a4a22') };
   }
   if (kind === 'clay') {
+    if (opts.color === undefined && !opts.glaze) {
+      // fired terracotta: darker & redder where the fire hit, pale lime bloom
+      const base = lin('#b5633e');
+      return { a: base, b: base.clone().multiplyScalar(0.62).lerp(lin('#6a2e1a'), 0.2), c: base.clone().lerp(lin('#e8c8a8'), 0.55) };
+    }
+    // a tinted body or glaze (celadon, grey stoneware, blue, white…): the
+    // variation stays IN the tint's own hue — darker where the glaze pools, paler
+    // where it breaks thin over the rings — so it never drifts to terracotta
     const base = lin(opts.color ?? '#b5633e');
-    return { a: base, b: base.clone().multiplyScalar(0.62).lerp(lin('#6a2e1a'), 0.2), c: base.clone().lerp(lin('#e8c8a8'), 0.55) };
+    return { a: base, b: base.clone().multiplyScalar(0.72), c: base.clone().lerp(WHITE, 0.3) };
   }
   // fabric & anything else
   const base = lin(opts.color ?? '#c9b79a');
   return { a: base, b: base.clone().multiplyScalar(0.55), c: base.clone().lerp(WHITE, 0.35) };
 }
+
+/** rgb kinds whose vertex-coloured variant uses the map's luminance only (see makeSurface). */
+const NEUTRAL_VC = new Set(['leaf']);
 
 let _mossMaps = null;
 /** Low tier: cheaper surface shader (no painterly breakup noise). Set by setRenderer(r, { tier: 'low' }). */
@@ -619,16 +635,34 @@ function makeSurface(kindIn, opts) {
         const l = 0.2126 * mr + 0.7152 * mg + 0.0722 * mb || 1;
         for (const c of [colA, colB, colC]) c.multiplyScalar(1 / l);
       }
+    } else if (opts.vertexColors && kind === 'clay' && opts.color === undefined) {
+      // clay + vertex colours (mugs, vases, pots): a NEUTRAL body, so the vertex
+      // colour alone sets the hue — white mugs stay white, blue stays blue
+      // (the terracotta preset's own orange used to survive a scalar normalisation)
+      const k = opts.glaze ? 0.72 : 0.66;
+      colA.setRGB(1, 1, 1); colB.setRGB(k, k, k); colC.setRGB(1.3, 1.3, 1.3);
+      const mean = 0.62 + 0.38 * k;
+      for (const c of [colA, colB, colC]) c.multiplyScalar(1 / mean);
     } else if (opts.vertexColors) {
       // normalise so the texture averages to white and the vertex colour sets the hue
       const mean = (colA.r + colA.g + colA.b + colB.r + colB.g + colB.b) / 6 || 1;
       colA.multiplyScalar(1 / mean); colB.multiplyScalar(1 / mean); colC.multiplyScalar(1 / mean);
     }
+  } else if (opts.vertexColors && NEUTRAL_VC.has(kind)) {
+    // a strongly coloured map (the leaf's green) cannot be normalised per
+    // channel (its blue mean is ~3 %): use its VALUE only, normalised to its mean
+    // luminance — the vertex colour alone sets the hue (pink petals stay pink)
+    const mc = new THREE.Color(kd.mean ?? '#808080');
+    const l = 0.2126 * mc.r + 0.7152 * mc.g + 0.0722 * mc.b || 1;
+    colA = new THREE.Color(1 / l, 1 / l, 1 / l);
+    colB = WHITE.clone();
+    colC = WHITE.clone();
   } else {
     colA = opts.vertexColors ? tintFor('#ffffff', kd.mean) : opts.color !== undefined ? tintFor(opts.color, kd.mean) : WHITE.clone();
     colB = WHITE.clone();
     colC = WHITE.clone();
   }
+  const neutralVC = !colorize && !!opts.vertexColors && NEUTRAL_VC.has(kind);
 
   // wood: end grain + ray flecks (uv-mapped only: the end-grain marker lives in the UVs)
   const woody = !!kd.woody && !triplanar;
@@ -651,10 +685,10 @@ function makeSurface(kindIn, opts) {
     sfColB: { value: colB },
     sfColC: { value: colC },
     sfTile: { value: tile },
-    sfP: { value: new THREE.Vector4((kd.normal ?? 1) * (opts.bump ?? 1), kd.ao ?? 1, opts.roughness ?? 1, opts.breakup ?? kd.breakup ?? 1) },
+    sfP: { value: new THREE.Vector4((kd.normal ?? 1) * (opts.bump ?? 1), kd.ao ?? 1, (opts.roughness ?? 1) * (opts.glaze ? 0.42 : 1), opts.breakup ?? kd.breakup ?? 1) },
     sfQ: { value: new THREE.Vector4(mossy, 1 / (KINDS.moss.tile * 0.9), kd.velvet ?? 0, kd.metalRust ?? 0) },
     sfR: { value: new THREE.Vector4(opts.grain === 'v' || opts.swapUV ? 1 : 0, kd.polar ? (opts.gills === 'cone' ? 2 : 1) : 0, opts.metalness ?? kd.metalness ?? 0, triplanar ? kd.antiTile ?? 0 : 0) },
-    sfLight: { value: new THREE.Vector4(opts.wrap ?? kd.wrap ?? 0, 0, 0, 0) },
+    sfLight: { value: new THREE.Vector4(opts.wrap ?? kd.wrap ?? 0, 0, 0, neutralVC ? 1 : 0) },
     sfS: { value: new THREE.Vector4(opts.mossGain ?? 1, rays, 1, kind === 'bark' ? meanLum(kd, colA) : 0) },
   };
   if (moss) {

@@ -210,7 +210,9 @@ export function buildHome(ctx, B, root, halos, smoke = [], rimHalos = null) {
   }
 
   // flowers & ferns along the inside of the fence, moss and toadstools by the houses
-  for (let i = 0; i < 46; i++) {
+  // (fewer on the lower tiers)
+  const dens = 0.45 + 0.55 * Math.min(1, ctx.quality?.density ?? 1);
+  for (let i = 0, n = Math.round(46 * dens); i < n; i++) {
     const az = rng.range(0.2, 2.1);
     if (Math.abs(az - HOME_DOOR_AZ) < 0.28) continue;
     const r = R - rng.range(0.15, 0.6);
@@ -222,7 +224,7 @@ export function buildHome(ctx, B, root, halos, smoke = [], rimHalos = null) {
     else addGrass(F, rng, x, 0, z, { size: rng.range(0.25, 0.4), blades: 3 });
   }
   // outside the fence: a few big ferns, mossy stones and fly agarics
-  for (let i = 0; i < 26; i++) {
+  for (let i = 0, n = Math.round(26 * dens); i < n; i++) {
     const az = rng.range(-0.4, 2.6);
     if (Math.abs(az - HOME_DOOR_AZ) < 0.32) continue;
     const r = rng.range(R + 0.25, R + 0.75);

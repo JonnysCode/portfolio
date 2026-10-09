@@ -94,8 +94,8 @@ import { createRng } from '../core/rng.js';
 import { getHeight, getPathDistance, getStreamDistance, pathPolylines } from './ground.js';
 import { STREAM, SPOTS, RIVERSIDE, OAK } from './layout.js';
 import { glowQuads, lightPools } from '../props/glow.js';
-import { fieldMid, fieldFine, fieldAlt, groundPatches, GeoBuilder, instanced, staticMesh, moonlit, TAU } from './vegetation/common.js';
-import { canGrow, isClearOfViews, isClearOfSubjects, blocksView, oakDist, cameraClearance, viewDistance, viewDetail, inShot, inNearField, setRidgeTest } from './vegetation/zones.js';
+import { fieldMid, fieldFine, fieldAlt, groundPatches, GeoBuilder, instanced, staticMesh, moonlit, moonRim, nightPetals, freeAfterUpload, TAU } from './vegetation/common.js';
+import { canGrow, isClearOfViews, isClearOfSubjects, blocksView, oakDist, cameraClearance, viewDistance, viewDetail, inShot, inNearField, setRidgeTest, setPropKeep } from './vegetation/zones.js';
 import { buildDrifts } from './vegetation/drifts.js';
 import { pickRingSite, buildFairyRing, buildGlowTrails, glowMossMesh, updateGlowMoss } from './vegetation/fairyRing.js';
 import { forestPlan } from './vegetation/plan.js';
@@ -205,9 +205,12 @@ export default async function build(ctx) {
     timing[k] = Math.round(n - tLap);
     tLap = n;
   };
+  // (our own static meshes: their CPU-side vertex arrays are freed after upload)
+  const owned = [];
   const addMesh = (m) => {
     if (!m) return null;
     group.add(m);
+    owned.push(m);
     stats.drawCalls++;
     const g = m.geometry;
     const tris = (g.index ? g.index.count : g.attributes.position.count) / 3;
@@ -234,6 +237,9 @@ export default async function build(ctx) {
   } catch (err) {
     console.warn('[vegetation] no ridge test', err);
   }
+  // …nor through the other builders' props (the Schreinerei yard's sawhorses,
+  // drying stack, handcart …: every collider registered before us)
+  setPropKeep(ctx.colliders);
   // (bark is vertex-coloured: moss creeping up the trunks, mossy roots & logs)
   const builders = { bark: new GeoBuilder(BARK_MEAN), birch: new GeoBuilder(), ivy: new GeoBuilder() };
   const clumps = [];
@@ -271,6 +277,9 @@ export default async function build(ctx) {
   //  placement of everything else stays exactly as it was)
   const grng = createRng('vegetation:glow');
   const giants = [];
+  // (a soft teal pool of light on the ground under every enchanted giant: its
+  //  gills light the moss beneath it at night)
+  const giantPools = [];
   /**
    * The cap of a giant as an exact camera obstacle: an empty marker at the
    * cap's centre (the stem leans) on the ground's height, with userData
@@ -351,6 +360,7 @@ export default async function build(ctx) {
     });
     occ.add(x, z, R * 0.45, 'giant');
     giants.push({ x, y, z, H, R, hue, rimY: cap.top.y - y, capTop: cap.capTop - y });
+    if (glowGills && !hidden) giantPools.push({ x: cap.top.x, y, z: cap.top.z, size: R * 1.75, color: '#72e6c6', strength: 0.36, lamp: false, rings: 5, segs: 18 });
     capMarker(cap, y, shape === 'upturned' ? R * 1.08 : R);
     // a family of little ones at its foot (its own kind, now and then a stranger)
     const kidSpecies = rng.chance(0.75) ? { red: hidden ? 'panther' : 'flyAgaric', ochre: 'ochre', brown: 'panther' }[hue] : pickWeighted(rng, { bolete: 2, bonnets: 1, orange: 1 });
@@ -874,15 +884,17 @@ export default async function build(ctx) {
   // (petals need a NEUTRAL texture: the leaf map's green survives its white
   //  normalisation, so blue, white, pink and yellow petals came out olive — the
   //  paper map normalises to white, the vertex colours alone set the hues)
-  const petalMat = M.surface('paper', { vertexColors: true, side: THREE.DoubleSide, wind: { strength: 0.14, base: 0.03, speed: 1.5 } });
-  const shrubMat = M.surface('paper', { vertexColors: true, side: THREE.DoubleSide });
+  // (at night the blue petals desaturate & darken, each catching a moon glint: common.nightPetals)
+  const petalMat = nightPetals(M.surface('paper', { vertexColors: true, side: THREE.DoubleSide, wind: { strength: 0.14, base: 0.03, speed: 1.5 } }));
+  const shrubMat = nightPetals(M.surface('paper', { vertexColors: true, side: THREE.DoubleSide }));
   const drifts = buildDrifts(ctx, { occ, density, tier, flowerMat: petalMat, leafMat: shrubMat, ringAt: ringSite });
   flowerPatches.push(...drifts.flowerPatches.slice(0, Math.max(0, 460 - flowerPatches.length)));
   for (const o of drifts.objects) group.add(o);
   stats.drifts = drifts.stats;
-  // the drifts wash the ground under them with their colour (reads from afar)
-  // (a little wider than the cushions: a carpet of small flowers around them)
-  ctx.modules?.terrain?.paintBlooms?.(drifts.zones.map((d) => ({ ...d, hl: d.hl * 1.3, hw: d.hw * 1.45 })));
+  // the drifts tint the ground under them with their colour — only under the
+  // flower heads, and only faintly (round 4's wider, stronger wash read from
+  // the overview as pastel paint smears on a flat carpet, not as flowers)
+  ctx.modules?.terrain?.paintBlooms?.(drifts.zones.map((d) => ({ ...d, hl: d.hl * 1.1, hw: d.hw * 1.0, k: d.k * 0.35 })));
   // (inside a drift only low things grow: big ferns & bushlets would hide it)
   const inDrift = (x, z) => {
     for (const d of drifts.zones) {
@@ -903,7 +915,8 @@ export default async function build(ctx) {
   const SMALL_K = 0.66, GRASS_B_K = 0.7, FAR_FERN_K = 1.32;
   /** A big fern; beyond the lenses' reach it becomes a scaled-up medium fern. */
   const addFern = (it, keep = false) => {
-    if (!keep && viewDistance(it.x, it.y + it.s * 0.5, it.z, it.s * 0.8) > 23) fernM.push({ ...it, s: it.s * FAR_FERN_K });
+    // (round 5: from 20 units on — the lenses never resolve a big fern's folded fronds there)
+    if (!keep && viewDistance(it.x, it.y + it.s * 0.5, it.z, it.s * 0.8) > 20) fernM.push({ ...it, s: it.s * FAR_FERN_K });
     else fernL.push(it);
   };
   const clover = [];
@@ -1072,6 +1085,111 @@ export default async function build(ctx) {
     const y = getHeight(x, z);
     if (rng.chance(0.55)) grassA.push({ x, y, z, ry: rng.range(0, TAU), s: rng.range(0.3, 0.55) * (rng.chance(0.5) ? 1 : GRASS_B_K), color: jitterTint(rng.pick(grassTints)) });
     else clover.push({ x, y: y + 0.01, z, ry: rng.range(0, TAU), s: rng.range(0.5, 0.9), color: jitterTint('#6a9a40') });
+  }
+
+  // ── 4a. the lawn wedges between the paths — the floor the overview and the
+  //     glen's camera look down on — get REAL 3D dressing instead of paint:
+  //     moss hummocks where the floor's velvet cushions are, clover mats on
+  //     its clover patches, half as many grass tufts again, little rock groups,
+  //     two or three small mushroom families, warm sunlit tufts. (Its own
+  //     random stream: the placement of everything above stays put.)
+  {
+    const lrng = createRng('vegetation:lawn-wedges');
+    const lawn = { cells: 0, hummocks: 0, clover: 0, grass: 0, stones: 0, families: 0 };
+    const GLEN = ['glen'];
+    const lowOk = (x, y, z, h, r) => cameraClearance(x, z) > 2.6 && isClearOfSubjects(x, y, z, h, r, GLEN) && !inNearField(x, y + h * 0.5, z, 0.3, 0.4);
+    const famSites = [];
+    const cs = 1.15 / Math.sqrt(Math.min(1, density));
+    const lp = {};
+    for (let gz = -2; gz < 23; gz += cs) {
+      for (let gx = -16; gx < 13; gx += cs) {
+        const x = gx + lrng.range(0, cs), z = gz + lrng.range(0, cs);
+        if (Math.hypot(x, z) > 22.5) continue;
+        if (!canGrow(x, z, { path: 1.22 }) || nearRing(x, z, 0.5)) continue;
+        const y = getHeight(x, z);
+        if (!inShot(x, y + 0.15, z, 0.4)) continue;
+        if (occ.clearance(x, z, 2) < 0.12) continue;
+        lawn.cells++;
+        groundPatches(x, z, lp);
+        const drift = inDrift(x, z);
+        const pd = getPathDistance(x, z);
+        const sunny = oakDist(x, z) > 12.5 && !(getStreamDistance(x, z) < 6);
+        // (a) grass: far more tufts in the open lawns — little clumps of 3–5,
+        //     the sunlit ones warmer (the glen's own scatter leaves its glades open)
+        const ng = drift ? lrng.int(0, 1) : lrng.int(3, 5);
+        for (let i = 0; i < ng; i++) {
+          const a = lrng.range(0, TAU), d = lrng.range(0, cs * 0.45);
+          const px = x + Math.sin(a) * d, pz = z + Math.cos(a) * d;
+          if (!canGrow(px, pz, { path: 1.12 })) continue;
+          const tint = sunny && lrng.chance(0.55) ? lrng.pick(['#9aa84c', '#a6aa52', '#8fa646']) : lrng.pick(grassTints);
+          const it = { x: px, y: getHeight(px, pz), z: pz, ry: lrng.range(0, TAU), s: lrng.range(0.75, 1.35) * (pd < 2 ? 0.8 : 1), color: jitterTint(tint, 0.02, 0.07) };
+          if (lrng.chance(0.5)) grassA.push(it);
+          else grassB.push({ ...it, s: it.s * GRASS_B_K });
+          lawn.grass++;
+        }
+        if (drift) continue;
+        // (b) the floor's velvet cushions rise as real moss hummocks
+        if (lp.cushion > 0.35 || lrng.chance(0.14)) {
+          const n = lp.cushion > 0.35 ? lrng.int(1, 3) : 1;
+          for (let i = 0; i < n; i++) {
+            const a = lrng.range(0, TAU), d = i ? lrng.range(0.3, 0.7) : 0;
+            const px = x + Math.sin(a) * d, pz = z + Math.cos(a) * d;
+            const w = lrng.range(0.32, 0.75) * (i ? 0.8 : 1);
+            const h = w * lrng.range(0.32, 0.5);
+            const py = getHeight(px, pz);
+            if (!canGrow(px, pz, { margin: w * 0.3 }) || occ.clearance(px, pz, 2) < w * 0.45 || !lowOk(px, py, pz, h, w)) continue;
+            mossMound(moundB, lrng, px, pz, w, h, { color: new THREE.Color('#4e6e2c').lerp(new THREE.Color('#86943e'), lrng.next()).offsetHSL(lrng.jitter(0.02), 0, lrng.jitter(0.03)) });
+            occ.add(px, pz, w * 0.5, 'mound');
+            lawn.hummocks++;
+          }
+        }
+        // (c) clover mats on the floor's clover patches (and a little patch now and then)
+        if (lp.clover > 0.25 || lrng.chance(0.16)) {
+          const n = lp.clover > 0.25 ? lrng.int(3, 6) : lrng.int(2, 3);
+          for (let i = 0; i < n; i++) {
+            const a = lrng.range(0, TAU), d = lrng.range(0, 0.55);
+            const px = x + Math.sin(a) * d, pz = z + Math.cos(a) * d;
+            if (!canGrow(px, pz, { path: 1.1 })) continue;
+            clover.push({ x: px, y: getHeight(px, pz) + 0.005, z: pz, ry: lrng.range(0, TAU), s: lrng.range(1.0, 1.5), color: jitterTint(sunny ? '#78a444' : '#6a9a40', 0.02, 0.06) });
+            lawn.clover++;
+          }
+        }
+        // (c2) now and then a low fern in the shade, rising out of the lawn
+        if (!sunny && lrng.chance(0.08)) {
+          const fy = getHeight(x, z), fs = lrng.range(0.55, 0.85);
+          if (lowOk(x, fy, z, fs * 0.6, fs * 0.5) && occ.clearance(x, z, 2) > 0.3) {
+            fernM.push({ x, y: fy, z, ry: lrng.range(0, TAU), s: fs, sy: lrng.range(0.85, 1.1), color: jitterTint(lrng.pick(fernTints)) });
+            lawn.ferns = (lawn.ferns ?? 0) + 1;
+          }
+        }
+        // (d) a little group of mossy stones
+        if (lrng.chance(0.075)) {
+          const n = lrng.int(1, 3);
+          for (let i = 0; i < n; i++) {
+            const a = lrng.range(0, TAU), d = i ? lrng.range(0.25, 0.55) : 0;
+            const px = x + Math.sin(a) * d, pz = z + Math.cos(a) * d;
+            const size = i ? lrng.range(0.1, 0.18) : lrng.range(0.16, 0.3);
+            const py = getHeight(px, pz);
+            if (!canGrow(px, pz, { margin: size * 0.4 }) || occ.clearance(px, pz, 2) < size * 0.8 || !lowOk(px, py, pz, size * 0.7, size)) continue;
+            const res = mossyRock(rockB, lrng, px, pz, size, { flat: lrng.range(0.5, 0.8), color: new THREE.Color(lrng.pick(rockTints)) });
+            occ.add(px, pz, res.r * 0.85, 'rock');
+            mossyRocks.push({ x: px, y: res.top, z: pz, r: res.r });
+            lawn.stones++;
+          }
+        }
+        // (candidate sites for the little mushroom families: shady, by a hummock or stone)
+        if (pd > 1.8 && occ.clearance(x, z, 2) < 0.9) famSites.push({ x, z, score: lrng.next() + (sunny ? 0 : 0.4) });
+      }
+    }
+    // (e) two or three small mushroom families of different species
+    famSites.sort((a, b) => b.score - a.score);
+    const famSpecies = ['bolete', 'bonnets', 'flyAgaric', 'ochre'];
+    for (const s of famSites) {
+      if (lawn.families >= 3) break;
+      if (troops.some((t) => Math.hypot(t.x - s.x, t.z - s.z) < 4)) continue;
+      if (familyAt(s.x, s.z, { keep: true, gap: 4, minClear: 0.04, size: lrng.range(0.26, 0.48), species: famSpecies[lawn.families % famSpecies.length], path: 1.3 })) lawn.families++;
+    }
+    stats.lawn = lawn;
   }
 
   // forest-edge bushes (leaf masses at ground level between the wall trunks)
@@ -1375,7 +1493,8 @@ export default async function build(ctx) {
       }
     }
     // (b) beyond the forest wall: fewer, bigger masses (they read from afar)
-    const big = 2.5 * thin;
+    // (round 5: a little sparser — the masses beyond the wall read from afar only)
+    const big = 2.8 * thin;
     for (let gz = -48; gz < 48; gz += big) {
       for (let gx = -48; gx < 48; gx += big) {
         const x = gx + rng.range(0, big), z = gz + rng.range(0, big);
@@ -1425,8 +1544,10 @@ export default async function build(ctx) {
   // (the surface shader's moss now ignores the vertex colour itself — moss on
   //  vertex-moss-tinted logs, roots & snags no longer goes black; mossGain
   //  lifts it a little towards the sunlit carpet around them)
-  const barkMat = M.surface('bark', { mossy: 0.3, scale: 1.8, vertexColors: true, mossGain: 1.2 });
-  const birchMat = M.surface('bark', { vertexColors: true, mossy: 0.12, scale: 0.6 });
+  // (at night a narrow silver back-rim on the moon's side of the giants' trunks
+  //  — the misty backdrop's trunks have one; the bark only, never the leaf cards)
+  const barkMat = moonRim(M.surface('bark', { mossy: 0.3, scale: 1.8, vertexColors: true, mossGain: 1.2 }), { rim: 0.045, pow: 5 });
+  const birchMat = moonRim(M.surface('bark', { vertexColors: true, mossy: 0.12, scale: 0.6 }), { rim: 0.035, pow: 5 });
   const rockMat = M.surface('rock', { mossy: 0.62, vertexColors: true, mossGain: 1.1 });
   const mossMat = M.surface('moss', { vertexColors: true, scale: 1.1, bump: 0.8 });
 
@@ -1469,13 +1590,14 @@ export default async function build(ctx) {
   addMesh(meshOf('forest-moss', moundB, mossMat, { cast: false }));
   addMesh(meshOf('forest-stump-faces', stumpFaceB, M.standard('#ffffff', { vertexColors: true, roughness: 0.82 }), { cast: false }));
   for (const m of smallKit.build(ctx, 'small-mushrooms', { cast: false })) addMesh(m);
-  for (const m of giantKit.build(ctx, 'mushrooms', { cast: true })) addMesh(m);
+  for (const m of giantKit.build(ctx, 'mushrooms', { cast: true, moon: true })) addMesh(m);
   // halos around the glowing caps & gills (night; the fairy ring's too)
   if (giantKit.glowPoints.length) addMesh(glowQuads(giantKit.glowPoints, '#7ff0d0', { day: 0.0, night: 0.7 }));
   // the flower drifts & hydrangeas, the glowing moss (fairy ring & trails) and
   // the cool light pooling under them at night (one draw)
   for (const m of drifts.meshes) addMesh(m);
   if (glowMoss.length) addMesh(glowMossMesh(glowMoss));
+  glowPools.push(...giantPools);
   if (glowPools.length) {
     const pools = lightPools(glowPools, { height: getHeight, lift: 0.05 });
     pools.name = 'glow-pools';
@@ -1518,6 +1640,14 @@ export default async function build(ctx) {
   group.traverse((o) => {
     if (o.isMesh && !o.userData.keepRaycast) o.raycast = () => {};
   });
+  // ── memory: nothing reads our static meshes' vertex data after the upload
+  //    (the fairy ring — a hotspot — and the props' meshes are not in `owned`),
+  //    and the builders' plain-JS vertex arrays and placement lists must not
+  //    outlive the build (the closures we hand out keep this scope alive)
+  stats.freed = freeAfterUpload(owned);
+  for (const B of [builders.bark, builders.birch, builders.ivy, rockB, moundB, stumpFaceB]) B.release();
+  smallKit.release();
+  giantKit.release();
 
   // ── API ───────────────────────────────────────────────────────────────────
   const trees = plan.trees.map((t) => ({
@@ -1560,6 +1690,12 @@ export default async function build(ctx) {
   // leaf masses of the forest canopy as spheres (camera obstacles, leaf sources)
   const canopy = clumps.map((c) => ({ x: c.x, y: c.y, z: c.z, r: c.s * 1.05 }));
   ctx.forest = { trees, giants, canopy, glowSpots, flowerPatches, mossyRocks, snailRocks, logs, stumps, fairyRing: ringInfo };
+  for (const l of [fernL, fernM, grassA, clover, bushes, bilberry, bramble, broad, shrubs, clumps, vigFerns, vigFox, vigBroad, glowMoss, glowPools, troops, logFamilies]) l.length = 0;
+  for (const k of FLOWER_KINDS) flowers[k].length = 0;
+  drifts.cover.length = 0;
+  drifts.leaves.length = 0;
+  occ.map.clear();
+  recipeCache.clear();
   return {
     group, trees, giants, canopy, glowSpots, flowerPatches, mossyRocks, snailRocks, logs, stumps, fairyRing: ringInfo, treesNear, stats, budget: VEG_BUDGET,
     update() {

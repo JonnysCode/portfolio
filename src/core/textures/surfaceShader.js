@@ -20,6 +20,8 @@
 //   • bark (SF_BARK): in direct (warm) sun the furrows are lifted and the
 //     plates' highlights desaturated, so a sunlit trunk never reads as a tiger
 //     stripe; a near-white vertex colour turns it into smooth birch bark
+//     (birches skip the sun treatment: they stay chalk-white, not warm tan)
+//   • sfLight.w = 1: vertex-colour-neutral rgb kinds (leaf) use the map's value only
 // FOLIAGE
 //   • the same wrap lighting + translucency: leaves glow when back-lit by the
 //     sun (and by lantern point lights), shadow-aware
@@ -215,7 +217,8 @@ const SURFACE_MAIN = /* glsl */ `
   vec3 sfCol = mix(sfColA, sfColB, sfA.r) * (sfA.g * 2.0);
   sfCol = mix(sfCol, sfColC, sfA.b);
 #else
-  vec3 sfCol = sfA.rgb * sfColA;
+  // sfLight.w: vertex-colour-neutral kinds (leaf) keep only the map's value
+  vec3 sfCol = mix(sfA.rgb, vec3(dot(sfA.rgb, vec3(0.2126, 0.7152, 0.0722))), sfLight.w) * sfColA;
 #endif
   float sfRough = sfD.z;
   float sfAO = sfD.w;
@@ -307,6 +310,7 @@ const SURFACE_MAIN = /* glsl */ `
 #endif
 #endif
 
+  float sfBirch = 0.0;
 #if defined(SF_BARK) && (defined(USE_COLOR) || defined(USE_COLOR_ALPHA))
   {
     // a near-white vertex colour is a silver BIRCH: papery, smooth bark. The
@@ -314,6 +318,7 @@ const SURFACE_MAIN = /* glsl */ `
     // keep only a trace of them and add fine horizontal lenticels instead
     // (the builder's own dark dashes & patches stay: they are in the colour)
     float birch = smoothstep(0.4, 0.6, dot(vColor.rgb, vec3(0.2126, 0.7152, 0.0722)));
+    sfBirch = birch;
     if (birch > 0.0) {
       sfCol = mix(sfCol, vec3(0.86, 0.85, 0.83), 0.8 * birch);
       float ln = sfNoise3(vec3(sfWPos.x * 8.0, sfWPos.y * 42.0, sfWPos.z * 8.0));
@@ -388,6 +393,8 @@ const SURFACE_MAIN = /* glsl */ `
     float hi = smoothstep(1.1, 1.8, l2 / max(sfS.w, 1e-4)) * (1.0 - sfMossM);
     c = mix(c, vec3(l2) * vec3(1.06, 1.0, 0.9), (0.35 + 0.3 * hi) * (1.0 - sfMossM));
     c *= 1.0 - 0.2 * hi;
+    // …but a birch stays chalk-white in the sun: no lift, no warm-tan cast
+    c = mix(c, sfCol, sfBirch);
     // …and no painterly crevice darkening on the sunlit side (it stays on ambient)
     sfDirK = c / max(sfCol, vec3(1e-4)) / mix(1.0, sfAO, sfP.y * 0.3);
     sfDirN = sfNormal0;

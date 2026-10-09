@@ -119,8 +119,11 @@ export function ridgeHeight(u, w, g) {
 
 export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
   const MM = M();
-  // the cliffs' own rock: bigger strata and cracks than the boulders, moss in every crevice
-  const cliffRock = materials.surface('rock', { vertexColors: true, mossy: 0.74, scale: 2.0 });
+  // the cliffs' own rock: bigger strata and cracks than the boulders. Moss on the
+  // ledges, flats and in the crevices — the steep faces show their sandstone
+  // strata, so the escarpment reads as a rock wall (not a smeared green sheet);
+  // direct sun through a canopy gap is softened and greened on it (see tameSun)
+  const cliffRock = tameSun(materials.surface('rock', { vertexColors: true, mossy: 0.56, scale: 2.0 }));
   const density = ctx.quality?.density ?? 1;
   const heightAt = (u, w) => ridgeHeight(u, w, groundAt(u, w));
   const glowCaps = [];
@@ -159,7 +162,7 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
     // the faces — per pixel, so its edges are never triangles; the vertex colour
     // only tints: grey-brown sandstone on the faces, damp & dark by the falls,
     // light on the flats so the moss there stays fresh and velvety)
-    const base = new THREE.Color('#7c7a6e'), damp = new THREE.Color('#4b5541'), ochre = new THREE.Color('#8f8062'), flat = new THREE.Color('#b9bb98'), back = new THREE.Color('#9b9772'), c = new THREE.Color();
+    const base = new THREE.Color('#857f6f'), damp = new THREE.Color('#4f5843'), ochre = new THREE.Color('#9a8462'), flat = new THREE.Color('#a4a686'), back = new THREE.Color('#8f8c6c'), c = new THREE.Color();
     const at = (i, j) => hs[Math.min(nw, Math.max(0, j)) * W + Math.min(nu, Math.max(0, i))];
     const vert = (i, j) => {
       const k = j * W + i;
@@ -226,10 +229,12 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       if (y < groundAt(u, w) + 0.6) continue;
       if (shelves.some((q) => Math.hypot(q.u - u, q.w - w) < 1.0 && Math.abs(q.y - y) < 0.7)) continue;
       // (set back into the face: a ledge of the rock itself, never a slab stuck on the moss)
-      shelves.push({ u: u - sl.ou * 0.06, w: w - sl.ow * 0.06, y, ou: sl.ou, ow: sl.ow });
+      shelves.push({ u: u - sl.ou * 0.16, w: w - sl.ow * 0.16, y, ou: sl.ou, ow: sl.ow });
     }
-    for (const sh of shelves) {
-      const len = rng.range(0.8, 1.9), dep = rng.range(0.4, 0.62), th = rng.range(0.12, 0.22);
+    for (const [si, sh] of shelves.entries()) {
+      const len = rng.range(0.8, 1.9), dep = rng.range(0.4, 0.62), th = rng.range(0.12, 0.22) * rng.range(0.7, 1.35);
+      // (every third one left out: a few scattered ledges, never a stack of identical plates)
+      if (si % 3 === 2) continue;
       const g = boulderGeo(rng, len, th, dep, { strata: 1, lump: 0.14, round: 0.25, detail: 2 });
       xf(g, [sh.u, sh.y - th * 0.7, sh.w], [rng.jitter(0.05), Math.atan2(sh.ou, sh.ow) + Math.PI / 2 + rng.jitter(0.15), rng.jitter(0.06)]);
       R.add(MM.rock, g, { color: rng.pick(ROCK_TINTS), cast: true });
@@ -245,6 +250,32 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       hangers.push({ u: fu, w: fw, top, ou: sh.ou, ow: sh.ow, len });
     }
   }
+  // glow-worm curtains: under a few ledges near the falls, silk threads hang
+  // beaded with tiny droplets that glow blue-green at night (a faint teal
+  // glint by day) — the cliff's own magic after dark
+  const curtains = [];
+  {
+    const want = LOD.k < 0.5 ? 3 : LOD.k < 1 ? 6 : 9;
+    const near = hangers.filter((hg) => Math.abs(hg.u) < 7.5 && hg.top > groundAt(hg.u, hg.w) + 1.0).sort((a, b) => Math.abs(a.u) - Math.abs(b.u));
+    for (const hg of near.slice(0, want)) {
+      const threads = rng.int(7, 11);
+      for (let t = 0; t < threads; t++) {
+        const k = (t / (threads - 1) - 0.5) * hg.len * 0.8 + rng.jitter(0.05);
+        // along the ledge (perpendicular to its outward normal), just off its lip
+        const u0 = hg.u + hg.ow * k + hg.ou * 0.06, w0 = hg.w - hg.ou * k + hg.ow * 0.06;
+        const len = rng.range(0.35, 1.1);
+        const n = Math.max(4, Math.round(len / 0.08));
+        for (let b = 1; b <= n; b++) {
+          const y = hg.top - 0.08 - (b / n) * len;
+          if (heightAt(u0, w0) > y - 0.02) break; // (never inside the rock)
+          const rb = 0.015 + 0.007 * rng.next() + (b === n ? 0.006 : 0);
+          R.add(MM.glowBlue, new THREE.SphereGeometry(rb, 4, 3).translate(u0 + rng.jitter(0.01), y, w0 + rng.jitter(0.01)), { cast: false });
+        }
+      }
+      curtains.push([hg.u + hg.ou * 0.1, hg.top - 0.45, hg.w + hg.ow * 0.1]);
+    }
+  }
+
   // ivy & moss curtains hanging from the crest edge and the shelves, hugging the face
   {
     const ivy = new Cards();
@@ -401,8 +432,12 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       g.rotateY(Math.atan2(sl.ou, sl.ow) + Math.PI / 2 + rng.jitter(0.4));
       alignUp(g, sl.ou * sl.s, 1, sl.ow * sl.s);
       const y = heightAt(u, w);
-      g.translate(u, y - r * sy * 0.1, w);
+      // (sunk a third into the slope, with a moss collar where it meets it)
+      g.translate(u - sl.ou * r * 0.25, y - r * sy * 0.42, w - sl.ow * r * 0.25);
       R.add(MM.rock, g, { color: rng.pick(ROCK_TINTS), cast: false });
+      const collar = mossGeo(rng, { r: r * 1.25, h: 0.09, sx: 1.25, seg: 10 });
+      alignUp(collar.rotateY(rng.next() * TAU), sl.ou * sl.s, 1, sl.ow * sl.s).translate(u, y - 0.04, w);
+      R.add(MM.moss, collar, { color: rng.pick(MOSS), cast: false });
       const m = mossGeo(rng, { r: r * 0.55, h: 0.05, sx: 1.3 });
       alignUp(m.rotateY(rng.next() * TAU), sl.ou * sl.s, 1, sl.ow * sl.s).translate(u - sl.ou * r * 0.25, y + r * sy * 0.5, w - sl.ow * r * 0.25);
       R.add(MM.moss, m, { color: rng.pick(MOSS), cast: false });
@@ -544,6 +579,14 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       pts.push(new THREE.Vector3(pu + d.x * r * 0.6, py, pw + d.y * r * 0.6));
       if (py < groundAt(pu, pw) + 0.2 || heightAt(pu + d.x * 0.4, pw + d.y * 0.4) > py + 0.4) break;
     }
+    // the tip: tucked into the rock (down a face) or burrowing into the moss —
+    // never a root ending in mid-air in front of the wall
+    const last = pts[pts.length - 1];
+    if (mode === 'down') pts.push(new THREE.Vector3(last.x - d.x * (r + 0.3), last.y - 0.2, last.z - d.y * (r + 0.3)));
+    else {
+      const tu = last.x + d.x * 0.3, tw = last.z + d.y * 0.3;
+      pts.push(new THREE.Vector3(tu, heightAt(tu, tw) - 0.15, tw));
+    }
     return pts;
   };
   const springAt = { u: 0.12, w: -4.5 };
@@ -629,6 +672,8 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
     heightAt,
     // (a handful of glowing clusters is magic; dozens would be a runway)
     glowCaps: springCaps.concat(glowCaps.filter((_, i) => i % 3 === 0)).slice(0, 12),
+    /** Glow-worm curtains under the ledges (u, y, w): where their soft halo goes. */
+    curtains,
     /** The spring channel's course (u, y, w) from the hollow under the arching root towards the lip. */
     spring: [
       [springAt.u, RIDGE.lipY + 0.27, springAt.w + 0.05],
@@ -637,4 +682,30 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
     ],
     tree: toWorld(tb.u, tb.y, tb.w),
   };
+}
+
+/**
+ * The escarpment fills the background of the bikes and glen views: direct sun
+ * through a canopy gap must not bleach a patch of it into a pale-yellow smear.
+ * This clone (never the cached original) compresses the direct light on it and
+ * turns it a little greener; the ambient shade keeps its depth.
+ */
+function tameSun(base) {
+  const m = base.clone();
+  m.name = 'riverside-ridge-rock';
+  const patch = m.onBeforeCompile;
+  m.onBeforeCompile = (shader, renderer) => {
+    patch?.(shader, renderer);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <lights_fragment_end>',
+      `#include <lights_fragment_end>
+  {
+    vec3 rdd = reflectedLight.directDiffuse;
+    reflectedLight.directDiffuse = rdd / (1.0 + rdd * 1.1) * vec3(0.8, 0.9, 0.72);
+  }`
+    );
+  };
+  const key = m.customProgramCacheKey();
+  m.customProgramCacheKey = () => key + '|ridge-sun';
+  return m;
 }

@@ -22,6 +22,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { materials, sharedUniforms } from '../../core/materials.js';
 import { createNoise2D } from '../../core/noise.js';
 import { haloColor } from '../../props/glow.js';
+import { mats as cottageMats } from '../cottage/kit.js';
 
 export const TAU = Math.PI * 2;
 export const noiseA = createNoise2D(5113);
@@ -85,7 +86,11 @@ export function M() {
     planks: m.surface('wood', { species: 'oak', planks: true, vertexColors: true }),
     timber: m.surface('timber', { vertexColors: true }),
     metal: m.surface('metal', { vertexColors: true }),
-    cap: m.surface('mushroomCap', { color: '#ffffff', vertexColors: true }),
+    // the cottages' painterly cap skin (fine fibril streaks, velvet bloom; UVs:
+    // U = around × 2, V = rim → apex) for the Velowerkstatt and every toadstool,
+    // and their torn cream veil flakes (shared cached materials, never mutated)
+    cap: cottageMats().cap,
+    warts: cottageMats().warts,
     gills: m.surface('gills', { side: THREE.DoubleSide, vertexColors: true }),
     stem: m.surface('mushroomStem', { vertexColors: true }),
     plaster: m.surface('plaster', { vertexColors: true }),

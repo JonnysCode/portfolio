@@ -18,9 +18,10 @@ import * as THREE from 'three';
 import { createRng, clamp } from '../../core/rng.js';
 import { SPOTS } from '../../world/layout.js';
 import {
-  Batch, board, timber, xf, mat4, stoneGeo, mossGeo, ShingleField, layShingles, shingleGeo, uvBox, doubleFace,
-  addLantern, addIvy, paint, SPECIES, noiseA, addBowSaw, turned, pushHalo,
+  Batch, board, timber, xf, mat4, stoneGeo, mossGeo, mossPadGeo, ShingleField, layShingles, shingleGeo, uvBox, doubleFace,
+  addLantern, addIvy, paint, SPECIES, noiseA, addBowSaw, turned, pushHalo, count,
 } from './kit.js';
+import { mossVCMaterial, paintMoss, mossTone } from './door.js';
 import { ANNEX, annexFrame, annexMatrix, crook, annexToWorld, decalMaterial, decalGeo, DECAL, frameMat, paintMember } from './annex.js';
 import { makeShavings, shavingGeo } from './fx.js';
 
@@ -71,12 +72,19 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
   // ── lean-to structure: ledger on the wall, two posts, a front beam, rafters ─
   F.add(tim, timber([P.x0 - 0.1, P.hi - 0.05, z0 + 0.08], [P.x1 + 0.08, P.hi - 0.05, z0 + 0.08], 0.14, 0.16, { rng }));
   const postZ = z1 - 0.12;
-  const postXs = [P.x0 + 0.1, P.x1 - 0.08];
+  // the left post is a timber on a stone footing; on the right the great oak
+  // root (annex.js) comes down in front of the gable and carries the beam —
+  // the porch was built against it
+  const RP = ANNEX.rootPost;
+  const postXs = [P.x0 + 0.1, RP.x - 0.1];
   for (const x of postXs) {
-    F.add(tim, timber([x, 0.12, postZ], [x + rng.jitter(0.02), yAt(postZ) - 0.14, postZ], 0.14, 0.14, { rng, up: [0, 0, 1] }));
-    // stone footing
-    F.add(mats.stone(), xf(stoneGeo(rng, { r: 1, sx: 0.16, sy: 0.08, sz: 0.16 }), [x, 0.06, postZ]));
-    // curved knee braces into the front beam
+    const root = x > 1.5;
+    if (!root) {
+      F.add(tim, timber([x, 0.12, postZ], [x + rng.jitter(0.02), yAt(postZ) - 0.14, postZ], 0.14, 0.14, { rng, up: [0, 0, 1] }));
+      // stone footing
+      F.add(mats.stone(), xf(stoneGeo(rng, { r: 1, sx: 0.16, sy: 0.08, sz: 0.16 }), [x, 0.06, postZ]));
+    }
+    // curved knee braces into the front beam (the right one springs from the root)
     for (const s of [-1, 1]) {
       if ((x < 1.5 && s < 0) || (x > 1.5 && s > 0)) continue;
       const pts = [];
@@ -87,9 +95,9 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
       F.add(tim, tubeAlong(pts, 0.045));
     }
   }
-  // front beam (Pfette) with carved ends
+  // front beam (Pfette) with carved ends — its right end let into the root
   const fbY = yAt(postZ) - 0.07;
-  F.add(tim, timber([P.x0 - 0.15, fbY, postZ], [P.x1 + 0.1, fbY, postZ], 0.15, 0.15, { rng }));
+  F.add(tim, timber([P.x0 - 0.15, fbY, postZ], [RP.x + 0.02, fbY, postZ], 0.15, 0.15, { rng }));
   // rafters
   for (let x = P.x0; x <= P.x1 + 0.01; x += (P.x1 - P.x0) / 3) {
     F.add(tim, timber([x, P.hi + 0.04, z0], [x, yAt(z1 + 0.3) + 0.04, z1 + 0.3], 0.09, 0.11, { rng, up: [0, 1, 0.3] }));
@@ -186,14 +194,13 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
     F.add(mats.metal('#2f2b28'), xf(new THREE.CylinderGeometry(0.006, 0.006, 0.12, 4), [lx, fbY - 0.1, postZ + 0.1]), { cast: false });
     addLantern(F, mats, [lx, fbY - 0.15, postZ + 0.1], hook.clone().setY(hook.y - 0.07), { scale: 0.7 });
   }
-  // a frame saw hanging on a peg on the right post, a coil of rope below it
+  // a frame saw hanging on a peg driven into the root post, a coil of rope on its outer side
   {
-    const px = postXs[1], pz = postZ + 0.1;
-    F.add(mats.wood('walnut'), xf(new THREE.CylinderGeometry(0.012, 0.012, 0.08, 6), [px, 1.47, pz - 0.02], [Math.PI / 2, 0, 0]), { cast: false });
+    const px = RP.x - 0.02, pz = RP.z + 0.16;
+    F.add(mats.wood('walnut'), xf(new THREE.CylinderGeometry(0.012, 0.012, 0.14, 6), [px, 1.47, pz - 0.05], [Math.PI / 2, 0, 0]), { cast: false });
     addBowSaw(F, mats, rng, mat4([px, 1.24, pz + 0.01], [0, 0, 0.04]), { scale: 0.72 });
-    // the rope coil hangs on the post's outer side, clear of the bench
-    F.add(mats.rope(), xf(new THREE.TorusGeometry(0.09, 0.016, 5, 16), [px + 0.085, 0.95, pz - 0.1], [0, Math.PI / 2, 0]), { cast: false });
-    F.add(mats.rope(), xf(new THREE.TorusGeometry(0.08, 0.016, 5, 16), [px + 0.1, 0.93, pz - 0.09], [0.3, Math.PI / 2, 0]), { cast: false });
+    F.add(mats.rope(), xf(new THREE.TorusGeometry(0.09, 0.016, 5, 16), [RP.x + 0.24, 0.95, RP.z - 0.02], [0, Math.PI / 2, 0]), { cast: false });
+    F.add(mats.rope(), xf(new THREE.TorusGeometry(0.08, 0.016, 5, 16), [RP.x + 0.255, 0.93, RP.z - 0.01], [0.3, Math.PI / 2, 0]), { cast: false });
   }
   // ivy trailing down from the porch eave — only at the porch's two ends,
   // outside the posts (nothing hangs across the bench, Jonny or the vise) —
@@ -207,17 +214,23 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
   // a fascia board along the porch eave
   F.add(mats.wood('oak'), xf(board(P.x1 - P.x0 + 0.46, 0.12, 0.035, { along: 'x', rng }), [(P.x0 + P.x1) / 2, yAt(z1 + 0.32) + 0.08, z1 + 0.34], [slope, 0, 0]));
 
-  // ── moss on the shakes: irregular cushions sitting on the courses ─────────
-  // (clustered along the low edge, at the two corners and in the damp angle
-  // against the annex wall; a few drape over the eave, lichen rosettes dot the
-  // dry shakes). Built in the roof's own frame: x along the eave, v up the
-  // slope from the eave line, lifted off the shakes.
+  // ── moss on the shakes: a few real cushions in the damp places ────────────
+  // Clustered where moss grows on a lean-to — the shaded low edge at its two
+  // ends, the damp angle against the annex wall, a drape or two over the
+  // eave — never sprinkled evenly. Each cushion is domed and lobed, its
+  // crown a sunlit yellow-green grading to a dark olive rim (the same family
+  // as the moss on the oak's roots), the cushions of a patch crowding into
+  // one another. Lichen rosettes dot the dry shakes. Built in the roof's own
+  // frame: x along the eave, v up the slope from the eave line.
   {
     const mRng = createRng('porch-roof-moss');
+    const mossVC = mossVCMaterial(ctx);
     const roofAt = (x, v, off) => [x, sOrigin.y + up.y * v + normal.y * off, sOrigin.z + up.z * v + normal.z * off];
     const exp = 0.125; // the shakes' course exposure (layShingles)
-    const cushion = (x, v, size, { drape = 0 } = {}) => {
-      const g = mossGeo(mRng, { r: size, h: size * mRng.range(0.6, 0.95), sx: mRng.range(1.1, 1.8), sz: mRng.range(0.6, 0.9) });
+    const cushion = (x, v, size, { drape = 0, sun = 0.7 } = {}) => {
+      const h = size * mRng.range(0.6, 0.9);
+      const g = mossPadGeo(mRng, { r: size, h, sx: mRng.range(1.0, 1.45), sz: mRng.range(0.7, 1.0), lobes: 1 });
+      paintMoss(g, h, { sun, seed: x * 7 + v * 3 });
       if (drape) {
         // the part beyond the eave line bends down over the fascia
         g.computeBoundingBox();
@@ -234,44 +247,51 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
       }
       // sit on a course: just above a shake butt line
       const vv = Math.max(0.02, Math.floor(v / exp) * exp + 0.045 + mRng.jitter(0.015));
-      F.add(mats.moss(), xf(g, roofAt(x, drape ? 0.0 : vv, 0.03), [slope, mRng.jitter(0.35), 0]), { cast: false });
+      F.add(mossVC, xf(g, roofAt(x, drape ? 0.0 : vv, 0.03), [slope, mRng.jitter(0.5), 0]), { cast: false });
+    };
+    // a patch: one big cushion with smaller ones crowding round it
+    const patch = (x, v, size, n, sun) => {
+      cushion(x, v, size, { sun });
+      for (let k = 0; k < count(n, 1); k++) {
+        const a = mRng.next() * Math.PI * 2, d = size * mRng.range(0.9, 1.5);
+        cushion(x + Math.cos(a) * d * 1.2, Math.max(0, v + Math.sin(a) * d * 0.7), size * mRng.range(0.45, 0.75), { sun: sun * mRng.range(0.8, 1.1) });
+      }
     };
     const x0 = P.x0 - 0.18, x1 = P.x1 + 0.18;
-    // the low edge: clusters, denser towards the ends
-    for (let x = x0; x < x1; ) {
-      const endK = Math.min(x - x0, x1 - x) < 0.45 ? 1 : 0;
-      if (mRng.next() < 0.4 + endK * 0.5) {
-        const n = mRng.int(2, 4);
-        for (let k = 0; k < n; k++) cushion(x + mRng.jitter(0.12), mRng.range(0.0, exp * (1.4 + endK)), mRng.range(0.045, 0.12));
-      }
-      x += mRng.range(0.22, 0.5);
-    }
-    // corners: creeping up the slope
-    for (const xc of [x0 + 0.1, x1 - 0.1]) {
-      for (let k = 0; k < 6; k++) cushion(xc + mRng.jitter(0.14), mRng.range(0.1, sH * 0.55), mRng.range(0.04, 0.1));
-    }
-    // the damp angle against the annex wall
-    for (let x = x0 + 0.1; x < x1 - 0.1; x += mRng.range(0.18, 0.4)) {
-      if (mRng.next() < 0.3) continue;
-      cushion(x, sH - mRng.range(0.04, 0.2), mRng.range(0.05, 0.11));
-    }
-    // a few small ones scattered on the field
-    for (let k = 0; k < 6; k++) cushion(mRng.range(x0, x1), mRng.range(0.2, sH - 0.25), mRng.range(0.03, 0.06));
+    // the low edge: a big patch at each end, a smaller one off-centre
+    patch(x0 + 0.24, 0.04, 0.13, 5, 0.6);
+    patch(x1 - 0.32, 0.06, 0.12, 4, 0.5);
+    patch(x0 + (x1 - x0) * 0.6, 0.02, 0.075, 2, 0.8);
+    // creeping up from the two low corners
+    patch(x0 + 0.1, sH * 0.38, 0.07, 2, 0.55);
+    patch(x1 - 0.12, sH * 0.3, 0.065, 1, 0.45);
+    // the damp angle against the wall
+    patch(x0 + 0.42, sH - 0.14, 0.095, 3, 0.4);
+    patch(x1 - 0.55, sH - 0.12, 0.08, 2, 0.35);
     // drapes over the eave, with a tuft or two hanging from them
-    for (const x of [x0 + 0.14, x1 - 0.22]) {
-      cushion(x, 0, mRng.range(0.06, 0.085), { drape: 0.4 });
+    const tc = new THREE.Color();
+    for (const x of [x0 + 0.18, x1 - 0.28]) {
+      cushion(x, 0, mRng.range(0.07, 0.09), { drape: 0.4, sun: 0.5 });
       for (let k = 0; k < 2; k++) {
         const tx = x + mRng.jitter(0.08);
         const top = roofAt(tx, -0.06, 0.0);
         const len = mRng.range(0.05, 0.1);
         const tuft = new THREE.ConeGeometry(0.016, len, 6, 2);
         tuft.rotateX(Math.PI).translate(0, -len / 2, 0);
-        F.add(mats.moss(), xf(tuft, [top[0], top[1] - 0.04, top[2] + 0.02], [mRng.jitter(0.25), 0, mRng.jitter(0.25)]), { cast: false });
+        const tcol = new Float32Array(tuft.attributes.position.count * 3);
+        mossTone(0.35, tc);
+        for (let i = 0; i < tcol.length; i += 3) {
+          tcol[i] = tc.r;
+          tcol[i + 1] = tc.g;
+          tcol[i + 2] = tc.b;
+        }
+        tuft.setAttribute('color', new THREE.BufferAttribute(tcol, 3));
+        F.add(mossVC, xf(tuft, [top[0], top[1] - 0.04, top[2] + 0.02], [mRng.jitter(0.25), 0, mRng.jitter(0.25)]), { cast: false });
       }
     }
     // lichen rosettes on the dry shakes (pale grey-green, the odd orange one)
     const lichen = ['#9ea283', '#959d78', '#a8a88a', '#9ea283', '#b08a3c'];
-    for (let k = 0; k < 34; k++) {
+    for (let k = 0; k < count(30, 10); k++) {
       const g = new THREE.CircleGeometry(mRng.range(0.01, 0.022), 7);
       g.rotateX(-Math.PI / 2);
       g.scale(1, 1, mRng.range(0.6, 1));

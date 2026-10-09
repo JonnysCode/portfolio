@@ -70,7 +70,7 @@ const XE = RE * Math.sin(THETA); // extrados end
 const extradosY = (x) => (Math.abs(x) <= XE ? Y0 + Math.sqrt(Math.max(0, RE * RE - x * x)) : -Infinity);
 
 /** The low tier's masonry: a fieldstone wall texture on the core (one material, shared with the workshop). */
-export const lowWall = () => materials.surface('stone', { vertexColors: true, mossy: 0.35, scale: 0.75 });
+export const lowWall = () => materials.surface('masonry', { vertexColors: true, mossy: 0.35, scale: 0.75 });
 /**
  * The bridge's dressed stone: the single-stone surface (fine grain, a rare
  * hairline crack, worn pale edges) — far quieter than the rock texture — with

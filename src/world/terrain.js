@@ -221,6 +221,13 @@ export default async function build(ctx) {
   geo.computeVertexNormals();
   geo.computeBoundingSphere();
 
+  // (memory: the splat/patch/relief weights are only read by the GPU — their
+  //  CPU copies go once uploaded; position & index stay: ground clicks raycast
+  //  the mesh; aBloom is released after paintBlooms has written it)
+  const dropArray = function () {
+    this.array = null;
+  };
+  for (const k of ['aSplat', 'aPatch', 'aRelief']) geo.attributes[k].onUpload(dropArray);
   const mesh = new THREE.Mesh(geo, makeTerrainMaterial(ctx));
   mesh.receiveShadow = true;
   mesh.castShadow = false;
@@ -258,6 +265,7 @@ export default async function build(ctx) {
   function paintBlooms(zones) {
     const attr = geo.attributes.aBloom;
     const a = attr.array;
+    if (!a) return;
     for (let i = 0; i < count; i++) {
       const x = posArr[i * 3], z = posArr[i * 3 + 2];
       for (const d of zones) {
@@ -275,6 +283,7 @@ export default async function build(ctx) {
       }
     }
     attr.needsUpdate = true;
+    attr.onUpload(dropArray);
   }
 
   return { mesh, pathStones, stats, budget: TERRAIN_BUDGET, paintBlooms };

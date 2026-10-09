@@ -40,7 +40,11 @@
 //                          sunny clearing in the heart of the glen.
 //   light pools            (night) every point request and lit doorway gets an
 //                          additive warm pool on the ground (props/glow.js
-//                          lightPools) — see buildLightPools.
+//                          lightPools), and so does every stretch of fairy
+//                          lights (any builder's small warm lamp halos, found
+//                          after the build): the deck planks, the bridge
+//                          parapet and the paths under a catenary go warm —
+//                          see buildLightPools.
 //   scene.environment      a painted "under the canopy" PMREM (env/envmap.js) so
 //                          PBR surfaces get soft ambient and gentle
 //                          reflections; swapped for a night version at dusk.
@@ -58,7 +62,7 @@
 // addPoint returns null once the budget is used up.)
 //
 // ctx.lights = { sun, hemi, rim, beam, keyDir, shadowExtent, shadowCenter, canopy, addPoint(position, opts), allocate(), points,
-//                pools ({ count, meshes, ms, list } — the night light pools), rigs, retune() }
+//                pools ({ count, meshes, ms, list } — the night light pools), strandBulbs, strandPools, rigs, retune() }
 //   keyDir is live (world space, towards the current key light).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
@@ -78,9 +82,9 @@ installCanopy();
 const DAY = {
   key: new THREE.Color('#ffd49a'),
   keyI: 4.05,
-  // a cool teal-grey sky fill: the shade reads as cool depth (not green felt),
-  // the warm key paints the sunlit flecks gold
-  hemiSky: new THREE.Color('#a2bcbe'),
+  // a soft sage sky fill: the shade reads as gentle depth (not green felt, not
+  // grey-teal murk), the warm key paints the sunlit flecks gold
+  hemiSky: new THREE.Color('#adbfa2'),
   hemiGround: new THREE.Color('#7a6440'),
   hemiI: 0.85,
   /** canopy cookie: shade level between the flecks and the flecks' gain (sunlit cap tops, roofs, path stones) */
@@ -279,9 +283,21 @@ export default async function build(ctx) {
   // By day, likewise: nothing is in the canopy's shadow without a shadow map, so
   // the sun key and the leaf-filtered half shade are toned down (the glen keeps
   // the same value structure as on the other tiers instead of washing out).
+  // ('low' by day: the cookie is all the shade there is — it reaches up into the
+  // crowns (no shadow map darkens their undersides) with sparser, softer flecks,
+  // and the key is lower, so sunlit crown tops and the open ground never bleach
+  // to cream.)
   const lit = q.shadows
-    ? { key: 1, rim: 1, hemi: 1, boost: 1, beam: 1, dayKey: 1, dayShade: 1 }
-    : { key: 0.45, rim: 0.55, hemi: 0.8, boost: 0, beam: 0.7, dayKey: 0.8, dayShade: 0.7 };
+    ? { key: 1, rim: 1, hemi: 1, boost: 1, beam: 1, dayKey: 1, dayShade: 1, fleck: 1 }
+    : { key: 0.45, rim: 0.55, hemi: 0.8, boost: 0, beam: 0.7, dayKey: 0.7, dayShade: 0.62, fleck: 0.8 };
+  if (!q.shadows) {
+    canopyParams.a[3] = 48; // the cookie's fade-out height: above the crowns
+    canopyParams.d[0] = 0.05; // fewer flecks: more leaf shade
+    // up in the crowns (y ≳ 14) far fewer: a crown is mostly its own shade, with
+    // a few sun-kissed clumps — not a back-lit cream ball
+    canopyParams.d[1] = 0.14;
+    canopyParams.d[2] = 13;
+  }
   const dayKeyI = DAY.keyI * lit.dayKey;
   const nightKeyI = NIGHT.keyI * lit.key;
   const nightRimI = NIGHT.rimI * lit.rim;
@@ -453,6 +469,29 @@ export default async function build(ctx) {
       }
     }
 
+    // fairy-light strands: every SMALL warm lamp halo in the glen (the bulbs of
+    // the strands over the Schreinerei deck, the loft deck & house, the bridge
+    // parapet, the cottages' garden and rims, the oak's roots) — whoever built
+    // them. Their light reaches the planks & stones below as pools (③).
+    const bulbs = [];
+    {
+      const w = new THREE.Vector3();
+      scene.traverse((o) => {
+        if (!o.isMesh || !o.visible) return;
+        const m = o.material;
+        if (!m || m.name !== 'props-glow-halo' || !(m.uniforms?.uLampK?.value > 0.5)) return;
+        const g = o.geometry;
+        const pos = g?.attributes?.position, size = g?.attributes?.aSize, lamp = g?.attributes?.aLamp;
+        if (!pos || !size || !lamp) return;
+        const sc = o.matrixWorld.getMaxScaleOnAxis() * (m.uniforms.uScale?.value ?? 1);
+        for (let i = 0; i < pos.count; i += 4) {
+          if (lamp.getX(i) < 0 || size.getX(i) * sc > 0.3) continue; // cool glows; lanterns & windows (pools of their own)
+          w.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+          bulbs.push(w.x, w.y, w.z, Math.max(0, lamp.getX(i)));
+        }
+      });
+    }
+
     // Surfaces a pool may lie on (floors, decks, porches, the bridge, steps): the
     // FLAT-ish triangles (|normal.y| > 0.75) of the building modules' opaque
     // static meshes within reach of a lamp, collected once. No terrain (getHeight
@@ -464,6 +503,10 @@ export default async function build(ctx) {
     for (const p of [...requests.map((r) => r.light.position), ...extra]) {
       if (p.y - groundY(p.x, p.z) > 7.5) continue;
       for (let i = -2; i <= 2; i++) for (let k = -2; k <= 2; k++) cells.add(key(Math.floor(p.x / CELL) + i, Math.floor(p.z / CELL) + k));
+    }
+    // (strand bulbs at any height — the loft deck is high up in the oak)
+    for (let b = 0; b < bulbs.length; b += 4) {
+      for (let i = -1; i <= 1; i++) for (let k = -1; k <= 1; k++) cells.add(key(Math.floor(bulbs[b] / CELL) + i, Math.floor(bulbs[b + 2] / CELL) + k));
     }
     const tri = []; // ax, az, ay, bx, bz, by, cx, cz, cy
     const grid = new Map(); // cell key → offsets into tri
@@ -623,6 +666,37 @@ export default async function build(ctx) {
       }
     }
 
+    // ③ fairy-light strands: the bulbs grouped into ~1 unit cells along each
+    // strand, a soft warm pool on the deck / bridge / ground below every group
+    // (weaker the higher the strand hangs) — the planks, tablecloths' shadows
+    // and parapet stones under a catenary go warm instead of staying moonlit
+    {
+      const S = 1.1, SY = 3; // (a tall band: a sagging strand never splits into two stacked pools)
+      const groups = new Map();
+      for (let b = 0; b < bulbs.length; b += 4) {
+        const k = `${Math.floor(bulbs[b] / S)},${Math.floor(bulbs[b + 1] / SY)},${Math.floor(bulbs[b + 2] / S)}`;
+        let gp = groups.get(k);
+        if (!gp) groups.set(k, (gp = { x: 0, y: 0, z: 0, n: 0, delay: Infinity }));
+        gp.x += bulbs[b];
+        gp.y += bulbs[b + 1];
+        gp.z += bulbs[b + 2];
+        gp.delay = Math.min(gp.delay, bulbs[b + 3]);
+        gp.n++;
+      }
+      const pt = new THREE.Vector3();
+      let strandPools = 0;
+      for (const gp of groups.values()) {
+        pt.set(gp.x / gp.n, gp.y / gp.n, gp.z / gp.n);
+        const at = placePool(pt, 1.2);
+        const h = pt.y - at.y;
+        if (h < 0.25 || h > 4.2) continue; // high in the crown / on a cap's crown: no pool
+        pools.push({ x: pt.x, y: at.y, z: pt.z, size: at.size, color: '#ffb866', strength: (0.42 * Math.min(gp.n / 3, 1.35)) / (1 + 0.08 * h * h), flat: at.flat, delay: gp.delay, rings: 4, segs: 14 });
+        strandPools++;
+      }
+      ctx.lights.strandBulbs = bulbs.length / 4;
+      ctx.lights.strandPools = strandPools;
+    }
+
     // ② lit doorways: a long pool spilling out over the threshold
     // (an interior light never reaches the threshold as a pool: walls, decay —
     // so doorway pools keep their strength whether or not that light is live)
@@ -738,7 +812,7 @@ export default async function build(ctx) {
     rim.intensity = DAY.rimI + (nightRimI - DAY.rimI) * n;
     // the canopy cookie: deeper shade & brighter flecks by day, the clearing open
     canopyParams.b[0] = DAY.canopyShade * lit.dayShade + (NIGHT.canopyShade - DAY.canopyShade * lit.dayShade) * n;
-    canopyParams.b[1] = DAY.canopyFleck + (NIGHT.canopyFleck - DAY.canopyFleck) * n;
+    canopyParams.b[1] = DAY.canopyFleck * lit.fleck + (NIGHT.canopyFleck - DAY.canopyFleck * lit.fleck) * n;
     canopyParams.c.set([CLEARING[0], CLEARING[1], CLEARING[2], DAY.clearing + (NIGHT.clearing - DAY.clearing) * n]);
     // the beam: golden sunbeam on the Schreinerei, fading out towards dusk, then
     // (relocated while dark) a silver moonbeam on the fairy ring

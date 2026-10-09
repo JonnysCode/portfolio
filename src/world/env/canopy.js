@@ -36,6 +36,10 @@
 // canopyParams.a = [time, strength, canopy plane height, fade start height]
 // canopyParams.b = [shade level, fleck gain, pattern frequency, detail octave (0/1)]
 // canopyParams.c = [clearing centre x, z, radius, strength (0 = none)]
+// canopyParams.d = [fleck threshold bias (+ = fewer, smaller flecks), extra bias up
+//   in the crowns, the height where that bias starts (+10 to full), –]
+//   ('low' — no shadow map — leans on the cookie alone: it reaches up into the
+//   crowns there and its flecks are sparser; lighting.js sets a.w and d.x)
 // installCanopy() is idempotent and runs on import.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
@@ -44,18 +48,21 @@ export const canopyParams = {
   a: new Float32Array([0, 1, 22, 15]),
   b: new Float32Array([0.3, 1.3, 0.42, 1]),
   c: new Float32Array([0, 0, 1, 0]),
+  d: new Float32Array([0, 0, 0, 0]),
 };
 
 const EXTRA_UNIFORMS = {
   woodlandCanopyA: { value: canopyParams.a },
   woodlandCanopyB: { value: canopyParams.b },
   woodlandCanopyC: { value: canopyParams.c },
+  woodlandCanopyD: { value: canopyParams.d },
 };
 
 const PARS = /* glsl */ `
 uniform vec4 woodlandCanopyA;
 uniform vec4 woodlandCanopyB;
 uniform vec4 woodlandCanopyC;
+uniform vec4 woodlandCanopyD;
 float wcHash( vec2 p ) {
 	vec3 p3 = fract( vec3( p.xyx ) * 0.1031 );
 	p3 += dot( p3, p3.yzx + 33.33 );
@@ -89,7 +96,7 @@ vec3 woodlandCanopy( vec3 viewPos, vec3 lightDirView ) {
 	// the glen's sunny clearing: denser, merging flecks (ground position)
 	vec2 dc = wp.xz - woodlandCanopyC.xy;
 	float clearing = woodlandCanopyC.w * exp( - dot( dc, dc ) / max( woodlandCanopyC.z * woodlandCanopyC.z, 1e-3 ) );
-	float thr = mix( 0.66, 0.43, region ) - 0.2 * clearing;
+	float thr = mix( 0.66, 0.43, region ) - 0.2 * clearing + woodlandCanopyD.x + woodlandCanopyD.y * smoothstep( woodlandCanopyD.z, woodlandCanopyD.z + 10.0, wp.y );
 	// crisp edges, widened with distance so they never shimmer into speckle
 	// (an estimate of the pattern's change per pixel — no derivatives, so it
 	// is safe inside the lit-only branch)

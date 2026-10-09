@@ -109,8 +109,15 @@ function clearY(x, z) {
 // ─── geometry accumulator (one merged mesh, no per-part BufferGeometry merge) ─
 
 function makeAcc() {
-  return { pos: [], nrm: [], tint: [], idx: [], v: 0 };
+  // tree: [ground height at the tree's foot, per-tree seed] — set per tree
+  // (the bark shader grows moss, ivy and lichen up from the roots)
+  return { pos: [], nrm: [], tint: [], info: [], idx: [], v: 0, tree: [-200, 0] };
 }
+/** A stable per-tree seed (0…1) from its position (keeps the rng sequence untouched). */
+const treeSeed = (x, z) => {
+  const h = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453;
+  return h - Math.floor(h);
+};
 /** Append an indexed geometry (position + normal) with a flat tint. */
 function addGeo(acc, g, rgb) {
   const p = g.attributes.position.array;
@@ -120,7 +127,10 @@ function addGeo(acc, g, rgb) {
     acc.pos.push(p[i]);
     acc.nrm.push(n[i]);
   }
-  for (let i = 0; i < count; i++) acc.tint.push(rgb[0], rgb[1], rgb[2]);
+  for (let i = 0; i < count; i++) {
+    acc.tint.push(rgb[0], rgb[1], rgb[2]);
+    acc.info.push(acc.tree[0], acc.tree[1]);
+  }
   const ix = g.index ? g.index.array : null;
   if (ix) for (let i = 0; i < ix.length; i++) acc.idx.push(ix[i] + acc.v);
   else for (let i = 0; i < count; i++) acc.idx.push(i + acc.v);
@@ -132,6 +142,7 @@ function accGeometry(acc) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(acc.pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(acc.nrm, 3));
   g.setAttribute('aTint', new THREE.Float32BufferAttribute(acc.tint, 3));
+  g.setAttribute('aInfo', new THREE.Float32BufferAttribute(acc.info, 2));
   g.setIndex(acc.v > 65535 ? new THREE.Uint32BufferAttribute(acc.idx, 1) : new THREE.Uint16BufferAttribute(acc.idx, 1));
   g.computeBoundingSphere();
   return g;
@@ -350,7 +361,9 @@ function ceilingGeometry(tier) {
 
 const FOREST_VERT = /* glsl */ `
   attribute vec3 aTint;
+  attribute vec2 aInfo; // ground height at the tree's foot, per-tree seed
   varying vec3 vTint;
+  varying vec2 vInfo;
   varying vec3 vN;
   varying vec3 vW;
   #include <fog_pars_vertex>
@@ -359,6 +372,7 @@ const FOREST_VERT = /* glsl */ `
     vW = wp.xyz;
     vN = normalize(mat3(modelMatrix) * normal);
     vTint = aTint;
+    vInfo = aInfo;
     vec4 mvPosition = viewMatrix * wp;
     gl_Position = projectionMatrix * mvPosition;
     #include <fog_vertex>
@@ -383,6 +397,7 @@ const FOREST_FRAG = /* glsl */ `
   uniform vec3 uKeyDir, uKeyColor, uSkyCol, uShadeCol, uMoss, uMoonDir, uMoonRim;
   uniform float uNight, uDepthK;
   varying vec3 vTint;
+  varying vec2 vInfo;
   varying vec3 vN;
   varying vec3 vW;
   ${GLSL_NOISE}
@@ -396,13 +411,58 @@ const FOREST_FRAG = /* glsl */ `
     // painterly breakup: broad colour patches that do not follow the mesh
     float patchN = envFbm(vW.xz * 0.09 + vW.y * 0.05);
     vec3 base = vTint * mix(0.75, 1.2, patchN);
-    // bark: long vertical furrows + moss creeping up from the roots
-    float around = dot(vW.xz, vec2(0.71, 0.71)) + dot(n.xz, vec2(-0.71, 0.71)) * 3.0;
-    float furrow = envFbm(vec2(around * 1.6, vW.y * 0.09));
-    base = mix(base, base * mix(0.55, 1.25, furrow), isBark);
-    // moss on the up-facing root flares and in streaks down the windward side
-    float mossAmt = isBark * (smoothstep(0.25, 0.85, n.y) * 0.75 + smoothstep(0.2, 0.9, -n.x) * 0.35) * smoothstep(0.35, 0.65, envNoise(vW.xz * 0.6 + vW.y * 0.2));
-    base = mix(base, uMoss * mix(0.7, 1.1, patchN), clamp(mossAmt, 0.0, 0.85));
+    // height above the tree's own foot (far below for the canopy fill)
+    float hA = vW.y - vInfo.x;
+    float sd = vInfo.y;
+    float rim = 1.0 - abs(dot(n, v));
+    // (how much brighter / darker the bark's detail makes it than a plain
+    //  trunk: kept, at reduced contrast, through the haze further down)
+    float barkDetail = 1.0;
+    if (isBark > 0.5) {
+      float plainL = dot(base, vec3(0.3, 0.59, 0.11));
+      // ── bark that reads as an old giant, not a pale cardboard column ──
+      float around = dot(vW.xz, vec2(0.71, 0.71)) + dot(n.xz, vec2(-0.71, 0.71)) * 3.0;
+      // per tree: a little darker or lighter, some greyer (lichen-silvered)
+      base *= mix(0.82, 1.2, fract(sd * 7.13));
+      base = mix(base, vec3(dot(base, vec3(0.333))) * vec3(0.96, 1.0, 0.94), 0.4 * fract(sd * 3.71));
+      // broad vertical bands — darker wet or mossy runs, lighter dry bark —
+      // big enough to survive the haze and the far-field blur of the lens
+      float broad = envNoise(vec2(around * 0.32 + sd * 7.0, vW.y * 0.028 + sd * 3.0));
+      base *= mix(0.6, 1.32, broad);
+      // long vertical furrows and the bark plates between them
+      float furrow = envFbm(vec2(around * 1.6, vW.y * 0.09));
+      base *= mix(0.5, 1.28, furrow);
+      #if BARK_DETAIL
+      float plates = envNoise(vec2(around * 4.2, vW.y * 0.32));
+      base *= mix(0.78, 1.12, plates);
+      // dark wet streaks running down the trunk from the forks
+      float wet = smoothstep(0.6, 0.85, envNoise(vec2(around * 2.3 + sd * 9.0, vW.y * 0.022)));
+      base *= 1.0 - 0.38 * wet;
+      // pale grey-green lichen blotches, mostly on the lit side
+      float lichen = smoothstep(0.6, 0.8, envNoise(vec2(around * 3.1 - sd * 5.0, vW.y * 0.21)));
+      lichen *= 0.35 + 0.65 * smoothstep(-0.1, 0.6, dot(n, uKeyDir));
+      base = mix(base, vec3(0.3, 0.32, 0.25), lichen * 0.42);
+      #endif
+      // moss: thick on the root flares, creeping up from the roots to a ragged
+      // tide line (higher on the windward side), in lighter and darker cushions
+      float tide = mix(3.5, 14.0, fract(sd * 5.31)) * (0.7 + 0.6 * envNoise(vec2(around * 1.3, sd * 11.0))) * (1.0 + 0.6 * smoothstep(0.2, 0.9, -n.x));
+      float mossAmt = smoothstep(0.25, 0.85, n.y) * 0.8 + (1.0 - smoothstep(tide * 0.45, tide, hA)) * 0.8 + smoothstep(0.2, 0.9, -n.x) * 0.3;
+      mossAmt *= smoothstep(0.28, 0.6, envNoise(vW.xz * 0.6 + vW.y * 0.2));
+      vec3 mossC = uMoss * mix(0.5, 1.3, envNoise(vec2(around * 2.6, vW.y * 0.45)));
+      base = mix(base, mossC, clamp(mossAmt, 0.0, 0.9));
+      #if BARK_DETAIL
+      // ivy: dark leafy runs climbing from the roots on about half the giants
+      float ivyTop = mix(6.0, 28.0, fract(sd * 11.1)) * step(0.45, fract(sd * 2.93));
+      float ivy = smoothstep(0.48, 0.68, envNoise(vec2(around * 1.1 + sd * 17.0, vW.y * 0.04)));
+      ivy *= 1.0 - smoothstep(ivyTop * 0.5, ivyTop, hA + 4.0 * envNoise(vec2(around * 3.0, sd * 3.0)));
+      float leaves = envNoise(vW.xy * 1.6 + vW.z * 1.3) * 0.6 + envNoise(vW.zy * 2.9 - vW.x * 1.1) * 0.4;
+      ivy *= smoothstep(0.22, 0.42, leaves);
+      base = mix(base, mix(vec3(0.04, 0.07, 0.028), vec3(0.11, 0.16, 0.05), leaves), ivy * 0.9);
+      #endif
+      // round, not flat: the trunk darkens towards its silhouette and at its foot
+      base *= (1.0 - 0.32 * rim * rim) * mix(0.62, 1.0, smoothstep(-2.0, 5.0, hA));
+      barkDetail = dot(base, vec3(0.3, 0.59, 0.11)) / max(plainL * 0.9, 1e-4);
+    }
     // never let a far-forest crown loom in front of the lens: when the camera
     // is high above the glen (the intro descends from above the canopy) the
     // backdrop near it dissolves (screen-door), as does anything very close
@@ -418,7 +478,6 @@ const FOREST_FRAG = /* glsl */ `
     }
     // foliage: a lobed, leafy silhouette — broad notches (several pixels wide
     // even far away, so the edge never turns into a stippled screen door)
-    float rim = 1.0 - abs(dot(n, v));
     if (isBark < 0.5) {
       float leafN = envNoise(vW.xy * 0.42 + vW.z * 0.27) * 0.6 + envNoise(vW.zy * 0.95 + vW.x * 0.33) * 0.4;
       if (rim > 0.56 + 0.42 * leafN) discard;
@@ -429,8 +488,9 @@ const FOREST_FRAG = /* glsl */ `
     float clump = envFbm(vW.xz * 0.35 + vW.y * 0.4) * 0.6 + envNoise(vW.xz * 0.9 + vW.y * 0.8) * 0.4;
     float belly = smoothstep(-0.8, 0.55, n.y);
     base = mix(base, base * mix(0.6, 1.3, clump) * mix(0.3, 1.05, belly), 1.0 - isBark);
-    // soft wrapped key light, sky from above, teal shade below
-    float key = clamp(dot(n, uKeyDir) * 0.6 + 0.4, 0.0, 1.0);
+    // soft wrapped key light, sky from above, teal shade below (the trunks a
+    // little less wrapped: a lit side and a shade side, so they read round)
+    float key = clamp(dot(n, uKeyDir) * mix(0.6, 0.78, isBark) + mix(0.4, 0.24, isBark), 0.0, 1.0);
     vec3 col = base * (uShadeCol * 0.9 + uKeyColor * key * 0.6 + uSkyCol * max(n.y, 0.0) * 0.4);
     // golden rim where a silhouette is backlit by the sun
     float facing = pow(1.0 - abs(dot(n, v)), 2.5);
@@ -440,14 +500,25 @@ const FOREST_FRAG = /* glsl */ `
     // rims, and everything sinks towards the misty blue-green with distance
     // from the glen (stronger on tiers without depth of field)
     vec4 hazeV = woodlandFog(vW);
-    float softRim = (1.0 - isBark) * smoothstep(0.25, 0.85, rim) * 0.4;
+    // (the trunks' silhouettes melt a little into the air too: no crisp cut-out edge)
+    float softRim = mix(smoothstep(0.25, 0.85, rim) * 0.4, smoothstep(0.55, 0.95, rim) * 0.22, isBark);
     float depth = smoothstep(36.0, 100.0, length(vW.xz)) * uDepthK;
+    // a trunk stands in mist at its feet and rises out of it: hazier low down
+    depth = clamp(depth + isBark * 0.22 * (1.0 - smoothstep(0.0, 12.0, hA)) * (0.5 + uDepthK), 0.0, 1.0);
     col = mix(col, hazeV.rgb, clamp(softRim + depth - softRim * depth, 0.0, 0.85));
     gl_FragColor = vec4(col, 1.0);
     // same order as three's built-in materials: the fog chunk expects display space
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #include <fog_fragment>
+    // …and higher up, under the leaf roof, it keeps more of its own dark,
+    // textured bark through the haze: a bottom-to-top value gradient, so the
+    // giants read as columns rising out of the mist, not flat pale cards
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, col, isBark * 0.32 * smoothstep(5.0, 32.0, hA) * hazeV.a);
+    // the bark's furrows, moss, ivy and its lit and shaded sides survive the
+    // haze at reduced contrast (the haze keeps the value, not the flatness)
+    float formK = mix(0.72, 1.22, key);
+    gl_FragColor.rgb *= mix(1.0, clamp(barkDetail * formK, 0.4, 1.6), isBark * 0.55 * hazeV.a);
     // night: a silver line where the edge faces the moon — scattered right at
     // the silhouette, so it survives the mist a little (the trunks stand out
     // against the moonlit haze like the backlit trees of the references)
@@ -795,6 +866,7 @@ export function buildBackdrop(ctx) {
       if (blocked) continue;
       const trunk = trunkGeometry(rng, { radius, height, lean, leanAz, radial: row.far ? 8 : 11, rings: row.far ? 8 : 12 });
       trunk.translate(x, y0, z);
+      acc.tree = [y0, treeSeed(x, z)];
       addGeo(acc, trunk, bark);
       // limbs: curved, tapering branches that arch up into the crown and end
       // in leaf sprays; now and then one forks off lower down (gnarled giants)
@@ -879,9 +951,11 @@ export function buildBackdrop(ctx) {
     if (inMoonWindow(x, y0 + height * 0.3, z, radius * 2) || inMoonWindow(x, y0 + height * 0.7, z, radius * 2) || inMoonWindow(cx, cy, cz, 4)) continue;
     const trunk = trunkGeometry(rng, { radius, height, lean, leanAz, radial: 8, rings: 8 });
     trunk.translate(x, y0, z);
+    acc.tree = [y0, treeSeed(x, z)];
     addGeo(acc, trunk, BARKS[rng.int(0, BARKS.length - 1)]);
     for (const c of masses) crownMass(acc, rng, cx + c.dx, cy + c.dy, cz + c.dz, c.s, leaf(), { lobes });
   }
+  acc.tree = [-200, 0];
   // the canopy between the crowns: big heaped leaf masses (rounded, several
   // bulges each — not flat discs) closing the roof over the far forest
   const fill = tier === 'low' ? 16 : 34;
@@ -920,6 +994,8 @@ export function buildBackdrop(ctx) {
     },
     vertexShader: FOREST_VERT,
     fragmentShader: FOREST_FRAG,
+    // (plates, wet streaks, lichen and ivy: not on 'low')
+    defines: { BARK_DETAIL: tier === 'low' ? 0 : 1 },
     fog: true,
   });
   const forest = new THREE.Mesh(merged, forestMat);

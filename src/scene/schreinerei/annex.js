@@ -30,10 +30,10 @@ import { createRng } from '../../core/rng.js';
 import {
   Batch, board, timber, peg, uvBox, xf, deform, mat4, stoneGeo, mossGeo, tube, rbox,
   ShingleField, layShingles, shingleGeo, addIvy, addToadstool, addFern, pushHalo, noiseA, noiseB,
-  addBowSaw, addFClamp, turned, doubleFace, FRAME_COLOR,
+  addBowSaw, addFClamp, turned, doubleFace, FRAME_COLOR, mossPadGeo, segs, count, LOD,
 } from './kit.js';
 import { shavingGeo } from './fx.js';
-import { rootGeo, rootBarkMaterial } from './door.js';
+import { rootGeo, rootBarkMaterial, mossCapGeo, mossVCMaterial, paintMoss, mossTone, stepStoneMaterial, wornStone } from './door.js';
 import { OAK, oakRadiusAt } from '../../world/layout.js';
 import { makeChimneySmoke } from '../../props/smoke.js';
 
@@ -55,6 +55,8 @@ export const ANNEX = {
   floor: 0.06, // interior floor
   door: { s0: 1.62, s1: 3.42, top: 2.12 }, // front double door (wall coords s = x + hx)
   porchRoof: { x0: 0.92, x1: 2.75, depth: 1.62, hi: 2.36, lo: 1.98 },
+  /** Where the great oak root comes down as the porch's right post (its foot). */
+  rootPost: { x: 2.93, z: 3.86 },
 };
 ANNEX.ridge = ANNEX.eave + ANNEX.hx * ANNEX.pitch; // underside of the rafters at the ridge
 
@@ -452,13 +454,29 @@ function makeWall(F, mats, rng, origin, sDir, normal) {
       const g = timber(p(s0, y0, -dj / 2 + (opts.proud ?? 0)), p(s1, y1, -dj / 2 + (opts.proud ?? 0)), fwj, dj, { rng, up: normal, wobble: opts.wobble ?? 0.018, r: 0.028 });
       F.add(opts.mat ?? oak, opts.mat ? g : paintMember(g, rng));
     },
-    /** A trenail (Holznagel) at (s, y): a pale end-grain dot standing a little proud. */
+    /**
+     * A trenail (Holznagel) at (s, y): a small riven oak peg (≈ 3 cm across
+     * at villager scale), its weathered end grain only a step lighter than
+     * the frame, barely proud, a little oval and off-centre, sitting in a
+     * soft dark ring where it was driven into its hole.
+     */
     peg(s, y) {
-      const g = peg(0.03, 0.05);
+      const r = rng.range(0.014, 0.016);
+      const n = segs(10, 6);
+      const sq = [1 + rng.jitter(0.08), 1 + rng.jitter(0.08)];
+      const g = new THREE.CylinderGeometry(r, r, 0.03, n, 1).rotateX(Math.PI / 2).scale(sq[0], sq[1], 1).rotateZ(rng.next() * 3);
+      uvBox(g, 'z');
       g.applyMatrix4(basis);
-      const q = p(s + rng.jitter(0.01), y + rng.jitter(0.01), -0.012);
+      const q = p(s + rng.jitter(0.008), y + rng.jitter(0.008), -0.0115 + rng.range(0, 0.0025));
       g.translate(q[0], q[1], q[2]);
-      F.add(mats.wood(rng.pick(['#cfae80', '#c4a173', '#d6b98d'])), g, { cast: false });
+      F.add(mats.wood(rng.pick(['#7d5a3c', '#86613f', '#8d6846', '#94704c'])), g, { cast: false });
+      if (LOD.tier !== 'low') {
+        const ring = new THREE.CylinderGeometry(r * 1.4, r * 1.45, 0.02, n, 1).rotateX(Math.PI / 2).scale(sq[0], sq[1], 1);
+        ring.applyMatrix4(basis);
+        const qr = p(s, y, -0.0088);
+        ring.translate(qr[0] + (q[0] - qr[0]) * 0.6, qr[1] + (q[1] - qr[1]) * 0.6, qr[2]);
+        F.add(mats.wood('#3d2519'), ring, { cast: false });
+      }
     },
     /** Plaster infill: outline [[s,y]…] with holes [[[s,y]…]…], recessed behind the timbers. */
     plaster(outline, holes = [], { depth = 0.12, recess = 0.022 } = {}) {
@@ -571,7 +589,7 @@ function addWindow(wall, mats, rng, s0, y0, s1, y1, { cols = 3, rows = 3, cell =
         }
       }
       // a trailing vine over the front
-      if (rng.next() < 0.4) {
+      if (rng.next() < 0.4 && LOD.tier !== 'low') {
         const pts = [[x, y0 - 0.06, 0.24], [x + rng.jitter(0.03), y0 - 0.2, 0.25], [x + rng.jitter(0.05), y0 - 0.36, 0.24]];
         wall.add(vc, tube(pts, 0.005, 3, 6), { color: '#4f7f36', cast: false });
         for (let k = 0; k < 3; k++) wall.add(vc, xf(new THREE.SphereGeometry(0.022, 5, 3), [pts[k][0] + rng.jitter(0.02), pts[k][1] - 0.02, 0.255], null, [1, 1, 0.4]), { color: '#5e8c3a', cast: false });
@@ -622,7 +640,14 @@ export function buildAnnex(ctx, B, mats) {
     },
   };
   const { hx, hz, plinth, sillTop, plateBottom, eave, pitch: T, jetty } = ANNEX;
-  const tim = FRAME; // the Riegel frame, joist heads, rafters & purlins
+  const tim = FRAME;
+  // (triangles each part adds to the shared batch — ctx.sites.schreinerei.annex.cost)
+  const cost = {};
+  let costMark = B.added;
+  const mark = (name) => {
+    cost[name] = Math.round(B.added - costMark);
+    costMark = B.added;
+  }; // the Riegel frame, joist heads, rafters & purlins
   const yRoof = (x) => eave + (hx - Math.abs(x)) * T; // rafter underside line
   // roof surface (top of the rafters), the eave line and the front edge — for the ivy curtain
   const sinPA = Math.sin(Math.atan(T)), cosPA = Math.cos(Math.atan(T));
@@ -655,10 +680,26 @@ export function buildAnnex(ctx, B, mats) {
       }
       y += ch;
     }
-    // mortar core behind the stones
-    const core = new THREE.BoxGeometry(len, plinth, 0.24);
-    xf(core, [(x0 + x1) / 2 - nx * 0.1, plinth / 2, (z0 + z1) / 2 - nz * 0.1], [0, Math.atan2(dx, dz) + Math.PI / 2, 0]);
-    F.add(mats.stone(), uvBox(core, 'x', 1));
+    // mortar core behind the stones (interrupted where the skip leaves an opening)
+    const spans = [];
+    {
+      let a = null;
+      for (let k = 0; k <= 64; k++) {
+        const sc = (k / 64) * len;
+        const open = k === 64 || (skip && skip(sc));
+        if (!open && a === null) a = sc;
+        if (open && a !== null) {
+          spans.push([a, k === 64 && !(skip && skip(sc)) ? len : sc]);
+          a = null;
+        }
+      }
+    }
+    for (const [sa, sb] of spans) {
+      const core = new THREE.BoxGeometry(sb - sa, plinth, 0.24);
+      const sm = (sa + sb) / 2;
+      xf(core, [x0 + dx * sm - nx * 0.1, plinth / 2, z0 + dz * sm - nz * 0.1], [0, Math.atan2(dx, dz) + Math.PI / 2, 0]);
+      F.add(mats.stone(), uvBox(core, 'x', 1));
+    }
     // cap stones: flat slabs on top, slightly proud
     let s = 0;
     while (s < len) {
@@ -679,6 +720,7 @@ export function buildAnnex(ctx, B, mats) {
   plinthRun(hx, -hz, -hx, -hz);
   plinthRun(-hx, -hz, -hx, hz);
 
+  mark('plinth');
   // ── ground-floor walls ─────────────────────────────────────────────────────
   const front = makeWall(F, mats, rng, [-hx, 0, hz], [1, 0, 0], [0, 0, 1]);
   const right = makeWall(F, mats, rng, [hx, 0, hz], [0, 0, -1], [1, 0, 0]);
@@ -747,6 +789,7 @@ export function buildAnnex(ctx, B, mats) {
   andreas(left, 3.03, Dd - 0.18, ys + 0.02, 0.98);
   left.plaster([[0, ys], [Dd, ys], [Dd, yp + 0.16], [0, yp + 0.16]], [[[1.6, 1.12], [2.8, 1.12], [2.8, yp - 0.02], [1.6, yp - 0.02]]]);
 
+  mark('walls');
   // ── the jettied front gable ────────────────────────────────────────────────
   const gz = hz + jetty; // gable outer face
   const [gs0, gs1] = ANNEX.gableSill;
@@ -842,6 +885,7 @@ export function buildAnnex(ctx, B, mats) {
     F.add(tim, xf(board(0.2, 0.05, 0.06, { along: 'x', rng }), [0.16, 4.1, gz + 0.03]), { cast: false });
   }
 
+  mark('gable');
   // ── roof: rafters, purlins with carved ends on brackets, bargeboards ──────
   const zB = -hz - ANNEX.overhangBack, zF = gz + ANNEX.overhangFront;
   const rd = 0.14; // rafter depth
@@ -884,7 +928,8 @@ export function buildAnnex(ctx, B, mats) {
     const deck = new THREE.BoxGeometry(deckLen, 0.025, zF - zB, 16, 1, 14);
     uvBox(deck, 'x');
     xf(deck, [s * eaveX / 2, (roofSurf(eaveX) + roofSurf(0)) / 2 + 0.012, (zF + zB) / 2], [0, 0, s * Math.atan(T) * -1]);
-    FR.add(mats.wood('spruce'), deck);
+    // (weathered dark: a missing shake reads as a dark gap, not a pale speck)
+    FR.add(mats.wood('#6b5640'), deck);
   }
   // ridge purlin + finial at the front apex
   F.add(tim, timber([0, apex - 0.1, zB - 0.05], [0, apex - 0.1, zF - 0.04], 0.16, 0.18, { rng }));
@@ -895,48 +940,103 @@ export function buildAnnex(ctx, B, mats) {
     F.add(mats.wood('oak'), xf(new THREE.ConeGeometry(0.045, 0.16, 8), [0, roofSurf(0) + 0.88, zF + 0.04]));
   }
 
+  mark('roof');
   // ── dormer on the right slope (towards the oak) ────────────────────────────
-  const dorm = { z: 0.55, w: 1.05, y0: 3.42, h: 0.85 };
-  dorm.x = hx - (dorm.y0 - eave) / T + 0.02; // front face where it meets the roof
+  // A proper little Giebelgaube: a timber-framed front with a two-light
+  // window (it looks out at the oak's bark and the great root), cheeks clad
+  // in small shakes — no plaster above the roof — a steep shingled gable roof
+  // with a ridge cap, bargeboards and a finial, and zinc flashing where the
+  // cheeks and the apron meet the main roof.
+  const shakeQueue = []; // the dormer cheeks' shakes, added to the roof's field below
+  const dorm = { z: 0.55, w: 1.0, y0: 3.42, h: 0.92, dp: 1.0 };
+  const shakeTop = (x) => roofSurf(x) + 0.07; // top of the main roof's shakes at x
+  const xAtShakes = (y) => hx - (y - 0.07 - eave - rd / cosP) / T; // where the shakes reach height y
+  dorm.x = hx - (dorm.y0 - eave) / T + 0.02; // front face (its foot sits on the rafters)
+  dorm.hw = dorm.w / 2;
+  dorm.top = dorm.y0 + dorm.h;
+  dorm.yb = shakeTop(dorm.x) - 0.02; // the apron line: where the front wall leaves the shakes
+  dorm.ow = dorm.hw + 0.13; // half span of its roof
+  dorm.ridge = dorm.top + dorm.ow * dorm.dp;
+  dorm.back = xAtShakes(dorm.ridge) - 0.12;
+  const zinc = mats.metal('#5c6064'); // old, dull lead-grey zinc
   {
-    const dx = dorm.x, dz = dorm.z, hw = dorm.w / 2, top = dorm.y0 + dorm.h;
+    const dx = dorm.x, dz = dorm.z, hw = dorm.hw, top = dorm.top, yb = dorm.yb;
     const dw = makeWall(F, mats, rng, [dx, 0, dz + hw], [0, 0, -1], [1, 0, 0]);
     dw.timber(0.06, dorm.y0, 0.06, top);
     dw.timber(dorm.w - 0.06, dorm.y0, dorm.w - 0.06, top);
     dw.timber(-0.05, top - 0.06, dorm.w + 0.05, top - 0.06, 0.12);
-    dw.timber(-0.05, dorm.y0 + 0.06, dorm.w + 0.05, dorm.y0 + 0.06, 0.12);
-    addWindow(dw, mats, rng, 0.2, dorm.y0 + 0.16, dorm.w - 0.2, top - 0.14, { cols: 2, rows: 2, cell: WIN.curtainL, sill: false });
-    dw.plaster([[0, dorm.y0], [dorm.w, dorm.y0], [dorm.w, top], [0, top]], [[[0.2, dorm.y0 + 0.16], [dorm.w - 0.2, dorm.y0 + 0.16], [dorm.w - 0.2, top - 0.14], [0.2, top - 0.14]]]);
-    // cheeks: triangles from the front wall back to where they meet the main roof
-    const xr = (y) => hx - (y - eave) / T - 0.02;
+    dw.timber(-0.02, yb + 0.06, dorm.w + 0.02, yb + 0.06, 0.12);
+    const wy0 = yb + 0.13, wy1 = top - 0.12;
+    addWindow(dw, mats, rng, 0.16, wy0, dorm.w - 0.16, wy1, { cols: 2, rows: 2, cell: WIN.curtainL, sill: false });
+    dw.plaster([[0.06, yb + 0.1], [dorm.w - 0.06, yb + 0.1], [dorm.w - 0.06, top - 0.08], [0.06, top - 0.08]], [[[0.16, wy0], [dorm.w - 0.16, wy0], [dorm.w - 0.16, wy1], [0.16, wy1]]]);
+    // cheeks: a board backing (its foot well under the shakes) clad in small shakes
+    const xb = xAtShakes(top + 0.1);
+    const xv = xAtShakes(top); // where the cheek meets the roof at the top
     for (const sgn of [-1, 1]) {
-      const sh = new THREE.Shape([new THREE.Vector2(dx, dorm.y0 - 0.1), new THREE.Vector2(dx, top), new THREE.Vector2(xr(top) - 0.1, top), new THREE.Vector2(xr(dorm.y0 - 0.1) - 0.1, dorm.y0 - 0.1)]);
-      const cg = new THREE.ExtrudeGeometry(sh, { depth: 0.08, bevelEnabled: false });
-      cg.translate(0, 0, sgn > 0 ? -0.08 : 0);
-      uvBox(cg, 'x', 1 / 2.2);
-      F.add(mats.plaster(), xf(cg, [0, 0, dz + sgn * hw]));
-      // corner board
-      F.add(tim, xf(board(0.08, dorm.h + 0.05, 0.08, { along: 'y', rng }), [dx - 0.02, dorm.y0 + dorm.h / 2, dz + sgn * (hw - 0.02)]));
+      const sh = new THREE.Shape([new THREE.Vector2(dx, shakeTop(dx) - 0.09), new THREE.Vector2(dx, top + 0.03), new THREE.Vector2(xb, top + 0.03)]);
+      const cg = new THREE.ExtrudeGeometry(sh, { depth: 0.04, bevelEnabled: false });
+      cg.translate(0, 0, sgn > 0 ? -0.04 : 0);
+      uvBox(cg, 'y');
+      F.add(mats.wood('#6e5a45'), xf(cg, [0, 0, dz + sgn * hw]));
+      // the cladding: courses of little shakes, each clear of the roof line
+      const along = new THREE.Vector3(sgn, 0, 0), up = new THREE.Vector3(0, 1, 0), nrm = new THREE.Vector3(0, 0, sgn);
+      const basis = new THREE.Matrix4().makeBasis(along, up, nrm);
+      const m = new THREE.Matrix4(), rot = new THREE.Matrix4(), sc = new THREE.Matrix4();
+      const q = new THREE.Vector3(), col = new THREE.Color();
+      let r = 0;
+      for (let y = shakeTop(dx) - 0.03; y < top - 0.06; y += 0.075, r++) {
+        const xs = xAtShakes(y);
+        for (let x = dx - 0.06 - (r % 2) * 0.05; x > xs + 0.035; x -= 0.1) {
+          q.set(x + rng.jitter(0.006), y, dz + sgn * (hw + 0.016 + (r % 2) * 0.003));
+          crook(q);
+          rot.makeRotationFromEuler(new THREE.Euler(-0.08 + rng.jitter(0.02), 0, rng.jitter(0.05)));
+          sc.makeScale(0.5 * rng.range(0.9, 1.1), 0.6, 1);
+          m.copy(basis).multiply(rot).multiply(sc).setPosition(q);
+          const g = rng.range(0.82, 1.05);
+          shakeQueue.push([m.clone(), col.setRGB(g, g * 0.97, g * 0.92).clone()]);
+        }
+      }
+      // corner board over the cladding's front ends
+      F.add(tim, xf(board(0.07, top - yb + 0.06, 0.07, { along: 'y', rng }), [dx - 0.015, (yb + top) / 2, dz + sgn * (hw + 0.01)]));
+      // zinc flashing along the cheek seam: a strip on the shakes and an upstand on the cladding
+      {
+        const U = new THREE.Vector3(-cosP, sinP, 0), Nr = new THREE.Vector3(sinP, cosP, 0), Z = new THREE.Vector3(0, 0, -1);
+        const fb = new THREE.Matrix4().makeBasis(U, Nr, Z);
+        const L = (top - shakeTop(dx)) / sinP + 0.05;
+        const mx = (dx + xv) / 2 + 0.01, my = shakeTop(mx);
+        const strip = new THREE.BoxGeometry(L, 0.005, 0.055).applyMatrix4(fb);
+        F.add(zinc, strip.translate(mx + Nr.x * 0.012, my + Nr.y * 0.012, dz + sgn * (hw + 0.06)), { cast: false });
+        const stand = new THREE.BoxGeometry(L, 0.05, 0.005).applyMatrix4(fb);
+        F.add(zinc, stand.translate(mx + Nr.x * 0.03, my + Nr.y * 0.03, dz + sgn * (hw + 0.034)), { cast: false });
+      }
     }
-    // little gable roof: two board planes (ridge along x), a carved bargeboard pair in front
-    const dp = 0.75;
-    const ow = hw + 0.15; // eave overhang
+    // the apron flashing across the front foot
+    {
+      const U = new THREE.Vector3(-cosP, sinP, 0), Nr = new THREE.Vector3(sinP, cosP, 0), Z = new THREE.Vector3(0, 0, -1);
+      const fb = new THREE.Matrix4().makeBasis(U, Nr, Z);
+      const px = dx + 0.045, py = shakeTop(px);
+      F.add(zinc, new THREE.BoxGeometry(0.1, 0.005, dorm.w + 0.14).applyMatrix4(fb).translate(px + Nr.x * 0.012, py + Nr.y * 0.012, dz), { cast: false });
+      F.add(zinc, new THREE.BoxGeometry(0.005, 0.06, dorm.w + 0.14).translate(dx + 0.012, shakeTop(dx) + 0.02, dz), { cast: false });
+    }
+    // its roof: two board planes (ridge along x), bargeboards and a finial in front
+    const dp = dorm.dp, ow = dorm.ow;
     const rl = Math.hypot(ow, ow * dp);
-    const back = xr(top + ow * dp) - 0.15;
-    const rlen = dx + 0.22 - back;
+    const back = dorm.back;
+    const rlen = dx + 0.24 - back;
     for (const sgn of [-1, 1]) {
       const rf = new THREE.BoxGeometry(rlen, 0.04, rl, 3, 1, 2);
       uvBox(rf, 'x');
       xf(rf, [back + rlen / 2, top + (ow * dp) / 2 + 0.03, dz + (sgn * ow) / 2], [sgn * Math.atan(dp), 0, 0]);
       F.add(mats.wood('spruce'), rf);
-      const bb = board(0.04, 0.14, rl + 0.05, { along: 'z', rng });
-      F.add(mats.wood('oak'), xf(bb, [dx + 0.22, top + (ow * dp) / 2, dz + (sgn * ow) / 2], [sgn * Math.atan(dp), 0, 0]));
+      const bb = scallopBoard(rl + 0.04, 0.12, 0.035, rng);
+      bb.rotateY(Math.PI / 2);
+      F.add(mats.wood('oak'), xf(bb, [dx + 0.25, top + (ow * dp) / 2 - 0.02, dz + (sgn * ow) / 2], [sgn * Math.atan(dp), 0, 0]));
     }
-    dorm.ridge = top + ow * dp;
-    dorm.ow = ow;
-    dorm.back = back;
+    F.add(mats.wood('oak'), xf(new THREE.CylinderGeometry(0.03, 0.04, 0.32, 8), [dx + 0.26, dorm.ridge + 0.14, dz]));
+    F.add(mats.wood('oak'), xf(new THREE.SphereGeometry(0.05, 8, 6), [dx + 0.26, dorm.ridge + 0.33, dz], null, [1, 1.3, 1]));
   }
 
+  mark('dormer');
   // ── shingles ───────────────────────────────────────────────────────────────
   const field = new ShingleField();
   const slopeLen = Math.hypot(eaveX, roofSurf(0) - roofSurf(eaveX));
@@ -957,14 +1057,14 @@ export function buildAnnex(ctx, B, mats) {
       rng,
       skip: (u, v) => {
         if (s < 0) return false;
-        // leave room for the dormer: its box below its eaves, its gable roof above (a triangle)
+        // leave room for the dormer: between its clad cheeks below its eaves
+        // (a shake's half width clear of the cladding), under its gable roof above
         const z = zF + 0.06 - u;
         const y = roofSurf(eaveX + 0.06) + v * sinP;
         const dzz = Math.abs(z - dorm.z);
-        if (y < dorm.y0 - 0.12 || y > dorm.ridge + 0.1) return false;
-        if (y < dorm.y0 + dorm.h) return dzz < dorm.w / 2 + 0.06;
-        const k = 1 - (y - dorm.y0 - dorm.h) / (dorm.ridge - dorm.y0 - dorm.h);
-        return dzz < dorm.ow * k + 0.04;
+        if (y < dorm.yb - 0.04 || y > dorm.ridge + 0.1) return false;
+        if (y < dorm.top) return dzz < dorm.hw + 0.13;
+        return dzz < Math.max(0, dorm.ow - (y - dorm.top) / dorm.dp) - 0.02;
       },
       tint: (u, v, c, p) => {
         // moss creeping up from the eaves and in patches; sun-bleached near the ridge
@@ -991,27 +1091,55 @@ export function buildAnnex(ctx, B, mats) {
       field.push(m, tmpCol.setRGB(0.7, 0.66, 0.58));
     }
   }
-  // dormer roof shingles
+  // dormer roof shingles: smaller shakes (scaled instances, no overlap within
+  // a course), none where the main roof covers the plane; a ridge cap; and
+  // the cheek cladding queued above
   {
-    const dp = 0.75;
-    const hw = dorm.w / 2 + 0.15;
-    const top = dorm.y0 + dorm.h;
-    const dl = Math.hypot(hw, hw * dp);
+    const dp = dorm.dp, ow = dorm.ow, top = dorm.top;
     const ca = Math.cos(Math.atan(dp)), sa = Math.sin(Math.atan(dp));
-    for (const s of [-1, 1]) {
-      layShingles(field, {
-        origin: new THREE.Vector3(s > 0 ? dorm.back : dorm.x + 0.24, top + 0.06, dorm.z + s * hw),
-        alongDir: new THREE.Vector3(s, 0, 0),
-        upDir: new THREE.Vector3(0, sa, -s * ca),
-        normal: new THREE.Vector3(0, ca, s * sa),
-        length: dorm.x + 0.24 - dorm.back,
-        height: dl,
-        w: 0.17,
-        exposure: 0.11,
-        rng,
-        transform: (p) => crook(p),
-      });
+    const rl = Math.hypot(ow, ow * dp);
+    const m = new THREE.Matrix4(), rot = new THREE.Matrix4(), sc = new THREE.Matrix4();
+    const q = new THREE.Vector3(), col = new THREE.Color();
+    for (const sgn of [-1, 1]) {
+      const along = new THREE.Vector3(sgn, 0, 0);
+      const up = new THREE.Vector3(0, sa, -sgn * ca);
+      const nrm = new THREE.Vector3(0, ca, sgn * sa);
+      const basis = new THREE.Matrix4().makeBasis(along, up, nrm);
+      // the board's top face along the eave line, the butts a little proud of it
+      const o = new THREE.Vector3(0, top + 0.03, dorm.z + sgn * ow).addScaledVector(nrm, 0.02).addScaledVector(up, -0.035);
+      const x0 = sgn > 0 ? dorm.back : dorm.x + 0.26, len = dorm.x + 0.26 - dorm.back;
+      let r = 0;
+      for (let v = 0; v < rl - 0.04; v += 0.085, r++) {
+        for (let u = -0.04 + (r % 2) * 0.065 + rng.jitter(0.01); u < len + 0.04; u += 0.13) {
+          q.copy(o).addScaledVector(up, v).addScaledVector(nrm, 0.013 + (r % 2) * 0.004);
+          q.x = x0 + sgn * u;
+          if (shakeTop(q.x) > q.y + 0.1) continue; // under the main roof
+          crook(q);
+          rot.makeRotationFromEuler(new THREE.Euler(-0.07 + rng.jitter(0.03), rng.jitter(0.02), rng.jitter(0.05)));
+          sc.makeScale(0.68 * rng.range(0.92, 1.08), 0.72, 1);
+          m.copy(basis).multiply(rot).multiply(sc).setPosition(q);
+          const g = rng.range(0.84, 1.08);
+          field.push(m, col.setRGB(g, g * 0.96, g * 0.9));
+        }
+      }
     }
+    // its ridge cap
+    for (let x = dorm.back + 0.2; x < dorm.x + 0.26; x += 0.13) {
+      for (const sgn of [-1, 1]) {
+        const a = 0.75;
+        const X = new THREE.Vector3(0, -Math.sin(a), sgn * Math.cos(a));
+        const Y = new THREE.Vector3(-1, 0, 0);
+        const Z = new THREE.Vector3().crossVectors(X, Y);
+        if (Z.y < 0) { X.negate(); Z.negate(); }
+        const mm = new THREE.Matrix4().makeBasis(X, Y, Z).multiply(new THREE.Matrix4().makeScale(0.55, 0.42, 1));
+        const p = new THREE.Vector3(x + 0.06, dorm.ridge + 0.075, dorm.z + sgn * 0.05);
+        if (shakeTop(p.x) > p.y) continue;
+        crook(p);
+        mm.setPosition(p);
+        field.push(mm, col.setRGB(0.72, 0.68, 0.6));
+      }
+    }
+    for (const [mm, c] of shakeQueue) field.push(mm, c);
   }
   // built by the main module once the porch has added its shingles too
   const shingles = {
@@ -1023,6 +1151,7 @@ export function buildAnnex(ctx, B, mats) {
     },
   };
 
+  mark('shingleBits');
   // moss cushions along the eaves, the ridge and on the bargeboards
   for (const s of [-1, 1]) {
     // cushions lying on the slope (rotated into the roof plane), longer along the eave
@@ -1046,6 +1175,7 @@ export function buildAnnex(ctx, B, mats) {
     }
   }
 
+  mark('roofMoss');
   // ── the leaning fieldstone chimney (left slope, near the back) ─────────────
   const chim = { x: -1.05, z: -1.05 };
   {
@@ -1091,6 +1221,7 @@ export function buildAnnex(ctx, B, mats) {
   const smoke = makeChimneySmoke(ctx, { position: chim.top, rise: 3.6, wind: [0.9, -0.3] });
   ctx.scene.add(smoke.object);
 
+  mark('chimney');
   // ── ivy & greenery on the walls ────────────────────────────────────────────
   {
     // ivy climbing the front-left corner and hanging from the jetty
@@ -1105,10 +1236,16 @@ export function buildAnnex(ctx, B, mats) {
     addIvy(right, mats, rng, [1.8, 0.45, 0.04], [0.1, 1, 0], { length: 2.4, droop: -0.6, size: 0.08, normal: [0, 0, 1] });
     addIvy(right, mats, rng, [3.6, 0.45, 0.04], [-0.3, 1, 0], { length: 2.2, droop: -0.6, size: 0.08, normal: [0, 0, 1] });
   }
-  // ── built into the roots: three oak roots reach the annex's right end ──────
-  // (frame space; each starts inside the sculpted bark). One grips the front
-  // corner of the plinth and dives into the soil before it, one arches over
-  // the plinth ledge, one climbs the back corner up under the eaves.
+  mark('wallIvy');
+  // ── built into the roots of the Great Oak ──────────────────────────────────
+  // (annex-local; each root starts inside the sculpted bark). The great root
+  // leaves the bole high up, arches out over the right eave, lies across the
+  // verge and comes down in front of the gable as the porch's right post; a
+  // second drapes over the eave further back and runs down the wall into the
+  // soil; a fat buttress swallows the back corner (the annex's back tucked
+  // under the trunk's flare); two low ones grip the plinth. Moss shells on
+  // their backs, moss curtains hanging from the arch, ivy climbing from the
+  // great root up the roof to the ridge, ferns and toadstools at their feet.
   {
     const inv = annexMatrix.clone().invert();
     const trunkAt = (azDeg, y, inset) => {
@@ -1120,29 +1257,129 @@ export function buildAnnex(ctx, B, mats) {
       return [w.x, w.y, w.z];
     };
     const rootMat = rootBarkMaterial(ctx);
+    const mossVC = mossVCMaterial(ctx);
+    const smooth = THREE.MathUtils.smoothstep;
+    const P = ANNEX.rootPost;
     const roots = [
-      { pts: [trunkAt(-40, 1.25, 0.4), [3.42, 0.98, 1.38], [3.05, 0.66, 1.96], [2.97, 0.58, 2.3], [2.98, 0.3, 2.55], [3.02, -0.2, 2.64]], r0: 0.24, r1: 0.075 },
-      { pts: [trunkAt(-62, 0.85, 0.4), [3.36, 0.98, -0.32], [3.03, 0.66, 0.04], [3.07, 0.38, 0.38], [3.22, -0.18, 0.6]], r0: 0.2, r1: 0.07 },
-      { pts: [trunkAt(-84, 0.55, 0.35), [3.25, 0.64, -2.3], [2.96, 1.0, -2.36], [2.91, 1.6, -2.34], [2.93, 2.02, -2.3], [2.99, 2.2, -2.08]], r0: 0.16, r1: 0.045 },
+      {
+        // the great root: bole → over the right eave → across the verge → the porch's right post
+        id: 'arch',
+        pts: [trunkAt(-49, 6.0, 0.6), trunkAt(-47, 5.35, -0.04), [3.75, 4.55, 0.55], [3.25, 3.72, 1.05], [2.88, 2.98, 1.62], [2.93, 2.72, 2.42], [3.12, 2.3, 3.12], [3.12, 1.72, 3.56], [P.x + 0.04, 1.0, P.z - 0.02], [P.x, 0.3, P.z], [P.x + 0.04, -0.25, P.z + 0.08]],
+        radius: (t) => 0.25 - 0.07 * t + 0.36 * Math.exp(-t * 9) + 0.08 * smooth(t, 0.88, 1),
+        flat: 0.85, tubular: segs(44, 20), radial: segs(14, 8),
+        moss: [0.1, 0.62], curtain: [0.14, 0.42, 16],
+      },
+      {
+        // draped over the eave further back, down the wall into the soil
+        id: 'drape',
+        pts: [trunkAt(-76, 4.5, 0.55), trunkAt(-74, 3.95, -0.04), [3.55, 3.22, -1.58], [3.1, 2.58, -1.46], [3.02, 1.9, -1.36], [3.0, 1.0, -1.26], [3.04, 0.35, -1.16], [3.12, -0.22, -1.04]],
+        radius: (t) => 0.12 - 0.03 * t + 0.3 * Math.exp(-t * 8) + 0.05 * smooth(t, 0.85, 1),
+        flat: 0.85, tubular: segs(30, 14), radial: segs(12, 7),
+        moss: [0.08, 0.45], curtain: [0.12, 0.3, 6],
+      },
+      {
+        // a fat buttress swallowing the back corner
+        id: 'buttress',
+        pts: [trunkAt(-84, 3.1, 0.75), [3.8, 2.55, -2.08], [3.18, 1.85, -2.3], [2.97, 1.0, -2.45], [2.96, 0.25, -2.55], [3.02, -0.25, -2.66]],
+        radius: (t) => 0.3 + 0.45 * Math.exp(-t * 4),
+        flat: 1.25, tubular: segs(24, 12), radial: segs(14, 8),
+        moss: [0.04, 0.5],
+      },
+      // low roots gripping the plinth: the front corner and the middle of the wall
+      { pts: [trunkAt(-40, 1.25, 0.4), [3.42, 0.98, 1.38], [3.05, 0.66, 1.96], [2.97, 0.58, 2.3], [2.98, 0.3, 2.55], [3.02, -0.2, 2.64]], r0: 0.34, r1: 0.09, moss: [0.1, 0.65] },
+      { pts: [trunkAt(-62, 0.85, 0.4), [3.36, 0.98, -0.32], [3.03, 0.66, 0.04], [3.07, 0.38, 0.38], [3.22, -0.18, 0.6]], r0: 0.28, r1: 0.07, moss: [0.1, 0.6] },
       // thin rootlets spilling over the plinth stones
       { pts: [[3.04, 0.66, 1.9], [3.13, 0.43, 1.79], [3.2, 0.1, 1.73], [3.27, -0.12, 1.7]], r0: 0.045, r1: 0.018, radial: 8, tubular: 12 },
       { pts: [[3.02, 0.64, -0.02], [3.11, 0.42, -0.2], [3.18, 0.06, -0.32], [3.21, -0.12, -0.35]], r0: 0.04, r1: 0.016, radial: 8, tubular: 12 },
     ];
+    const built = {};
     for (const r of roots) {
-      const { geo } = rootGeo(rng, r.pts, { r0: r.r0, r1: r.r1, flat: 0.85, radial: r.radial ?? 12, tubular: r.tubular ?? 24 });
+      const flat = r.flat ?? 0.85;
+      const { geo, curve, radiusAt } = rootGeo(rng, r.pts, { r0: r.r0, r1: r.r1, radius: r.radius, flat, radial: r.radial ?? segs(12, 7), tubular: r.tubular ?? segs(24, 12) });
       F.add(rootMat, geo);
+      if (r.id) built[r.id] = { curve, radiusAt, flat };
+      // a moss shell over its back: lumpy cushions with a broken, fuzzy rim
+      if (r.moss) {
+        const cap = mossCapGeo(rng, curve, radiusAt, { flat, t0: r.moss[0], t1: r.moss[1], cover: 0.5, thick: 0.045, radial: segs(10, 6), tubular: segs(20, 10) });
+        F.add(mossVC, cap, { cast: false });
+      }
+      // moss curtains hanging from the underside of its arch
+      if (r.curtain) {
+        const [ta, tb, n] = r.curtain;
+        const c = new THREE.Vector3();
+        for (let i = 0, nn = count(n, 3); i < nn; i++) {
+          const t = ta + (tb - ta) * (i + rng.next()) / nn;
+          curve.getPointAt(t, c);
+          const rr = radiusAt(t) * flat * 0.8;
+          const len = rng.range(0.25, 0.8) * (0.6 + 0.4 * Math.sin(((i + 0.5) / nn) * Math.PI));
+          const x0 = c.x + rng.jitter(rr * 0.5), z0 = c.z + rng.jitter(rr * 0.5), y0s = c.y - rr;
+          const sway = rng.jitter(0.06);
+          const pts = [];
+          for (let k = 0; k <= 4; k++) {
+            const u = k / 4;
+            pts.push([x0 + sway * u * u, y0s - len * u, z0 + rng.jitter(0.015) + sway * 0.5 * u]);
+          }
+          const strand = tube(pts, 0.016, 4, 6);
+          // taper to a wisp
+          const pos = strand.attributes.position;
+          for (let v = 0; v < pos.count; v++) {
+            const k = THREE.MathUtils.clamp((y0s - pos.getY(v)) / len, 0, 1);
+            const cx = x0 + sway * k * k, cz = z0 + sway * 0.5 * k;
+            const f = 1 - 0.75 * k;
+            pos.setX(v, cx + (pos.getX(v) - cx) * f);
+            pos.setZ(v, cz + (pos.getZ(v) - cz) * f);
+          }
+          strand.computeVertexNormals();
+          // olive where it hangs from the root, paler, greyer wisps at the tips
+          const sc = new Float32Array(pos.count * 3), tc = new THREE.Color(), tip = new THREE.Color('#a4a986');
+          for (let v = 0; v < pos.count; v++) {
+            const k = THREE.MathUtils.clamp((y0s - pos.getY(v)) / len, 0, 1);
+            mossTone(0.55 - 0.25 * k, tc).lerp(tip, k * 0.6);
+            sc[v * 3] = tc.r;
+            sc[v * 3 + 1] = tc.g;
+            sc[v * 3 + 2] = tc.b;
+          }
+          strand.setAttribute('color', new THREE.BufferAttribute(sc, 3));
+          F.add(mossVC, strand, { cast: false });
+        }
+      }
     }
-    // moss where they rest on the stones, ferns and toadstools at their feet
+    // ivy climbing from the great root up the right slope to the ridge (and a
+    // runner along the root itself)
+    {
+      const arch = built.arch;
+      const c = new THREE.Vector3(), tng = new THREE.Vector3();
+      arch.curve.getPointAt(0.48, c);
+      const nrm = [sinPA, cosPA, 0];
+      addIvy(FR, mats, rng, [c.x - 0.15, roofSurfAt(c.x - 0.15) + 0.08, c.z - 0.1], [-cosPA, sinPA, -0.12], { length: 2.4, droop: 0, size: 0.085, normal: nrm });
+      addIvy(FR, mats, rng, [c.x - 0.12, roofSurfAt(c.x - 0.12) + 0.08, c.z + 0.25], [-cosPA, sinPA, 0.15], { length: 1.6, droop: 0, size: 0.08, normal: nrm });
+      arch.curve.getPointAt(0.2, c);
+      arch.curve.getTangentAt(0.2, tng);
+      const r = arch.radiusAt(0.2) * arch.flat;
+      const up = new THREE.Vector3(0, 1, 0).addScaledVector(tng, -tng.y).normalize();
+      addIvy(F, mats, rng, [c.x + up.x * r, c.y + up.y * r, c.z + up.z * r], [tng.x, tng.y, tng.z], { length: 1.6, droop: 0.1, size: 0.075, normal: [up.x, up.y, up.z], density: 0.9 });
+      // moss cushions where the root rests on the shakes
+      for (const t of [0.44, 0.5, 0.56]) {
+        arch.curve.getPointAt(t, c);
+        const x = c.x - arch.radiusAt(t) - rng.range(0.02, 0.1);
+        FR.add(mossVC, xf(paintMoss(mossPadGeo(rng, { r: rng.range(0.1, 0.16), h: 0.06, sx: 1.4, sz: 1, lobes: 1 }), 0.06, { sun: 0.8, seed: t * 9 }), [x, roofSurfAt(x) + 0.06, c.z + rng.jitter(0.1)], [0, 0, -Math.atan(T)]), { cast: false });
+      }
+    }
+    // moss where the low roots rest on the stones, ferns and toadstools at their feet
     for (const [x, z] of [[3.0, 1.2], [3.0, -0.55], [2.98, 2.05]]) {
       F.add(mats.moss(), xf(mossGeo(rng, { r: rng.range(0.1, 0.16), h: 0.06, sz: 1.8 }), [x, plinth + 0.01, z]), { cast: false });
     }
     addFern(F, ctx, rng, 3.3, 0, 2.3, { size: 0.42, fronds: 7 });
     addFern(F, ctx, rng, 3.45, 0, 0.9, { size: 0.5, fronds: 7 });
     addFern(F, ctx, rng, 3.35, 0, -1.2, { size: 0.45, fronds: 6 });
+    addFern(F, ctx, rng, P.x + 0.32, 0, P.z + 0.22, { size: 0.36, fronds: 6 });
     for (let i = 0; i < 4; i++) addToadstool(F, mats, rng, 3.12 + rng.jitter(0.1), 0, 2.72 + rng.jitter(0.1), { size: rng.range(0.05, 0.09), color: i % 2 ? '#b98a4e' : '#c9352a' });
     for (let i = 0; i < 3; i++) addToadstool(F, mats, rng, 3.3 + rng.jitter(0.08), 0, 0.62 + rng.jitter(0.1), { size: rng.range(0.05, 0.08), color: '#b98a4e' });
+    for (let i = 0; i < 3; i++) addToadstool(F, mats, rng, P.x + 0.22 + rng.jitter(0.06), 0, P.z + 0.12 + rng.jitter(0.08), { size: rng.range(0.05, 0.08), color: i ? '#b98a4e' : '#c9352a' });
+    for (let i = 0; i < 3; i++) addToadstool(F, mats, rng, 3.25 + rng.jitter(0.08), 0, -2.85 + rng.jitter(0.1), { size: rng.range(0.05, 0.08), color: '#b98a4e' });
   }
 
+  mark('roots');
   // ── an ivy curtain from the oak over the right eave and verge ──────────────
   {
     const kickAt = (x) => 0.3 * Math.max(0, Math.abs(x) - hx + 0.15) ** 2;
@@ -1164,6 +1401,7 @@ export function buildAnnex(ctx, B, mats) {
     }
   }
 
+  mark('eaveIvy');
   // ── weathering: algae streaks under the sills & in the splash zone, cracks ─
   {
     const dm = decalMaterial();
@@ -1197,8 +1435,9 @@ export function buildAnnex(ctx, B, mats) {
     crack(left, 0.6, 1.5, 0.3, 0.9);
   }
 
+  mark('weathering');
   // moss on the plinth stones & toadstools at the foot of the walls
-  for (let i = 0; i < 26; i++) {
+  for (let i = 0, n = count(26, 12); i < n; i++) {
     const side = rng.int(0, 3);
     let x, z;
     const t = rng.next();
@@ -1221,6 +1460,7 @@ export function buildAnnex(ctx, B, mats) {
     if (rng.next() < 0.35) addToadstool(F, mats, rng, x * 1.04 + rng.jitter(0.1), 0, z * 1.04 + rng.jitter(0.1), { size: rng.range(0.07, 0.12), color: rng.pick(['#c9352a', '#c9352a', '#b98a4e']) });
   }
 
+  mark('plinthMoss');
   // ── the double door: open leaves + threshold ───────────────────────────────
   {
     const dw = (door.s1 - door.s0) / 2;
@@ -1246,23 +1486,41 @@ export function buildAnnex(ctx, B, mats) {
       const m = new THREE.Matrix4();
       const hingeX = dir > 0 ? door.s0 - hx : door.s1 - hx;
       // opened outwards: the free edge swings towards +z
-      m.compose(new THREE.Vector3(hingeX, 0.02, hz + 0.03), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -dir * ang, 0)), new THREE.Vector3(1, 1, 1));
+      m.compose(new THREE.Vector3(hingeX, 0.075, hz + 0.03), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -dir * ang, 0)), new THREE.Vector3(1, 1, 1));
       for (const e of leaf.lists.values()) for (const geo of e.geos) F.add(e.material, geo.applyMatrix4(m), { cast: e.cast });
       leaf.lists.clear();
     }
-    // threshold stone and a worn board ramp
-    const th = stoneGeo(rng, { r: 1, sx: (door.s1 - door.s0) * 0.55, sy: 0.07, sz: 0.3, lump: 0.08 });
-    F.add(mats.stone(), xf(th, [(door.s0 + door.s1) / 2 - hx, 0.03, hz + 0.1]));
+    // the plinth stops at the opening: an oak threshold (Schwelle) laid flush
+    // with the workshop floor, a broad worn step stone outside it, the stone
+    // dished and the oak worn pale where the Leiterwägeli's wheels and the
+    // boards come in, and a trail of sawdust spilling out over both
+    {
+      const cx = (door.s0 + door.s1) / 2 - hx, dwid = door.s1 - door.s0;
+      const sill = board(dwid + 0.1, 0.07, 0.3, { along: 'x', rng, r: 0.02 });
+      deform(sill, (v) => {
+        if (v.y > 0) v.y -= 0.012 * (Math.exp(-((v.x + 0.32) ** 2) / 0.012) + Math.exp(-((v.x - 0.32) ** 2) / 0.012)) + 0.008 * Math.exp(-(v.x * v.x) / 0.2);
+      });
+      F.add(mats.wood('#9a7a55'), xf(sill, [cx, ANNEX.floor - 0.035, hz - 0.03]));
+      const step = wornStone(rng, dwid + 0.3, 0.16, 0.46, { walkX: 0, tone: '#958d7f', dish: 0.016, chips: 1 });
+      F.add(stepStoneMaterial(ctx), xf(step, [cx, ANNEX.floor - 0.01 - 0.08, hz + 0.36], [0, rng.jitter(0.03), 0]));
+      // two pale wheel ruts and the sawdust trail
+      const dm = decalMaterial();
+      for (const s of [-1, 1]) F.add(dm, xf(decalGeo(0.07, 0.62, DECAL.streak).rotateX(-Math.PI / 2), [cx + s * 0.32, ANNEX.floor + 0.002, hz + 0.2]), { color: '#d9c6a0', cast: false });
+      F.add(dm, xf(decalGeo(0.9, 0.55, DECAL.blob).rotateX(-Math.PI / 2), [cx + 0.1, ANNEX.floor + 0.003, hz + 0.05], [0, 0.3, 0]), { color: '#e2c792', cast: false });
+      F.add(dm, xf(decalGeo(0.8, 0.5, DECAL.specks).rotateX(-Math.PI / 2), [cx - 0.1, 0.005, hz + 0.75], [0, 1.1, 0]), { color: '#e4cd9c', cast: false });
+    }
   }
 
+  mark('doorLeaves');
   const winMatRef = windowMaterial();
   // ── interior (seen through the open door) ──────────────────────────────────
   const interior = buildInterior(ctx, F, mats, rng);
+  mark('interior');
   // warm light inside, spilling out of the door and windows (budgeted)
   const light = ctx.lights?.addPoint?.(annexToWorld(-0.6, 1.6, 0.8), { color: '#ffb866', day: 1.2, night: 7, distance: 7 });
 
   // a glow halo in each window at night
-  for (const [x, y, z, sz] of [[W1[0] + 0.65 - hx, 1.65, hz + 0.25, 0.95], [W2[0] + 0.5 - hx, 1.5, hz + 0.25, 0.7], [-0.85, 3.5, gz + 0.2, 0.8], [0.85, 3.5, gz + 0.2, 0.8], [dorm.x + 0.2, dorm.y0 + 0.4, dorm.z, 0.5]]) {
+  for (const [x, y, z, sz] of [[W1[0] + 0.65 - hx, 1.65, hz + 0.25, 0.95], [W2[0] + 0.5 - hx, 1.5, hz + 0.25, 0.7], [-0.85, 3.5, gz + 0.2, 0.8], [0.85, 3.5, gz + 0.2, 0.8], [dorm.x + 0.12, (dorm.yb + dorm.top) / 2, dorm.z, 0.42]]) {
     pushHalo(annexToWorld(x, y, z), sz);
   }
 
@@ -1278,6 +1536,7 @@ export function buildAnnex(ctx, B, mats) {
       winMatRef.emissiveIntensity = WIN_DAY + (WIN_NIGHT - WIN_DAY) * n;
     },
     anchors: { chimneyTop: chim.top },
+    cost,
   };
 }
 
@@ -1338,22 +1597,22 @@ function buildInterior(ctx, F, mats, rng) {
   F.add(steel, xf(new THREE.BoxGeometry(0.2, 0.026, 0.004), [sbx + 0.72, sby + 0.06, zt]), { cast: false });
   F.add(steel, xf(new THREE.BoxGeometry(0.03, 0.4, 0.004), [sbx + 0.9, sby + 0.12, zt]), { cast: false });
   F.add(steel, xf(new THREE.BoxGeometry(0.26, 0.03, 0.004), [sbx + 0.78, sby - 0.07, zt]), { cast: false });
-  for (const s of [-1, 1]) F.add(steel, xf(new THREE.BoxGeometry(0.008, 0.2, 0.006), [sbx + 0.6 + s * 0.025, sby - 0.22, zt], [0, 0, s * 0.14]), { cast: false });
-  // files & rasps, screwdrivers with turned handles
-  for (let i = 0; i < 3; i++) {
+  if (LOD.small) for (const s of [-1, 1]) F.add(steel, xf(new THREE.BoxGeometry(0.008, 0.2, 0.006), [sbx + 0.6 + s * 0.025, sby - 0.22, zt], [0, 0, s * 0.14]), { cast: false });
+  // files & rasps, screwdrivers with turned handles (the tiniest decor: high tier only)
+  for (let i = 0; i < (LOD.small ? 3 : 0); i++) {
     const x = sbx + 0.36 + i * 0.05;
     F.add(mats.metal('#55595e'), xf(new THREE.BoxGeometry(0.016, 0.2, 0.006), [x, sby - 0.2, zt]), { cast: false });
     F.add(mats.wood('#b07a48'), xf(new THREE.CylinderGeometry(0.012, 0.014, 0.07, 6), [x, sby - 0.06, zt]), { cast: false });
   }
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < (LOD.small ? 3 : 0); i++) {
     const x = sbx + 0.08 + i * 0.06;
     F.add(steel, xf(new THREE.CylinderGeometry(0.004, 0.004, 0.12, 4), [x, sby - 0.28, zt]), { cast: false });
     F.add(mats.wood(['#c4372a', '#e8c22a', '#9c5a43'][i]), xf(new THREE.CylinderGeometry(0.014, 0.012, 0.08, 6), [x, sby - 0.18, zt]), { cast: false });
   }
   // a row of chisels in a rack
   F.add(mats.wood('oak'), xf(board(0.66, 0.05, 0.06, { along: 'x', rng }), [sbx - 0.6, sby - 0.3, zt + 0.02]), { cast: false });
-  for (let i = 0; i < 8; i++) {
-    const x = sbx - 0.88 + i * 0.08;
+  for (let i = 0, n = count(8, 4); i < n; i++) {
+    const x = sbx - 0.88 + i * (0.56 / (n - 1));
     F.add(mats.wood('ash'), xf(new THREE.CylinderGeometry(0.014, 0.012, 0.12, 6), [x, sby - 0.22, zt + 0.02]), { cast: false });
     F.add(steel, xf(new THREE.BoxGeometry(0.012 + (i % 3) * 0.006, 0.12, 0.004), [x, sby - 0.34, zt + 0.02]), { cast: false });
   }
@@ -1372,8 +1631,9 @@ function buildInterior(ctx, F, mats, rng) {
     const rx0 = 0.78, rx1 = 1.95, ry = 1.62;
     F.add(mats.wood('oak'), xf(board(rx1 - rx0 + 0.1, 0.06, 0.07, { along: 'x', rng }), [(rx0 + rx1) / 2, ry, z0 + 0.06]));
     const cols = ['#c4372a', '#c4372a', '#3f6f9a', '#c4372a', '#d9a441', '#c4372a', '#3f6f9a', '#c4372a', '#c4372a'];
-    for (let i = 0; i < cols.length; i++) {
-      const x = rx0 + (i / (cols.length - 1)) * (rx1 - rx0);
+    const nClamps = LOD.tier === 'low' ? 5 : cols.length;
+    for (let i = 0; i < nClamps; i++) {
+      const x = rx0 + (i / (nClamps - 1)) * (rx1 - rx0);
       const len = [0.6, 0.48, 0.8, 0.6, 0.4, 0.7, 0.55, 0.48, 0.62][i];
       // hung by the fixed jaw over the rail: bar down, jaws towards the wall
       addFClamp(F, mats, mat4([x, ry + 0.064 - len, z0 + 0.13], [0, Math.PI / 2, 0]), { len, reach: 0.1, color: cols[i], open: 0.3 + (i % 3) * 0.12 });
@@ -1383,8 +1643,8 @@ function buildInterior(ctx, F, mats, rng) {
   {
     const rx = -hx + 0.22;
     F.add(mats.wood('oak'), xf(board(0.06, 0.08, 1.4, { along: 'z', rng }), [rx, 1.75, 1.1]));
-    for (let i = 0; i < 9; i++) {
-      const z = 0.5 + i * 0.14;
+    for (let i = 0, n = count(9, 4); i < n; i++) {
+      const z = 0.5 + i * (1.12 / (n - 1));
       const len = rng.range(0.45, 0.75);
       F.add(steel, xf(new THREE.BoxGeometry(0.012, len, 0.03), [rx + 0.06, 1.8 - len / 2, z]), { cast: false });
       F.add(mats.metal('#b23a2a'), xf(new THREE.BoxGeometry(0.03, 0.03, 0.12), [rx + 0.06, 1.79, z + 0.05]), { cast: false });
@@ -1407,12 +1667,14 @@ function buildInterior(ctx, F, mats, rng) {
     wheel.rotateX(Math.PI / 2);
     cast(xf(wheel.clone(), [bx - 0.02, floor + 1.55, bz]));
     // a raised rim round the housing door and the hub
-    cast(xf(new THREE.TorusGeometry(0.24, 0.012, 4, 22), [bx - 0.02, floor + 1.55, bz + 0.072]), { cast: false });
+    if (LOD.tier !== 'low') cast(xf(new THREE.TorusGeometry(0.24, 0.012, 4, 22), [bx - 0.02, floor + 1.55, bz + 0.072]), { cast: false });
     F.add(vc, xf(new THREE.CylinderGeometry(0.045, 0.045, 0.16, 10).rotateX(Math.PI / 2), [bx - 0.02, floor + 1.55, bz]), { color: '#4a5056', cast: false });
     // the maker's badge on the base: a brass oval with a red enamel name strip
-    F.add(mats.metal('#c9a04a'), xf(new THREE.CylinderGeometry(0.075, 0.075, 0.008, 16).rotateX(Math.PI / 2).scale(1, 0.55, 1), [bx - 0.04, floor + 0.47, bz + 0.214]), { cast: false });
-    F.add(vc, xf(new THREE.BoxGeometry(0.11, 0.024, 0.004), [bx - 0.04, floor + 0.47, bz + 0.219]), { color: '#a8261c', cast: false });
-    F.add(vc, xf(new THREE.BoxGeometry(0.075, 0.006, 0.003), [bx - 0.04, floor + 0.47, bz + 0.2215]), { color: '#f0e2b0', cast: false });
+    if (LOD.small) F.add(mats.metal('#c9a04a'), xf(new THREE.CylinderGeometry(0.075, 0.075, 0.008, 16).rotateX(Math.PI / 2).scale(1, 0.55, 1), [bx - 0.04, floor + 0.47, bz + 0.214]), { cast: false });
+    if (LOD.small) {
+      F.add(vc, xf(new THREE.BoxGeometry(0.11, 0.024, 0.004), [bx - 0.04, floor + 0.47, bz + 0.219]), { color: '#a8261c', cast: false });
+      F.add(vc, xf(new THREE.BoxGeometry(0.075, 0.006, 0.003), [bx - 0.04, floor + 0.47, bz + 0.2215]), { color: '#f0e2b0', cast: false });
+    }
     // the table on its trunnion, the blade guard and the blade
     F.add(brightSteel(ctx, '#c7cdd2'), xf(new THREE.BoxGeometry(0.46, 0.035, 0.44), [bx + 0.02, floor + 0.86, bz + 0.02]), { cast: false });
     darkC(xf(new THREE.BoxGeometry(0.1, 0.18, 0.1), [bx + 0.02, floor + 0.74, bz]));
@@ -1455,7 +1717,7 @@ function buildInterior(ctx, F, mats, rng) {
     F.add(oak, xf(board(cw, t, cd, { along: 'x', rng, r: 0.004 }), [cx, y0 + t / 2, cz]));
     F.add(mats.wood('#c2a37a'), xf(board(cw - 2 * t, ch - 2 * t, 0.008, { along: 'x', rng }), [cx, y0 + ch / 2, cz - cd / 2 + 0.006]), { cast: false });
     // the dovetails: darker end-grain tails on the sides, pins on the top
-    for (const s of [-1, 1]) {
+    for (const s of LOD.tier === 'low' ? [] : [-1, 1]) {
       for (let k = 0; k < 4; k++) {
         const z = cz - cd / 2 + 0.035 + k * ((cd - 0.07) / 3);
         const tail = new THREE.Shape([new THREE.Vector2(-0.014, 0), new THREE.Vector2(0.014, 0), new THREE.Vector2(0.02, t), new THREE.Vector2(-0.02, t)]);
@@ -1512,12 +1774,12 @@ function buildInterior(ctx, F, mats, rng) {
     for (const [x, z, w, d] of drifts) {
       F.add(dm, xf(decalGeo(w, d, DECAL.blob).rotateX(-Math.PI / 2), [x, floor + 0.004, z], [0, rng.jitter(0.6), 0]), { color: rng.pick(['#e2c792', '#dcc08c', '#e8d4a8']), cast: false });
     }
-    for (let k = 0; k < 6; k++) {
+    for (let k = 0, n = count(6, 3); k < n; k++) {
       F.add(dm, xf(decalGeo(rng.range(0.5, 0.8), rng.range(0.35, 0.5), DECAL.specks).rotateX(-Math.PI / 2), [rng.range(-2.2, 1.2), floor + 0.005, rng.range(z0 + 0.2, hz - 0.3)], [0, rng.next() * 6, 0]), { color: '#e6d0a0', cast: false });
     }
     const sg = doubleFace(shavingGeo(0.032, 0.02, 1.3));
     const tones = ['#c99c63', '#bd8f58', '#e6d3a4', '#ddc690'];
-    for (let i = 0; i < 22; i++) {
+    for (let i = 0, n = count(22, 8); i < n; i++) {
       const a = rng.next() * Math.PI * 2, u = Math.sqrt(rng.next());
       const x = -0.3 + Math.cos(a) * 0.75 * u, z = z0 + 0.7 + Math.sin(a) * 0.32 * u;
       F.add(mats.wood('maple'), xf(sg.clone(), [x, floor + 0.012 + (1 - u) * 0.015, z], [rng.next() * 6, rng.next() * 6, rng.next() * 6], rng.range(0.5, 0.8)), { color: rng.pick(tones), cast: false });

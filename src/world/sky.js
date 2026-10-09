@@ -4,8 +4,9 @@
 //
 //   dome      soft blue-green sky, a luminous warm haze around the low sun
 //             (back-left), thin painterly cloud wisps; at night deep blue with
-//             stars peeking and a big hazy moon low over the far forest at the
-//             back-right, between the trunks. At and below the horizon it is
+//             stars peeking and a big storybook moon low over the far forest
+//             at the back-right, between the trunks (a clean disc with soft
+//             grey seas, a thin faint halo ring, a modest glow). At and below the horizon it is
 //             exactly the aerial-perspective mist colour, so the fogged far
 //             forest melts into it without a seam. On 'low' (thin far forest,
 //             no canopy shadows) the dome itself is pushed towards the mist so
@@ -29,6 +30,8 @@ import { buildBackdrop } from './env/backdrop.js';
 installFog();
 
 const DOME_RADIUS = 450;
+/** Angular radius of the hero moon disc (radians): a big storybook moon. */
+const MOON_RADIUS = 0.034;
 
 const domeVertex = /* glsl */ `
   varying vec3 vDir;
@@ -118,32 +121,46 @@ const domeFragment = /* glsl */ `
     // (under the moon the misty horizon sits a little lower: the far valley)
     col = mix(col, mist, 1.0 - smoothstep(-0.03, 0.03, y + 0.025 * notch));
 
-    // ── the hero moon: a soft bright disc in the canopy gap above the waterfall
-    //    (the far forest keeps a window open for it, and a valley beneath it),
-    //    a wide silver-blue Mie halo and a luminous gradient round it, so the
-    //    giants nearby stand as silhouettes; it rises out of the far valley's
-    //    mist, so it is painted over the horizon haze, its lower rim veiled,
-    //    a touch warmer and hazier ──
+    // ── the hero moon: a crisp, readable disc in the canopy gap above the
+    //    waterfall (the far forest keeps a window open for it, and a valley
+    //    beneath it), so the giants nearby stand as silhouettes. A storybook
+    //    moon: soft mare mottling, a gentle limb darkening, a clean edge, a
+    //    thin faint halo ring around it and only a modest glow — the bright
+    //    mist around it must not swallow the disc into a fog blob. It rises
+    //    out of the far valley's mist: its lowest rim is a little veiled ──
     if (uNight > 0.01) {
       float md = max(dot(d, uMoonDir), 0.0);
       vec3 mr = normalize(cross(uMoonDir, vec3(0.0, 1.0, 0.0)));
       vec3 mu = cross(mr, uMoonDir);
-      vec2 ml = vec2(dot(d, mr), dot(d, mu)) / 0.038;
-      float r = length(ml);
+      vec2 ml = vec2(dot(d, mr), dot(d, mu)) / ${MOON_RADIUS.toFixed(4)};
+      float r = length(ml); // (distance from the disc's centre, in disc radii)
       float clear = smoothstep(-0.04, 0.1, y);
-      vec3 moonCol = vec3(2.1, 2.15, 2.3) * mix(vec3(1.08, 0.97, 0.86), vec3(1.0), clear);
-      // soft maria + a gentle limb darkening, the lit side towards the upper left
-      moonCol *= 0.78 + 0.22 * smoothstep(0.25, 0.7, envNoise(ml * 2.1 + 4.0));
-      moonCol *= mix(0.7, 1.0, smoothstep(-0.9, -0.2, dot(ml, vec2(-0.75, -0.2))));
-      moonCol *= 1.0 - 0.18 * r * r;
-      float disc = smoothstep(1.0, 0.93, r) * step(0.0, dot(d, uMoonDir));
+      vec3 moonCol = vec3(1.08, 1.1, 1.16) * mix(vec3(1.06, 0.98, 0.9), vec3(1.0), clear);
+      // maria: a few big soft grey seas (big enough to survive the far-field
+      // blur of the depth of field), broken up by finer mottling
+      vec2 q = ml;
+      float mare = exp(-dot(q - vec2(-0.32, 0.36), q - vec2(-0.32, 0.36)) * 7.0)
+        + 0.8 * exp(-dot(q - vec2(0.2, 0.32), q - vec2(0.2, 0.32)) * 13.0)
+        + 0.85 * exp(-dot(q - vec2(0.38, -0.02), q - vec2(0.38, -0.02)) * 10.0)
+        + 0.7 * exp(-dot(q - vec2(-0.58, -0.12), q - vec2(-0.58, -0.12)) * 6.0)
+        + 0.5 * exp(-dot(q - vec2(0.02, -0.4), q - vec2(0.02, -0.4)) * 15.0);
+      mare = clamp(mare, 0.0, 1.0) * (0.65 + 0.35 * envNoise(q * 4.5 + 3.0));
+      moonCol *= 1.0 - 0.54 * mare;
+      moonCol *= mix(0.78, 1.0, smoothstep(-0.9, -0.15, dot(ml, vec2(-0.75, -0.2))));
+      moonCol *= 1.0 - 0.22 * pow(min(r, 1.0), 3.0);
+      // (a clean, antialiased edge)
+      float aa = max(fwidth(r), 1e-4) * 1.2;
+      float front = step(0.0, dot(d, uMoonDir));
+      float disc = (1.0 - smoothstep(1.0 - aa, 1.0 + aa, r)) * front;
       float haze = mix(0.6, 1.0, clear);
-      // (a tight corona that leaves the limb crisp, a softer glow, the wide Mie halo)
-      vec3 halo = vec3(0.55, 0.66, 1.0) * (pow(md, 2600.0) * 0.7 + pow(md, 160.0) * 0.45 + pow(md, 8.0) * 0.3 + pow(md, 2.5) * 0.07);
+      // a tight corona hugging the limb, a soft glow, the wide faint Mie halo
+      vec3 halo = vec3(0.55, 0.66, 1.0) * (exp(-max(r - 1.0, 0.0) * 9.0) * 0.22 * step(1.0, r) * front + pow(md, 160.0) * 0.1 + pow(md, 8.0) * 0.12 + pow(md, 2.5) * 0.05);
+      // a thin faint halo ring a little way out
+      halo += vec3(0.62, 0.72, 1.0) * exp(-pow((r - 1.6) / 0.12, 2.0)) * 0.07 * front;
       col += halo * uNight * haze;
       // (low in the mist the disc dims and warms a little, but stays a solid disc)
       float veil = smoothstep(-0.055, 0.0, y);
-      col = mix(col, moonCol * mix(0.8, 1.0, clear), disc * uNight * mix(0.55, 1.0, veil));
+      col = mix(col, moonCol * mix(0.82, 1.0, clear), disc * uNight * mix(0.6, 1.0, veil));
     }
     // (low tier, night: a little above the horizon the gaps sink into darkness)
     if (uLow > 0.5) col *= mix(1.0, 0.6, uNight * smoothstep(0.03, 0.22, y));

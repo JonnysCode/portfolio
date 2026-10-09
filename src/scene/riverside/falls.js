@@ -137,9 +137,10 @@ function ribbon() {
   for (let k = start; k < line.length; k++) line[k].g /= len;
   for (let k = 0; k < start; k++) line[k].g = -(start - k) / start;
   // half widths: narrow at the lip, fanning out as it falls, ragged on each side
+  // (generous: from the glen the falls must read as a curtain, not a thin line)
   const edges = (r, k = 1) => {
     const g = Math.max(0, r.g);
-    const hw = (r.hw ?? 0.3 + 0.62 * Math.pow(g, 0.9)) * (r.b < 0 ? 1.08 : 1) * k;
+    const hw = (r.hw ? r.hw * 1.2 : (0.3 + 0.62 * Math.pow(g, 0.9)) * 1.3) * (r.b < 0 ? 1.08 : 1) * k;
     const c = 0.07 * noiseB(r.g * 4 + 3.1, 1.7) * (0.3 + g);
     return [c - hw * (1 + 0.16 * noiseA(r.g * 9, 1.3)), c + hw * (1 + 0.16 * noiseA(r.g * 9, 7.7))];
   };
@@ -154,7 +155,7 @@ export function planFalls() {
   const impacts = [];
   const last = TIERS[TIERS.length - 1];
   const p = new THREE.Vector3(0, 0, last.landW + 0.05).applyMatrix4(m);
-  impacts.push({ x: p.x, z: p.z, r: 0.75, strength: 1 });
+  impacts.push({ x: p.x, z: p.z, r: 0.95, strength: 1 });
   return { impacts, frame: m };
 }
 
@@ -270,8 +271,11 @@ void main() {
   vec3 light = uKeyColor * 0.55 * ndl + uSkyHorizon * 0.55;
   col *= light;
   col += vec3(0.25, 0.55, 0.6) * uNight * 0.12 * a;
-  // the fall melts into the pool's churn instead of ending in a straight line
-  a *= smoothstep(uFloor - 0.04, uFloor + 0.24, vWPos.y);
+  // the fall melts into the pool's churn instead of ending in a straight line —
+  // and never goes on below the surface (the water is drawn first and does not
+  // write depth, so anything under it would show through as a flat band)
+  if (vWPos.y < uFloor + 0.015) discard;
+  a *= smoothstep(uFloor + 0.015, uFloor + 0.26, vWPos.y);
   gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -297,6 +301,7 @@ export function buildFalls(ctx, B, rng) {
   /** One layered rock slab: wider than tall, strata ledges, moss on top. */
   const tops = [];
   const hangers = []; // shelf & lip edges that ivy and roots hang from
+  const wetRocks = []; // loose rock standing in or at the pool: [u, w, radius] (the water hides what is under it)
   const rockSlab = (u, w, y0, y1, sx, sz, opts = {}) => {
     const h = y1 - y0;
     if (h < 0.08) return;
@@ -397,7 +402,7 @@ export function buildFalls(ctx, B, rng) {
     // colour: warm grey sandstone in strata bands, darker & damper low down
     // and in the steep faces near the water, lighter on the terrace lips
     const col = new Float32Array(pos.length);
-    const base = new THREE.Color('#8f8a7c'), damp = new THREE.Color('#5d6450'), c = new THREE.Color();
+    const base = new THREE.Color('#8f8a7c'), damp = new THREE.Color('#5d6450'), sunk = new THREE.Color('#2c4038'), c = new THREE.Color();
     const nrm = g.attributes.normal;
     for (let v = 0; v < pos.length / 3; v++) {
       const u = pos[v * 3], y = pos[v * 3 + 1], w = pos[v * 3 + 2];
@@ -405,6 +410,9 @@ export function buildFalls(ctx, B, rng) {
       c.copy(base).multiplyScalar(0.86 + 0.1 * Math.sin(y * 6.5 + noiseA(u * 0.8, w * 0.8) * 2) + 0.08 * noiseB(u * 2.3 + y, w * 2.3));
       const wet = (1 - smooth01((Math.abs(u) - 0.5) / 1.2)) * 0.5 + (1 - smooth01((y - WL) / 1.2)) * 0.5;
       c.lerp(damp, wet * 0.45 * (0.4 + 0.6 * steep));
+      // under the surface the rock fades into the pool's dark teal-green (slime
+      // and the water's own colour): no pale, hard-edged skirt below the waterline
+      c.lerp(sunk, smooth01((WL + 0.02 - y) / 0.45) * 0.8);
       col[v * 3] = c.r;
       col[v * 3 + 1] = c.g;
       col[v * 3 + 2] = c.b;
@@ -470,16 +478,24 @@ export function buildFalls(ctx, B, rng) {
   }
   // loose rock: flat, layered sandstone slabs tumbled onto the terraces and
   // the pool's rim, stacked two or three high like broken strata
+  // (each slab its own thickness, size and tilt — never a stack of identical
+  // plates; the bottom one sits on the LOWEST ground under its footprint, so on
+  // the pool's sloping rim no straight-cut underside hangs over the water)
   const slabStack = (u, w, base, s, { height = null, color = null } = {}) => {
     const n = height ? Math.max(2, Math.round(height / (s * 0.3))) : rng.int(1, 3);
-    let y = base - 0.06;
+    let low = base;
+    for (const [du, dw] of [[-0.75, 0], [0.75, 0], [0, -0.55], [0, 0.55]]) low = Math.min(low, Math.max(rockH(u + du * s, w + dw * s), groundAt(u + du * s, w + dw * s)));
+    let y = Math.min(base - 0.06, Math.max(low - 0.12, base - 0.45));
+    if (y < WL + 0.1) wetRocks.push([u, w, s * 0.8]);
+    const total = height ?? 0;
     for (let k = 0; k < n; k++) {
-      const th = height ? height / n : s * rng.range(0.2, 0.32);
-      const shrink = 1 - k * (height ? 0.08 : 0.2);
-      rockSlab(u + rng.jitter(0.1 * s), w + rng.jitter(0.1 * s), y, y + th + 0.03, s * rng.range(1.15, 1.5) * shrink, s * rng.range(0.8, 1.05) * shrink, {
-        round: 0.28, lump: 0.12, color: color ?? rng.pick(ROCK_TINTS), noTop: k < n - 1, rot: rng.jitter(0.5),
-      });
-      y += th;
+      const th = (height ? total / n : s * rng.range(0.2, 0.32)) * rng.range(0.72, 1.3);
+      const shrink = (1 - k * (height ? 0.08 : 0.2)) * rng.range(0.78, 1.15);
+      const g0 = boulderGeo(rng, s * rng.range(1.15, 1.5) * shrink, th + 0.03 + (k === 0 ? base - y : 0), s * rng.range(0.8, 1.05) * shrink, { strata: 1, lump: 0.12, round: 0.28, detail: s > 1.1 ? 3 : 2 });
+      if (k === n - 1) tops.push({ u, w, y: y + th + (k === 0 ? base - y : 0) - th * 0.08, sx: s * shrink, sz: s * shrink * 0.9 });
+      xf(g0, [u + rng.jitter(0.12 * s), y, w + rng.jitter(0.12 * s)], [rng.jitter(0.13), rng.jitter(0.5), rng.jitter(0.13)]);
+      R.add(MM.rock, g0, { color: color ?? rng.pick(ROCK_TINTS), cast: true });
+      y += th + (k === 0 ? base - y : 0);
     }
   };
   for (let i = 0; i < 16; i++) {
@@ -505,10 +521,11 @@ export function buildFalls(ctx, B, rng) {
       if (h < groundAt(u, w) + 0.3 || h < WL + 0.35) continue;
       if (shelves.some((q) => Math.hypot(q.u - u, q.w - w) < 0.75 && Math.abs(q.y - h) < 0.45)) continue;
       const ou = -gu / sl, ow = -gw / sl;
-      shelves.push({ u: u + ou * 0.1, w: w + ow * 0.1, y: h, ou, ow });
+      shelves.push({ u: u - ou * 0.04, w: w - ow * 0.04, y: h, ou, ow });
     }
-    for (const sh of shelves) {
-      const len = rng.range(0.7, 1.5), dep = rng.range(0.38, 0.55), th = rng.range(0.1, 0.17);
+    for (const [si, sh] of shelves.entries()) {
+      const len = rng.range(0.7, 1.5) * rng.range(0.75, 1.25), dep = rng.range(0.38, 0.55), th = rng.range(0.1, 0.17) * rng.range(0.7, 1.35);
+      if (si % 3 === 2) continue; // (a few scattered ledges, never a stack of identical plates)
       const g = boulderGeo(rng, len, th, dep, { strata: 1, lump: 0.14, round: 0.25, detail: 2 });
       xf(g, [sh.u, sh.y - th * 0.7, sh.w], [rng.jitter(0.05), Math.atan2(sh.ou, sh.ow) + rng.jitter(0.15), rng.jitter(0.06)]);
       R.add(MM.rock, g, { color: rng.pick(ROCK_TINTS), cast: true });
@@ -524,8 +541,9 @@ export function buildFalls(ctx, B, rng) {
   }
   // boulders standing in the pool at the foot of the cliff (round, river-worn)
   for (const [u, w, s] of [[-1.35, 2.35, 0.8], [1.45, 2.25, 0.7], [-2.5, 2.75, 0.9], [2.6, 2.95, 0.85], [0.95, 2.95, 0.55]]) {
-    const gy = Math.max(groundAt(u, w), WL - 0.9);
-    rockSlab(u, w, gy - 0.4, WL + rng.range(0.12, 0.42), s * rng.range(0.9, 1.15), s * rng.range(0.75, 1.0), { round: 0.75, lump: 0.14 });
+    // (rounded, and bedded 0.35 below the real bed: no cut underside shows through the clear water)
+    rockSlab(u, w, groundAt(u, w) - 0.35, WL + rng.range(0.12, 0.42), s * rng.range(0.9, 1.15), s * rng.range(0.75, 1.0), { round: 0.75, lump: 0.14 });
+    wetRocks.push([u, w, s * 0.6]);
   }
   // scree & pebbles around the pool rim and on ledges
   for (let i = 0; i < Math.round(46 * Math.max(0.5, density)); i++) {
@@ -626,6 +644,9 @@ export function buildFalls(ctx, B, rng) {
         pts.push(new THREE.Vector3(u, y, w + 0.03));
       }
       if (pts.length < 3) continue;
+      // (the tip tucked into the rock face, never hanging in mid-air)
+      const tip = pts[pts.length - 1];
+      pts.push(new THREE.Vector3(tip.x, tip.y - 0.14, tip.z - 0.22));
       R.add(MM.wood, taperTube(pts, 0.035, 0.008, segs(5, 4), Math.max(6, Math.round(pts.length * 4 * LOD.k))), { color: '#4a3d31', cast: false });
       // a rootlet or two
       for (let k = 0; k < 2; k++) {
@@ -665,6 +686,11 @@ export function buildFalls(ctx, B, rng) {
       const wp = toWorld(x, y + h, z);
       halos.push({ x: wp.x, y: wp.y, z: wp.z, size: 0.35 });
     }
+  }
+  // the glow-worm curtains on the escarpment: a soft teal haze round each
+  for (const [u, y, w] of ridge.curtains ?? []) {
+    const wp = toWorld(u, y, w);
+    halos.push({ x: wp.x, y: wp.y, z: wp.z, size: 0.55 });
   }
 
   // ── water: ONE ribbon from the lip to the pool, the spring channel, ledge foam ──
@@ -726,7 +752,7 @@ export function buildFalls(ctx, B, rng) {
     const rows = Array.from({ length: 4 }, (_, j) => j / 3);
     strip(rows, 16, (b, j, a) => {
       const ang = a * TAU;
-      const r = b * (0.32 + 0.06 * k) * (1 + 0.14 * Math.sin(ang * 3 + k));
+      const r = b * (0.32 + 0.06 * k) * 1.25 * (1 + 0.14 * Math.sin(ang * 3 + k));
       pushV(Math.cos(ang) * r * 1.45, P0.landY + 0.04, cw + Math.sin(ang) * r * 0.7, [2, a, b, 0], 0);
     });
   }
@@ -760,12 +786,14 @@ export function buildFalls(ctx, B, rng) {
     name: 'falls-spray',
     seed: 'falls-spray',
     emitters: [
-      ...ALL.map((T, i) => ({ p: toWorld(0, T.landY + 0.02, T.landW + 0.02), n: [56, 48, 48, 170][i], spread: (T.hw1 ?? 0.5) * 0.8, across })),
+      ...ALL.map((T, i) => ({ p: toWorld(0, T.landY + 0.02, T.landW + 0.02), n: [56, 48, 48, 230][i], spread: (T.hw1 ?? 0.5) * 1.05, across })),
       // a low, slow veil of mist over the plunge pool
-      { p: toWorld(0, WL + 0.05, TIERS[2].landW + 0.5), n: 40, spread: 1.3, depth: 0.7, across },
+      { p: toWorld(0, WL + 0.05, TIERS[2].landW + 0.5), n: 50, spread: 1.5, depth: 0.8, across },
     ],
     color: '#f2f7f6',
-    rise: 0.75,
+    // (at night the spray catches the moonbeam over the pool: silver, with a few glints)
+    nightGlow: 0.9,
+    rise: 0.95,
     spreadOut: 0.35,
     drift: FWD.clone().multiplyScalar(0.9),
     size: [0.05, 0.42],
@@ -777,8 +805,21 @@ export function buildFalls(ctx, B, rng) {
   ctx.scene.add(spray.points);
 
   const animate = !ctx.engine?.reducedMotion;
+  // where rock stands in the water (world x, z): the outcrop proud of the bed, and
+  // the boulders & slabs in the pool — the water mask turns deep & opaque in
+  // front of it, so its submerged faces fade instead of showing as a hard skirt
+  const inv = frame.clone().invert();
+  const _q = new THREE.Vector3();
+  const solidAt = (x, z) => {
+    _q.set(x, 0, z).applyMatrix4(inv);
+    const u = _q.x, w = _q.z;
+    if (rockH(u, w) > groundAt(u, w) + 0.1 && Math.abs(u) < 5.6 && w > -3.6 && w < 3.3) return 1;
+    for (const [ru, rw, rr] of wetRocks) if (Math.hypot(u - ru, w - rw) < rr) return 1;
+    return 0;
+  };
   return {
     impacts: planFalls().impacts,
+    solidAt,
     halos,
     water,
     spray: spray.points,

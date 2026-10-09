@@ -304,7 +304,7 @@ export function buildBanks(ctx, B, rng, rocks) {
   // across), dark and wet at the waterline, a few with moss on their crowns ──
   {
     const c = lineAt(LENGTH - 7.5);
-    const STONES = ['#5f5e57', '#6a665a', '#55554f', '#71695d', '#5d5a50', '#666354'];
+    const STONES = ['#55544d', '#5f5c51', '#4c4c46', '#655f54', '#535047', '#5c594b'];
     let u = -1.95;
     let k = 0;
     while (u < 2.0) {
@@ -322,7 +322,9 @@ export function buildBanks(ctx, B, rng, rocks) {
       });
       wetPaint(g, rng.pick(STONES), top - r * flat * 0.45);
       g.translate(x, top - r * flat * 0.45, z);
-      B.add(MM.pebble, g);
+      // (the mossy rock material: velvet moss settles on their crowns, so they
+      // read as wet river stones by day and night — never pale coasters)
+      B.add(MM.rock, g);
       if (rng.chance(0.6)) {
         const m = mossGeo(rng, { r: r * rng.range(0.45, 0.7), h: 0.035, sx: rng.range(1, 1.4), sz: 0.8 });
         xf(m, [x + rng.jitter(r * 0.15), top - r * flat * 0.45 + r * flat * 0.5, z + rng.jitter(r * 0.15)], [0, rng.next() * TAU, 0]);

@@ -11,11 +11,14 @@
 //     the workbench with a vice, a pegboard of tools, wheels and a road bike
 //     hanging from hooks, shelves of tyres & parts, a hanging lamp
 //   • the cap: a pointed rust-orange bell pushed back like a hat (so its real
-//     gills show from the yard), a rolled rim, cream spots, fairy lights
-//     along the rim, a crooked stovepipe and a bicycle weathervane
+//     gills show from the yard), a rolled rim, fairy lights along the rim, a
+//     crooked stovepipe and a bicycle weathervane — painted like the cottages'
+//     caps (their velvet cap material from cottage/kit.js, a rust rim → orange
+//     crown skin with blotches and streaks, torn cream veil flakes)
 //   • round & square windows glowing, ivy, moss, ferns & toadstools at the foot
 //   • out front: the hero gravel bike on a repair stand (cranks & wheels
-//     turning), the mechanic with a wrench, a truing stand with a slowly
+//     turning; a C-jaw clamp on the seatpost), the mechanic behind it with a
+//     wrench, looking up at you between spells of work, a truing stand with a slowly
 //     spinning wheel on a stump bench, wheels on wall pegs over a bench,
 //     flower pots under a hanging lantern, a split-rail fence with a road
 //     bike and a kid's bike, a chalkboard, tyres, a pump, an oil can, a crate
@@ -24,7 +27,8 @@
 // Local frame: origin on the pad centre, the doors face +Z.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { RIVERSIDE } from '../../world/layout.js';
+import { RIVERSIDE, SPOT_BY_ID } from '../../world/layout.js';
+import { createRng } from '../../core/rng.js';
 import { getHeight, getPathDistance, isInWater } from '../../world/ground.js';
 import {
   Batch, M, TAU, WOOD, IRON, LOD, segs, xf, mat4, deform, stoneGeo, mossGeo, paramSurface, board, boardBetween, rod, tube,
@@ -708,20 +712,40 @@ export function buildWorkshop(ctx, B, rng, halos) {
     out.set(Math.sin(phi) * pt.x * wob - curl * 0.42, y - curl * 0.12, Math.cos(phi) * pt.x * wob - curl * 0.12);
     return out.applyMatrix4(LEAN);
   };
-  const capTop = paramSurface((u, v, p) => capPoint(u * TAU, v, p), segs(64, 40), segs(28, 18), { uv: (u, v) => [u * 4, 1 - v] });
+  // (the cottages' cap material: U = around × 2, V = rim → apex)
+  const capTop = paramSurface((u, v, p) => capPoint(u * TAU, v, p), segs(64, 40), segs(28, 18), { uv: (u, v) => [u * 2, 1 - v] });
+  // painterly skin, as on the cottages' caps (props/mushroomHouse.js capPaint):
+  // never one flat orange — the hue runs from a deep, cool rust at the rim to a
+  // warm, sun-bleached orange crown, broken by soft blotches (darker rust
+  // clouds, paler dabs where the skin has stretched) and brush streaks running
+  // down from the crown; the material adds the fine fibrils and velvet bloom
+  const capHSL = { h: 0, s: 0, l: 0 };
+  new THREE.Color(CAP_COLOR).getHSL(capHSL);
+  const hsl = (dh, ks, kl) => new THREE.Color().setHSL(capHSL.h + dh, Math.min(1, capHSL.s * ks), Math.min(0.88, capHSL.l * kl));
+  const capBase = new THREE.Color(CAP_COLOR);
+  const capCrown = hsl(0.026, 1.04, 1.2), capRimC = hsl(-0.022, 1.0, 0.6), capDarkC = hsl(-0.014, 1.0, 0.7);
+  const capBlot = hsl(-0.022, 0.98, 0.62), capPale = hsl(0.04, 0.95, 1.34);
+  const cTmp = new THREE.Color();
+  /** The skin's painted colour at cap parameter v (0 apex → 1 rim) and point p (also used by the flakes' contact shadows). */
+  const capPaint = (phi, v, p, c) => {
+    const k = 1 - Math.min(1, Math.max(0, v)); // 0 rim … 1 apex
+    c.copy(capRimC).lerp(capBase, smooth01(k / 0.4)).lerp(capCrown, smooth01((k - 0.42) / 0.5) * 0.85);
+    const b1 = noiseA(p.x * 0.62 + 3.7, p.z * 0.62 + p.y * 0.45);
+    const b2 = noiseB(p.x * 1.7 - 1.3, p.z * 1.7 + p.y * 0.9);
+    c.lerp(capBlot, smooth01((b1 - 0.05) / 0.5) * 0.8 * (0.6 + 0.4 * (1 - k)));
+    c.lerp(capPale, smooth01((-b1 - 0.22) / 0.45) * 0.55 * (0.5 + 0.5 * k));
+    c.lerp(cTmp.copy(c).multiplyScalar(b2 > 0 ? 0.84 : 1.12), Math.abs(b2) * 0.6);
+    const st = noiseB(Math.cos(phi) * 7 + 2.1, Math.sin(phi) * 7 + p.y * 0.12);
+    c.lerp(capDarkC, Math.max(0, st) * 0.22 * (1 - k * 0.4));
+    return c;
+  };
   {
-    // painterly gradient: a sun-bleached orange crown, burnt orange body, deep
-    // rust towards the rim — with soft blotches and faint vertical streaks
-    const top = new THREE.Color('#e3904a'), mid = new THREE.Color(CAP_COLOR), rim = new THREE.Color('#8e3c1a');
     const pos = capTop.attributes.position;
     const uv = capTop.attributes.uv;
     const col = new Float32Array(pos.count * 3);
-    const c = new THREE.Color();
+    const c = new THREE.Color(), q = new THREE.Vector3();
     for (let i = 0; i < pos.count; i++) {
-      const t = uv.getY(i); // 0 rim → 1 apex
-      const ph = uv.getX(i) * 1.5708;
-      c.copy(rim).lerp(mid, smooth01(t * 3.4)).lerp(top, smooth01((t - 0.5) * 1.9));
-      c.multiplyScalar(0.92 + 0.1 * noiseA(Math.cos(ph) * 2.2 + t * 2, Math.sin(ph) * 2.2) + 0.04 * noiseB(ph * 9, t * 1.5));
+      capPaint(uv.getX(i) * Math.PI, 1 - uv.getY(i), q.fromBufferAttribute(pos, i), c);
       col.set([c.r, c.g, c.b], i * 3);
     }
     capTop.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -736,7 +760,10 @@ export function buildWorkshop(ctx, B, rng, halos) {
       pts.push(q.clone().add(new THREE.Vector3(0, -0.035, 0)));
     }
     const rim = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), segs(120, 64), 0.075, segs(6, 5), true);
-    F.add(MM.cap, rim, { color: '#8e3f1e' });
+    // (cap material UVs: around × 2, at the rim)
+    const ruv = rim.attributes.uv;
+    for (let i = 0; i < ruv.count; i++) ruv.setXY(i, ruv.getX(i) * 2, 0.01);
+    F.add(MM.cap, rim, { color: '#86391b' });
   }
   // gills: the underside from the wall top (which doesn't tilt) out to the
   // tilted rim (disc UVs for the lamellae texture) + real lamella fins
@@ -787,11 +814,11 @@ export function buildWorkshop(ctx, B, rng, halos) {
     uvPlanar(fins, 'x', 'z', 1 / (2 * RD), [0.5, 0.5]);
     F.add(MM.gills, fins, { color: '#d8c39a', cast: false });
   }
-  // spots: cream, softly raised patches following the cap surface — larger
-  // round ones on the body, a scatter of freckles towards the rim (none
-  // overlapping, a little blue-grey shade at their edges from the vertex tint)
+  // (replays the random draws of the old round sticker spots on the shop's main
+  // generator, so everything placed after the cap keeps its composition; the
+  // flakes below draw from their own generator)
   {
-    const p0 = new THREE.Vector3(), pu = new THREE.Vector3(), pv = new THREE.Vector3();
+    const p0 = new THREE.Vector3();
     const placed = [];
     for (let tries = 0, want = LOD.k >= 1 ? 150 : LOD.k > 0.5 ? 110 : 80; tries < 900 && placed.length < want; tries++) {
       const v = Math.pow(rng.next(), 0.8) * 0.94 + 0.03;
@@ -800,21 +827,211 @@ export function buildWorkshop(ctx, B, rng, halos) {
       const size = (rng.chance(0.25) ? rng.range(0.11, 0.17) : rng.range(0.045, 0.1)) * (1.1 - v * 0.45);
       if (placed.some((q) => q.p.distanceTo(p0) < (q.s + size) * 1.15)) continue;
       placed.push({ p: p0.clone(), s: size });
-      capPoint(phi + 0.01, v, pu).sub(p0);
-      capPoint(phi, v + 0.01, pv).sub(p0);
-      const nrm = new THREE.Vector3().crossVectors(pv, pu).normalize();
-      if (nrm.y < 0) nrm.negate();
-      const g = new THREE.SphereGeometry(1, size > 0.09 && LOD.k >= 1 ? 8 : 6, size > 0.09 && LOD.k >= 1 ? 3 : 2, 0, TAU, 0, Math.PI / 2);
-      deform(g, (q) => {
-        const k = 1 + 0.18 * noiseA(q.x * 2.5 + size * 97, q.z * 2.5 + placed.length);
-        q.set(q.x * k, q.y, q.z * k);
-      });
-      g.scale(size, size * 0.22, size * rng.range(0.7, 1));
-      g.translate(0, -size * 0.06, 0);
-      g.rotateY(rng.next() * TAU);
-      g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), nrm));
-      g.translate(p0.x, p0.y, p0.z);
-      F.add(MM.vc, g, { color: rng.pick(['#f2e9d6', '#efe3c9', '#f6efe0', '#ece0c4']), cast: false });
+      rng.range(0.7, 1);
+      rng.next();
+      rng.pick([0, 1, 2, 3]);
+    }
+  }
+  // the warts: torn cream veil flakes, as on the cottages' caps (adapted from
+  // props/mushroomHouse.js buildWarts, which is private to makeMushroomHouse):
+  // big plates at the crown, smaller flakes down the bell in loose clusters
+  // with bare skin between them, a fine sprinkle of speckles towards the rim.
+  // Each flake is a low plateau with a torn, notched outline and its own tone
+  // (fresh cream, older & greyer, stained by the cap); the big ones get a soft
+  // contact shadow painted on the skin around their foot (in the cap material)
+  {
+    const frng = createRng('velowerkstatt:flakes');
+    const RC = 2.0;
+    const sizeAt = (v) => RC * 0.074 * Math.max(0.2, 1.38 - 1.12 * v) ** 1.25;
+    const FLAKE = [[0.0, 1.0], [0.74, 0.9], [1.0, 0]];
+    const DOT = [[0.0, 1.0], [0.68, 0.7], [1.0, 0]];
+    const AO = [[0.92, 0.5], [1.3, 0]];
+    const det = LOD.k >= 1 ? 1 : LOD.k > 0.5 ? 0.7 : 0.4;
+    const target = Math.round(120 * (0.62 + 0.38 * det));
+    /** cap frame at (phi, v): the point, the outward normal and the metric (units per radian / per unit v) */
+    const frameAt = (phi, v) => {
+      const e = 0.004;
+      const va = Math.max(0, v - e), vb = Math.min(1, v + e);
+      const p = capPoint(phi, v);
+      const dPhi = capPoint(phi + e, v).sub(capPoint(phi - e, v)).divideScalar(2 * e);
+      const dV = capPoint(phi, vb).sub(capPoint(phi, va)).divideScalar(vb - va);
+      const n = new THREE.Vector3().crossVectors(dV, dPhi).normalize();
+      if (n.y < 0) n.negate();
+      return { p, n, lPhi: Math.max(0.05, dPhi.length()), lS: Math.max(0.05, dV.length()) };
+    };
+    // keep clear of the stovepipe and the vane's mast at the tip
+    const reserved = [{ p: capPoint(2.5, 0.42), r: 0.32 }];
+    const makeOutline = (k, ragged = 1) => {
+      const rot = frng.next() * TAU;
+      const ax = frng.range(0.78, 1.3);
+      const h2 = frng.range(0.04, 0.13), p2 = frng.next() * TAU;
+      const h3 = frng.range(0.02, 0.09), p3 = frng.next() * TAU;
+      const notch = frng.chance(0.4) ? frng.int(0, k - 1) : -1;
+      const pts = [], hts = [];
+      let ext = 0;
+      for (let i = 0; i < k; i++) {
+        const t = ((i + frng.jitter(0.28)) / k) * TAU;
+        let r = 1 + h2 * Math.sin(2 * t + p2) + h3 * Math.sin(3 * t + p3) + frng.jitter(0.15 * ragged);
+        if (i === notch) r *= frng.range(0.58, 0.78);
+        const x = Math.cos(t + rot) * r * ax, y = (Math.sin(t + rot) * r) / ax;
+        pts.push([x, y]);
+        hts.push(1 + frng.jitter(0.14 * ragged));
+        ext = Math.max(ext, Math.hypot(x, y));
+      }
+      return { pts, hts, ext };
+    };
+    const placed = [];
+    const reach = (w) => w.size * w.ext * (w.ao ? AO[AO.length - 1][0] : 1);
+    const free = (w, margin) => {
+      for (const q of placed) if (q.c.distanceTo(w.c) < reach(q) + reach(w) + margin) return false;
+      for (const r of reserved) if (r.p.distanceTo(w.c) < r.r + reach(w)) return false;
+      return true;
+    };
+    const clusters = [];
+    const nCl = Math.max(5, Math.round(target / 12));
+    for (let i = 0; i < nCl; i++) {
+      const v = 0.05 + Math.sqrt(frng.next()) * 0.8;
+      const phi = frng.next() * TAU;
+      const f = frameAt(phi, v);
+      clusters.push({ phi, v, lPhi: f.lPhi, lS: f.lS, spread: frng.range(0.8, 1.7) });
+    }
+    for (let tries = 0, n = 0; n < target && tries < target * 30; tries++) {
+      let v, phi;
+      if (frng.chance(0.86)) {
+        const c = clusters[frng.int(0, clusters.length - 1)];
+        const sig = c.spread * sizeAt(c.v) * 2.4;
+        const a = (frng.next() + frng.next() + frng.next() - 1.5) * sig * 1.4;
+        const b = (frng.next() + frng.next() + frng.next() - 1.5) * sig * 1.4;
+        phi = c.phi + a / c.lPhi;
+        v = Math.min(0.92, Math.max(0.05, c.v + b / c.lS));
+      } else {
+        v = 0.05 + Math.sqrt(frng.next()) * 0.86;
+        phi = frng.next() * TAU;
+      }
+      const size = sizeAt(v) * (frng.chance(0.3) ? frng.range(0.35, 0.6) : frng.range(0.7, 1.3));
+      const k = Math.max(7, Math.round((size > RC * 0.05 ? 12 : size > RC * 0.03 ? 10 : 8) * (0.65 + 0.35 * det)));
+      const w = { c: capPoint(phi, v), size, v, phi, ao: size > RC * 0.022, k, ...makeOutline(k) };
+      if (!free(w, size * 0.1)) continue;
+      placed.push(w);
+      n++;
+    }
+    // a sprinkle of tiny speckles towards the rim (the veil breaks up finest at the margin)
+    const nSpeck = Math.round(target * 0.25 * (0.5 + 0.5 * det));
+    for (let tries = 0, n = 0; n < nSpeck && tries < nSpeck * 30; tries++) {
+      const v = frng.range(0.6, 0.96);
+      const phi = frng.next() * TAU;
+      const size = RC * 0.014 * frng.range(0.7, 1.35);
+      const k = det > 0.7 ? 7 : 6;
+      const w = { c: capPoint(phi, v), size, v, phi, ao: false, k, ...makeOutline(k, 0.6) };
+      if (!free(w, size * 0.5)) continue;
+      placed.push(w);
+      n++;
+    }
+    // (the cottages' wart albedo: the cream whitened and lifted, so it lands on ivory on screen)
+    const albedo = (hex) => new THREE.Color(hex).lerp(new THREE.Color('#ffffff'), 0.12).multiplyScalar(1.3);
+    const cTop = albedo('#efe6cf');
+    const cFoot = albedo('#efe6cf').lerp(new THREE.Color('#9c8064'), 0.55);
+    const cOld = new THREE.Color('#cfc4ae');
+    const cStain = new THREE.Color(CAP_COLOR).lerp(new THREE.Color('#ffffff'), 0.55);
+    const cW = new THREE.Color(), cWF = new THREE.Color(), cV = new THREE.Color();
+    const pos = [], col = [], uv = [], idx = [];
+    const aPos = [], aNor = [], aCol = [], aUv = [], aIdx = [];
+    const q = new THREE.Vector3();
+    for (const w of placed) {
+      const f = frameAt(w.phi, w.v);
+      const { k, pts, hts } = w;
+      const onCap = (a, b, out) => {
+        const ph = w.phi + a / f.lPhi;
+        const vv = Math.min(1, Math.max(0.01, w.v + b / f.lS));
+        capPoint(ph, vv, out);
+        return [ph, vv];
+      };
+      const tone = frng.range(0.76, 1.0);
+      cW.copy(cTop);
+      const age = frng.next();
+      if (age < 0.22) cW.lerp(cOld, frng.range(0.3, 0.6));
+      else if (age < 0.36) cW.lerp(cStain, frng.range(0.15, 0.35));
+      cW.multiplyScalar(tone);
+      cWF.copy(cFoot).multiplyScalar(tone);
+      const prof = w.ao ? FLAKE : DOT;
+      const h = w.size * (w.ao ? frng.range(0.24, 0.36) : 0.3);
+      const tiltA = frng.next() * TAU, tiltK = w.ao ? frng.range(0.05, 0.16) : 0;
+      const base = pos.length / 3;
+      for (let ri = 0; ri < prof.length; ri++) {
+        const [rf, hf] = prof[ri];
+        const last = ri === prof.length - 1;
+        cV.copy(cW).lerp(cWF, smooth01((rf - 0.45) / 0.55) * 0.85);
+        const n = ri === 0 ? 1 : k;
+        for (let i = 0; i < n; i++) {
+          const [ox, oz] = ri === 0 ? [0, 0] : pts[i];
+          const ht = ri === 0 ? 1 : hts[i];
+          const lift = last ? -0.012 : h * hf * (1 + (ht - 1) * rf) * (1 + tiltK * (ox * Math.cos(tiltA) + oz * Math.sin(tiltA)) * rf);
+          const [ph, vv] = onCap(ox * rf * w.size, oz * rf * w.size, q);
+          q.addScaledVector(f.n, lift);
+          pos.push(q.x, q.y, q.z);
+          col.push(cV.r, cV.g, cV.b);
+          uv.push(ph * 0.5, vv);
+        }
+      }
+      for (let i = 0; i < k; i++) idx.push(base, base + 1 + i, base + 1 + ((i + 1) % k));
+      for (let ri = 1; ri < prof.length - 1; ri++) {
+        const a0 = base + 1 + (ri - 1) * k, b0 = base + 1 + ri * k;
+        for (let i = 0; i < k; i++) {
+          const i1 = (i + 1) % k;
+          idx.push(a0 + i, b0 + i, b0 + i1, a0 + i, b0 + i1, a0 + i1);
+        }
+      }
+      // the soft contact shadow: rings of skin a hair above the cap, darkened towards the flake
+      if (w.ao) {
+        const aBase = aPos.length / 3;
+        for (const [rf, dark] of AO) {
+          for (let i = 0; i < k; i++) {
+            const [ox, oz] = pts[i];
+            const [ph, vv] = onCap(ox * rf * w.size, oz * rf * w.size, q);
+            const fr = frameAt(ph, vv);
+            aPos.push(q.x + fr.n.x * 0.006, q.y + fr.n.y * 0.006, q.z + fr.n.z * 0.006);
+            aNor.push(fr.n.x, fr.n.y, fr.n.z);
+            capPaint(ph, vv, q, cV).multiplyScalar(1 - dark);
+            aCol.push(cV.r, cV.g, cV.b);
+            aUv.push((ph / TAU) * 2, 1 - vv);
+          }
+        }
+        for (let r = 0; r < AO.length - 1; r++) {
+          const r0 = aBase + r * k, r1 = aBase + (r + 1) * k;
+          for (let i = 0; i < k; i++) {
+            const i1 = (i + 1) % k;
+            aIdx.push(r0 + i, r1 + i, r1 + i1, r0 + i, r1 + i1, r0 + i1);
+          }
+        }
+      }
+    }
+    /** flip the winding of `g` when its first triangle faces against `nrm` */
+    const faceOut = (g, nrm) => {
+      const P = g.attributes.position, I = g.index.array;
+      const A = new THREE.Vector3().fromBufferAttribute(P, I[0]);
+      const Bv = new THREE.Vector3().fromBufferAttribute(P, I[1]).sub(A);
+      const Cv = new THREE.Vector3().fromBufferAttribute(P, I[2]).sub(A);
+      if (Bv.cross(Cv).dot(nrm) < 0) for (let i = 0; i < I.length; i += 3) [I[i + 1], I[i + 2]] = [I[i + 2], I[i + 1]];
+    };
+    if (placed.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.setIndex(idx);
+      faceOut(g, frameAt(placed[0].phi, placed[0].v).n);
+      g.computeVertexNormals();
+      F.add(MM.warts, g, { cast: false, color: null });
+    }
+    if (aIdx.length) {
+      const ag = new THREE.BufferGeometry();
+      ag.setAttribute('position', new THREE.Float32BufferAttribute(aPos, 3));
+      ag.setAttribute('normal', new THREE.Float32BufferAttribute(aNor, 3));
+      ag.setAttribute('color', new THREE.Float32BufferAttribute(aCol, 3));
+      ag.setAttribute('uv', new THREE.Float32BufferAttribute(aUv, 2));
+      ag.setIndex(aIdx);
+      faceOut(ag, new THREE.Vector3(aNor[0], aNor[1], aNor[2]));
+      F.add(MM.cap, ag, { cast: false, color: null });
     }
   }
   // stovepipe chimney poking through the back of the cap, with a rain hat
@@ -972,8 +1189,31 @@ export function buildWorkshop(ctx, B, rng, halos) {
       F.add(MM.glossy, rod([mastX, 0.13, mastZ], [mastX + Math.sin(a) * 0.34, 0.01, mastZ + Math.cos(a) * 0.34], 0.018, 0.015, 6), { color: STAND });
       F.add(MM.vc, new THREE.SphereGeometry(0.021, 6, 4).translate(mastX + Math.sin(a) * 0.34, 0.013, mastZ + Math.cos(a) * 0.34), { color: '#1f1e1d', cast: false });
     }
-    F.add(MM.metal, rod([mastX, post.y + 0.04, mastZ], [post.x, post.y + 0.015, post.z], 0.013, 0.013, 6), { color: '#9ea2a5' });
-    F.add(MM.glossy, new THREE.BoxGeometry(0.06, 0.07, 0.075).translate(post.x, post.y, post.z), { color: '#c0392b' });
+    // the clamp: a C-jaw gripping the seatpost ~8 cm below the saddle rails —
+    // two dark rubber jaw pads either side of the post, the red cast head behind
+    // it on the shop side, a quick-release lever, and a short angled arm from the
+    // mast (stand red & steel: never saddle-brown, never a second saddle)
+    {
+      const seatAx = new THREE.Vector3(hero.dims.saddle.x, hero.dims.saddle.y - hero.dims.bbHeight, 0).normalize();
+      const ax = seatAx.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.1);
+      const jaw = hero.dims.saddle.clone().addScaledVector(seatAx, -0.115).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.1).add(heroPos);
+      const tilt = Math.atan2(-ax.x, ax.y); // lean of the seatpost from vertical
+      const J = F.at(new THREE.Matrix4().makeRotationY(0.1).multiply(new THREE.Matrix4().makeRotationZ(tilt)).setPosition(jaw.x, jaw.y, jaw.z));
+      const RED = '#c0392b';
+      // rubber pads hugging the post from both sides
+      for (const sz of [-1, 1]) J.add(MM.vc, new THREE.BoxGeometry(0.034, 0.05, 0.01).translate(0, 0, sz * 0.019), { color: '#1f1d1b', cast: false });
+      // the jaw frame: cheeks round the post back to the head
+      for (const sz of [-1, 1]) J.add(MM.glossy, new THREE.BoxGeometry(0.03, 0.044, 0.008).translate(-0.004, 0, sz * 0.027), { color: RED, cast: false });
+      J.add(MM.glossy, new THREE.BoxGeometry(0.05, 0.05, 0.034).translate(0, 0, -0.046), { color: RED });
+      // quick-release lever folded along the head, with its paddle
+      J.add(MM.glossy, rod([0.026, 0.0, -0.05], [0.07, -0.035, -0.062], 0.005, 0.004, 5), { color: RED, cast: false });
+      J.add(MM.glossy, new THREE.BoxGeometry(0.03, 0.012, 0.016).rotateZ(-0.6).translate(0.078, -0.04, -0.064), { color: RED, cast: false });
+      // the arm: up from the mast top, then a short angled reach to the head
+      const head = new THREE.Vector3(0, 0, -0.063).applyAxisAngle(new THREE.Vector3(0, 0, 1), tilt).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.1).add(jaw);
+      const elbow = new THREE.Vector3(mastX, head.y + 0.03, mastZ);
+      F.add(MM.metal, rod([mastX, post.y + 0.04, mastZ], elbow.toArray(), 0.014, 0.014, 6), { color: '#9ea2a5' });
+      F.add(MM.metal, rod(elbow.toArray(), head.toArray(), 0.013, 0.012, 6), { color: '#9ea2a5' });
+    }
     F.add(MM.glossy, new THREE.SphereGeometry(0.03, 8, 6).translate(mastX, post.y + 0.08, mastZ), { color: '#c0392b', cast: false });
     // a little tray of tools on the mast
     const ty = post.y * 0.62;
@@ -998,18 +1238,25 @@ export function buildWorkshop(ctx, B, rng, halos) {
     T.add(MM.vc, new THREE.TorusGeometry(0.2, 0.03, segs(5, 3), segs(18, 10)).rotateY(1.3).rotateZ(0.25).translate(0.26, 0.19, 0.05), { color: '#2a2622', cast: false });
   }
 
-  // the mechanic, at the back of the bike beside the rear wheel, bent over the
-  // derailleur with his wrench — the frame, the fork and the whole cockpit stay
-  // clear against the dark door behind
+  // the mechanic, on the shop side of the bike (behind it, seen from the spot
+  // camera), facing the yard and reaching over to the rear wheel with his
+  // wrench: the whole bike stays in front of him, his face shows over the top
+  // tube, and from the bikes camera he stands against the dark door leaf —
+  // clear of the restored vintage bike on the bridge to the left
   let mechanic = null;
   try {
-    mechanic = ctx.props.makePerson({ seed: 'velo-mechanic', name: 'Mechanic', holding: 'wrench', action: 'work', apron: true, apronColor: '#3f5f73', hat: 'bandana', hatColor: '#b03a2e', hair: 'curly', shirt: '#e8a838', beard: true });
-    // bike-local (−0.72, 0, −0.12): just past the rear tyre, a step behind the wheel's plane
-    const mp = new THREE.Vector3(-0.72, 0, -0.12).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.1).add(new THREE.Vector3(heroPos.x, 0, heroPos.z));
+    // (a tan leather apron: it reads against the cobalt frame in front of it)
+    mechanic = ctx.props.makePerson({ seed: 'velo-mechanic', name: 'Mechanic', holding: 'wrench', action: 'idle', apron: true, apronColor: '#8a5a36', hat: 'bandana', hatColor: '#9a3a2c', hair: 'curly', shirt: '#e8a838', beard: true });
+    // bike-local (0.2, 0, −0.52): behind the bottom bracket, clear of the stand's tripod
+    const mp = new THREE.Vector3(0.2, 0, -0.52).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.1).add(new THREE.Vector3(heroPos.x, 0, heroPos.z));
     mechanic.group.position.copy(mp);
-    // facing along the bike (+X), turned a little towards the spot camera
-    mechanic.group.rotation.y = Math.PI / 2 + 0.1 - 0.42;
+    // facing the yard and the spot camera (local yaw ≈ 0.3), turned a little towards the rear hub
+    mechanic.group.rotation.y = 0.1 - 0.16;
     group.add(mechanic.group);
+    // between spells of work he looks up at the visitor (the bikes camera), so
+    // the spot shows his face over the top tube, not the top of his bandana
+    const cam = SPOT_BY_ID.bikes?.camera?.position;
+    if (cam) mechanic.lookAt(new THREE.Vector3(cam[0], cam[1], cam[2]));
     // only the body casts (one caster, not a handful)
     let first = true;
     mechanic.group.traverse((o) => {
@@ -1363,6 +1610,12 @@ export function buildWorkshop(ctx, B, rng, halos) {
 
   const animate = !ctx.engine?.reducedMotion;
   let phase = 0;
+  // (reduced motion: he stays looking up from his work)
+  let mechAct = '';
+  if (mechanic && !animate) {
+    mechanic.setAction('idle');
+    mechAct = 'idle';
+  }
   updates.push((dt, t) => {
     if (!animate) return;
     truingWheel.rotation.z -= dt * 1.4;
@@ -1371,6 +1624,12 @@ export function buildWorkshop(ctx, B, rng, halos) {
     const spinning = phase > 0.55;
     hero.setSpin(spinning ? 6 : 0, spinning ? 2.2 : 0);
     hero.update(dt);
+    // he looks up and greets you for a while, then bends to the rear wheel again
+    const act = phase < 0.6 ? 'idle' : 'work';
+    if (mechanic && act !== mechAct) {
+      mechAct = act;
+      mechanic.setAction(act);
+    }
   });
 
   return {

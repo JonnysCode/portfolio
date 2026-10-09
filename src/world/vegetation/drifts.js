@@ -30,10 +30,12 @@ import { canGrow, isClearOfViews, isClearOfSubjects, cameraClearance, inShot, pa
 import { pickWeighted } from './families.js';
 import { bloomTemplate, hydrangea, BLOOM_KINDS, BLOOM_HEIGHT } from './blooms.js';
 
+// (round 5: fewer blue drifts — by night they were the most saturated thing
+//  in the frame; white anemones and pink campion carry more of the colour)
 const MIX = {
-  path: { forgetMeNot: 3, buttercup: 2.5, anemone: 2.5, campion: 1.6, bluebell: 1.2 },
-  house: { campion: 3, forgetMeNot: 2.4, bluebell: 2, anemone: 2, buttercup: 1.4 },
-  wedge: { bluebell: 3, anemone: 2.5, buttercup: 2.5, campion: 2, forgetMeNot: 1.6 },
+  path: { forgetMeNot: 2.2, buttercup: 2.5, anemone: 2.8, campion: 1.8, bluebell: 0.9 },
+  house: { campion: 3, forgetMeNot: 2, bluebell: 1.4, anemone: 2.2, buttercup: 1.4 },
+  wedge: { bluebell: 1.6, anemone: 3, buttercup: 2.5, campion: 2.4, forgetMeNot: 1.2 },
 };
 /** A companion that grows at a drift's fringe. */
 const COMPANION = { forgetMeNot: 'anemone', bluebell: 'anemone', anemone: 'forgetMeNot', campion: 'buttercup', buttercup: 'forgetMeNot' };
@@ -365,7 +367,8 @@ export function buildDrifts(ctx, { occ, density = 1, tier = 'high', flowerMat, l
   const bRng = createRng('vegetation:bloom-templates');
   for (const kind of BLOOM_KINDS) {
     if (!items[kind].length) continue;
-    meshes.push(instanced(`blooms-${kind}`, bloomTemplate(kind, bRng, { lite }), flowerMat, items[kind], { cast: false }));
+    // (bluebells: the lighter cushion on every tier — 330 triangles a cushion, and fewer bells read less like a blue puddle)
+    meshes.push(instanced(`blooms-${kind}`, bloomTemplate(kind, bRng, { lite: lite || kind === 'bluebell' }), flowerMat, items[kind], { cast: false }));
   }
   if (shrubB.count) meshes.push(staticMesh('hydrangeas', shrubB.build(), leafMat, { cast: false, receive: true }));
   stats.ms = Math.round(performance.now() - t0);

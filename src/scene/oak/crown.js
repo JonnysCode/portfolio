@@ -1,15 +1,17 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The Great Oak's crown: painterly leaf MASSES made of alpha-tested leaf cards.
 //
-// Each clump the skeleton chose is a cluster of 3–6 lumpy sub-clumps ("lobes",
-// from a few templates), so the crown reads as a painter's clusters-of-
-// clusters — every cushion with a sunlit, warm yellow-green top and a deep,
-// cool blue-green belly — not as smooth topiary balls. Cards on the outer skin
-// of a cluster are bigger, so single sprigs break the silhouette even from the
-// overview. Gap spheres along the limbs and a few knocked-out high clumps cut
-// 25–40 % of the foliage away: the dark, kinked limbs and the sky show through.
-// Lobes of mixed sizes and stray sprigs poking out of every mass keep the
-// outline ragged, so the crown reads as an old oak's, not as broccoli puffs.
+// Each clump the skeleton chose is a broad, layered PAD (≈ 1.3× wider than
+// its size, ≈ 0.7× as tall) built from a heart and 4–6 lobes ringed round it,
+// whose hem DROOPS (cards further out sit lower) — every pad with a sunlit,
+// golden yellow-green top and a deep, cool blue-green belly, so the masses
+// stack into lush layers with dark creases between them, not round pom-poms
+// or one broccoli dome. Cards on the outer skin are bigger, so single sprigs
+// break the silhouette even from the overview. The skirts and boughs trail
+// short CURTAINS of hanging sprigs (8 % of the cards, not on the low tier).
+// A few windows along the limbs and the odd knocked-out high clump (≈ 25–35 %
+// of the cards) let the dark, kinked limbs and the sky show through; the
+// treehouse and the hero moon stay in sight from the glen (shape.js).
 // Everything is ONE vertex-coloured mesh. At night it becomes a dark
 // blue-green silhouette: near-black bellies, a thin silver rim where the
 // leaves face the moon, a warm bounce under the masses near the Code Loft and
@@ -54,11 +56,12 @@ export function clumpTemplate(rng, cards, { flat = 0.78, size = [0.2, 0.32], bot
   const L = [{ c: new THREE.Vector3(0, -0.08, 0), r: 0.58 }];
   const az0 = rng.range(0, TAU);
   for (let i = 0; i < lobes; i++) {
-    // (lobes of mixed sizes, some small ones far out: a lumpy, irregular mass)
+    // (lobes ringed round the heart, mostly sideways and a little up: one
+    //  broad, layered pad with a lumpy hem — not a stack of round pom-poms)
     const az = az0 + (i / lobes) * TAU + rng.range(-0.45, 0.45);
-    const el = rng.range(-0.35, 0.8);
-    const dist = rng.range(0.42, 0.68);
-    L.push({ c: new THREE.Vector3(Math.cos(el) * Math.sin(az) * dist, Math.sin(el) * dist, Math.cos(el) * Math.cos(az) * dist), r: rng.range(0.27, 0.48) });
+    const el = rng.range(-0.3, 0.5);
+    const dist = rng.range(0.45, 0.7);
+    L.push({ c: new THREE.Vector3(Math.cos(el) * Math.sin(az) * dist, Math.sin(el) * dist, Math.cos(el) * Math.cos(az) * dist), r: rng.range(0.32, 0.48) });
   }
   let wsum = 0;
   for (const l of L) wsum += l.r * l.r;
@@ -190,27 +193,26 @@ export function clumpTemplate(rng, cards, { flat = 0.78, size = [0.2, 0.32], bot
 function crownGaps(rng, clumps, limbs, branches) {
   const gaps = [];
   for (const L of limbs) {
-    // windows along every main limb: its dark, kinked bark shows against the
-    // lit masses beyond (three per limb, one of them sometimes skipped)
-    for (const [u0, u1] of [[0.28, 0.42], [0.48, 0.62], [0.68, 0.84]]) {
-      if (rng.chance(0.15)) continue;
+    // two windows along every main limb: its dark, kinked bark shows against
+    // the lit masses beyond (the long low limb keeps ONE, near the trunk — its
+    // outer two thirds carry a full skirt that frames the glen)
+    for (const [u0, u1] of L.id === 'front-left-low' ? [[0.3, 0.42]] : [[0.36, 0.5], [0.62, 0.8]]) {
       const u = rng.range(u0, u1);
       const p = L.curve.getPointAt(u);
       p.y += rng.range(0.3, 1.3);
-      gaps.push({ c: p, r: 1.9 + L.radiusAt(u) * 1.25 + rng.range(0, 0.8) });
+      gaps.push({ c: p, r: 1.6 + L.radiusAt(u) * 1.15 + rng.range(0, 0.6) });
     }
   }
   for (const b of branches) {
-    if (b.depth !== 1 || !rng.chance(0.34)) continue;
+    if (b.depth !== 1 || !rng.chance(0.22)) continue;
     const p = b.curve.getPointAt(rng.range(0.3, 0.6));
     p.y += 0.4;
-    gaps.push({ c: p, r: rng.range(1.2, 1.7) });
+    gaps.push({ c: p, r: rng.range(1.05, 1.5) });
   }
-  // sky holes: whole high clumps knocked out (the backdrop & the sky show
-  // through the upper crown in the wide frames)
+  // a few sky holes: high clumps knocked out (the backdrop shows through the
+  // upper crown in the wide frames) — never the crowning masses on top
   for (const c of clumps) {
-    if (c.tier === 1 && c.p.y > 21 && rng.chance(0.2)) gaps.push({ c: c.p.clone(), r: c.s * 0.9 });
-    else if (c.tier === 2 && c.p.y > 25 && rng.chance(0.16)) gaps.push({ c: c.p.clone(), r: c.s * 0.85 });
+    if (c.tier === 1 && c.p.y > 22 && rng.chance(0.1)) gaps.push({ c: c.p.clone(), r: c.s * 0.75 });
   }
   return gaps;
 }
@@ -303,6 +305,13 @@ function moonlitCrownMaterial(base, bounce = []) {
  * The crown as ONE merged, vertex-coloured mesh of leaf cards.
  * opts: { density, limbs, branches } (limbs/branches from the skeleton, for the gaps).
  * Returns { meshes, bounds (Box3), cards }.
+ *
+ * Every clump is a broad, layered PAD — about 1.4× wider than its size and
+ * 0.72× as tall — whose hem droops (the cards further out from its heart sit
+ * lower), and the skirts and boughs trail short CURTAINS of hanging sprigs:
+ * lush, drooping, wider-than-tall masses instead of round pom-poms. (The
+ * anisotropy moves the card centres only — every sprig card keeps its own
+ * shape, nothing is squashed.)
  */
 export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branches = [], bounce = [] } = {}) {
   const { materials } = ctx;
@@ -313,11 +322,14 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
     { flat: 0.68, bottom: 0.56, lobes: 4 },
   ];
   // leaf-card budget at high density, whatever the number of clumps (overdraw
-  // of stacked alpha-tested cards is the real cost, not the triangle count)
-  const budget = (ctx.engine?.params?.get('oakcards') ? +ctx.engine.params.get('oakcards') : 18500) * density;
-  // the clumps are a little smaller than the skeleton asked for, so the
-  // clusters stand apart instead of melting into one green dome
-  let clumps = clumpsIn.map((c) => ({ ...c, s: c.s * 0.86 }));
+  // of stacked alpha-tested cards is the real cost, not the triangle count);
+  // a share of it trails as hanging sprig curtains (none on the low tier)
+  const budgetAll = (ctx.engine?.params?.get('oakcards') ? +ctx.engine.params.get('oakcards') : 20000) * density;
+  const curtainShare = density >= 0.45 ? 0.08 : 0;
+  const budget = budgetAll * (1 - curtainShare);
+  // (the clumps a touch smaller than the skeleton asked for: the wide pads
+  //  overlap into one lush mass, with dark creases between them)
+  let clumps = clumpsIn.map((c) => ({ ...c, s: c.s * 0.87 }));
   // on lower tiers keep the cards per clump sensible and drop the least
   // important clumps instead (hanging skirt first, then twig tips)
   const MIN_CARDS = 44;
@@ -331,20 +343,67 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
       .map((e) => e.c);
   }
 
-  // per-clump placement (fixed before the card count is settled)
+  // per-clump placement (fixed before the card count is settled):
+  // M  = the pad's anisotropic frame (card CENTRES: wide & flat),
+  // L  = rotation × uniform size (the cards' own shape), size = that scale
   const place = clumps.map((c, ci) => {
     const under = c.tier === 3 || c.tier === 2;
     const t = under ? (rng.chance(0.5) ? 2 : ci % 2) : ci % 2;
-    _e.set(rng.range(-0.2, 0.2), rng.range(0, Math.PI * 2), rng.range(-0.2, 0.2));
+    _e.set(rng.range(-0.16, 0.16), rng.range(0, Math.PI * 2), rng.range(-0.16, 0.16));
     _q.setFromEuler(_e);
-    // masses of very different sizes (no stack of equal puffs), spread wide
-    // and flat like an old oak's layered foliage pads
+    // masses of different sizes (no stack of equal puffs), spread wide and
+    // flat like an old oak's layered foliage pads
     const hk = hash2(c.p.x * 0.37 + c.p.z, c.p.y * 0.61);
-    const k = c.tier === 0 ? 1.08 + 0.2 * hk : 0.74 + 0.56 * hk * hk;
-    _s.set(c.s * k * rng.range(0.95, 1.22), c.s * k * rng.range(0.78, 0.96), c.s * k * rng.range(0.95, 1.22));
+    const k = c.tier === 0 ? 1.08 + 0.2 * hk : 0.8 + 0.45 * hk * hk;
+    const size = c.s * k;
+    const wide = c.tier === 0 ? rng.range(1.15, 1.32) : rng.range(1.2, 1.42);
+    const tall = c.tier === 0 ? rng.range(0.74, 0.86) : rng.range(0.66, 0.8);
+    _s.set(size * wide * rng.range(0.92, 1.08), size * tall, size * wide * rng.range(0.92, 1.08));
     const M = new THREE.Matrix4().compose(c.p, _q, _s);
-    return { t, M, under, drift: rng.range(-1, 1), shade: rng.range(0.9, 1.06) };
+    const L = new THREE.Matrix4().compose(new THREE.Vector3(), _q, new THREE.Vector3(size, size, size));
+    // hems droop: the skirts and boughs more than the crowning tops
+    const droop = c.tier === 0 ? 0.35 : c.tier === 3 ? 0.75 : 0.6;
+    return { t, M, L, size, droop, under, drift: rng.range(-1, 1), shade: rng.range(0.9, 1.06) };
   });
+  /** World centre of card k of clump ci (template card centre `mid`): the pad's frame + its drooping hem. */
+  const cardCentre = (pl, mid, k, out) => {
+    out.fromArray(mid, k * 3);
+    const rho = Math.hypot(out.x, out.z);
+    const d = pl.droop * (Math.max(0, rho - 0.3) ** 2 + (out.y < 0 ? 0.35 * rho * -out.y : 0));
+    out.applyMatrix4(pl.M);
+    out.y -= d * pl.size;
+    return out;
+  };
+  // creases: a card that lies INSIDE a neighbouring pad is buried in the
+  // mass — darken it (and keep the sun off it), so where pads overlap the
+  // crown shows dark folds between lit layers instead of one even green dome
+  const invM = place.map((pl) => new THREE.Matrix4().copy(pl.M).invert());
+  const CELL = 6;
+  const grid = new Map();
+  const cellKey = (x, y, z) => `${Math.floor(x / CELL)},${Math.floor(y / CELL)},${Math.floor(z / CELL)}`;
+  clumps.forEach((c, ci) => {
+    const k = cellKey(c.p.x, c.p.y, c.p.z);
+    if (!grid.has(k)) grid.set(k, []);
+    grid.get(k).push(ci);
+  });
+  const _o = new THREE.Vector3();
+  const buried = (p, self) => {
+    let occ = 0;
+    const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL), cz = Math.floor(p.z / CELL);
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dz = -1; dz <= 1; dz++) {
+          const list = grid.get(`${cx + dx},${cy + dy},${cz + dz}`);
+          if (!list) continue;
+          for (const j of list) {
+            if (j === self) continue;
+            _o.copy(p).applyMatrix4(invM[j]);
+            const d = Math.hypot(_o.x, _o.y / 0.75, _o.z);
+            if (d < 1.05) occ += THREE.MathUtils.smoothstep(1.05 - d, 0, 0.55);
+          }
+        }
+    return Math.min(1, occ);
+  };
   const gaps = crownGaps(rng.fork('gaps'), clumps, limbs, branches);
   const tv = new THREE.Vector3();
   const inGap = (p, ci, k) => {
@@ -369,7 +428,7 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
     let kept = 0;
     place.forEach((pl, ci) => {
       const mid = geos[pl.t].userData.mid;
-      for (let k = 0; k < per; k++) if (!inGap(tv.fromArray(mid, k * 3).applyMatrix4(pl.M), ci, k)) kept++;
+      for (let k = 0; k < per; k++) if (!inGap(cardCentre(pl, mid, k, tv), ci, k)) kept++;
     });
     return kept;
   };
@@ -413,7 +472,8 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
     yMax = Math.max(yMax, c.p.y);
   }
 
-  const maxCards = clumps.length * perClump;
+  const curtainCards = Math.round(budgetAll * curtainShare);
+  const maxCards = clumps.length * perClump + curtainCards;
   const pos = new Float32Array(maxCards * 12);
   const nor = new Float32Array(maxCards * 12);
   const col = new Float32Array(maxCards * 12);
@@ -423,14 +483,19 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
   const v = new THREE.Vector3();
   const n = new THREE.Vector3();
   const m = new THREE.Vector3();
+  const cc = new THREE.Vector3();
+  const mc = new THREE.Vector3();
   // painterly palette (sRGB → linear via THREE.Color): olive & sage, not neon
   const UNDER = new THREE.Color('#263f3d'); // deep blue-green / teal bellies
   const MID = new THREE.Color('#667b4f'); // olive green
   const SAGE = new THREE.Color('#5f7a5e');
   const OLIVE = new THREE.Color('#7a7d48');
-  const TOP = new THREE.Color('#b2b35a'); // warm yellow-green crowns
-  const SUNLIT = new THREE.Color('#ddcd78'); // sun-kissed, golden sprig tips
+  const TOP = new THREE.Color('#b6b257'); // warm yellow-green crowns
+  const SUNLIT = new THREE.Color('#d2b553'); // sun-kissed, GOLDEN sprig tips (gold, not cream)
   const sunDir = SUN_LIGHT_DIR.clone().normalize();
+  // (the low tier renders without the full post: its sun-kissed tips are held
+  //  back so the crown's top never bleaches to cream)
+  const sunK = density < 0.45 ? 0.6 : 1;
   const hue = new THREE.Color();
   const tmpC = new THREE.Color();
   let cards = 0;
@@ -445,17 +510,22 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
     // per-clump hue: olive ↔ sage drift; height in the crown makes it warmer
     const h = THREE.MathUtils.clamp((c.p.y - yMin) / Math.max(1, yMax - yMin) + pl.drift * 0.15, 0, 1);
     hue.copy(MID).lerp(pl.drift > 0 ? OLIVE : SAGE, Math.abs(pl.drift) * 0.7);
-    const topK = pl.under ? 0.35 : 0.55 + 0.6 * h;
+    // (the upper rims catch the low gold sun: more of it the higher the mass)
+    const topK = pl.under ? 0.35 : 0.6 + 0.5 * h;
     const gp = g.attributes.position.array;
     const gn = g.attributes.normal.array;
     const gu = g.attributes.uv.array;
     const aux = g.userData.aux;
     const mid = g.userData.mid;
     for (let k = 0; k < perClump; k++) {
-      if (inGap(tv.fromArray(mid, k * 3).applyMatrix4(pl.M), ci, k)) continue;
+      cardCentre(pl, mid, k, cc);
+      if (inGap(cc, ci, k)) continue;
+      const occ = buried(cc, ci);
+      mc.fromArray(mid, k * 3);
       for (let qi = 0; qi < 4; qi++) {
         const sv = k * 4 + qi;
-        v.set(gp[sv * 3], gp[sv * 3 + 1], gp[sv * 3 + 2]).applyMatrix4(pl.M);
+        // the card keeps its shape: its corners around the (moved) centre
+        v.set(gp[sv * 3] - mc.x, gp[sv * 3 + 1] - mc.y, gp[sv * 3 + 2] - mc.z).applyMatrix4(pl.L).add(cc);
         n.set(gn[sv * 3], gn[sv * 3 + 1], gn[sv * 3 + 2]).applyMatrix3(NM).normalize();
         m.copy(v).sub(centre);
         m.y += 0.3 * m.length();
@@ -475,15 +545,17 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
         const inner = aux[sv * 3 + 1];
         const clumpLight = 0.5 + 0.5 * aux[sv * 3 + 2];
         const massLight = THREE.MathUtils.clamp((v.y - my.lo) / Math.max(1, my.hi - my.lo), 0, 1);
-        let light = THREE.MathUtils.clamp(0.3 * massLight + 0.27 * clumpLight + 0.25 * lobeLight + 0.18 * (0.5 + 0.5 * n.y), 0, 1);
+        // (each pad's own top-to-belly gradient weighs most: the layered masses
+        //  read as pads stacked with dark creases, not one blob)
+        let light = THREE.MathUtils.clamp(0.2 * massLight + 0.46 * clumpLight + 0.16 * lobeLight + 0.18 * (0.5 + 0.5 * n.y), 0, 1);
         if (pl.under) light *= 0.8;
         light = light * light * (3 - 2 * light);
         tmpC.copy(UNDER).lerp(hue, THREE.MathUtils.smoothstep(light, 0.12, 0.62));
-        tmpC.lerp(TOP, THREE.MathUtils.smoothstep(light, 0.6, 1) * (0.35 + 0.55 * h) * (pl.under ? 0.5 : 1));
-        tmpC.multiplyScalar((0.5 + 0.5 * light) * (1 - 0.22 * inner) * pl.shade);
-        // …and warm, light sprig tips where the top of a mass faces the sun
-        const sf = Math.max(0, n.dot(sunDir) * 0.75 + n.y * 0.45);
-        tmpC.lerp(SUNLIT, Math.min(0.66, sf * sf * topK * (1 - inner)));
+        tmpC.lerp(TOP, THREE.MathUtils.smoothstep(light, 0.56, 1) * (0.45 + 0.45 * h) * (pl.under ? 0.5 : 1));
+        tmpC.multiplyScalar((0.56 + 0.44 * light) * (1 - 0.22 * inner) * (1 - 0.5 * occ) * pl.shade);
+        // …and warm, golden sprig tips where the top of a mass faces the sun
+        const sf = Math.max(0, n.dot(sunDir) * 0.6 + n.y * 0.62);
+        tmpC.lerp(SUNLIT, Math.min(0.62, sf * sf * topK * (1 - inner) * (1 - occ)) * sunK);
         col[o] = tmpC.r;
         col[o + 1] = tmpC.g;
         col[o + 2] = tmpC.b;
@@ -498,6 +570,93 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
     totalBy[c.limb] = (totalBy[c.limb] ?? 0) + perClump;
   });
   geos.forEach((g) => g.dispose());
+
+  // ── sprig curtains: short strands of hanging leaves trailing from the hems
+  //    of the skirts and boughs (the oak's lush, drooping underside) ────────
+  let curtains = 0;
+  if (curtainCards > 0) {
+    const crng = rng.fork('curtains');
+    const hosts = [];
+    clumps.forEach((c, ci) => {
+      if ((c.tier === 3 || (c.tier === 1 && crng.chance(0.55))) && c.p.y > 13) hosts.push(ci);
+    });
+    const perHost = Math.max(2, Math.min(9, Math.round(curtainCards / Math.max(1, hosts.length))));
+    const down = new THREE.Vector3();
+    const across = new THREE.Vector3();
+    const face = new THREE.Vector3();
+    const base = new THREE.Vector3();
+    const tip = new THREE.Vector3();
+    const corners = [
+      [-1, 0, 0, 0],
+      [1, 0, 1, 0],
+      [1, 2, 1, 1],
+      [-1, 2, 0, 1],
+    ];
+    for (const ci of hosts) {
+      const c = clumps[ci];
+      const pl = place[ci];
+      const centre = centres.get(c.limb).p;
+      hue.copy(MID).lerp(pl.drift > 0 ? OLIVE : SAGE, Math.abs(pl.drift) * 0.7);
+      let left = perHost;
+      while (left > 0 && cards < maxCards) {
+        // hang point on the pad's belly, out towards its drooping hem
+        const th = crng.range(0, TAU);
+        const rho = crng.range(0.45, 0.95);
+        tv.set(Math.sin(th) * rho, -0.42, Math.cos(th) * rho);
+        const mid = [tv.x, tv.y, tv.z];
+        cardCentre(pl, mid, 0, base);
+        const nCards = Math.min(left, crng.int(2, 4));
+        left -= nCards;
+        const sc = crng.range(0.26, 0.36) * THREE.MathUtils.clamp(pl.size / 2.4, 0.8, 1.25);
+        // the strand leans a little out of the mass and sways sideways
+        face.set(base.x - c.p.x, 0, base.z - c.p.z);
+        if (face.lengthSq() < 1e-4) face.set(1, 0, 0);
+        face.normalize();
+        const lean = crng.range(0.05, 0.22);
+        const sway = crng.range(-0.18, 0.18);
+        for (let i = 0; i < nCards; i++) {
+          const t = i / Math.max(1, nCards - 1);
+          down.set(face.x * lean + face.z * sway, -1, face.z * lean - face.x * sway).normalize();
+          // the card faces out of the mass, rolled a little
+          across.crossVectors(down, face).normalize();
+          const roll = crng.range(-0.6, 0.6);
+          across.applyAxisAngle(down, roll);
+          const s = sc * (1 - 0.18 * t);
+          // never into a spot camera's view or a window
+          tip.copy(base).addScaledVector(down, s);
+          if (inGap(tip, ci, 1000 + curtains)) break;
+          // belly greens, a little lighter towards the tips (back-lit leaves)
+          const val = 0.5 + 0.12 * t;
+          tmpC.copy(UNDER).lerp(hue, 0.42 + 0.22 * t).multiplyScalar((0.62 + 0.22 * val) * pl.shade);
+          m.copy(tip).sub(centre);
+          m.y = 0.15 * m.length();
+          m.normalize();
+          for (let qi = 0; qi < 4; qi++) {
+            const [cx, cy, tu, tvv] = corners[qi];
+            v.copy(base).addScaledVector(across, cx * s).addScaledVector(down, cy * s);
+            const o = (cards * 4 + qi) * 3;
+            pos[o] = v.x;
+            pos[o + 1] = v.y;
+            pos[o + 2] = v.z;
+            nor[o] = m.x;
+            nor[o + 1] = m.y;
+            nor[o + 2] = m.z;
+            col[o] = tmpC.r;
+            col[o + 1] = tmpC.g;
+            col[o + 2] = tmpC.b;
+            const tt = (cards * 4 + qi) * 2;
+            uv[tt] = (i + ci) % 2 ? 1 - tu : tu;
+            uv[tt + 1] = tvv;
+            bounds.expandByPoint(v);
+          }
+          cards++;
+          curtains++;
+          // the next sprig hangs from this one's lower third (they overlap)
+          base.addScaledVector(down, s * 1.45);
+        }
+      }
+    }
+  }
 
   const idx = new Uint32Array(cards * 6);
   for (let k = 0; k < cards; k++) {
@@ -519,5 +678,5 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
   mesh.receiveShadow = true;
   mesh.matrixAutoUpdate = false;
   mesh.updateMatrix();
-  return { meshes: [mesh], bounds, cards, gapFraction: 1 - cards / Math.max(1, maxCards), gaps: gaps.length, keptBy, totalBy };
+  return { meshes: [mesh], bounds, cards, curtains, gapFraction: 1 - (cards - curtains) / Math.max(1, clumps.length * perClump), gaps: gaps.length, keptBy, totalBy };
 }

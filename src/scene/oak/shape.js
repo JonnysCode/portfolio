@@ -753,8 +753,57 @@ const viewTests = [];
     }
   }
 }
+// The glen overview may be framed by the crown, but two things in it must stay
+// in sight: the treehouse (a cone from the glen camera and from the high
+// overview to the Code Loft's house), and the hero moon at night (a keep-out
+// rectangle on the glen frame, 1280 × 720 px: the moon & its halo above the
+// waterfall, x ≈ 955–1075, below y ≈ 72).
+const glenSpot = SPOTS.find((s) => s.id === 'glen');
+const LOFT_SEE = new THREE.Vector3(OAK.loft.x + 1.0, 15.2, OAK.loft.z + 0.5);
+const sightLines = [];
+if (glenSpot) {
+  const p = new THREE.Vector3(...glenSpot.camera.position);
+  const t = new THREE.Vector3(...glenSpot.camera.target);
+  sightLines.push({ a: p, b: LOFT_SEE, r0: 0.4, r1: 3.0 });
+  // (its "-wide" variant and the high overview the critics and the intro use)
+  sightLines.push({ a: t.clone().add(p.clone().sub(t).multiplyScalar(1.8)), b: LOFT_SEE, r0: 0.4, r1: 3.0 });
+}
+sightLines.push({ a: new THREE.Vector3(0, 34, 52), b: LOFT_SEE, r0: 0.4, r1: 3.2 });
+const MOON_RECT = { x0: 955, x1: 1075, y0: 72, y1: 330 };
+const moonCam = new THREE.PerspectiveCamera(glenSpot?.camera.fov ?? 40, ASPECT, 0.1, 400);
+if (glenSpot) {
+  moonCam.position.set(...glenSpot.camera.position);
+  moonCam.lookAt(...glenSpot.camera.target);
+  moonCam.updateMatrixWorld(true);
+  moonCam.updateProjectionMatrix();
+}
+const _seg = new THREE.Vector3();
+const _q = new THREE.Vector3();
+function inSightLine(p, r) {
+  for (const L of sightLines) {
+    _seg.subVectors(L.b, L.a);
+    const len2 = _seg.lengthSq();
+    const t = Math.min(1, Math.max(0, _q.subVectors(p, L.a).dot(_seg) / len2));
+    _q.copy(L.a).addScaledVector(_seg, t);
+    if (p.distanceTo(_q) < L.r0 + (L.r1 - L.r0) * t + r) return true;
+  }
+  return false;
+}
+function inMoonRect(p, r) {
+  if (!glenSpot) return false;
+  _q.copy(p).applyMatrix4(moonCam.matrixWorldInverse);
+  if (_q.z > -1) return false;
+  const depth = -_q.z;
+  _q.copy(p).project(moonCam);
+  const px = (_q.x + 1) * 640, py = (1 - _q.y) * 360;
+  const rp = (r / (depth * Math.tan((moonCam.fov * Math.PI) / 360))) * 360;
+  return px + rp > MOON_RECT.x0 && px - rp < MOON_RECT.x1 && py + rp > MOON_RECT.y0 && py - rp < MOON_RECT.y1;
+}
 const _sphere = new THREE.Sphere();
-/** True if a sphere at p with radius r would block a spot camera or crowd the Code Loft. */
+/**
+ * True if a sphere at p with radius r would block a spot camera, crowd the
+ * Code Loft, hide the treehouse from the glen / overview, or the hero moon.
+ */
 export function crownBlocked(p, r = 0) {
   // the Code Loft and the air in front of it
   const lx = p.x - OAK.loft.x, lz = p.z - OAK.loft.z;
@@ -762,5 +811,6 @@ export function crownBlocked(p, r = 0) {
   _sphere.center.copy(p);
   _sphere.radius = r;
   for (const v of viewTests) if (v.frustum.intersectsSphere(_sphere)) return true;
+  if (p.y + r > 12 && (inSightLine(p, r) || inMoonRect(p, r))) return true;
   return false;
 }

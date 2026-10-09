@@ -260,6 +260,10 @@ Surf kind_soil(vec2 uv) {
   // across the stone (and from stone to stone — each samples its own patch of
   // the world), a rare open-ended hairline crack, pale worn high spots, a few
   // fresh chips, lichen crusts & rosettes, faint water streaks.
+  // What keeps a big plain slab (a doorstep, a flag) from reading as poured
+  // concrete: patchy warm/cool mineral colour with soft ochre iron stains, faint
+  // bedding streaks, a few pale quartz/calcite veins that stand a little proud,
+  // shallow weathering hollows (darker, damp) and lichen that clearly grows.
   // (The wall texture with mortar joints lives on as 'masonry'.)
   stone: /* glsl */ `
 Surf kind_stone(vec2 uv) {
@@ -270,25 +274,51 @@ Surf kind_stone(vec2 uv) {
   float pits = smoothstep(0.3, 0.75, fbm(q * 52.0 + 1.3, vec2(52.0), 2));
   float fine = gnoise(q * 150.0, vec2(150.0));
   float grain = fbm(q * 40.0, vec2(40.0), 3);
-  // colour: blue-grey, warm sandstone, pale limestone, grey-brown — drifting
-  float t1 = sat(fbmu(q + vec2(0.71, 0.13), 3.0, 3) * 1.1 + 0.5);
-  float t2 = sat(fbmu(q + vec2(0.29, 0.57), 2.0, 3) * 1.1 + 0.5);
-  vec3 sc = mix(C(0x8e8f8c), C(0xa99677), smoothstep(0.3, 0.7, t1));
-  sc = mix(sc, C(0xb9b2a2), smoothstep(0.55, 0.85, t2) * 0.8);
-  sc = mix(sc, C(0x6f6b62), smoothstep(0.42, 0.12, t2) * 0.65);
-  sc *= 0.84 + 0.3 * sat(bump * 0.8 + 0.5);
-  sc *= 1.0 + 0.08 * fine + 0.06 * grain;
+  // colour: blue-grey, warm sandstone, pale limestone, grey-brown — drifting in
+  // patches (stronger than a cast stone could ever be)
+  float t1 = sat(fbmu(q + vec2(0.71, 0.13), 3.0, 3) * 1.25 + 0.5);
+  float t2 = sat(fbmu(q + vec2(0.29, 0.57), 2.0, 3) * 1.25 + 0.5);
+  float t3 = sat(fbmu(q + vec2(0.47, 0.91), 5.0, 3) * 1.4 + 0.5);
+  vec3 sc = mix(C(0x8b8e8c), C(0xab9675), smoothstep(0.28, 0.72, t1));
+  sc = mix(sc, C(0xbab3a2), smoothstep(0.55, 0.85, t2) * 0.8);
+  sc = mix(sc, C(0x6c6a62), smoothstep(0.42, 0.12, t2) * 0.7);
+  // a faint green-grey cast in places (Molasse sandstone, the Swiss steps' stone)
+  sc = mix(sc, sc * vec3(0.95, 1.02, 0.95), smoothstep(0.45, 0.8, t3) * 0.6);
+  // soft ochre / rust iron stains bleeding out from a few spots
+  float iron = smoothstep(0.18, 0.5, fbm(q * 4.0 + vec2(5.3, 1.1), vec2(4.0), 4) + 0.25 * (t3 - 0.5));
+  sc = mix(sc, sc * vec3(1.2, 0.98, 0.7), iron * 0.65);
+  // bedding: faint streaky layers along U (horizontal on the sides of a stone)
+  float bed = fbm(vec2(q.x * 2.0, q.y * 18.0) + vec2(0.4, 2.2), vec2(2.0, 18.0), 3);
+  sc *= 1.0 + 0.07 * bed;
+  sc *= 0.82 + 0.34 * sat(bump * 0.8 + 0.5);
+  sc *= 1.0 + 0.1 * fine + 0.07 * grain;
   // mineral grains: small, soft dark & pale specks (never a polka-dot pattern)
   vec4 gv = voronoi(q * 110.0, vec2(110.0), 1.0);
   float dot1 = 1.0 - smoothstep(0.06, 0.2, gv.x);
-  sc = mix(sc, sc * 0.7, step(0.82, gv.z) * dot1 * 0.5);
-  sc = mix(sc, sc * 1.12 + 0.015, step(0.93, gv.w) * dot1 * 0.35);
+  sc = mix(sc, sc * 0.66, step(0.8, gv.z) * dot1 * 0.55);
+  sc = mix(sc, sc * 1.14 + 0.02, step(0.92, gv.w) * dot1 * 0.45);
   sc *= 1.0 - 0.2 * pits;
   float h = 0.5 + 0.16 * bump + 0.07 * bump2 - 0.05 * pits + 0.015 * fine;
+  // shallow weathering hollows (solution pans): darker, damp, smoother
+  vec4 hv = voronoi(q * 4.0 + vec2(1.3, 0.6), vec2(4.0), 0.9);
+  float hollow = step(0.55, hv.z) * (1.0 - smoothstep(0.12, 0.34 + 0.08 * hv.w, hv.x + 0.06 * bump));
+  h -= 0.06 * hollow;
+  sc = mix(sc, sc * vec3(0.8, 0.8, 0.76), hollow * 0.55);
+  // quartz / calcite veins: a few thin pale lines meandering across, fading out,
+  // standing a little proud of the weathered stone
+  float vn = gnoise(q * 2.0 + vec2(0.7, 3.1) + w * 0.6, vec2(2.0));
+  float vw = 0.018 + 0.018 * sat(fbmu(q + vec2(0.2, 0.4), 6.0, 2) + 0.5);
+  float vmask = smoothstep(0.0, 0.3, fbmu(q + vec2(0.83, 0.27), 3.0, 3));
+  float vein = (1.0 - smoothstep(vw * 0.45, vw, abs(vn))) * vmask;
+  float vn2 = gnoise(q * 5.0 + vec2(2.9, 0.3) + w * 0.4, vec2(5.0));
+  float vein2 = (1.0 - smoothstep(0.012, 0.03, abs(vn2))) * smoothstep(0.1, 0.35, fbmu(q + vec2(0.13, 0.61), 4.0, 3)) * 0.7;
+  float veins = max(vein, vein2);
+  sc = mix(sc, mix(C(0xdcd6c6), C(0xe6dcc4), iron) * (0.95 + 0.08 * fine), veins * 0.68);
+  h += 0.02 * veins;
   // worn high spots: paler & smoother; damp hollows a little darker (soft, no lines)
   float wear = smoothstep(0.56, 0.72, h);
   sc = mix(sc, sc * 1.12 + 0.025, wear * 0.7);
-  sc = mix(sc, sc * 0.82, smoothstep(0.45, 0.33, h) * 0.6);
+  sc = mix(sc, sc * 0.8, smoothstep(0.45, 0.33, h) * 0.6);
   // a rare hairline crack: open-ended pieces of a coarse net (≈ 70 cm cells), faint, with a pale lip
   vec4 cv = voronoi(q * 3.0 + vec2(0.4, 0.2), vec2(3.0), 0.9);
   float cmask = smoothstep(0.12, 0.34, fbmu(q + vec2(0.55, 0.15), 4.0, 3));
@@ -304,26 +334,35 @@ Surf kind_stone(vec2 uv) {
   vec2 kr = rot2(ktc, kv.w * 6.2831);
   float chipR = 0.16 + 0.1 * kv.w;
   float chipD = max(abs(kr.x), abs(kr.y) * 1.4) + 0.35 * abs(kr.x + kr.y);
-  float hasChip = step(0.86, kv.z);
-  float chip = hasChip * (1.0 - smoothstep(chipR - 0.025, chipR, chipD));
+  float hasChip = step(0.87, kv.z);
+  float chip = hasChip * (1.0 - smoothstep(chipR - 0.03, chipR, chipD));
   float chipEdge = hasChip * (1.0 - smoothstep(chipR, chipR + 0.05, chipD)) * (1.0 - chip);
-  sc = mix(sc, mix(sc, C(0xc9c3b4), 0.5) * 1.06, chip);
-  sc = mix(sc, sc * 0.78, chipEdge * 0.55);
+  // (fresh, unweathered rock: only a little paler & warmer — never a stuck-on white flake)
+  sc = mix(sc, sc * vec3(1.13, 1.1, 1.04) + 0.015, chip * 0.8);
+  sc = mix(sc, sc * 0.76, chipEdge * 0.5);
   h -= 0.035 * chip;
-  // lichen: soft sage crusts on the high parts + small pale & yellow rosettes
+  // lichen: soft sage & grey-white crusts on the high parts, small pale and a few
+  // ochre-yellow rosettes (Xanthoria) where the crust grows — never a polka-dot grid
   float lich = fbm(q * 6.0 + vec2(9.0), vec2(6.0), 4) + 0.3 * gnoise(q * 50.0, vec2(50.0));
-  float lm = smoothstep(0.32, 0.46, lich) * smoothstep(0.45, 0.6, h);
-  sc = mix(sc, mix(C(0xa9b08c), C(0xc9c49a), sat(grain + 0.5)), lm * 0.55);
-  // (rosettes: ragged, soft and only where the crust grows — never a polka-dot grid)
-  vec4 lv = voronoi(q * 18.0, vec2(18.0), 1.0);
-  float lr = lv.x + 0.1 * gnoise(q * 80.0, vec2(80.0));
-  float lic = step(0.88, lv.z) * (1.0 - smoothstep(0.08, 0.26, lr)) * (1.0 - chip) * smoothstep(0.15, 0.4, lich);
-  sc = mix(sc, lv.w > 0.5 ? C(0xcdcab4) : C(0xbcb070), lic * 0.45);
-  h += 0.01 * (lm + lic);
+  float lm = smoothstep(0.26, 0.42, lich) * smoothstep(0.42, 0.57, h) * (1.0 - hollow * 0.7);
+  vec3 lcol = mix(C(0xa7af8a), C(0xcdc9a6), sat(grain + 0.5));
+  lcol = mix(lcol, C(0xd2d3c6), smoothstep(0.3, 0.7, t3) * 0.5);
+  sc = mix(sc, lcol, lm * 0.66);
+  // rosettes (2–6 cm): ragged round patches, a paler growing rim around an
+  // older centre; grey-white, sage and a few ochre-yellow ones
+  vec4 lv = voronoi(q * 12.0, vec2(12.0), 1.0);
+  float lr = lv.x + 0.07 * gnoise(q * 90.0, vec2(90.0)) + 0.05 * gnoise(q * 40.0, vec2(40.0));
+  float lR = 0.12 + 0.2 * fract(lv.w * 7.3);
+  float lic = step(0.8, lv.z) * (1.0 - smoothstep(lR * 0.7, lR, lr)) * (1.0 - chip) * smoothstep(0.08, 0.34, lich) * (1.0 - hollow);
+  float lrim = smoothstep(lR * 0.35, lR * 0.85, lr);
+  vec3 rcol = lv.w > 0.75 ? C(0xcfa64a) : lv.w > 0.4 ? C(0xb3b98e) : C(0xd9d8ca);
+  rcol *= 0.88 + 0.16 * lrim + 0.06 * fine;
+  sc = mix(sc, rcol, lic * 0.62);
+  h += 0.012 * (lm + lic);
   // faint dark water streaks running down
   float streak = sat(gnoise(vec2(q.x * 30.0, q.y * 3.0), vec2(30.0, 3.0)) * 1.4 - 0.5);
   sc *= 1.0 - 0.14 * streak;
-  float rough = 0.9 - 0.08 * wear - 0.04 * chip;
+  float rough = 0.9 - 0.08 * wear - 0.04 * chip - 0.08 * hollow + 0.04 * lm;
   float ao = mix(0.55, 1.0, smoothstep(0.3, 0.6, h)) * (1.0 - 0.35 * crack);
   return surf(sc, sat(h), rough, ao);
 }`,

@@ -27,8 +27,8 @@ import { makeMushroomHouse, paneGrid } from '../../props/mushroomHouse.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makePerson } from '../../props/index.js';
 import {
-  Batch, mats, mat4, xf, board, boardBetween, rod, stoneGeo, mossGeo, tube, taperTube, leafGeo, Cards, deform, uvBox,
-  arcSegment, noiseA, lightSpillGeo, lightSpillMaterial,
+  Batch, mats, mat4, xf, board, boardBetween, rod, stoneGeo, mossGeo, tube, taperTube, leafGeo, Cards, deform, uvBox, paramSurface,
+  arcSegment, noiseA, lightSpillGeo, lightSpillMaterial, KIT,
   paintFn, addFlower, addFern, addGrass, addIvy, TAU, WOOD,
 } from './kit.js';
 import { local, hitProxy, pot, stringLights, flagstones } from './garden.js';
@@ -40,6 +40,11 @@ export const ATELIER_ROT = COTTAGE.atelier.rotY ?? 0.6;
 
 const PALETTE = {
   sage: '#7a9273',
+  // the sofa's sage (on the neutral textile, kit.js mats().textile: the plain fabric's beige
+  // cast turned the old sage olive-mustard); a muted grey-green that stays sage under the
+  // warm lamps and turns a little cooler in the daylight from the loggia
+  sofaSage: '#7f9776',
+  archInk: '#435d8f', // the painted arch behind the bookcase (limewash in ink blue: lighter than the ink itself, it sits in the deepest shade)
   terracotta: '#c46a43',
   mustard: '#d6a23a',
   cream: '#efe4cf',
@@ -202,9 +207,11 @@ export function buildAtelier(ctx, B, root, halos, smoke = [], rimHalos = null) {
     out.hotspots.push([sofaGroup, { entryId: 'living-room', area: 'interior', focus: { distance: 4.4, height: 0.4 } }]);
   }
 
-  // a warm light inside (lamps) — the room is deep in the cap's shadow
+  // a warm light inside (lamps) — the room is deep in the cap's shadow. By day only a
+  // gentle fill (the lamps are not the key: a strong warm fill flattened the room into one
+  // yellow haze and clipped the rug); at night the lamps carry the room
   const lp = new THREE.Vector3(0.1, I.floorY + 1.9, -0.5).applyMatrix4(frame);
-  out.lights.push([lp, { color: '#ffc98a', day: 1.1, night: 2.8, distance: 6 }]);
+  out.lights.push([lp, { color: '#ffc98a', day: 0.45, night: 2.8, distance: 6 }]);
   // terrace, easel, designer, model table, flanking pots
   const zf = I.facadeZ;
   for (const [lx, lz, r] of [[0, zf + 0.9, 1.3], [-1.2, zf + 1.3, 0.9], [1.2, zf + 1.3, 0.9], [0, zf + 2.0, 1.1], [-2.05, zf + 1.45, 0.75], [-1.3, zf + 1.95, 0.45], [2.05, zf + 1.25, 0.75], [-I.width / 2 - 0.55, zf + 0.35, 0.35], [I.width / 2 + 0.75, zf + 0.4, 0.45]]) keepL(lx, lz, r);
@@ -240,7 +247,7 @@ function buildInterior(F, rng, I, halos, frame, sofaB, extras) {
   // sofa's front legs and the lounge chair's whole base stand on it
   berberRug(F, rng4, at(-0.3, -0.47), 2.9, 1.56);
   // sofa against the back wall (into its own batch, local to the sofa group's origin)
-  sofa(sofaB, rng, new THREE.Matrix4(), { len: 1.95, color: PALETTE.sage });
+  sofa(sofaB, rng, new THREE.Matrix4(), { len: 1.95, color: PALETTE.sofaSage });
   // coffee table, a comfortable reach in front of the seat
   coffeeTable(F, rng, at(0.02, -0.36, 0.3));
   // reading corner: lounge chair, ottoman, black-metal tripod lamp, a side table at the chair's arm
@@ -254,6 +261,8 @@ function buildInterior(F, rng, I, halos, frame, sofaB, extras) {
   {
     const phi = Math.PI + 0.78;
     const [x, , z] = wallPos(phi, 1, 0.22);
+    // the room's deep, cool anchor: an ink-blue limewashed arch painted on the wall behind it
+    paintedArch(F, I, phi, { halfW: 0.66, spring: 1.78, color: PALETTE.archInk });
     bookcase(F, rng, at(x, z, phi + Math.PI));
   }
   {
@@ -342,19 +351,21 @@ function atelierWindow(F, rng, I, extras) {
   }
   cur.computeVertexNormals();
   uvBox(cur, 'z', 5);
-  L.add(M.fabric, cur.translate(0, rodY - ch / 2 - 0.008, 0.045), { color: PALETTE.linen, cast: false });
+  L.add(M.textile, cur.translate(0, rodY - ch / 2 - 0.008, 0.045), { color: PALETTE.linen, cast: false });
   // curtain rings on the rod
   for (let i = 0; i < 7; i++) L.add(M.metal, new THREE.TorusGeometry(0.011, 0.002, 3, 8).translate(-cw / 2 + 0.02 + (i / 6) * (cw - 0.04), rodY, 0.05), { color: PALETTE.brass, cast: false });
 
-  // daylight: a soft patch on the floor reaching into the room, and a glow on the wall around
-  // the window (one additive mesh; gone at night)
+  // daylight: a soft patch on the oak floor just inside the window, and a glow on the wall
+  // around it (one additive mesh; gone at night). Subtle, and short enough to stay on the
+  // boards between the wall and the rug (the rug's back edge is ≈ 0.75 in from this window):
+  // on the cream rug the extra light clipped to white.
   const inward = new THREE.Vector3(-Math.sin(WIN_PHI), 0, -Math.cos(WIN_PHI));
-  const floorP = new THREE.Vector3(Math.sin(WIN_PHI) * dist, I.floorY + 0.03, Math.cos(WIN_PHI) * dist).addScaledVector(inward, 0.95);
-  const floorPatch = lightSpillGeo(0.95, 1.5, { color: '#fff3dc', peak: 0.2, tilt: 0.8 });
+  const floorP = new THREE.Vector3(Math.sin(WIN_PHI) * dist, I.floorY + 0.03, Math.cos(WIN_PHI) * dist).addScaledVector(inward, 0.38);
+  const floorPatch = lightSpillGeo(0.72, 0.6, { color: '#fff3dc', peak: 0.1, tilt: 0.8 });
   floorPatch.rotateX(-Math.PI / 2); // +Y (the window end) → −Z
   floorPatch.rotateY(WIN_PHI); // −Z → towards the window
   floorPatch.translate(floorP.x, floorP.y, floorP.z);
-  const wallGlow = lightSpillGeo(1.3, 1.5, { color: '#fff6e6', peak: 0.1 });
+  const wallGlow = lightSpillGeo(1.3, 1.5, { color: '#fff6e6', peak: 0.05 });
   wallGlow.translate(0, 0.04, 0.004).applyMatrix4(m);
   const spill = new THREE.Mesh(mergeGeometries([floorPatch, wallGlow], false), lightSpillMaterial());
   spill.name = 'atelier-daylight-spill';
@@ -362,6 +373,40 @@ function atelierWindow(F, rng, I, extras) {
   spill.castShadow = spill.receiveShadow = false;
   spill.raycast = () => {};
   extras.push(spill);
+}
+
+/**
+ * A colour-blocked arch painted on the inner wall (limewash in a deep colour) centred at
+ * azimuth φ: straight sides up to `spring` above the floor, a half-round head of radius
+ * halfW. It follows the concave, leaning wall exactly (a grid laid on the plaster a hair
+ * in front of it), each column as tall as the arch is at that point.
+ */
+function paintedArch(F, I, phi, { halfW = 0.65, spring = 1.75, color = '#2b3b5c' } = {}) {
+  const M = mats();
+  const y0 = I.floorY + 0.002;
+  const r0 = I.radiusAt(phi, I.floorY + 1.2);
+  const g = paramSurface(
+    (u, v, p) => {
+      const x = (u * 2 - 1) * halfW;
+      const top = I.floorY + spring + Math.sqrt(Math.max(0, halfW * halfW - x * x));
+      const y = top + v * (y0 - top); // v: 0 at the top edge → 1 at the floor
+      const a = phi - Math.asin(THREE.MathUtils.clamp(x / r0, -0.95, 0.95));
+      const r = I.radiusAt(a, y) - 0.006;
+      p.set(Math.sin(a) * r, y, Math.cos(a) * r);
+    },
+    18,
+    8,
+    { uv: (u, v, p) => [(Math.atan2(p.x, p.z) * r0) / 2.2, p.y / 2.2] }
+  );
+  // the same soft skirting shadow as the limewash around it
+  paintFn(g, color, (x, y, z, i, c) => c.multiplyScalar(0.82 + 0.18 * THREE.MathUtils.smoothstep(y - I.floorY, 0, 0.35)));
+  // (the generator walks the wall from right to left: face it into the room)
+  if (g.attributes.normal.getX(0) * g.attributes.position.getX(0) + g.attributes.normal.getZ(0) * g.attributes.position.getZ(0) > 0) {
+    const ia = g.index.array;
+    for (let i = 0; i < ia.length; i += 3) [ia[i + 1], ia[i + 2]] = [ia[i + 2], ia[i + 1]];
+    g.computeVertexNormals();
+  }
+  F.add(M.limewash, g, { cast: false, color: null });
 }
 
 /**
@@ -378,8 +423,24 @@ function berberRug(F, rng, m, W, D) {
     v.x += 0.012 * Math.sin(v.z * 7 + 1.3);
     v.z += 0.01 * Math.sin(v.x * 5.3);
   });
-  L.add(M.fabric, base.translate(0, th / 2 + 0.002, 0), { color: '#ece3d0', cast: false });
+  // (a warm wool cream, not paper white: under the lamps a near-white pile clipped to white)
+  L.add(M.textile, base.translate(0, th / 2 + 0.002, 0), { color: '#d9cdb5', cast: false });
   const top = th + 0.0035;
+  // a woven ink border just inside the edge frames the field
+  {
+    const o = new THREE.Shape();
+    const ox = W / 2 - 0.028, oz = D / 2 - 0.028, ix = W / 2 - 0.062, iz = D / 2 - 0.062;
+    o.moveTo(-ox, -oz).lineTo(ox, -oz).lineTo(ox, oz).lineTo(-ox, oz).lineTo(-ox, -oz);
+    const h = new THREE.Path();
+    h.moveTo(-ix, -iz).lineTo(-ix, iz).lineTo(ix, iz).lineTo(ix, -iz).lineTo(-ix, -iz);
+    o.holes.push(h);
+    const b = new THREE.ShapeGeometry(o, 1).rotateX(-Math.PI / 2);
+    deform(b, (v) => {
+      v.x += 0.012 * Math.sin(v.z * 7 + 1.3);
+      v.z += 0.01 * Math.sin(v.x * 5.3);
+    });
+    L.add(M.textile, uvBox(b, 'y', 3).translate(0, top, 0), { color: PALETTE.ink, cast: false });
+  }
   // the lattice: two families of diagonal lines, clipped to the field inside a narrow margin
   const ink = PALETTE.ink;
   const mx = W / 2 - 0.08, mz = D / 2 - 0.07;
@@ -429,7 +490,7 @@ function berberRug(F, rng, m, W, D) {
         g.computeVertexNormals();
       }
       uvBox(g, 'y', 3);
-      L.add(M.fabric, g, { color: ink, cast: false });
+      L.add(M.textile, g, { color: ink, cast: false });
     }
   }
   // a few small solid diamonds in the lozenges (the lozenge between lines a, a+1 and b, b+1
@@ -440,7 +501,7 @@ function berberRug(F, rng, m, W, D) {
     const z = ((b - a) * cellZ) / 2;
     if (Math.abs(x) > mx - 0.12 || Math.abs(z) > mz - 0.1) continue;
     const d = new THREE.CircleGeometry(0.035, 4).rotateX(-Math.PI / 2).scale(1.3, 1, 1);
-    L.add(M.fabric, uvBox(d, 'y', 3).translate(x, top + 0.0005, z), { color: ink, cast: false });
+    L.add(M.textile, uvBox(d, 'y', 3).translate(x, top + 0.0005, z), { color: ink, cast: false });
   }
   // knotted fringes at both short ends
   for (const sx of [-1, 1]) {
@@ -449,7 +510,7 @@ function berberRug(F, rng, m, W, D) {
       const len = rng.range(0.05, 0.075);
       const x = sx * (W / 2 + len / 2 - 0.004);
       const f = new THREE.BoxGeometry(len, 0.004, 0.012).rotateY(rng.jitter(0.25));
-      L.add(M.fabric, uvBox(f, 'y', 3).translate(x, 0.004, z), { color: '#e3d8c2', cast: false });
+      L.add(M.textile, uvBox(f, 'y', 3).translate(x, 0.004, z), { color: '#d6cab2', cast: false });
     }
   }
 }
@@ -488,7 +549,8 @@ function sideTable(F, rng, m) {
 // ─── furniture ───────────────────────────────────────────────────────────────
 /** A puffy cushion (rounded box with domed faces) — fabric UVs in world units. */
 function cushion(w, h, d, r = 0.035, puff = 0.18) {
-  const g = new RoundedBoxGeometry(w, h, d, 2, Math.min(r, h * 0.45, w * 0.3, d * 0.3));
+  // (the low tier rounds the edges with one segment: ≈ a quarter of the triangles)
+  const g = new RoundedBoxGeometry(w, h, d, KIT.detail < 0.4 ? 1 : 2, Math.min(r, h * 0.45, w * 0.3, d * 0.3));
   deform(g, (v) => {
     const kx = Math.max(0, 1 - (v.x / (w / 2)) ** 2);
     const kz = Math.max(0, 1 - (v.z / (d / 2)) ** 2);
@@ -510,22 +572,22 @@ function sofa(F, rng, m, { len = 1.9, depth = 0.82, color }) {
   }
   L.add(M.wood, board(len, 0.06, depth - 0.06, { along: 'x', rng }).translate(0, 0.19, 0), { color: WOOD.walnut });
   // upholstered body
-  L.add(M.fabric, cushion(len, 0.12, depth, 0.03, 0.05).translate(0, 0.27, 0), { color });
+  L.add(M.textile, cushion(len, 0.12, depth, 0.03, 0.05).translate(0, 0.27, 0), { color });
   // arms
-  for (const s of [-1, 1]) L.add(M.fabric, cushion(0.16, 0.36, depth, 0.06, 0.08).translate(s * (len / 2 - 0.08), 0.42, 0), { color });
+  for (const s of [-1, 1]) L.add(M.textile, cushion(0.16, 0.36, depth, 0.06, 0.08).translate(s * (len / 2 - 0.08), 0.42, 0), { color });
   // seat cushions
   const n = 3;
   const cw = (len - 0.32) / n;
   for (let i = 0; i < n; i++) {
     const c = cushion(cw - 0.012, 0.14, depth - 0.24, 0.05, 0.22);
-    L.add(M.fabric, c.translate(-len / 2 + 0.16 + cw * (i + 0.5), seatY - 0.02, 0.09), { color: shadeHex(color, rng.range(-0.03, 0.03)) });
+    L.add(M.textile, c.translate(-len / 2 + 0.16 + cw * (i + 0.5), seatY - 0.02, 0.09), { color: shadeHex(color, rng.range(-0.03, 0.03)) });
   }
   // back: a frame + leaning back cushions
-  L.add(M.fabric, cushion(len - 0.04, 0.42, 0.16, 0.05, 0.05).translate(0, 0.53, -depth / 2 + 0.08), { color });
+  L.add(M.textile, cushion(len - 0.04, 0.42, 0.16, 0.05, 0.05).translate(0, 0.53, -depth / 2 + 0.08), { color });
   for (let i = 0; i < n; i++) {
     const c = cushion(cw - 0.02, 0.4, 0.15, 0.06, 0.25);
     c.rotateX(-0.2);
-    L.add(M.fabric, c.translate(-len / 2 + 0.16 + cw * (i + 0.5), 0.66, -depth / 2 + 0.2), { color: shadeHex(color, 0.03) });
+    L.add(M.textile, c.translate(-len / 2 + 0.16 + cw * (i + 0.5), 0.66, -depth / 2 + 0.2), { color: shadeHex(color, 0.03) });
   }
   // throw pillows
   // ink velvet, cognac and linen (the room's accent and its two supporting colours)
@@ -539,11 +601,11 @@ function sofa(F, rng, m, { len = 1.9, depth = 0.82, color }) {
     p.rotateX(-0.25);
     p.rotateZ(rot * 0.3);
     p.rotateY(rot * 0.4);
-    L.add(M.fabric, p.translate(x, 0.66, -depth / 2 + 0.33), { color: c });
+    L.add(M.textile, p.translate(x, 0.66, -depth / 2 + 0.33), { color: c });
   }
   // knitted throw draped over the right arm: lying on the seat cushion, over the arm,
   // both ends dropping down with soft folds and a wavy hem
-  L.add(M.fabric, knitThrow(rng, len, 0.55), { color: null, cast: false });
+  L.add(M.textile, knitThrow(rng, len, 0.55), { color: null, cast: false });
 }
 
 /**
@@ -619,7 +681,7 @@ function loungeChair(F, rng, m) {
     v.y += (v.x / 0.37) ** 2 * 0.07 + Math.max(0, -v.z) * 0.08;
   });
   L.add(M.wood, uvBox(shell, 'x').translate(0, 0.27, 0.02), { color: WOOD.walnut });
-  L.add(M.fabric, cushion(0.6, 0.11, 0.58, 0.05, 0.25).translate(0, 0.35, 0.04), { color: PALETTE.cognac });
+  L.add(M.textile, cushion(0.6, 0.11, 0.58, 0.05, 0.25).translate(0, 0.35, 0.04), { color: PALETTE.cognac });
   // back shell (two panels) leaning back
   const back = new THREE.Matrix4().makeRotationX(-0.42).setPosition(0, 0.36, -0.3);
   const BL = local(L, back);
@@ -629,12 +691,12 @@ function loungeChair(F, rng, m) {
       v.z -= (v.x / 0.36) ** 2 * 0.08;
     });
     BL.add(M.wood, uvBox(sh, 'x').translate(0, y, -0.03), { color: WOOD.walnut });
-    BL.add(M.fabric, cushion(0.58, h - 0.06, 0.1, 0.05, 0.12).rotateX(Math.PI / 2).rotateX(-Math.PI / 2).translate(0, y, 0.04), { color: PALETTE.cognac });
+    BL.add(M.textile, cushion(0.58, h - 0.06, 0.1, 0.05, 0.12).rotateX(Math.PI / 2).rotateX(-Math.PI / 2).translate(0, y, 0.04), { color: PALETTE.cognac });
   }
   // armrests
   for (const s of [-1, 1]) {
     L.add(M.wood, boardBetween([s * 0.36, 0.5, 0.25], [s * 0.38, 0.6, -0.28], 0.06, 0.04), { color: WOOD.walnut, cast: false });
-    L.add(M.fabric, cushion(0.1, 0.05, 0.4, 0.02, 0.2).translate(s * 0.37, 0.56, -0.02), { color: PALETTE.cognac });
+    L.add(M.textile, cushion(0.1, 0.05, 0.4, 0.02, 0.2).translate(s * 0.37, 0.56, -0.02), { color: PALETTE.cognac });
   }
 }
 
@@ -646,7 +708,7 @@ function ottoman(F, rng, m) {
     L.add(M.metal, boardBetween([0, 0.1, 0], [Math.sin(a) * 0.26, 0.02, Math.cos(a) * 0.26], 0.04, 0.03), { color: '#7d7f80', cast: false });
   }
   L.add(M.wood, uvBox(new THREE.BoxGeometry(0.56, 0.05, 0.46), 'x').translate(0, 0.17, 0), { color: WOOD.walnut });
-  L.add(M.fabric, cushion(0.52, 0.1, 0.42, 0.05, 0.25).translate(0, 0.25, 0), { color: PALETTE.cognac });
+  L.add(M.textile, cushion(0.52, 0.1, 0.42, 0.05, 0.25).translate(0, 0.25, 0), { color: PALETTE.cognac });
 }
 
 function coffeeTable(F, rng, m) {
@@ -721,7 +783,8 @@ function globeLamp(F, m, r) {
   const M = mats();
   const L = local(F, m);
   const RIBS = 9;
-  const g = new THREE.SphereGeometry(r, 22, RIBS * 4);
+  const lo = KIT.detail < 0.6;
+  const g = new THREE.SphereGeometry(r, lo ? 14 : 22, RIBS * (lo ? 3 : 4));
   const col = [];
   deform(g, (v) => {
     const th = Math.acos(Math.max(-1, Math.min(1, v.y / r))); // 0 top … π bottom
@@ -991,7 +1054,7 @@ function rug(F, rng, m, rx, rz) {
   g.computeVertexNormals();
   uvBox(g, 'x', 3);
   void rng;
-  F.add(M.fabric, g.applyMatrix4(m).translate(0, 0.012, 0), { color: null, cast: false });
+  F.add(M.textile, g.applyMatrix4(m).translate(0, 0.012, 0), { color: null, cast: false });
 }
 
 function monstera(F, rng, m) {
@@ -1060,8 +1123,8 @@ function basket(F, rng, m) {
     v.z *= k;
   });
   L.add(M.wood, uvBox(g, 'y', 3).translate(0, 0.16, 0), { color: '#b8955e', cast: false });
-  L.add(M.fabric, cushion(0.34, 0.12, 0.3, 0.05, 0.4).rotateZ(0.3).translate(0.0, 0.33, 0), { color: PALETTE.oat, cast: false });
-  L.add(M.fabric, cushion(0.3, 0.1, 0.26, 0.05, 0.4).rotateZ(-0.4).translate(0.02, 0.4, 0.04), { color: PALETTE.sage, cast: false });
+  L.add(M.textile, cushion(0.34, 0.12, 0.3, 0.05, 0.4).rotateZ(0.3).translate(0.0, 0.33, 0), { color: PALETTE.oat, cast: false });
+  L.add(M.textile, cushion(0.3, 0.1, 0.26, 0.05, 0.4).rotateZ(-0.4).translate(0.02, 0.4, 0.04), { color: PALETTE.sage, cast: false });
 }
 
 // ─── easel & mood board ──────────────────────────────────────────────────────

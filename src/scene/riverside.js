@@ -33,6 +33,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../core/rng.js';
+import { STREAM } from '../world/layout.js';
 import { Batch, M, setDetail } from './riverside/kit.js';
 import { buildWater } from './riverside/water.js';
 import { buildBridge, BIKE_SPOT } from './riverside/bridge.js';
@@ -113,6 +114,8 @@ export default async function build(ctx) {
   const water = buildWater(ctx, {
     rocks,
     impacts: falls.impacts,
+    solidAt: falls.solidAt,
+    pool: STREAM.pool,
     bridge: { x: bridge.frame.elements[12], z: bridge.frame.elements[14], dx: bridge.X.x, dz: bridge.X.z },
     proxies: [
       { kind: 'ellipsoid', x: shed.x, y: 3.05, z: shed.z, rx: 2.9, ry: 3.1, rz: 2.9, yMin: 3.0, color: '#cc632b' },

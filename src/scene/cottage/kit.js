@@ -20,12 +20,23 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { materials } from '../../core/materials.js';
+import { materials, END_GRAIN_V } from '../../core/materials.js';
 import { createNoise2D } from '../../core/noise.js';
 import { requestBake } from '../../core/textures/bakery.js';
 import { mushroomGlowMaterials } from '../../world/vegetation/mushrooms.js';
 
 export const TAU = Math.PI * 2;
+
+/**
+ * Detail of the many small parts (stones, moss cushions, toadstools, fern fronds, fairy-light
+ * bulbs …): 1 at the high tier, ≈ 0.5 medium, 0.35 low. The cottage sets it once before it
+ * builds (setCottageDetail(ctx.quality.density)); it only ever changes tessellation, never
+ * the random draws, so placement stays the same on every tier.
+ */
+export const KIT = { detail: 1 };
+export function setCottageDetail(d = 1) {
+  KIT.detail = Math.min(1, Math.max(0.35, d));
+}
 export const noiseA = createNoise2D(41117);
 export const noiseB = createNoise2D(9029);
 
@@ -70,9 +81,14 @@ export function mats() {
     wallStone: m.surface('stone', { vertexColors: true, mossy: 0.3 }),
     stone: m.surface('rock', { vertexColors: true, scale: 0.5, mossy: 0.1 }),
     wood: m.surface('wood', { species: 'oak', vertexColors: true }),
-    floor: m.surface('wood', { species: 'oak', planks: true }),
+    // oak floorboards (vertex-coloured: the floor's tone is chosen where it is laid)
+    floor: m.surface('wood', { species: 'oak', planks: true, vertexColors: true }),
     metal: m.surface('metal', { vertexColors: true }),
     fabric: m.surface('fabric', { vertexColors: true }),
+    // a NEUTRAL weave for the Wohnatelier's textiles: the plain vertex-coloured fabric keeps the
+    // kind's default beige in its normalised texture (an orange cast: a sage sofa rendered olive,
+    // ink turned slate) — with a white base the vertex colour alone sets the hue
+    textile: m.surface('fabric', { vertexColors: true, color: '#ffffff' }),
     clay: m.surface('clay', { vertexColors: true }),
     paper: null, // → vc (books & prints: the paper texture is invisible at this size)
     moss: m.surface('moss'),
@@ -128,13 +144,16 @@ function bounceGills(base) {
  * The caps' warts: torn cream veil flakes. In the cap's shade a plain standard
  * material would read khaki-grey, so this clone (never the cached original) is
  * white with the true cream (and a per-flake tone) in the vertex colours, plus
- * a faint warm-white "subsurface" lift by day. At night they must not turn into
- * white polka-dot stickers: the albedo dims a little and the emissive becomes a
- * faint mint GLINT — scaled by the flake's own vertex tone and a fresnel term,
- * so only the rims of the raised flakes catch it while their faces stay in the
- * moonlit shade (the cap's fairy lights and the windows carry the light).
+ * a faint warm-white "subsurface" lift by day. At night they read as the soft
+ * MILKY dots of a fly agaric under the moon — never grey-blue gravel and never
+ * LEDs: the albedo keeps its full value (the moonlight alone turns cream into a
+ * cold grey), and a warm-milk emissive covers the whole face of each flake,
+ * scaled by the flake's own vertex tone, a little brighter towards its rounded
+ * edges (fresnel) where the light scatters through the thin veil. The warm milk
+ * carries enough chroma that the night grade's moon tint and Purkinje shift
+ * (which spare warm hues) leave it cream.
  */
-const WART_GLOW = { day: '#fff1d8', night: '#d6ffe2', dayI: 0.06, nightI: 0.14 };
+const WART_GLOW = { day: '#fff1d8', night: '#ffdfb4', dayI: 0.06, nightI: 0.34 };
 let wartMat = null;
 const wartUniforms = { uWartNight: { value: 0 } };
 function creamWarts(base) {
@@ -153,11 +172,11 @@ function creamWarts(base) {
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
   {
-    // by day a soft even lift; at night only the flake rims glint (fresnel), each flake its own tone
+    // by day a soft even lift; at night a warm milky glow over the whole flake (a touch
+    // brighter at its rounded rim), each flake its own tone
     float wFres = pow(1.0 - saturate(abs(dot(normal, normalize(vViewPosition)))), 2.0);
     float wTone = dot(vColor.rgb, vec3(0.3, 0.5, 0.2));
-    totalEmissiveRadiance *= mix(vec3(1.0), vec3(wTone * (0.1 + 1.7 * wFres)), uWartNight);
-    diffuseColor.rgb *= 1.0 - 0.35 * uWartNight;
+    totalEmissiveRadiance *= mix(vec3(1.0), vec3(wTone * (0.6 + 1.0 * wFres)), uWartNight);
   }`
       );
   };
@@ -205,8 +224,9 @@ function velvetCap(base) {
     float f2 = 1.0 - smoothstep(0.6, 1.6, w2);
     float s1 = sfNoise3(q1 + vec3(0.0, 0.0, 1.7 * sfNoise3(q2 * 0.5)));
     float s2 = sfNoise3(q2);
-    float streak = (smoothstep(0.52, 0.86, s1) * 0.2 - smoothstep(0.42, 0.1, s1) * 0.07) * f1
-                 + (smoothstep(0.5, 0.9, s2) * 0.14 - smoothstep(0.45, 0.12, s2) * 0.06) * f2;
+    // (soft and low in contrast: strong long streaks under a highlight read as brushed metal)
+    float streak = (smoothstep(0.55, 0.88, s1) * 0.1 - smoothstep(0.4, 0.1, s1) * 0.04) * f1
+                 + (smoothstep(0.5, 0.9, s2) * 0.1 - smoothstep(0.45, 0.12, s2) * 0.05) * f2;
     diffuseColor.rgb *= 1.0 - streak;
     // velvet bloom: chalky and a little desaturated where the skin turns away
     float cF = pow(1.0 - saturate(abs(dot(normal, normalize(vViewPosition)))), 3.0);
@@ -214,10 +234,18 @@ function velvetCap(base) {
     diffuseColor.rgb = mix(diffuseColor.rgb, vec3(cL) * vec3(1.5, 1.25, 1.15) + diffuseColor.rgb * 0.25, cF * 0.3);
   }
 #endif`
-    );
+      )
+      // velvet, not satin: a cap's skin is matte, fibrous suede — its gloss is mostly
+      // gone (the broad sky reflection and the sun's sheen), the velvet rim term stays
+      .replace(
+        '#include <lights_fragment_end>',
+        `#include <lights_fragment_end>
+  reflectedLight.directSpecular *= 0.35;
+  reflectedLight.indirectSpecular *= 0.4;`
+      );
   };
   const key = c.customProgramCacheKey();
-  c.customProgramCacheKey = () => key + '|cottage-cap';
+  c.customProgramCacheKey = () => key + '|cottage-cap2';
   return c;
 }
 
@@ -637,7 +665,10 @@ export function frameAt(pos, normal, target = new THREE.Matrix4()) {
 const AX = { x: 0, y: 1, z: 2 };
 /**
  * Planar "box" UVs in the part's own space × scale, so a texture keeps the
- * same density on every part. U (wood grain) runs along `along`.
+ * same density on every part. U (wood grain) runs along `along`. Faces that cut
+ * ACROSS the grain (normal along `along`: board ends, a round table top's edge
+ * at its grain ends) get the END_GRAIN_V marker on V, so the wood surfaces draw
+ * them as end grain (Hirnholz); every other surface() kind strips it again.
  */
 export function uvBox(geo, along = 'x', scale = 1 / 1.4, off = [0, 0]) {
   const pos = geo.attributes.position;
@@ -654,16 +685,17 @@ export function uvBox(geo, along = 'x', scale = 1 / 1.4, off = [0, 0]) {
     let dom = 0;
     if (ny > nx && ny >= nz) dom = 1;
     else if (nz > nx && nz > ny) dom = 2;
-    let u, v;
+    let u, v, end = 0;
     if (dom === A) {
       u = p[(A + 1) % 3];
       v = p[(A + 2) % 3];
+      end = END_GRAIN_V;
     } else {
       u = p[A];
       v = p[3 - A - dom];
     }
     uv[i * 2] = u * scale + off[0];
-    uv[i * 2 + 1] = v * scale + off[1];
+    uv[i * 2 + 1] = v * scale + off[1] + end;
   }
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   return geo;
@@ -801,10 +833,13 @@ export function profile(points, samples = 64) {
 export function beamGeo(len, h, w, c = 0.01, segs = 1) {
   const cc = Math.max(0.0005, Math.min(c, h * 0.3, w * 0.3));
   const hh = h / 2, hw = w / 2;
-  const sec = [
-    [-hh + cc, -hw], [hh - cc, -hw], [hh, -hw + cc], [hh, hw - cc],
-    [hh - cc, hw], [-hh + cc, hw], [-hh, hw - cc], [-hh, -hw + cc],
-  ];
+  // (the low tier drops the chamfers: a plain 4-sided section, half the triangles)
+  const sec = KIT.detail < 0.4
+    ? [[-hh, -hw], [hh, -hw], [hh, hw], [-hh, hw]]
+    : [
+      [-hh + cc, -hw], [hh - cc, -hw], [hh, -hw + cc], [hh, hw - cc],
+      [hh - cc, hw], [-hh + cc, hw], [-hh, hw - cc], [-hh, -hw + cc],
+    ];
   const pos = [];
   const nor = [];
   const idx = [];
@@ -889,6 +924,7 @@ export function rod(a, b, r1, r2 = r1, radial = 6) {
  * pebbles, footing stones, flagstones: the many small ones nobody sees up close).
  */
 export function stoneGeo(rng, { r = 0.2, sx = 1, sy = 0.6, sz = 1, lump = 0.22, detail = 1, flatTop = 0.55 } = {}) {
+  if (detail === 1 && KIT.detail < 0.6) detail = 'low'; // (lower tiers: the small ones lose nothing)
   let g = detail === 'low' ? new THREE.OctahedronGeometry(1, 1) : new THREE.IcosahedronGeometry(1, detail);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
@@ -907,6 +943,7 @@ export function stoneGeo(rng, { r = 0.2, sx = 1, sy = 0.6, sz = 1, lump = 0.22, 
 
 /** A dressed block stone (rounded box with lumpy faces), size w × h × d. segs: box segments (fewer for tiny stones). */
 export function blockStone(rng, w, h, d, lump = 0.12, segs = [3, 2, 2]) {
+  if (KIT.detail < 0.6) segs = segs.map((n) => Math.max(1, n - 1));
   let g = new THREE.BoxGeometry(w, h, d, segs[0], segs[1], segs[2]);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
@@ -928,7 +965,8 @@ export function blockStone(rng, w, h, d, lump = 0.12, segs = [3, 2, 2]) {
 
 /** A soft moss cushion (flattened lumpy dome) sitting on y = 0. */
 export function mossGeo(rng, { r = 0.25, h = 0.08, sx = 1, sz = 1 } = {}) {
-  let g = new THREE.SphereGeometry(1, 9, 4, 0, Math.PI * 2, 0, Math.PI / 2);
+  const lo = KIT.detail < 0.6;
+  let g = new THREE.SphereGeometry(1, lo ? 7 : 9, lo ? 3 : 4, 0, Math.PI * 2, 0, Math.PI / 2);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -1059,7 +1097,7 @@ export class Cards {
   add(base, up, normal, s, { aspect = 1, flip = false, bend = 0 } = {}) {
     const across = _x.crossVectors(up, normal).normalize();
     const n0 = this.pos.length / 3;
-    const rows = bend ? 3 : 1;
+    const rows = bend ? (KIT.detail < 0.6 ? 2 : 3) : 1;
     for (let r = 0; r <= rows; r++) {
       const t = r / rows;
       const droop = bend * t * t;
@@ -1122,6 +1160,20 @@ export function addFlower(F, rng, x, y, z, { color = null, size = 0.06, stem = 0
   const tip = new THREE.Vector3(0, h, 0).applyEuler(new THREE.Euler(lean[0], 0, lean[2])).add(new THREE.Vector3(x, y, z));
   const petals = rng.int(5, 6);
   const rot = rng.next() * TAU;
+  if (KIT.detail < 0.6) {
+    // (lower tiers: the petals as one cupped star — 2 triangles a petal instead of 8)
+    const star = new THREE.CircleGeometry(size, petals * 2, rot);
+    const sp = star.attributes.position;
+    for (let i = 1; i < sp.count; i++) {
+      const k = (i - 1) % 2 === 0 ? 1 : 0.45;
+      sp.setXYZ(i, sp.getX(i) * k, sp.getY(i) * k, size * 0.22 * k);
+    }
+    star.rotateX(-Math.PI / 2);
+    star.computeVertexNormals();
+    F.add(M2.vc, star.translate(tip.x, tip.y, tip.z), { color: c, cast: false });
+    F.add(M2.vc, new THREE.SphereGeometry(size * 0.28, 4, 2).translate(tip.x, tip.y + size * 0.08, tip.z), { color: '#e8b33a', cast: false });
+    return;
+  }
   for (let i = 0; i < petals; i++) {
     const a = rot + (i / petals) * TAU;
     const pg = new THREE.SphereGeometry(size * 0.5, 4, 2); // a soft lozenge petal (8 triangles)
@@ -1172,15 +1224,16 @@ export function addToadstool(F, rng, x, y, z, { size = 0.12, color = '#c4301f', 
   const M2 = mats();
   const h = size * rng.range(1.1, 1.8);
   const rx = rng.jitter(lean), rz = rng.jitter(lean), ry = rng.next() * TAU;
-  const stem = new THREE.CylinderGeometry(size * 0.15, size * 0.22, h, 6, 1, true);
+  const lo = KIT.detail < 0.6;
+  const stem = new THREE.CylinderGeometry(size * 0.15, size * 0.22, h, lo ? 5 : 6, 1, true);
   stem.translate(0, h / 2, 0);
   // a little ring (annulus) under the cap
-  const ring = new THREE.CylinderGeometry(size * 0.2, size * 0.24, size * 0.06, 6, 1, true).translate(0, h * 0.78, 0);
+  const ring = new THREE.CylinderGeometry(size * 0.2, size * 0.24, size * 0.06, lo ? 5 : 6, 1, true).translate(0, h * 0.78, 0);
   const capR = size * rng.range(0.5, 0.62);
-  const cap = new THREE.SphereGeometry(capR, 9, 4, 0, TAU, 0, Math.PI / 2);
+  const cap = new THREE.SphereGeometry(capR, lo ? 7 : 9, lo ? 3 : 4, 0, TAU, 0, Math.PI / 2);
   cap.scale(1, rng.range(0.55, 0.85), 1);
   cap.translate(0, h - capR * 0.08, 0);
-  const under = new THREE.CircleGeometry(capR * 0.98, 9).rotateX(Math.PI / 2).translate(0, h - capR * 0.06, 0);
+  const under = new THREE.CircleGeometry(capR * 0.98, lo ? 7 : 9).rotateX(Math.PI / 2).translate(0, h - capR * 0.06, 0);
   for (const [g, c, m] of [[stem, '#efe5cf', M2.stem], [ring, '#efe5cf', M2.stem], [cap, color, M2.cap], [under, '#e3cfa8', M2.vc]]) {
     xf(g, [x, y, z], [rx, ry, rz]);
     F.add(m, g, { color: c, cast: false });

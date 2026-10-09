@@ -49,9 +49,20 @@ const VERT = /* glsl */ `
       vTint = aTint;
     #endif
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    vLamp = (uLampK > 0.5 && aLamp >= 0.0) ? lampOn((modelMatrix * vec4(position, 1.0)).xyz, aLamp) : 1.0;
+    vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
+    bool isLamp = uLampK > 0.5 && aLamp >= 0.0;
+    vLamp = isLamp ? lampOn(wp, aLamp) : 1.0;
     float sc = length(modelMatrix[0].xyz);
     float s = aSize * sc * uScale;
+    // fairy bulbs are hand-strung, not machine-made: every small lamp halo gets
+    // its own brightness & size (±25 %), and one in ten flickers slowly like a
+    // candle (off under reduced motion) — lampGlow() jitters the bulbs alike
+    if (isLamp) {
+      float small = 1.0 - smoothstep(0.22, 0.4, s);
+      float h = lampSeed(wp, aLamp);
+      vLamp *= 1.0 + small * lampJitter(h, uLampTime, uLampFx);
+      s *= 1.0 + small * (fract(h * 7.13) - 0.5) * 0.5;
+    }
     // pull the halo towards the camera so the lamp geometry never clips it
     mv.xyz += normalize(-mv.xyz) * s * uPull;
     mv.xy += aCorner * s;
@@ -101,6 +112,11 @@ const FRAG = /* glsl */ `
 `;
 
 const _hsl = { h: 0, s: 0, l: 0 };
+/** Cold blue-white light (LEDs, screens' lamps): hue ≈ 196–262°. Cyan & mint glows are not. */
+function isColdLed(color) {
+  new THREE.Color(color).getHSL(_hsl, THREE.SRGBColorSpace);
+  return _hsl.h > 0.545 && _hsl.h < 0.73;
+}
 /**
  * Halo colour: warm lights (candle / bulb yellows, oranges, near-whites) are
  * pulled to a soft amber so halos read as warm light, never as white discs.
@@ -127,8 +143,16 @@ const matCache = new Map();
  * where each point's own colour decides).
  */
 export function glowMaterial(color = palette.windowGlow, { day = 0.18, night = 1.1, pull = 0.6, tint = false, warm = true, cap = 0.55, knee = 0.3, scale = null, lamp = null } = {}) {
-  const sizeK = scale ?? (warm && !tint && isWarmLight(color) ? 0.72 : 1);
-  const isLamp = lamp ?? (tint || isWarmLight(color));
+  const warmC = isWarmLight(color);
+  // Cool glows never outshine the warm lamps: cold blue-white LEDs (screens'
+  // status lights, a desk lamp, the rack) are drawn at the warm halos' size and
+  // under their cap; cyan & mint glows (mushrooms, glow-worms) a little smaller
+  // and softer than before, so the amber lamps lead the night.
+  const led = !tint && !warmC && isColdLed(color);
+  const coolK = tint || warmC ? 1 : led ? 0.72 : 0.9;
+  if (!tint && !warmC) cap = Math.min(cap, led ? 0.36 : 0.5);
+  const sizeK = scale ?? (warm && !tint && warmC ? 0.72 : coolK);
+  const isLamp = lamp ?? (tint || warmC);
   const key = `${new THREE.Color(color).getHexString()}|${day}|${night}|${pull}|${tint}|${warm}|${cap}|${knee}|${sizeK}|${isLamp}`;
   let m = matCache.get(key);
   if (m) return m;
@@ -350,20 +374,23 @@ const SEGS = 22;
  *                and only size·back behind the source
  *   stretch = 1, back = 1
  *   delay = 0    extra lamplighter delay (s); lamp: false → not in the cascade
+ *   rings = 6, segs = 22   tessellation (small pools — fairy strands — need less)
  * }]. opts.height(x, z) drapes the pool over the ground (else flat at y).
  * opts.lift: height above the surface (default 0.04; ~0.1 clears flagstones & threshold stones).
  */
 export function lightPoolGeometry(pools, { height = null, lift = 0.04 } = {}) {
-  const per = 1 + RINGS * SEGS;
-  const n = pools.length;
-  const pos = new Float32Array(n * per * 3);
-  const uv = new Float32Array(n * per * 2);
-  const cen = new Float32Array(n * per * 3);
-  const tint = new Float32Array(n * per * 3);
-  const lamp = new Float32Array(n * per);
+  const lods = pools.map((p) => ({ rings: Math.max(2, p.rings ?? RINGS), segs: Math.max(6, p.segs ?? SEGS) }));
+  const total = lods.reduce((n, l) => n + 1 + l.rings * l.segs, 0);
+  const pos = new Float32Array(total * 3);
+  const uv = new Float32Array(total * 2);
+  const cen = new Float32Array(total * 3);
+  const tint = new Float32Array(total * 3);
+  const lamp = new Float32Array(total);
   const idx = [];
   const c = new THREE.Color();
+  let base = 0;
   pools.forEach((p, k) => {
+    const { rings: R, segs: G } = lods[k];
     const size = p.size ?? 1.6;
     const stretch = p.stretch ?? 1, back = p.back ?? 1;
     let dx = p.dir?.x ?? 0, dz = p.dir?.z ?? 1;
@@ -372,7 +399,6 @@ export function lightPoolGeometry(pools, { height = null, lift = 0.04 } = {}) {
     dz /= dl;
     const isLamp = p.lamp !== false && isWarmLight(p.color ?? '#ffae5c');
     c.set(p.color ?? '#ffae5c').multiplyScalar(p.strength ?? 1);
-    const base = k * per;
     const put = (i, u, v, nu, nv) => {
       const x = p.x + dx * u + dz * v;
       const z = p.z + dz * u - dx * v;
@@ -384,25 +410,26 @@ export function lightPoolGeometry(pools, { height = null, lift = 0.04 } = {}) {
       lamp[base + i] = isLamp ? Math.max(0, p.delay ?? 0) : -1;
     };
     put(0, 0, 0, 0, 0);
-    for (let r = 1; r <= RINGS; r++) {
+    for (let r = 1; r <= R; r++) {
       // rings packed towards the rim (the falloff is steepest there)
-      const t = Math.pow(r / RINGS, 0.8);
-      for (let s = 0; s < SEGS; s++) {
-        const a = (s / SEGS) * Math.PI * 2;
+      const t = Math.pow(r / R, 0.8);
+      for (let s = 0; s < G; s++) {
+        const a = (s / G) * Math.PI * 2;
         const cu = Math.cos(a), sv = Math.sin(a);
         const reach = (cu > 0 ? stretch : back) * size;
-        put(1 + (r - 1) * SEGS + s, cu * t * reach, sv * t * size, cu * t, sv * t);
+        put(1 + (r - 1) * G + s, cu * t * reach, sv * t * size, cu * t, sv * t);
       }
     }
     // (counter-clockwise seen from above: the pool faces up)
-    for (let s = 0; s < SEGS; s++) idx.push(base, base + 1 + s, base + 1 + ((s + 1) % SEGS));
-    for (let r = 1; r < RINGS; r++) {
-      for (let s = 0; s < SEGS; s++) {
-        const a = base + 1 + (r - 1) * SEGS + s, b = base + 1 + (r - 1) * SEGS + ((s + 1) % SEGS);
-        const a2 = a + SEGS, b2 = b + SEGS;
+    for (let s = 0; s < G; s++) idx.push(base, base + 1 + s, base + 1 + ((s + 1) % G));
+    for (let r = 1; r < R; r++) {
+      for (let s = 0; s < G; s++) {
+        const a = base + 1 + (r - 1) * G + s, b = base + 1 + (r - 1) * G + ((s + 1) % G);
+        const a2 = a + G, b2 = b + G;
         idx.push(a, b2, b, a, a2, b2);
       }
     }
+    base += 1 + R * G;
   });
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -410,7 +437,7 @@ export function lightPoolGeometry(pools, { height = null, lift = 0.04 } = {}) {
   g.setAttribute('aCenter', new THREE.BufferAttribute(cen, 3));
   g.setAttribute('aTint', new THREE.BufferAttribute(tint, 3));
   g.setAttribute('aLamp', new THREE.BufferAttribute(lamp, 1));
-  g.setIndex(n * per > 65535 ? new THREE.Uint32BufferAttribute(idx, 1) : new THREE.Uint16BufferAttribute(idx, 1));
+  g.setIndex(total > 65535 ? new THREE.Uint32BufferAttribute(idx, 1) : new THREE.Uint16BufferAttribute(idx, 1));
   g.computeBoundingBox();
   g.computeBoundingSphere();
   return g;

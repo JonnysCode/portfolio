@@ -63,6 +63,41 @@ export function setRidgeTest(fn) {
   ridgeTest = fn;
 }
 
+// ─── the other builders' props (colliders) ───────────────────────────────────
+// The scene builders run before the vegetation and register their props as
+// colliders (the Schreinerei yard's sawhorses, the drying stack, the handcart,
+// the chest, the Velowerkstatt's stands …). Nothing of ours may grow through
+// them: setPropKeep(ctx.colliders) snapshots every collider that exists when
+// the vegetation starts building (so the trees and giants it adds itself
+// later are not in it) and canGrow keeps KEEP_PAD clear of each footprint.
+const KEEP_PAD = 0.22;
+let props = null;
+/** Snapshot the colliders registered so far (null / no colliders clears it). */
+export function setPropKeep(colliders) {
+  props = null;
+  if (!colliders?.query || !colliders?.distance) return;
+  const list = [];
+  colliders.query(0, 0, 1e4, (s) => {
+    // (the oak's own trunk circle is the oak zone's business; houses are pads)
+    if (s.tag === 'oak' || s.tag === 'tree' || s.tag === 'giant-mushroom') return;
+    list.push(s);
+  });
+  if (!list.length) return;
+  props = list.map((s) => ({ s, x: s.x, z: s.z, b: s.bound ?? Math.max(s.r ?? 0, Math.hypot(s.hw ?? 0, s.hd ?? 0)) }));
+  props.dist = colliders.distance;
+}
+/** Distance from the nearest registered prop's footprint (Infinity if none is near). */
+export function propClearance(x, z, reach = 2) {
+  if (!props) return Infinity;
+  let best = Infinity;
+  for (const p of props) {
+    if (Math.abs(x - p.x) > p.b + reach || Math.abs(z - p.z) > p.b + reach) continue;
+    const d = props.dist(p.s, x, z);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
 /** Distance from the oak's trunk axis. */
 export const oakDist = (x, z) => Math.hypot(x - OAK.x, z - OAK.z);
 
@@ -78,6 +113,7 @@ export function canGrow(x, z, { margin = 0, path = 1.25, oak = OAK_KEEP, padExtr
   if (nearWater(x, z, margin)) return false;
   if (onFallsRock(x, z, margin)) return false;
   if (ridgeTest && ridgeTest(x, z, margin)) return false;
+  if (props && propClearance(x, z, KEEP_PAD + margin + 0.5) < KEEP_PAD + margin) return false;
   return true;
 }
 

@@ -5,9 +5,10 @@
 //          dandelion fluff drifting in the light, leaves tumbling down from
 //          the Great Oak's canopy
 //   dusk:  the first few fireflies wake up
-//   night: hundreds of blinking fireflies swirling around the oak's roots,
-//          over the stream and the pond, around the cottages, along the
-//          forest edge and at the glowing mushrooms; a glow-worm canopy of
+//   night: fireflies in four swarms (the pond, the stream's bend, the fairy
+//          ring, under the oak's left limb), roaming round the oak's roots,
+//          the cottages and the glowing mushrooms, big slow "hero" fireflies
+//          near every spot's focus; a glow-worm canopy of
 //          tiny cool lights hanging under the oak's limbs and the giants'
 //          crowns, twinkling slowly like a starry sky; mint wisps rising
 //          slowly out of the fairy ring's heart
@@ -51,6 +52,7 @@ export default async function build(ctx) {
     createFireflies(ctx, {
       glowSpots: veg.glowSpots ?? [],
       count: Math.round(Math.max(220, 640 * density) * (reduced ? 0.6 : 1)),
+      ring: veg.fairyRing ?? ctx.forest?.fairyRing ?? null,
       reduced,
     }),
   );
@@ -106,7 +108,9 @@ export default async function build(ctx) {
     for (const c of veg.canopy ?? []) {
       if (Math.hypot(c.x, c.z) < 34) anchors.push({ x: c.x, y: c.y - c.r * 0.75, z: c.z, r: c.r * 0.7 });
     }
-    return createGlowWorms(ctx, { anchors, oakN, count: Math.round(Math.max(320, 640 * Math.min(1.2, density))), reduced, yRange: [11, 36] });
+    // (round 5: fewer, and mostly under the oak — over the dark backdrop trunks
+    //  they were even sparkle noise; the dark stays dark around the lights)
+    return createGlowWorms(ctx, { anchors, oakN, oakShare: 0.88, count: Math.round(Math.max(280, 500 * Math.min(1.2, density))), reduced, yRange: [11, 36] });
   });
   const motes = safe('motes', () => createMotes(ctx, { count: Math.round(Math.max(60, 160 * density) * k), reduced }));
   const leaves = safe('leaves', () => createLeaves(ctx, { count: Math.round(Math.max(14, 34 * density) * k), reduced }));
@@ -128,7 +132,7 @@ export default async function build(ctx) {
   const focus = new THREE.Vector3(0, 0, 4);
   return {
     layers: { fireflies, glowworms, motes, leaves, flappers, post, wild, wisps },
-    stats: { fireflies: fireflies?.count ?? 0, glowworms: glowworms?.count ?? 0, wisps: wisps?.count ?? 0 },
+    stats: { fireflies: fireflies?.count ?? 0, fireflyLayout: fireflies?.stats ?? null, glowworms: glowworms?.count ?? 0, wisps: wisps?.count ?? 0 },
     update(dt) {
       const night = ctx.env?.night ?? 0;
       const target = ctx.cameraRig?.target;
