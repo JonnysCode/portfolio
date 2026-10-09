@@ -361,8 +361,10 @@ export default async function build(ctx) {
     // the moonbeam finds the fairy ring (a secret hotspot of the vegetation)
     try {
       const ring = ctx.interactions?.hotspots?.find((h) => /fairy ring/i.test(h.label ?? ''));
-      if (ring?.worldPosition) {
-        ring.worldPosition(beamNight.target);
+      if (ring?.center || ring?.worldPosition) {
+        // the ring's meshes are merged in world space under a group at the origin: aim at its bounds
+        if (ring.center) ring.center(beamNight.target);
+        else ring.worldPosition(beamNight.target);
         beamNight.target.y = Math.max(beamNight.target.y, 0) + 0.2;
         placeNightBeam();
         beamPhase = -1;
