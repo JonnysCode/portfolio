@@ -10,6 +10,9 @@
 //   isDraft(text)                    'DRAFT', 'DRAFT — …'
 //   presentEntry(entry) → { year, yearDraft, body: [{ text, draft }], facts: [[k, v, draft]] }
 //   mailAddress(profile) → { email, draft } | null
+//   reachOut(profile) → { mail, primary, others }   how to get in touch: the mail
+//        address when there is one, else the strongest link (LinkedIn, then GitHub,
+//        then the first) as the primary "Find me on …" — never a letter without an address
 // ─────────────────────────────────────────────────────────────────────────────
 const param = (() => {
   try {
@@ -44,6 +47,17 @@ export function mailAddress(profile) {
   const draft = isExampleMail(email);
   if (draft && !showDrafts) return null;
   return { email, draft };
+}
+
+const LINK_RANK = { linkedin: 0, github: 1 };
+/** How a visitor reaches the owner: mail first; without one, the strongest link leads. */
+export function reachOut(profile) {
+  const mail = mailAddress(profile);
+  const links = [...(profile?.links ?? [])].filter((l) => l?.href);
+  if (mail) return { mail, primary: null, others: links };
+  const ranked = links.map((l, i) => [LINK_RANK[l.icon] ?? 9, i, l]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const primary = ranked[0]?.[2] ?? null;
+  return { mail: null, primary, others: links.filter((l) => l !== primary) };
 }
 
 let reported = false;

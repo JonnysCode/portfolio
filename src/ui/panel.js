@@ -1,25 +1,31 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The journal page — an entry opened from the glen, styled like a page of a
 // cabinetmaker's field journal: kraft paper held by washi tape, a hand-lettered
-// title, polaroids (or a pencil sketch while there are no photos), the facts
-// as a Stückliste (cut list), paper tags, stamped links and prev/next within
-// the area. Desktop: a page on the right. Phones: a bottom sheet you can pull
-// down to close.
+// title, polaroids (the owner's photos — or, until there are any, a live
+// polaroid of the real piece as it stands in the glen with the pencil sketch
+// tucked behind it; polaroid.js), the facts as a Stückliste (cut list), paper
+// tags, stamped links and prev/next within the area. Desktop: a page on the
+// right. Phones: a bottom sheet you can pull down to close.
+// Without a mail address the contact & about pages never promise a letter: the
+// strongest link leads ("Find me on GitHub").
 //
-//   createJournal(ctx, { onClose, onNavigate(entryId) }) →
+//   createJournal(ctx, { onClose, onNavigate(entryId), polaroids }) →
 //     { el, open(entry, { siblings }), close(), isOpen, inset() → { right, bottom } }
 // ─────────────────────────────────────────────────────────────────────────────
 import { AREA_BY_ID } from '../world/layout.js';
 import { h, svg } from './dom.js';
 import { icon, spotIcon } from './icons.js';
 import { sketchFor } from './sketches.js';
-import { presentEntry, mailAddress, showDrafts } from './draft.js';
+import { presentEntry, reachOut, showDrafts } from './draft.js';
 
 const FLOURISH = `<svg class="journal__flourish" viewBox="0 0 220 14" aria-hidden="true"><path d="M2 8 C 40 2, 70 12, 110 7 S 180 3, 218 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M104 7 c 3 -5 9 -5 9 0 c 0 4 -6 5 -8 2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>`;
 
 const KIND_LABEL = { project: 'Project', credential: 'Credential', about: 'About', contact: 'Contact', note: 'Note' };
 
-export function createJournal(ctx, { onClose, onNavigate } = {}) {
+const LINK_ICON = { github: 'github', linkedin: 'linkedin' };
+const linkIcon = (l) => LINK_ICON[l.icon] ?? 'link';
+
+export function createJournal(ctx, { onClose, onNavigate, polaroids } = {}) {
   const { content } = ctx;
   const body = h('div', { class: 'journal__content' });
   const closeBtn = h('button', { class: 'journal__close', type: 'button', 'aria-label': 'Close the journal page', html: icon('close'), onclick: () => onClose?.() });
@@ -57,6 +63,9 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
   window.addEventListener('pointerup', endDrag);
   window.addEventListener('pointercancel', endDrag);
 
+  const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const sketchCard = (entry, cls = '') => h('figure', { class: `polaroid is-sketch${cls}`, style: { '--tilt': '3deg' }, 'aria-hidden': 'true' }, svg(sketchFor(entry)), h('figcaption', {}, 'sketch'));
+
   function figure(entry) {
     if (entry.images?.length) {
       return h(
@@ -67,11 +76,47 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
         ),
       );
     }
-    // no photos yet: a small pencil sketch pinned beside the text (not a big
-    // empty polaroid pushing the words below the fold); none at all for the
-    // about / contact pages, where the words and the buttons are the point
-    if (entry.kind === 'contact' || entry.kind === 'about') return null;
-    return h('figure', { class: 'polaroid is-sketch', style: { '--tilt': '3deg' }, 'aria-hidden': 'true' }, svg(sketchFor(entry)), h('figcaption', {}, 'sketch'));
+    // no photos yet: a polaroid of the piece itself, taken in the glen (the sketch
+    // tucked behind it) — about & contact get theirs (the portrait, the mailbox) without a sketch
+    const people = entry.kind === 'contact' || entry.kind === 'about';
+    if (polaroids?.available(entry.id)) return livePolaroid(entry, people);
+    // no 3D object to photograph: a small pencil sketch pinned beside the text (none
+    // for the about / contact pages, where the words and the buttons are the point)
+    return people ? null : sketchCard(entry);
+  }
+
+  /** The real piece, photographed in the glen (developing in place the first time). */
+  function livePolaroid(entry, people) {
+    const place = ctx.content.areas[entry.area]?.title ?? AREA_BY_ID[entry.area]?.title ?? '';
+    const cached = polaroids.cached(entry.id);
+    // ('in the Schreinerei', 'in Jonny’s Cottage')
+    const where = place ? `in ${/’s\b|'s\b/.test(place) ? '' : 'the '}${place}` : '';
+    const img = h('img', { alt: where ? `${entry.title}, as it stands ${where}` : entry.title, decoding: 'async', width: 630, height: 420 });
+    const photo = h(
+      'figure',
+      { class: `polaroid is-photo${cached ? '' : ' is-developing'}`, style: { '--tilt': '-2.2deg' } },
+      h('span', { class: 'polaroid__window' }, img),
+      where && h('figcaption', {}, `seen ${where}`),
+    );
+    const wrap = h('div', { class: `journal__figure${people ? ' is-solo' : ''}` }, photo, !people && sketchCard(entry, ' is-tucked'));
+    const develop = (url) => {
+      if (!url) {
+        // nothing to photograph after all: back to the sketch alone (or nothing)
+        wrap.replaceWith(...[people ? null : sketchCard(entry)].filter(Boolean));
+        return;
+      }
+      img.src = url;
+      // (a frame later, so the change is seen; the timer when no frames come — a hidden tab)
+      const done = () => {
+        requestAnimationFrame(() => photo.classList.remove('is-developing'));
+        setTimeout(() => photo.classList.remove('is-developing'), 80);
+      };
+      if (reduced()) photo.classList.remove('is-developing');
+      else img.decode?.().then(done, done) ?? done();
+    };
+    if (cached) img.src = cached;
+    else polaroids.request(entry.id, { live: true }).then(develop);
+    return wrap;
   }
 
   function cutList(facts) {
@@ -89,18 +134,25 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
     );
   }
 
+  const linkBtn = (l, primary = false) =>
+    h('a', { class: `stamp-btn${primary ? ' is-primary' : ''}`, href: l.href, target: '_blank', rel: 'noopener' }, h('span', { html: icon(linkIcon(l)) }), primary ? `Find me on ${l.label}` : l.label);
+
   function links(entry, siblings) {
     const out = [];
-    if (entry.kind === 'contact') {
-      const mail = mailAddress(content.profile);
-      if (mail) out.push(h('a', { class: `stamp-btn is-primary${mail.draft ? ' is-draft' : ''}`, href: `mailto:${mail.email}`, title: mail.draft ? 'draft: put the real address into content.js' : null }, h('span', { html: icon('mail') }), 'Write me a letter'));
-      for (const l of content.profile.links ?? []) out.push(h('a', { class: 'stamp-btn', href: l.href, target: '_blank', rel: 'noopener' }, h('span', { html: icon(l.icon === 'github' ? 'github' : 'link') }), l.label));
-    }
-    if (entry.kind === 'about') {
-      // the next step after "who is this?": say hello
-      const hello = siblings?.find((s) => s.kind === 'contact');
-      if (hello) out.push(h('button', { type: 'button', class: 'stamp-btn is-primary', onclick: () => onNavigate?.(hello.id) }, h('span', { html: icon('mail') }), `${hello.title} `, h('span', { class: 'stamp-btn__arrow', html: icon('right') })));
-      for (const l of content.profile.links ?? []) out.push(h('a', { class: 'stamp-btn', href: l.href, target: '_blank', rel: 'noopener' }, h('span', { html: icon(l.icon === 'github' ? 'github' : 'link') }), l.label));
+    if (entry.kind === 'contact' || entry.kind === 'about') {
+      // a letter only with a real address; otherwise the strongest link leads ("Find me on GitHub")
+      const reach = reachOut(content.profile);
+      if (entry.kind === 'contact' && reach.mail) {
+        const mail = reach.mail;
+        out.push(h('a', { class: `stamp-btn is-primary${mail.draft ? ' is-draft' : ''}`, href: `mailto:${mail.email}`, title: mail.draft ? 'draft: put the real address into content.js' : null }, h('span', { html: icon('mail') }), 'Write me a letter'));
+      }
+      if (entry.kind === 'about' && reach.mail) {
+        // the next step after "who is this?": say hello (only worth a page when there is a mailbox)
+        const hello = siblings?.find((s) => s.kind === 'contact');
+        if (hello) out.push(h('button', { type: 'button', class: 'stamp-btn is-primary', onclick: () => onNavigate?.(hello.id) }, h('span', { html: icon('mail') }), `${hello.title} `, h('span', { class: 'stamp-btn__arrow', html: icon('right') })));
+      }
+      if (reach.primary) out.push(linkBtn(reach.primary, true));
+      for (const l of reach.others) out.push(linkBtn(l));
     }
     for (const l of entry.links ?? []) out.push(h('a', { class: 'stamp-btn', href: l.href, target: '_blank', rel: 'noopener' }, h('span', { html: icon('link') }), l.label));
     return out.length ? h('div', { class: 'journal__links' }, out) : null;
@@ -130,6 +182,14 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
     );
   }
 
+  /** The words, with the picture after the first paragraph (a pinned sketch floats beside them). */
+  function words(entry, shown) {
+    const fig = figure(entry);
+    const paras = shown.body.map((p) => h('p', { class: p.draft ? 'is-draft' : null }, p.text));
+    const block = fig && !fig.classList.contains('is-sketch');
+    return h('div', { class: 'journal__body' }, block ? [paras[0], fig, paras.slice(1)] : [fig, paras]);
+  }
+
   function render(entry, siblings) {
     const area = AREA_BY_ID[entry.area];
     const info = content.areas[entry.area];
@@ -145,12 +205,12 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
         h('div', { class: 'journal__kicker' }, h('span', { class: 'journal__kicon', html: spotIcon(entry.area) }), info?.title ?? area?.title ?? '', h('span', { class: 'journal__kdot' }, '·'), KIND_LABEL[entry.kind] ?? 'Entry'),
         h('h2', { id: 'journal-title', class: 'journal__title' }, entry.title),
         svg(FLOURISH),
-        entry.subtitle && h('p', { class: 'journal__subtitle' }, entry.subtitle),
+        entry.subtitle && h('p', { class: `journal__subtitle${visited ? ' has-leaf' : ''}` }, entry.subtitle),
         shown.year && h('span', { class: `journal__stamp${shown.yearDraft ? ' is-draft' : ''}`, 'aria-label': shown.yearDraft ? 'Year: still a draft' : `Year: ${shown.year}` }, shown.year),
         visited && h('span', { class: 'journal__visited', title: 'Already in your journal', html: icon('leaf') }),
       ),
       ctaFirst && cta,
-      h('div', { class: 'journal__body' }, figure(entry), shown.body.map((p) => h('p', { class: p.draft ? 'is-draft' : null }, p.text))),
+      words(entry, shown),
       cutList(shown.facts),
       entry.tags?.length && h('ul', { class: 'journal__tags', 'aria-label': 'Tags' }, entry.tags.map((t) => h('li', { class: 'paper-tag' }, t))),
       !ctaFirst && cta,
@@ -167,8 +227,23 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
   sheet.addEventListener('scroll', syncMore, { passive: true });
   window.addEventListener('resize', () => isOpen && syncMore());
 
+  /** Focus the page's title (retrying a few frames while it cannot take focus yet). */
+  function focusTitle(title, tries, first = true) {
+    if (!title || !isOpen || !title.isConnected) return;
+    const a = document.activeElement;
+    // (a retry gives way once the visitor has moved focus on purpose)
+    const idle = !a || a === document.body || a === title || a === lastFocus || a.classList?.contains('hs-btn') || a === ctx.engine?.renderer?.domElement;
+    if (!first && !idle) return;
+    if (a !== title) title.focus({ preventScroll: true });
+    if (document.activeElement !== title && tries > 0) requestAnimationFrame(() => focusTitle(title, tries - 1, false));
+  }
+
   const api = {
     el,
+    /** Is keyboard focus inside the page? */
+    get hasFocus() {
+      return el.contains(document.activeElement);
+    },
     get isOpen() {
       return isOpen;
     },
@@ -189,15 +264,13 @@ export function createJournal(ctx, { onClose, onNavigate } = {}) {
       }
       isOpen = true;
       // a non-modal page: Tab may still reach the spot bar & HUD (Esc closes it).
-      // The page is visible as soon as it is open (visibility switches at once),
-      // so focus moves into it right away — and again next frame in case it wasn't yet.
+      // Focus moves to the title at once — the page is visible as soon as it is
+      // open (no visibility transition on the way in; reduced motion too). Should
+      // the browser not take it yet, try again on the coming frames.
       const title = body.querySelector('#journal-title');
       title?.setAttribute('tabindex', '-1');
-      title?.focus?.({ preventScroll: true });
-      requestAnimationFrame(() => {
-        if (isOpen && document.activeElement !== title && !el.contains(document.activeElement)) title?.focus?.({ preventScroll: true });
-        syncMore();
-      });
+      focusTitle(title, 4);
+      requestAnimationFrame(() => syncMore());
       setTimeout(syncMore, 650); // after the slide-in (and the photos' layout)
       for (const img of body.querySelectorAll('img')) img.addEventListener('load', syncMore, { once: true });
     },

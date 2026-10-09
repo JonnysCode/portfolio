@@ -63,8 +63,8 @@ export function addTrack(B, mats, rng, gh, pts, { width = 0.7, lift = 0.012, mat
   const mat = material ?? mats.soilSurface?.() ?? mats.vc();
   const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p.x, 0, p.z)), false, 'centripetal');
   const len = curve.getLength();
-  const n = Math.max(4, Math.ceil(len / 0.07));
-  const across = [-1, -0.7, -0.42, -0.14, 0.14, 0.42, 0.7, 1];
+  const n = Math.max(4, Math.ceil(len / (0.07 / Math.sqrt(LOD.k))));
+  const across = LOD.k < 1 ? [-1, -0.62, -0.2, 0.2, 0.62, 1] : [-1, -0.7, -0.42, -0.14, 0.14, 0.42, 0.7, 1];
   const pos = [];
   const col = [];
   const uv = [];
@@ -247,19 +247,19 @@ export function addHandcart(F, mats, rng) {
   const wheel = (x, z, R) => {
     const W = new THREE.Matrix4().makeTranslation(x, R, z);
     const add = (mat, g, opts) => F.add(mat, g.applyMatrix4(W), opts);
-    add(oak, uvBox(new THREE.CylinderGeometry(0.034, 0.04, 0.075, 10), 'y').rotateZ(Math.PI / 2));
-    add(iron, new THREE.CylinderGeometry(0.022, 0.022, 0.085, 8).rotateZ(Math.PI / 2), { cast: false });
-    const ns = 8;
+    add(oak, uvBox(new THREE.CylinderGeometry(0.034, 0.04, 0.075, segs(10, 6)), 'y').rotateZ(Math.PI / 2));
+    add(iron, new THREE.CylinderGeometry(0.022, 0.022, 0.085, segs(8, 5)).rotateZ(Math.PI / 2), { cast: false });
+    const ns = LOD.k < 0.5 ? 6 : 8;
     for (let i = 0; i < ns; i++) {
       const a = (i / ns) * Math.PI * 2 + 0.2;
       const sp = board(0.016, R - 0.05, 0.02, { along: 'y', rng, r: 0.004 });
       sp.translate(0, (R - 0.05) / 2 + 0.025, 0).rotateX(a);
       add(ash, sp, { cast: false });
     }
-    const fel = new THREE.TorusGeometry(R - 0.018, 0.019, 5, 22);
+    const fel = new THREE.TorusGeometry(R - 0.018, 0.019, segs(5, 4), segs(22, 12));
     fel.scale(1, 1, 1.25);
     add(oak, uvBox(fel.rotateY(Math.PI / 2), 'z'));
-    add(iron, new THREE.TorusGeometry(R - 0.002, 0.007, 4, 26).rotateY(Math.PI / 2), { cast: false });
+    add(iron, new THREE.TorusGeometry(R - 0.002, 0.007, segs(4, 3), segs(26, 12)).rotateY(Math.PI / 2), { cast: false });
   };
   for (const s of [-1, 1]) {
     wheel(s * track, zR, R1);

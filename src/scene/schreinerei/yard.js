@@ -28,6 +28,7 @@
 // repeats); ctx.sites.schreinerei.cost reports the triangles per part.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createRng } from '../../core/rng.js';
 import { getHeight } from '../../world/ground.js';
 import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, mossPadGeo, uvBox, uvCyl, paintBy, addToadstool, addFern, addLanternPost, SPECIES, LOD, segs, count } from './kit.js';
@@ -120,7 +121,15 @@ export function buildYard(ctx, B, mats) {
       for (let k = 0; k < n; k++) {
         const a = (k / n) * Math.PI * 2 + (i % 2) * (Math.PI / n);
         // logs: bark on the sides, pale end grain on the ends (the visible face)
-        const log = new THREE.CylinderGeometry(0.058, 0.062, 0.34, LOD.k < 0.5 ? 5 : 6);
+        // (medium & low: open-ended, only the outer end grain capped — the inner end is never seen)
+        const log = new THREE.CylinderGeometry(0.058, 0.062, 0.34, LOD.k < 0.5 ? 5 : 6, 1, LOD.k < 1);
+        if (LOD.k < 1) {
+          const cap = new THREE.CircleGeometry(0.058, LOD.k < 0.5 ? 5 : 6).rotateX(-Math.PI / 2).translate(0, 0.17, 0);
+          log.deleteAttribute('uv');
+          cap.deleteAttribute('uv');
+          const merged = mergeGeometries([log.toNonIndexed(), cap.toNonIndexed()]);
+          log.copy(merged);
+        }
         const endC = rng.pick(['#c2a886', '#d0bc9a', '#b39776', '#c8b08e', '#b8a080']);
         const barkC = rng.pick(['#4e3b2c', '#5a4434', '#463528']);
         paintBy(log, (nx, ny) => (Math.abs(ny) > 0.7 ? endC : barkC));
@@ -279,10 +288,12 @@ export function buildYard(ctx, B, mats) {
   const lanterns = [];
   {
     const { getPathDistance } = ctx.ground;
+    // (the left one stands a step down the path, in front of — not across —
+    // the sawhorses in the hero frame)
     const posts = [
       { x: 1.6, z: 4.0, side: 1 },
-      { x: -1.95, z: 5.8, side: -1 },
-      { x: 1.5, z: 7.7, side: 1 },
+      { x: -1.95, z: 6.6, side: -1 },
+      { x: 1.5, z: 8.3, side: 1 },
     ];
     for (const p of posts) {
       // slide sideways until the post stands just off the path's edge

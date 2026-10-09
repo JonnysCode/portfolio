@@ -163,7 +163,7 @@ button { font: inherit; color: inherit; }
 }
 .spot-label.is-shown { opacity: 1; pointer-events: auto; }
 .spot-label__flag {
-  position: absolute; left: 0; bottom: calc(30px + var(--lift, 0px)); transform: translateX(-50%) rotate(-1.5deg);
+  position: absolute; left: var(--nudge, 0px); bottom: calc(30px + var(--lift, 0px)); transform: translateX(-50%) rotate(-1.5deg);
   display: inline-flex; align-items: center; gap: 8px; padding: 5px 13px 6px 6px; white-space: nowrap; text-align: left;
   border-radius: 999px 14px 14px 999px; color: var(--ink);
   background: var(--paper) var(--noise); box-shadow: inset 0 0 0 1.5px rgba(58, 36, 18, 0.55), var(--shadow);
@@ -247,17 +247,20 @@ button { font: inherit; color: inherit; }
 .toast__arrow { width: 16px; height: 16px; }
 .toast.is-gold .toast__icon { color: #b07a10; }
 
-/* ── arrival banner ─────────────────────────────────────────────────────── */
+/* ── arrival tag (under the name plate: never over the place itself) ───── */
 .banner {
-  position: fixed; left: 50%; top: max(96px, 13vh); transform: translate(-50%, -10px); text-align: center; pointer-events: none !important;
-  color: #fff6de; opacity: 0; transition: opacity 0.7s ease, transform 0.9s cubic-bezier(.2, .8, .2, 1);
-  text-shadow: 0 2px 2px rgba(20, 12, 4, 0.55), 0 0 22px rgba(20, 12, 4, 0.6), 0 0 48px rgba(20, 12, 4, 0.35);
+  position: fixed; left: calc(var(--gutter) + 6px); top: 92px; max-width: min(300px, calc(100vw - 2 * var(--gutter) - 70px)); pointer-events: none !important;
+  padding: 7px 14px 8px 13px; border-radius: 3px 6px 5px 4px; color: var(--ink);
+  background: var(--paper) var(--noise); box-shadow: inset 0 0 0 1.5px rgba(58, 36, 18, 0.35), var(--shadow-soft);
+  clip-path: polygon(0 3%, 40% 0, 100% 2%, 99% 52%, 100% 98%, 60% 100%, 1% 97%, 0 50%);
+  opacity: 0; transform: translateY(-8px) rotate(-1.2deg); transform-origin: 20% 0;
+  transition: opacity 0.5s ease, transform 0.6s cubic-bezier(.2, .8, .2, 1);
 }
-.banner.is-visible { opacity: 1; transform: translate(-50%, 0); }
-.banner__kicker { font-size: 13px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold-2); }
-.banner__title { margin-top: 0.1em; font-family: var(--font-hand); font-size: clamp(40px, 6.4vw, 66px); line-height: 1.02; }
-.banner__flourish { width: 180px; height: 12px; color: var(--gold-2); filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6)); }
-.banner__count { font-family: var(--font-hand); font-size: 18px; opacity: 0.9; }
+.banner.is-visible { opacity: 1; transform: rotate(-1.2deg); }
+.banner__kicker { font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--berry); }
+.banner__title { margin-top: 1px; font-family: var(--font-hand); font-size: 30px; line-height: 1; color: #2e1f12; }
+.banner__count { margin-top: 3px; font-family: var(--font-hand); font-size: 16px; line-height: 1.15; color: var(--ink-soft); }
+.banner__spark { display: inline-block; width: 13px; height: 13px; margin-right: 3px; vertical-align: -1px; color: #b07a10; }
 
 /* ── speech bubbles ─────────────────────────────────────────────────────── */
 .speech-layer { position: fixed; inset: 0; pointer-events: none !important; }
@@ -362,6 +365,22 @@ button { font: inherit; color: inherit; }
 .journal__body .polaroid.is-sketch { float: right; width: min(40%, 160px); margin: 8px -4px 8px 14px; padding: 6px 6px 3px; }
 .journal__body .polaroid.is-sketch figcaption { padding-top: 2px; font-size: 13px; line-height: 1.1; }
 .journal__body::after { content: ''; display: block; clear: both; }
+/* a live polaroid of the piece as it stands in the glen (polaroid.js), the pencil sketch tucked behind it */
+.journal__figure { position: relative; width: min(calc(100% - 40px), 292px); margin: 16px auto 24px; }
+.journal__figure .polaroid { margin: 0; }
+.polaroid.is-photo { width: 100%; padding: 9px 9px 7px; }
+.polaroid__window { display: block; position: relative; overflow: hidden; aspect-ratio: 3 / 2; background: linear-gradient(170deg, #e8dcbf, #d9c9a2); }
+.polaroid__window img { display: block; width: 100%; height: 100%; aspect-ratio: auto; object-fit: cover; transition: filter 1.8s ease, opacity 0.6s ease; }
+/* developing: pale, warm and soft, then the picture comes up */
+.polaroid.is-developing .polaroid__window img { filter: sepia(0.7) saturate(0.4) brightness(1.45) contrast(0.55) blur(1.5px); }
+.polaroid.is-developing .polaroid__window img:not([src]) { opacity: 0; }
+.polaroid.is-photo figcaption { font-size: 15px; }
+.journal__body .journal__figure .polaroid.is-tucked { position: absolute; z-index: -1; right: -34px; bottom: -20px; width: 42%; margin: 0; padding: 5px 5px 2px; transform: rotate(8deg); }
+.journal__body .journal__figure .polaroid.is-tucked figcaption { padding-top: 1px; font-size: 12.5px; line-height: 1.1; }
+.journal__figure { isolation: isolate; }
+/* the portrait / the mailbox: a smaller print */
+.journal__figure.is-solo { width: min(100%, 268px); }
+.journal__subtitle.has-leaf { padding-right: 34px; }
 .journal__body p { margin: 12px 0; font-size: 15.5px; line-height: 1.55; color: #33251a; }
 .cutlist { margin: 18px 0 8px; padding: 12px 14px 10px; background: rgba(250, 244, 228, 0.82); border-radius: 2px; box-shadow: 0 1px 0 rgba(90, 60, 25, 0.25), 0 4px 10px rgba(60, 40, 15, 0.12); transform: rotate(-0.4deg); }
 .cutlist__title { margin: 0 0 6px; font-family: var(--font-hand); font-weight: 400; font-size: 21px; }
@@ -397,7 +416,12 @@ button { font: inherit; color: inherit; }
 @keyframes moreNudge { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(3px); } }
 .journal:not(.has-more) .journal__more { height: 0; padding: 0; margin: 0; overflow: hidden; }
 .journal__head:has(.journal__stamp) .journal__title { padding-right: 92px; }
-@media (max-height: 800px) and (min-width: 721px) { .polaroid { width: min(100%, 250px); margin-top: 12px; } }
+@media (max-height: 800px) and (min-width: 721px) {
+  .polaroid { width: min(100%, 250px); margin-top: 12px; }
+  /* (a 720p page: the photo leaves room for the words and the cut list) */
+  .journal__figure { width: min(calc(100% - 40px), 246px); margin: 12px auto 20px; }
+  .journal__figure.is-solo { width: min(calc(100% - 40px), 214px); }
+}
 .journal__nav { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; column-gap: 10px; margin: 6px -6px 0; padding-top: 10px; border-top: 1.5px dashed rgba(90, 60, 25, 0.35); }
 .journal__nav.is-pair { display: flex; justify-content: center; }
 .journal__navbtn { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 6px 4px; border: 0; background: none; cursor: pointer; font-family: var(--font-hand); font-size: 17px; color: var(--ink-soft); }
@@ -580,8 +604,10 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px 4px; text-align: 
   .spot-label__text small { display: none; }
   .spot-label__text b { font-size: 16px; }
   .spot-label__icon { width: 26px; height: 26px; padding: 4px; }
-  .banner { top: 82px; width: calc(100vw - 32px); }
-  .banner__kicker { font-size: 11px; }
+  .banner { top: 74px; left: var(--gutter); max-width: min(240px, 62vw); padding: 5px 11px 6px 10px; }
+  .banner__kicker { font-size: 9.5px; letter-spacing: 0.12em; }
+  .banner__title { font-size: 25px; }
+  .banner__count { font-size: 14.5px; }
   .toasts { bottom: calc(var(--bar-h) + 24px + env(safe-area-inset-bottom)); }
   .ui.has-panel .toasts, .ui.has-modal .toasts { bottom: auto; top: 96px; }
   .map-pin.is-current .map-pin__label::after { content: ''; }
@@ -604,6 +630,8 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px 4px; text-align: 
   .journal__visited { top: 76px; right: 14px; }
   .journal__photos .polaroid { width: min(86%, 300px); }
   .journal__body .polaroid.is-sketch { width: min(38%, 136px); }
+  .journal__figure { width: min(76%, 290px); margin: 12px auto 20px; }
+  .journal__figure.is-solo { width: min(62%, 240px); }
   .modal { padding: 0; place-items: end stretch; }
   .modal__card, .modal__card.is-wide { width: 100%; max-height: 92vh; padding: 26px 18px 22px; border-radius: 16px 16px 0 0; animation: sheetIn 0.45s cubic-bezier(.2, 1, .3, 1); }
   .modal__close { margin: -14px -8px 0 8px; }
@@ -635,8 +663,9 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px 4px; text-align: 
   .spotbar__arrow { width: 32px; height: 32px; padding: 6px; }
   .ui.has-panel .spotbar { opacity: 0; visibility: hidden; pointer-events: none !important; transform: translate(-50%, 20px); }
   .ui.has-panel .toasts { bottom: 14px; left: 30%; }
-  .banner { top: 58px; }
-  .banner__title { font-size: 40px; }
+  .banner { top: 54px; padding: 4px 11px 5px 10px; }
+  .banner__title { font-size: 24px; }
+  .banner__count { font-size: 14px; }
   .journal { top: 8px; right: 8px; bottom: auto; max-height: calc(100vh - 16px); width: min(380px, 46vw); z-index: 5; }
   .journal__sheet { padding: 20px 22px 18px 26px; }
   .journal__close { width: 34px; height: 34px; margin: -10px -12px 0 8px; }
@@ -648,6 +677,8 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px 4px; text-align: 
   .journal__nav { padding-top: 6px; }
   .journal__navbtn { padding: 3px 4px; font-size: 16px; }
   .polaroid { width: min(100%, calc(30vh * 1.5 + 20px)); margin: 10px auto 6px; }
+  .journal__figure, .journal__figure.is-solo { width: min(86%, calc(34vh * 1.5 + 20px)); margin: 8px auto 16px; }
+  .journal__figure .polaroid.is-photo { width: 100%; margin: 0; }
   .polaroid figcaption { font-size: 14px; padding-top: 3px; }
   .modal { padding: 8px; }
   .modal__card, .modal__card.is-wide { max-height: 96vh; padding: 22px 24px 18px; }
@@ -671,5 +702,8 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px 4px; text-align: 
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  /* no transitions at all — not even 0.01 ms: every element would otherwise run a
+     tiny transition of the visibility it inherits, and a page that has just opened
+     could not take focus until the next frame */
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition: none !important; }
 }

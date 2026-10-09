@@ -34,6 +34,14 @@ import { buildPorch, BENCH } from './schreinerei/porch.js';
 import { buildDeck } from './schreinerei/deck.js';
 import { buildYard } from './schreinerei/yard.js';
 
+/**
+ * Triangle budget per tier (moduleStats: budget / overBudget) — a regression
+ * guard measured after round 4 (high ≈ 233k, medium ≈ 158k, low ≈ 142k). The
+ * kit's LOD (setDetail) does the cutting; the next big lever on low is the
+ * annex (≈ 45k of it) and the hotspot pieces & characters (≈ 30k).
+ */
+const BUDGET = { high: 250000, medium: 170000, low: 150000 };
+
 export default async function build(ctx) {
   // per-tier geometry detail (kit.LOD): medium & low drop tessellation and the tiniest decor
   setDetail(ctx.quality?.tier ?? 'high');
@@ -133,6 +141,7 @@ export default async function build(ctx) {
     cost: { ...cost, ...(yard.cost ?? {}) },
   };
   return {
+    budget: BUDGET,
     update(dt, t) {
       for (const u of updates) u(dt, t);
     },

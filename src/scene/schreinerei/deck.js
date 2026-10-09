@@ -84,7 +84,7 @@ export function buildDeck(ctx, B, mats) {
       const t = i / n;
       const x = a[0] + (b[0] - a[0]) * t, z = a[1] + (b[1] - a[1]) * t;
       F.add(tim, xf(board(0.08, railH + 0.06, 0.08, { along: 'y', rng }), [x, h + (railH + 0.06) / 2, z]));
-      F.add(oak, xf(new THREE.SphereGeometry(0.05, 8, 6), [x, h + railH + 0.08, z], null, [1, 0.8, 1]), { cast: false });
+      F.add(oak, xf(new THREE.SphereGeometry(0.05, segs(8, 6), segs(6, 4)), [x, h + railH + 0.08, z], null, [1, 0.8, 1]), { cast: false });
       railPosts.push([x, z]);
     }
     const ang = Math.atan2(b[0] - a[0], b[1] - a[1]) - Math.PI / 2;
@@ -96,7 +96,7 @@ export function buildDeck(ctx, B, mats) {
       const t = i / nb;
       const x = a[0] + (b[0] - a[0]) * t, z = a[1] + (b[1] - a[1]) * t;
       // turned profile (its ends hide in the rails)
-      const bal = new THREE.LatheGeometry([[0.018, 0], [0.018, 0.04], [0.026, 0.12], [0.014, 0.22], [0.022, 0.3], [0.014, 0.38], [0.018, 0.47]].map(([r, y]) => new THREE.Vector2(r, y)), 6);
+      const bal = new THREE.LatheGeometry([[0.018, 0], [0.018, 0.04], [0.026, 0.12], [0.014, 0.22], [0.022, 0.3], [0.014, 0.38], [0.018, 0.47]].map(([r, y]) => new THREE.Vector2(r, y)), segs(6, 4));
       F.add(mats.wood('oak'), xf(uvBox(bal, 'y'), [x, h + 0.14, z]), { cast: false });
     }
   };
@@ -414,9 +414,9 @@ function addTeaSet(Bt, mats, rng, H) {
     const body = new THREE.SphereGeometry(0.075, segs(14, 8), segs(10, 6));
     body.scale(1, 0.82, 1);
     Bt.add(china, xf(body, [tx, top + 0.065, tz]), { color: '#3f6f8f', cast: false });
-    Bt.add(china, xf(new THREE.CylinderGeometry(0.04, 0.045, 0.02, 12), [tx, top + 0.125, tz]), { color: '#3f6f8f', cast: false });
-    Bt.add(china, xf(new THREE.SphereGeometry(0.014, 8, 6), [tx, top + 0.142, tz]), { color: '#f2ead8', cast: false });
-    const spout = new THREE.CylinderGeometry(0.008, 0.016, 0.08, 8);
+    Bt.add(china, xf(new THREE.CylinderGeometry(0.04, 0.045, 0.02, segs(12, 6)), [tx, top + 0.125, tz]), { color: '#3f6f8f', cast: false });
+    Bt.add(china, xf(new THREE.SphereGeometry(0.014, segs(8, 6), segs(6, 3)), [tx, top + 0.142, tz]), { color: '#f2ead8', cast: false });
+    const spout = new THREE.CylinderGeometry(0.008, 0.016, 0.08, segs(8, 6));
     Bt.add(china, xf(spout, [tx + 0.085, top + 0.08, tz], [0, 0, -0.9]), { color: '#3f6f8f', cast: false });
     Bt.add(china, xf(new THREE.TorusGeometry(0.035, 0.008, 6, 12, Math.PI * 1.2), [tx - 0.078, top + 0.07, tz], [0, 0, Math.PI / 2 - 0.3]), { color: '#3f6f8f', cast: false });
     // little white dots painted on the pot
@@ -427,33 +427,33 @@ function addTeaSet(Bt, mats, rng, H) {
   }
   // cups on saucers (in front of the guests and two more)
   for (const [x, z, c] of [[-0.3, -0.16, '#f2ead8'], [0.45, -0.05, '#e8c27a'], [0.32, 0.16, '#f2ead8'], [-0.42, 0.14, '#c96a4a']]) {
-    Bt.add(china, xf(new THREE.CylinderGeometry(0.045, 0.04, 0.008, 14), [x, top + 0.004, z]), { color: '#f2ead8', cast: false });
+    Bt.add(china, xf(new THREE.CylinderGeometry(0.045, 0.04, 0.008, segs(14, 6)), [x, top + 0.004, z]), { color: '#f2ead8', cast: false });
     const cup = new THREE.CylinderGeometry(0.03, 0.022, 0.04, 12, 1, true);
     Bt.add(china, xf(cup, [x, top + 0.028, z]), { color: c, cast: false });
-    Bt.add(china, xf(new THREE.CircleGeometry(0.028, 12), [x, top + 0.04, z], [-Math.PI / 2, 0, 0]), { color: '#8a4a22', cast: false });
+    Bt.add(china, xf(new THREE.CircleGeometry(0.028, segs(12, 6)), [x, top + 0.04, z], [-Math.PI / 2, 0, 0]), { color: '#8a4a22', cast: false });
     Bt.add(china, xf(new THREE.TorusGeometry(0.012, 0.004, 4, 8), [x + 0.033, top + 0.03, z]), { color: c, cast: false });
   }
   // plate of cookies
-  Bt.add(china, xf(new THREE.CylinderGeometry(0.07, 0.06, 0.01, 16), [-0.12, top + 0.005, 0.07]), { color: '#f2ead8', cast: false });
+  Bt.add(china, xf(new THREE.CylinderGeometry(0.07, 0.06, 0.01, segs(16, 6)), [-0.12, top + 0.005, 0.07]), { color: '#f2ead8', cast: false });
   for (let i = 0; i < 6; i++) {
     const a = (i / 6) * Math.PI * 2;
-    Bt.add(china, xf(new THREE.CylinderGeometry(0.022, 0.022, 0.008, 10), [-0.12 + Math.cos(a) * 0.035, top + 0.014 + (i % 2) * 0.005, 0.07 + Math.sin(a) * 0.035], [rng.jitter(0.2), 0, rng.jitter(0.2)]), { color: '#c98a4b', cast: false });
+    Bt.add(china, xf(new THREE.CylinderGeometry(0.022, 0.022, 0.008, segs(10, 6)), [-0.12 + Math.cos(a) * 0.035, top + 0.014 + (i % 2) * 0.005, 0.07 + Math.sin(a) * 0.035], [rng.jitter(0.2), 0, rng.jitter(0.2)]), { color: '#c98a4b', cast: false });
   }
   // wildflowers in a jar
   {
     const jx = -0.48, jz = -0.02;
-    Bt.add(mats.glass(), xf(new THREE.CylinderGeometry(0.03, 0.028, 0.08, 10), [jx, top + 0.04, jz]), { cast: false, receive: false });
+    Bt.add(mats.glass(), xf(new THREE.CylinderGeometry(0.03, 0.028, 0.08, segs(10, 6)), [jx, top + 0.04, jz]), { cast: false, receive: false });
     for (let i = 0; i < 7; i++) {
       const a = rng.next() * Math.PI * 2, r = rng.range(0.01, 0.05), hh = rng.range(0.1, 0.17);
       const fx = jx + Math.cos(a) * r, fz = jz + Math.sin(a) * r;
       Bt.add(china, xf(new THREE.CylinderGeometry(0.002, 0.002, hh, 3), [(jx + fx) / 2, top + 0.03 + hh / 2, (jz + fz) / 2], [Math.sin(a) * 0.3, 0, -Math.cos(a) * 0.3]), { color: '#4f7f36', cast: false });
-      Bt.add(china, xf(new THREE.SphereGeometry(0.016, 6, 4), [fx, top + 0.03 + hh, fz]), { color: rng.pick(['#f2ead8', '#e8c22a', '#b39ddb', '#ef7a5a', '#7fb3e0']), cast: false });
+      Bt.add(china, xf(new THREE.SphereGeometry(0.016, segs(6, 6), segs(4, 3)), [fx, top + 0.03 + hh, fz]), { color: rng.pick(['#f2ead8', '#e8c22a', '#b39ddb', '#ef7a5a', '#7fb3e0']), cast: false });
     }
   }
   // a candle in a brass holder (its flame glows at night — returned, the deck
   // merges it into the shared lamp glow)
-  Bt.add(mats.wood('#b8893a'), xf(new THREE.CylinderGeometry(0.03, 0.035, 0.01, 10), [0.2, top + 0.005, 0.02]), { cast: false });
-  Bt.add(china, xf(new THREE.CylinderGeometry(0.012, 0.012, 0.07, 8), [0.2, top + 0.045, 0.02]), { color: '#f7efdf', cast: false });
+  Bt.add(mats.wood('#b8893a'), xf(new THREE.CylinderGeometry(0.03, 0.035, 0.01, segs(10, 6)), [0.2, top + 0.005, 0.02]), { cast: false });
+  Bt.add(china, xf(new THREE.CylinderGeometry(0.012, 0.012, 0.07, segs(8, 6)), [0.2, top + 0.045, 0.02]), { color: '#f7efdf', cast: false });
   return new THREE.Vector3(0.2, top + 0.088, 0.02);
 }
 
@@ -540,7 +540,7 @@ function buildRecordPlayer(ctx, mats, rng, { idleSpin = true } = {}) {
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) Bp.add(mats.metal('#b8893a'), xf(new THREE.CylinderGeometry(0.014, 0.016, 0.012, 10), [sx * (PW / 2 - 0.03), 0.006, sz * (PD / 2 - 0.03)]), { cast: false });
   const steel = mats.metal('#d4d6d8');
   // platter: its bright rim frames the black record
-  Bp.add(steel, xf(new THREE.CylinderGeometry(0.112, 0.108, 0.014, 32), [-0.04, PH + 0.019, 0]), { cast: false });
+  Bp.add(steel, xf(new THREE.CylinderGeometry(0.112, 0.108, 0.014, segs(32, 14)), [-0.04, PH + 0.019, 0]), { cast: false });
   // speed knob & a little brass power button
   Bp.add(steel, xf(new THREE.CylinderGeometry(0.013, 0.013, 0.014, 10), [-PW / 2 + 0.03, PH + 0.018, PD / 2 - 0.03]), { cast: false });
   Bp.add(mats.metal('#c9a04a'), xf(new THREE.CylinderGeometry(0.009, 0.009, 0.01, 8), [-PW / 2 + 0.06, PH + 0.017, PD / 2 - 0.03]), { cast: false });
@@ -568,7 +568,7 @@ function buildRecordPlayer(ctx, mats, rng, { idleSpin = true } = {}) {
   // spinning record (own mesh) with a label
   const rec = new THREE.Group();
   rec.position.set(-0.04, PH + 0.028, 0);
-  const vinyl = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.004, 40), makeVinylMaterial());
+  const vinyl = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.004, segs(40, 18)), makeVinylMaterial());
   vinyl.name = 'vinyl';
   rec.add(vinyl);
   g.add(rec);

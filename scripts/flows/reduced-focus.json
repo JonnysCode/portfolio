@@ -1,0 +1,8 @@
+[
+  { "name": "rf-arrive", "key": "2", "wait": 600, "after": "__woodland.debug.step(90); 0", "shot": false },
+  { "name": "rf-tab", "eval": "document.activeElement?.blur(); 0", "key": "Tab", "after": "(() => { for (let i = 0; i < 4 && !document.activeElement?.classList?.contains('hs-btn'); i++) document.querySelector('.hs-btn[tabindex=\"0\"]')?.focus(); return document.activeElement?.className; })()", "shot": false },
+  { "name": "rf-enter", "key": "Enter", "after": "(() => { const a = document.activeElement; if (a?.id !== 'journal-title') throw new Error('reduced motion: focus is on ' + a?.tagName + '#' + a?.id + ', not the journal title'); return a.id; })()", "shot": false },
+  { "name": "rf-panel", "wait": 400, "render": 2, "after": "(() => { const a = document.activeElement; const r = document.querySelector('.journal').getBoundingClientRect(); if (a?.id !== 'journal-title') throw new Error('focus left the title: ' + a?.tagName); if (r.left >= innerWidth) throw new Error('the page is still off-screen'); return JSON.stringify({ focus: a.id, left: Math.round(r.left) }); })()" },
+  { "name": "rf-next-tab", "key": "Tab", "after": "(() => { const a = document.activeElement; if (!document.querySelector('.journal').contains(a)) throw new Error('Tab left the page: ' + a?.tagName + '.' + a?.className); return a.tagName + '.' + a.className; })()", "shot": false },
+  { "name": "rf-esc", "key": "Escape", "after": "(() => { const a = document.activeElement; return JSON.stringify({ open: __woodland.ctx.ui.isPanelOpen, focus: a?.tagName + '.' + (a?.className || a?.id) }); })()", "shot": false }
+]

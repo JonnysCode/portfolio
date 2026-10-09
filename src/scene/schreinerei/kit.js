@@ -472,7 +472,8 @@ export function beamBox(w, h, d, along = 'x', c = 0.012, segs = 1) {
  */
 export function board(w, h, d, { along = 'x', r = 0.01, rng = null, scale = 1 / TILE.wood, segs = 0 } = {}) {
   const len = along === 'x' ? w : along === 'y' ? h : d;
-  const g = beamBox(w, h, d, along, r, segs || Math.max(1, Math.round(len / 0.7)));
+  // (length segments only matter where a deform bends the board: fewer on the lower tiers)
+  const g = beamBox(w, h, d, along, r, segs || Math.max(1, Math.round((len / 0.7) * LOD.k)));
   return uvBox(g, along, scale, rng ? [rng.next() * 7, rng.next() * 7] : [0, 0]);
 }
 
@@ -482,8 +483,8 @@ export function board(w, h, d, { along = 'x', r = 0.01, rng = null, scale = 1 / 
  */
 export function timber(a, b, w, h, { rng = null, up = [0, 1, 0], r = 0.018, wobble = 0.012, scale = 1 / TILE.timber } = {}) {
   const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-  const segs = Math.max(1, Math.round(len / 0.5));
-  const g = beamGeo(len, h, w, r, segs);
+  const n = Math.max(1, Math.round((len / 0.5) * (LOD.k < 1 ? Math.max(0.5, LOD.k) : 1)));
+  const g = beamGeo(len, h, w, r, n);
   if (rng && wobble > 0) {
     const s1 = rng.next() * 10, s2 = rng.next() * 10;
     const k1 = rng.jitter(1), k2 = rng.jitter(1);
@@ -802,8 +803,9 @@ export function shingleGeo(w = 0.2, l = 0.34, t = 0.022) {
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   // keep only what can ever be seen: the face, the butt edge and the two
   // sides (the top edge hides under the next course, the back lies on the
-  // roof boards) → 12 triangles per shake
-  const keep = new Set([0, 1, 3, 4]); // BoxGeometry groups: px nx py ny pz nz
+  // roof boards) → 12 triangles per shake; medium & low keep the face and
+  // the butt edge only (4 triangles: the 2 cm sides vanish at that size)
+  const keep = new Set(LOD.k < 1 ? [3, 4] : [0, 1, 3, 4]); // BoxGeometry groups: px nx py ny pz nz
   const src = g.index.array;
   const idx = [];
   for (const gr of g.groups) if (keep.has(gr.materialIndex)) for (let i = gr.start; i < gr.start + gr.count; i++) idx.push(src[i]);

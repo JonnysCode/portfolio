@@ -39,6 +39,7 @@ import { createJournal } from './panel.js';
 import { renderGuidebook } from './guidebook.js';
 import { createMap } from './map.js';
 import { reportDrafts } from './draft.js';
+import { createPolaroids } from './polaroid.js';
 
 const HINT_KEY = 'woodland:hinted';
 /**
@@ -296,10 +297,13 @@ export function createUI(ctx) {
   const speechAnnounce = h('div', { class: 'sr-only', 'aria-live': 'polite' });
   root.append(toasts, banner, speechLayer, speechAnnounce, fader);
   let bannerTimer = 0;
+  let bannerQuietUntil = 0; // (a page is about to open: no banner over it)
   let namedTimer = 0;
 
   // ── journal page ──────────────────────────────────────────────────────────
-  const journal = createJournal(ctx, { onClose: () => ui.closePanel(), onNavigate: (id) => ui.openEntry(id) });
+  // live polaroids of the pieces in the glen (until the owner's photos arrive)
+  const polaroids = ctx.engine ? createPolaroids(ctx) : null;
+  const journal = createJournal(ctx, { onClose: () => ui.closePanel(), onNavigate: (id) => ui.openEntry(id), polaroids });
   root.append(journal.el);
   /** user: closed by the visitor (✕, Esc, pull-down, a tap beside it) — history steps back / is rewritten. */
   function closeJournal({ release = true, user = false } = {}) {
@@ -654,7 +658,7 @@ export function createUI(ctx) {
     // floating spot labels in the overview
     // (a debug/screenshot camera override shows them only when it looks at the glen from afar)
     const atGlen = rig.overridden ? cam.position.distanceTo(GLEN_CAM) < 14 : rig.spot === 'glen';
-    const showLabels = atGlen && !rig.transitioning && !rig.focused && !ui.isModalOpen && !intro;
+    const showLabels = atGlen && !rig.transitioning && !rig.focused && !journal.isOpen && !ui.isModalOpen && !intro;
     placed.length = 0;
     for (const l of labels) {
       let on = showLabels;
@@ -670,12 +674,20 @@ export function createUI(ctx) {
             l.fh = f.offsetHeight || 40;
             l.measured = ctx.engine.frame;
           }
-          let x = sp.x - view.x;
+          const ax = sp.x - view.x;
           const y = sp.y - view.y;
-          // places beyond the frame (phones!) get a little signpost pinned to the edge
+          let x = ax;
+          let nudge = 0;
+          // a place beyond the frame (phones!) gets a little signpost pinned to the edge;
+          // one whose anchor IS in frame keeps its stem on it and only slides its flag inwards
           const half = Math.min(110, l.fw / 2) + 10;
-          if (x < half) (edge = -1), (x = half);
+          const inFrame = ax > 14 && ax < W - 14;
+          if (inFrame) {
+            if (ax < l.fw / 2 + 8) nudge = l.fw / 2 + 8 - ax;
+            else if (ax > W - l.fw / 2 - 8) nudge = W - l.fw / 2 - 8 - ax;
+          } else if (x < half) (edge = -1), (x = half);
           else if (x > W - half) (edge = 1), (x = W - half);
+          l.nudge = nudge;
           l.x = view.x + x;
           l.y = view.y + y;
           placed.push(l);
@@ -706,6 +718,13 @@ export function createUI(ctx) {
       if (lift !== l.liftPx) {
         l.liftPx = lift;
         l.el.style.setProperty('--lift', `${lift}px`);
+        // a lifted label's long stem passes behind the flags below it, never across them
+        l.el.style.zIndex = lift > 2 ? '1' : '2';
+      }
+      const nudge = Math.round(l.nudge ?? 0);
+      if (nudge !== l.nudgePx) {
+        l.nudgePx = nudge;
+        l.el.style.setProperty('--nudge', `${nudge}px`);
       }
     }
     // keyboard hotspot buttons follow their markers; things beyond an edge are counted for the chips
@@ -733,6 +752,8 @@ export function createUI(ctx) {
     }
     syncChip(chips.l, yl, H);
     syncChip(chips.r, yr, H);
+    // the arrival tag never stays over a detail being framed (a secret, a page)
+    if (rig.focused && banner.classList.contains('is-visible')) banner.classList.remove('is-visible');
     // speech bubbles
     for (const b of bubbles) b.update();
     // keep the subject framed beside the journal page — or just above the spot bar
@@ -784,7 +805,8 @@ export function createUI(ctx) {
     let nd = 0;
     for (const l of list) {
       const w = (l.fw ?? 140) + GAP, hh = (l.fh ?? 40) + GAP;
-      const left = l.x - w / 2, right = l.x + w / 2;
+      const cx = l.x + (l.nudge ?? 0);
+      const left = cx - w / 2, right = cx + w / 2;
       let bottom = l.y - 30; // the flag sits on a 30px stem
       for (let pass = 0; pass < 6; pass++) {
         let moved = false;
@@ -929,6 +951,8 @@ export function createUI(ctx) {
 
   const ui = {
     root,
+    /** Live polaroids of the pieces (polaroid.js) — also handy from the console. */
+    polaroids,
     isPanelOpen: false,
     isModalOpen: false,
     setProgress(p, label) {
@@ -1046,7 +1070,10 @@ export function createUI(ctx) {
         else if (st.modal === 'guide') ui.showGuidebook();
         else showHintOnce();
       };
-      if (st.entry || st.modal) setTimeout(then, reduced ? 0 : 700);
+      if (st.entry || st.modal) {
+        bannerQuietUntil = performance.now() + 2500;
+        setTimeout(then, reduced ? 0 : 700);
+      }
       else then();
       return true;
     },
@@ -1068,7 +1095,9 @@ export function createUI(ctx) {
       ctx.interactions?.setFocused?.(null);
       ui.hideTooltip();
       journal.open(entry, { siblings: content.entriesForArea(entry.area) });
-      if (document.activeElement?.classList?.contains('hs-btn')) document.activeElement.blur();
+      // (focus is normally on the page's title by now; should the browser not have
+      // let it move yet, the button lets go — the page takes it on the next frame)
+      if (!journal.hasFocus && document.activeElement?.classList?.contains('hs-btn')) document.activeElement.blur();
       ui.isPanelOpen = true;
       root.classList.add('has-panel');
       banner.classList.remove('is-visible');
@@ -1105,6 +1134,7 @@ export function createUI(ctx) {
         'guide',
         renderGuidebook(ctx, {
           show3d: !!ctx.cameraRig,
+          polaroids,
           linkFor,
           onCopyLink: (link, e) => copyLink(link, e.title),
           onShow: (id) => {
@@ -1135,7 +1165,7 @@ export function createUI(ctx) {
           'ul',
           { class: 'help__list' },
           isTouch
-            ? [row(['drag'], 'look around'), row(['pinch'], 'zoom in & out'), row(['two fingers'], 'move sideways'), row(['swipe', 'swipe'], 'look round to the edge — then on to the next place'), row(['tap ✦'], 'open a journal page')]
+            ? [row(['drag'], 'look around'), row(['pinch'], 'zoom in & out'), row(['two fingers'], 'move sideways'), row(['← swipe', 'swipe →'], 'look round to the edge — then on to the next place'), row(['tap ✦'], 'open a journal page')]
             : [row(['drag'], 'look around'), row(['scroll'], 'zoom in & out'), row(['right-drag', 'shift-drag'], 'move sideways'), row(['click ✦'], 'open a journal page'), row(['←', '→'], 'previous / next place'), row(['1', '–', '6'], 'jump to a place'), row(['G'], 'guidebook'), row(['M'], 'map'), row(['N'], 'day & night'), row(['Esc'], 'close'), row(['Tab'], 'step through the things at a place')],
         ),
         h('p', { class: 'help__secret' }, h('span', { html: icon('sparkle') }), isTouch ? 'Not everything here has a sparkle. A few little secrets hide in the glen — tap anything that looks curious, some things answer.' : 'Not everything here has a sparkle. A few little secrets hide in the glen — hover around and see who answers.', foundAllByDay() && h('span', { class: 'help__night' }, ' Some things only show themselves after dark (N).')),
@@ -1199,22 +1229,33 @@ export function createUI(ctx) {
         setTimeout(() => el.remove(), 500);
       }, ms);
     },
+    /**
+     * A small paper tag under the name plate on arrival: the place, how many pages
+     * wait there and whether a secret hides there too — for ~2 s, never over a
+     * detail being framed or a page that is opening.
+     */
     showAreaBanner(spotId) {
       const s = SPOT_BY_ID[spotId];
       if (!s) return;
+      const rig = ctx.cameraRig;
+      if (journal.isOpen || ui.isModalOpen || intro || rig?.focused || performance.now() < bannerQuietUntil) return;
       const info = content.areas[spotId];
-      const n = ctx.interactions?.forSpot?.(spotId)?.length ?? 0;
+      const it = ctx.interactions;
+      const list = it?.forSpot?.(spotId) ?? [];
+      const unread = list.filter((x) => !it.isVisited?.(x.entryId)).length;
+      const hidden = (it?.hotspots ?? []).filter((x) => x.kind === 'secret' && x.area === spotId && x.enabled && !x.visited).length;
+      const pages = list.length === 0 ? '' : unread === 0 ? 'every page read' : `${unread} page${unread === 1 ? '' : 's'} to read`;
+      const secret = hidden === 0 ? '' : hidden === 1 ? 'a secret hides here' : `${hidden} secrets hide here`;
       banner.replaceChildren(
         h('div', { class: 'banner__kicker' }, info?.kicker ?? s.subtitle),
         h('div', { class: 'banner__title' }, info?.title ?? s.title),
-        svg(`<svg class="banner__flourish" viewBox="0 0 220 14" aria-hidden="true"><path d="M2 8 C 40 2, 70 12, 110 7 S 180 3, 218 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`),
-        n > 0 && h('div', { class: 'banner__count' }, `${n} thing${n === 1 ? '' : 's'} to discover here`),
+        (pages || secret) && h('div', { class: 'banner__count' }, pages, pages && secret && ' · ', secret && h('span', { class: 'banner__spark', html: icon('sparkle') }), secret),
       );
       banner.classList.remove('is-visible');
       void banner.offsetWidth;
       banner.classList.add('is-visible');
       clearTimeout(bannerTimer);
-      bannerTimer = setTimeout(() => banner.classList.remove('is-visible'), 3600);
+      bannerTimer = setTimeout(() => banner.classList.remove('is-visible'), 2300);
     },
     speech(text, anchor, { duration } = {}) {
       if (!ctx.camera) return null;
