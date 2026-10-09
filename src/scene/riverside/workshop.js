@@ -950,31 +950,36 @@ export function buildWorkshop(ctx, B, rng, halos) {
 
   // ── the yard: hero bike on a repair stand, truing stand, wheels, bits ────
   // Jonny's own gravel build, cobalt blue with tan-wall tyres, up on the stand
-  // at the front of the yard — big and side-on to the spot camera
-  const hero = makeBike({ style: 'gravel', spin: true, spinFront: false, seed: 'hero', scale: 0.96, color: '#2f68d0', tape: '#6b4a2e' });
-  const heroPos = new THREE.Vector3(-1.72, 0.22, 3.42);
+  // at the front of the yard, side-on to the spot camera. Villager-sized (like
+  // the Hobelbank and the dining furniture): wheels ≈ 0.46 across, the saddle
+  // at a villager's chest when the bike stands on the ground.
+  const HERO_S = 0.68;
+  const hero = makeBike({ style: 'gravel', spin: true, spinFront: false, seed: 'hero', scale: HERO_S, color: '#2f68d0', tape: '#6b4a2e' });
+  const heroPos = new THREE.Vector3(-1.66, 0.15, 3.42);
   hero.group.position.copy(heroPos);
   hero.group.rotation.y = 0.1;
   group.add(hero.group);
   hero.setSpin(0, 0);
   {
-    // repair stand: tripod, mast, arm and clamp gripping the seatpost
-    const post = hero.dims.saddle.clone().add(new THREE.Vector3(0.05, -0.14, 0)).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.1).add(heroPos);
-    const mastX = post.x - 0.32, mastZ = post.z - 0.45;
+    // repair stand: tripod, mast, arm and clamp gripping the seatpost (behind
+    // the bike, so the drive side and the cockpit stay clear to the camera)
+    const post = hero.dims.saddle.clone().add(new THREE.Vector3(0.035, -0.1, 0)).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.1).add(heroPos);
+    const mastX = post.x - 0.2, mastZ = post.z - 0.34;
     const STAND = '#4a5057';
-    F.add(MM.glossy, rod([mastX, 0.1, mastZ], [mastX, post.y + 0.05, mastZ], 0.03, 0.026, 8), { color: STAND });
+    F.add(MM.glossy, rod([mastX, 0.08, mastZ], [mastX, post.y + 0.04, mastZ], 0.024, 0.021, 8), { color: STAND });
     for (let i = 0; i < 3; i++) {
       const a = (i / 3) * TAU + 0.4;
-      F.add(MM.glossy, rod([mastX, 0.16, mastZ], [mastX + Math.sin(a) * 0.45, 0.01, mastZ + Math.cos(a) * 0.45], 0.022, 0.018, 6), { color: STAND });
-      F.add(MM.vc, new THREE.SphereGeometry(0.026, 6, 4).translate(mastX + Math.sin(a) * 0.45, 0.015, mastZ + Math.cos(a) * 0.45), { color: '#1f1e1d', cast: false });
+      F.add(MM.glossy, rod([mastX, 0.13, mastZ], [mastX + Math.sin(a) * 0.34, 0.01, mastZ + Math.cos(a) * 0.34], 0.018, 0.015, 6), { color: STAND });
+      F.add(MM.vc, new THREE.SphereGeometry(0.021, 6, 4).translate(mastX + Math.sin(a) * 0.34, 0.013, mastZ + Math.cos(a) * 0.34), { color: '#1f1e1d', cast: false });
     }
-    F.add(MM.metal, rod([mastX, post.y + 0.05, mastZ], [post.x, post.y + 0.02, post.z], 0.017, 0.017, 6), { color: '#9ea2a5' });
-    F.add(MM.glossy, new THREE.BoxGeometry(0.08, 0.09, 0.1).translate(post.x, post.y, post.z), { color: '#c0392b' });
-    F.add(MM.glossy, new THREE.SphereGeometry(0.038, 8, 6).translate(mastX, post.y + 0.1, mastZ), { color: '#c0392b', cast: false });
+    F.add(MM.metal, rod([mastX, post.y + 0.04, mastZ], [post.x, post.y + 0.015, post.z], 0.013, 0.013, 6), { color: '#9ea2a5' });
+    F.add(MM.glossy, new THREE.BoxGeometry(0.06, 0.07, 0.075).translate(post.x, post.y, post.z), { color: '#c0392b' });
+    F.add(MM.glossy, new THREE.SphereGeometry(0.03, 8, 6).translate(mastX, post.y + 0.08, mastZ), { color: '#c0392b', cast: false });
     // a little tray of tools on the mast
-    F.add(MM.metal, new THREE.BoxGeometry(0.32, 0.025, 0.21).translate(mastX, 0.64, mastZ - 0.05), { color: STAND });
-    F.add(MM.metal, new THREE.BoxGeometry(0.02, 0.012, 0.16).translate(mastX - 0.06, 0.66, mastZ - 0.05), { color: '#c9cdd0', cast: false });
-    F.add(MM.vc, new THREE.CylinderGeometry(0.015, 0.015, 0.12, 6).rotateZ(Math.PI / 2).translate(mastX + 0.05, 0.665, mastZ - 0.03), { color: '#d9a441', cast: false });
+    const ty = post.y * 0.62;
+    F.add(MM.metal, new THREE.BoxGeometry(0.24, 0.02, 0.16).translate(mastX, ty, mastZ - 0.04), { color: STAND });
+    F.add(MM.metal, new THREE.BoxGeometry(0.016, 0.01, 0.12).translate(mastX - 0.05, ty + 0.015, mastZ - 0.04), { color: '#c9cdd0', cast: false });
+    F.add(MM.vc, new THREE.CylinderGeometry(0.012, 0.012, 0.09, 6).rotateZ(Math.PI / 2).translate(mastX + 0.04, ty + 0.02, mastZ - 0.02), { color: '#d9a441', cast: false });
   }
   // a stump beside the stand with the tools of the job laid out on it
   {
@@ -993,14 +998,17 @@ export function buildWorkshop(ctx, B, rng, halos) {
     T.add(MM.vc, new THREE.TorusGeometry(0.2, 0.03, segs(5, 3), segs(18, 10)).rotateY(1.3).rotateZ(0.25).translate(0.26, 0.19, 0.05), { color: '#2a2622', cast: false });
   }
 
-  // the mechanic, on the far side of the bike at the bars, facing it and
-  // working on the front hub (the bike stays clear in front of him)
+  // the mechanic, at the back of the bike beside the rear wheel, bent over the
+  // derailleur with his wrench — the frame, the fork and the whole cockpit stay
+  // clear against the dark door behind
   let mechanic = null;
   try {
     mechanic = ctx.props.makePerson({ seed: 'velo-mechanic', name: 'Mechanic', holding: 'wrench', action: 'work', apron: true, apronColor: '#3f5f73', hat: 'bandana', hatColor: '#b03a2e', hair: 'curly', shirt: '#e8a838', beard: true });
-    const mp = new THREE.Vector3(-1.28, 0, heroPos.z - 0.7);
+    // bike-local (−0.72, 0, −0.12): just past the rear tyre, a step behind the wheel's plane
+    const mp = new THREE.Vector3(-0.72, 0, -0.12).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.1).add(new THREE.Vector3(heroPos.x, 0, heroPos.z));
     mechanic.group.position.copy(mp);
-    mechanic.group.rotation.y = 0.3;
+    // facing along the bike (+X), turned a little towards the spot camera
+    mechanic.group.rotation.y = Math.PI / 2 + 0.1 - 0.42;
     group.add(mechanic.group);
     // only the body casts (one caster, not a handful)
     let first = true;
@@ -1016,13 +1024,13 @@ export function buildWorkshop(ctx, B, rng, halos) {
   // truing stand on a stump bench to the right of the doors
   const truing = new THREE.Group();
   truing.name = 'truing-stand';
-  const tPos = new THREE.Vector3(1.95, 0, 3.05);
+  const tPos = new THREE.Vector3(1.78, 0, 3.0);
   truing.position.copy(tPos);
-  truing.rotation.y = -0.35;
+  truing.rotation.y = -0.9; // (three-quarter on to the yard: both uprights show)
   group.add(truing);
   let truingWheel;
   {
-    const tm = new THREE.Matrix4().makeRotationY(-0.35).setPosition(tPos.x, 0, tPos.z);
+    const tm = new THREE.Matrix4().makeRotationY(-0.9).setPosition(tPos.x, 0, tPos.z);
     const T = F.at(tm);
     // stump bench: a thick log round on three legs
     const top = 0.52;
@@ -1034,16 +1042,63 @@ export function buildWorkshop(ctx, B, rng, halos) {
       const a = (i / 3) * TAU + 0.5;
       T.add(MM.wood, rod([Math.sin(a) * 0.2, top - 0.12, Math.cos(a) * 0.2], [Math.sin(a) * 0.33, 0, Math.cos(a) * 0.33], 0.035, 0.03, 6), { color: '#7d6550' });
     }
-    // the truing stand: base + two uprights holding the axle, a caliper arm
-    const axleY = top + 0.06 + 0.34 * 0.6 + 0.05;
-    T.add(MM.glossy, new THREE.BoxGeometry(0.34, 0.04, 0.18).translate(0, top + 0.02, 0), { color: '#2f6f8f' });
-    for (const sz of [-1, 1]) T.add(MM.glossy, rod([0, top + 0.03, sz * 0.07], [0, axleY + 0.03, sz * 0.05], 0.014, 0.012, 6), { color: '#2f6f8f' });
-    T.add(MM.metal, rod([0.0, top + 0.03, 0.07], [0.17, axleY + 0.15, 0.06], 0.008, 0.008, 4), { color: '#c9cdd0', cast: false });
-    T.add(MM.vc, new THREE.BoxGeometry(0.03, 0.04, 0.05).translate(0.17, axleY + 0.17, 0.0), { color: '#1f1e1d', cast: false });
-    // spoke key & spare nipples on the stump
-    T.add(MM.vc, new THREE.CylinderGeometry(0.05, 0.05, 0.02, 10).translate(-0.2, top + 0.012, 0.12), { color: '#b03a2e', cast: false });
-    T.add(MM.metal, new THREE.BoxGeometry(0.1, 0.012, 0.03).translate(0.15, top + 0.008, 0.18), { color: '#b9bec2', cast: false });
-    truingWheel = makeWheel({ style: 'road', scale: 0.6, seed: 'truing' });
+    // the truing stand (the classic blue workshop kind): a heavy foot, two
+    // uprights cradling the axle in their dropouts on both sides of the hub,
+    // knurled axle knobs, and the two caliper arms reaching in at the rim from
+    // both sides with their little pads — plus the adjuster knob at the back
+    const WS = 0.6;
+    const RT = 0.34 * WS; // wheel radius incl. tyre
+    const RR = 0.29 * WS; // braking track of the rim
+    const axleY = top + 0.05 + RT + 0.035;
+    const BLUE = '#2f6f8f';
+    // the foot: a cast block with a step, rubber feet
+    T.add(MM.glossy, new THREE.BoxGeometry(0.3, 0.03, 0.17).translate(0, top + 0.016, 0), { color: BLUE });
+    T.add(MM.glossy, new THREE.BoxGeometry(0.08, 0.05, 0.16).translate(-0.02, top + 0.05, 0), { color: BLUE, cast: false });
+    const UZ = 0.05; // the uprights stand just outside the hub's locknuts
+    const yTop = axleY + RR + 0.03;
+    for (const sz of [-1, 1]) {
+      // an upright on each side of the wheel: from the foot, past the axle (which
+      // sits in its sliding jaw) up to the rim, where the caliper reaches in
+      T.add(MM.glossy, rod([-0.02, top + 0.07, sz * 0.07], [0, axleY - 0.05, sz * UZ], 0.012, 0.011, 6), { color: BLUE });
+      T.add(MM.glossy, rod([0, axleY - 0.05, sz * UZ], [0, yTop, sz * UZ], 0.011, 0.01, 6), { color: BLUE });
+      // the sliding axle jaw and its knurled knob
+      T.add(MM.glossy, new THREE.BoxGeometry(0.034, 0.03, 0.014).translate(0, axleY, sz * UZ), { color: '#24566e', cast: false });
+      T.add(MM.vc, new THREE.CylinderGeometry(0.013, 0.013, 0.018, 8).rotateX(Math.PI / 2).translate(0, axleY, sz * (UZ + 0.015)), { color: '#1f1e1d', cast: false });
+      // the caliper: a short arm in from the upright's head, a black pad a hair off the rim's side
+      T.add(MM.metal, rod([0, axleY + RR, sz * UZ], [0, axleY + RR, sz * 0.02], 0.005, 0.005, 5), { color: '#c9cdd0', cast: false });
+      T.add(MM.vc, new THREE.BoxGeometry(0.02, 0.016, 0.008).translate(0, axleY + RR, sz * 0.015), { color: '#1f1e1d', cast: false });
+      T.add(MM.glossy, new THREE.SphereGeometry(0.013, 8, 6).translate(0, yTop + 0.008, sz * UZ), { color: BLUE, cast: false });
+    }
+    // the caliper adjuster: a big black knob on the outside of one upright's head
+    T.add(MM.vc, new THREE.CylinderGeometry(0.02, 0.02, 0.022, 10).rotateX(Math.PI / 2).translate(0, axleY + RR - 0.005, UZ + 0.02), { color: '#1f1e1d', cast: false });
+    // the axle through the hub
+    T.add(MM.metal, new THREE.CylinderGeometry(0.004, 0.004, 2 * UZ + 0.02, 5).rotateX(Math.PI / 2).translate(0, axleY, 0), { color: '#c9cdd0', cast: false });
+    // on the stump: a red spoke key, loose spokes, a tray of brass nipples, a coffee mug
+    {
+      const kx = -0.19, kz = 0.14;
+      T.add(MM.glossy, new THREE.CylinderGeometry(0.032, 0.032, 0.008, 12).translate(kx, top + 0.006, kz), { color: '#c0392b', cast: false });
+      T.add(MM.glossy, new THREE.BoxGeometry(0.06, 0.007, 0.016).rotateY(0.6).translate(kx + 0.04, top + 0.006, kz - 0.03), { color: '#c0392b', cast: false });
+      T.add(MM.vc, new THREE.CylinderGeometry(0.011, 0.011, 0.01, 6).translate(kx, top + 0.008, kz), { color: '#1f1e1d', cast: false });
+      for (let i = 0; i < 4; i++) {
+        const z0 = 0.17 + i * 0.012, yaw = 0.15 + rng.jitter(0.05);
+        const len = 0.17;
+        const a0 = [0.02 + rng.jitter(0.01), top + 0.004, z0], a1 = [a0[0] + Math.cos(yaw) * len, top + 0.004, z0 - Math.sin(yaw) * len];
+        T.add(MM.metal, rod(a0, a1, 0.0018, 0.0018, 3), { color: '#d9dcdf', cast: false });
+        T.add(MM.metal, rod(a0, [a0[0] - 0.008, top + 0.004, a0[2] - 0.01], 0.0018, 0.0018, 3), { color: '#d9dcdf', cast: false });
+      }
+      // nipple tray: a shallow tin dish with brass beads
+      T.add(MM.metal, new THREE.CylinderGeometry(0.05, 0.045, 0.012, 14, 1, true).translate(0.17, top + 0.007, -0.15), { color: '#9ea2a5', cast: false });
+      T.add(MM.metal, new THREE.CircleGeometry(0.046, 14).rotateX(-Math.PI / 2).translate(0.17, top + 0.003, -0.15), { color: '#7e8286', cast: false });
+      for (let i = 0; i < 9; i++) {
+        const a = rng.next() * TAU, r = Math.sqrt(rng.next()) * 0.035;
+        T.add(MM.metal, new THREE.CylinderGeometry(0.004, 0.004, 0.009, 5).rotateZ(Math.PI / 2).rotateY(rng.next() * 3).translate(0.17 + Math.cos(a) * r, top + 0.009, -0.15 + Math.sin(a) * r), { color: '#c9a24a', cast: false });
+      }
+      // a coffee mug (the work keeps the mechanic up)
+      T.add(MM.glossy, new THREE.CylinderGeometry(0.03, 0.027, 0.07, 12).translate(-0.2, top + 0.035, -0.12), { color: '#e9e2d2', cast: false });
+      T.add(MM.vc, new THREE.TorusGeometry(0.017, 0.006, 4, 10).translate(-0.232, top + 0.04, -0.12), { color: '#e9e2d2', cast: false });
+      T.add(MM.vc, new THREE.CircleGeometry(0.026, 10).rotateX(-Math.PI / 2).translate(-0.2, top + 0.062, -0.12), { color: '#4a2e1c', cast: false });
+    }
+    truingWheel = makeWheel({ style: 'road', scale: WS, seed: 'truing' });
     truingWheel.position.set(0, axleY, 0);
     truing.add(truingWheel);
   }
@@ -1071,7 +1126,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
     pm.add(MM.metal, new THREE.CylinderGeometry(0.008, 0.008, 0.1, 4).translate(0, 0.6, 0), { color: '#c9cdd0', cast: false });
     pm.add(MM.vc, tube([[0.03, 0.15, 0], [0.15, 0.08, 0.05], [0.2, 0.25, 0.08]], 0.008, 4, 10), { color: '#1f1e1d', cast: false });
     // oil can
-    const oc = F.at(mat4([1.4, 0.0, 2.95], [0, 0.6, 0]));
+    const oc = F.at(mat4([1.18, 0.0, 2.78], [0, 0.6, 0]));
     oc.add(MM.glossy, new THREE.CylinderGeometry(0.07, 0.08, 0.12, 12).translate(0, 0.06, 0), { color: '#c9a24a' });
     oc.add(MM.glossy, new THREE.ConeGeometry(0.07, 0.06, 12).translate(0, 0.15, 0), { color: '#c9a24a' });
     oc.add(MM.metal, rod([0, 0.17, 0], [0.16, 0.26, 0], 0.008, 0.004, 4), { color: '#c9a24a', cast: false });
@@ -1136,11 +1191,11 @@ export function buildWorkshop(ctx, B, rng, halos) {
   // road bike and a little kid's bike leaning on it, a chalkboard, grass & flowers
   {
     const fz = 3.3;
-    const posts = [2.1, 3.0, 3.9];
+    const posts = [2.5, 3.3, 4.1];
     for (const px of posts) {
       const h = 0.62 + rng.jitter(0.04);
       F.add(MM.timber, rod([px + rng.jitter(0.02), -0.15, fz], [px + rng.jitter(0.03), h, fz + rng.jitter(0.02)], 0.055, 0.045, 7), { color: '#8d8274' });
-      F.add(MM.timber, new THREE.ConeGeometry(0.058, 0.08, 7).translate(px, h + 0.04, fz), { color: '#8d8274', cast: false });
+      F.add(MM.timber, new THREE.CylinderGeometry(0.03, 0.048, 0.025, 7).translate(px, h + 0.012, fz), { color: '#8d8274', cast: false });
     }
     for (const ry of [0.24, 0.5]) {
       F.add(MM.timber, boardBetween([posts[0] - 0.12, ry + rng.jitter(0.02), fz - 0.05], [posts[2] + 0.14, ry + rng.jitter(0.03), fz - 0.05], 0.06, 0.07, { rng, bow: 0.02 }), { color: '#9a8a76' });
@@ -1152,8 +1207,8 @@ export function buildWorkshop(ctx, B, rng, halos) {
     }
     // the bikes lean back against the top rail
     const road = { style: 'road', color: '#b0392c', tape: '#f1ece2', lite: true, seed: 'customer', scale: 0.62 };
-    makeBike({ ...road, batch: F, matrix: new THREE.Matrix4().makeTranslation(2.62, 0, fz + 0.2).multiply(new THREE.Matrix4().makeRotationX(-0.16)) });
-    if (LOD.k >= 0.5) makeBike({ style: 'vintage', color: '#f2c14e', basket: false, lite: true, seed: 'kid', scale: 0.42, batch: F, matrix: new THREE.Matrix4().makeTranslation(3.62, 0, fz + 0.16).multiply(new THREE.Matrix4().makeRotationX(-0.2)) });
+    makeBike({ ...road, batch: F, matrix: new THREE.Matrix4().makeTranslation(2.98, 0, fz + 0.2).multiply(new THREE.Matrix4().makeRotationX(-0.16)) });
+    if (LOD.k >= 0.5) makeBike({ style: 'vintage', color: '#f2c14e', basket: false, lite: true, seed: 'kid', scale: 0.42, batch: F, matrix: new THREE.Matrix4().makeTranslation(3.92, 0, fz + 0.16).multiply(new THREE.Matrix4().makeRotationX(-0.2)) });
     // a little chalkboard on an A-frame: "Velo-Service · offen"
     try {
       const tex = ctx.props.makeTextTexture(['Velo-Service', 'heute offen!'], { width: 384, height: 256, background: '#27322c', color: '#f1eee4', font: '"Patrick Hand", "Comic Sans MS", cursive', weight: 400, style: 'plain', padding: 0.14 });
@@ -1185,7 +1240,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
       if (Math.hypot(x, z) < wallR(0) + 0.5) continue;
       if (Math.abs(x) < 1.6 && z > 1.6 && z < 4.0) continue; // the apron & the door
       if (x < -0.4 && z > 2.2 && z < 4.4) continue; // the repair stand & the mechanic
-      if (x > 1.4 && x < 2.6 && z > 2.6 && z < 3.5) continue; // the truing stand
+      if (x > 1.25 && x < 2.35 && z > 2.45 && z < 3.55) continue; // the truing stand
       if (x > 2.0 && x < 3.9 && z > -0.9 && z < 1.6) continue; // the bike rack
       const wp = toWorld(x, 0, z);
       if (getPathDistance(wp.x, wp.z) < 1.2 || isInWater(wp.x, wp.z, 0.3)) continue;

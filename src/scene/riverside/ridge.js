@@ -23,9 +23,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { materials } from '../../core/materials.js';
+import { createRng } from '../../core/rng.js';
 import { forestPlan } from '../../world/vegetation/plan.js';
 import {
-  M, TAU, LOD, segs, xf, boulderGeo, stoneGeo, mossGeo, paramSurface, plantFern, plantGrass, addToadstool, addFlower, addIvy,
+  M, TAU, LOD, segs, xf, alignUp, boulderGeo, stoneGeo, mossGeo, paramSurface, plantFern, plantGrass, addToadstool, addFlower, addIvy,
   wallFern, taperTube, Cards, flushCards, noiseA, noiseB, smooth01,
 } from './kit.js';
 
@@ -224,7 +225,8 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       const y = heightAt(u, w);
       if (y < groundAt(u, w) + 0.6) continue;
       if (shelves.some((q) => Math.hypot(q.u - u, q.w - w) < 1.0 && Math.abs(q.y - y) < 0.7)) continue;
-      shelves.push({ u: u + sl.ou * 0.12, w: w + sl.ow * 0.12, y, ou: sl.ou, ow: sl.ow });
+      // (set back into the face: a ledge of the rock itself, never a slab stuck on the moss)
+      shelves.push({ u: u - sl.ou * 0.06, w: w - sl.ow * 0.06, y, ou: sl.ou, ow: sl.ow });
     }
     for (const sh of shelves) {
       const len = rng.range(0.8, 1.9), dep = rng.range(0.4, 0.62), th = rng.range(0.12, 0.22);
@@ -232,8 +234,8 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       xf(g, [sh.u, sh.y - th * 0.7, sh.w], [rng.jitter(0.05), Math.atan2(sh.ou, sh.ow) + Math.PI / 2 + rng.jitter(0.15), rng.jitter(0.06)]);
       R.add(MM.rock, g, { color: rng.pick(ROCK_TINTS), cast: true });
       const top = sh.y + th * 0.35;
-      const m = mossGeo(rng, { r: dep * 0.45, h: 0.07, sx: (len / dep) * 0.8, seg: 8 });
-      xf(m, [sh.u + sh.ou * 0.05, top, sh.w + sh.ow * 0.05], [0, Math.atan2(sh.ou, sh.ow) + Math.PI / 2, 0]);
+      const m = mossGeo(rng, { r: dep * 0.34, h: 0.06, sx: (len / dep) * 0.62, seg: 8 });
+      xf(m, [sh.u, top - 0.015, sh.w], [0, Math.atan2(sh.ou, sh.ow) + Math.PI / 2, 0]);
       R.add(MM.moss, m, { color: rng.pick(MOSS), cast: false });
       const fu = sh.u + sh.ou * dep * 0.45, fw = sh.w + sh.ow * dep * 0.45;
       const k = rng.next();
@@ -314,13 +316,20 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       if (sl.s > 1.2 || sl.s < 0.2 || !proud(u, w, 0.25)) continue;
       const y = heightAt(u, w);
       const s = rng.range(0.7, 1.5);
-      const g = boulderGeo(rng, s * rng.range(1.1, 1.5), s * rng.range(0.55, 0.8), s, { strata: 2, lump: 0.16, round: 0.4, detail: 2 });
-      xf(g, [u, y - s * 0.22, w], [rng.jitter(0.25), rng.next() * TAU, rng.jitter(0.25)]);
+      // (bedded into the slope: tipped most of the way with it and sunk, so no
+      // block stands proud of the moss like a box on a hillside)
+      const hb = s * rng.range(0.5, 0.72);
+      const g = boulderGeo(rng, s * rng.range(1.1, 1.5), hb, s, { strata: 2, lump: 0.22, round: 0.55, detail: 2 });
+      g.translate(0, -hb * 0.45, 0);
+      g.rotateY(Math.atan2(sl.ou, sl.ow) + Math.PI / 2 + rng.jitter(0.5));
+      alignUp(g, sl.ou * sl.s * 0.75, 1, sl.ow * sl.s * 0.75);
+      g.translate(u, y - hb * 0.12, w);
       R.add(MM.rock, g, { color: rng.pick(ROCK_TINTS), cast: true });
       if (rng.chance(0.75)) {
-        const m = mossGeo(rng, { r: s * 0.42, h: 0.12, sx: 1.2, seg: 8 });
-        xf(m, [u, y + s * 0.4, w], [0, rng.next() * TAU, 0]);
-        R.add(MM.moss, m, { color: rng.pick(MOSS), cast: false });
+        const m = mossGeo(rng, { r: s * 0.38, h: 0.1, sx: 1.2, seg: 8 });
+        m.rotateY(rng.next() * TAU).translate(0, hb * 0.5, 0);
+        alignUp(m, sl.ou * sl.s * 0.75, 1, sl.ow * sl.s * 0.75);
+        R.add(MM.moss, m.translate(u, y - hb * 0.12, w), { color: rng.pick(MOSS), cast: false });
       }
       placed++;
     }
@@ -353,8 +362,12 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       if (k < 0.36) plantFern(R, rng, u, y, w, { size: rng.range(0.55, 1.15), fronds: rng.int(8, 12), tilt: 1.15 });
       else if (k < 0.56) plantGrass(R, rng, u, y, w, { size: rng.range(0.3, 0.55), blades: rng.int(4, 6) });
       else if (k < 0.8) {
-        const m = mossGeo(rng, { r: rng.range(0.25, 0.6), h: rng.range(0.07, 0.15), sx: rng.range(1, 1.7) });
-        xf(m, [u, y, w], [0, rng.next() * TAU, 0]);
+        // a moss mat hugging the slope (tipped onto it and sunk, never a lid floating off it)
+        const hm = rng.range(0.07, 0.14);
+        const m = mossGeo(rng, { r: rng.range(0.25, 0.55), h: hm, sx: rng.range(1, 1.6) });
+        m.rotateY(rng.next() * TAU);
+        alignUp(m, sl.ou * sl.s, 1, sl.ow * sl.s);
+        m.translate(u, y - hm * 0.35, w);
         R.add(MM.moss, m, { color: rng.pick(MOSS), cast: false });
       } else if (k < 0.88) {
         const col = rng.chance(0.6) ? '#c4301f' : '#d7832e';
@@ -363,6 +376,37 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
         const col = rng.pick(['#f4f0e6', '#7fa7e0', '#f29bb8', '#f2c14e']);
         for (let q = 0; q < 3; q++) addFlower(R, rng, u + rng.jitter(0.15), y, w + rng.jitter(0.15), { size: 0.05, color: col });
       } else glowCaps.push([u, y, w]);
+    }
+  }
+
+  // ── rock outcrops breaking up the mossy slopes: weathered boulders half
+  // buried in the moss, moss settled on their tops, a fern at their feet ──
+  {
+    // (their own random stream: everything after them stays as it was)
+    const rng = createRng('ridge-outcrops');
+    const want = Math.round(14 * (LOD.k < 0.5 ? 0.4 : LOD.k < 1 ? 0.7 : 1));
+    const placed = [];
+    for (let i = 0; i < 900 && placed.length < want; i++) {
+      const u = rng.jitter(12.5), w = rng.range(-11, 2.5);
+      if (inWater(u, w) || Math.abs(u) < 1.6 || !proud(u, w, 0.3)) continue;
+      const sl = slopeAt(u, w);
+      if (sl.s < 0.3 || sl.s > 1.2) continue;
+      if (placed.some((q) => Math.hypot(q[0] - u, q[1] - w) < 2.2)) continue;
+      placed.push([u, w]);
+      // a weathered boulder half buried in the slope: lumpy, flattened along the
+      // slope (its up axis is the slope's normal), sunk to just over half its height
+      const r = rng.range(0.4, 0.68), sy = rng.range(0.45, 0.6);
+      const dep = r * 2;
+      const g = stoneGeo(rng, { r, sx: rng.range(1.2, 1.6), sy, sz: 1, lump: 0.3, detail: 2, flatTop: 0.45, flatBottom: -0.9 });
+      g.rotateY(Math.atan2(sl.ou, sl.ow) + Math.PI / 2 + rng.jitter(0.4));
+      alignUp(g, sl.ou * sl.s, 1, sl.ow * sl.s);
+      const y = heightAt(u, w);
+      g.translate(u, y - r * sy * 0.1, w);
+      R.add(MM.rock, g, { color: rng.pick(ROCK_TINTS), cast: false });
+      const m = mossGeo(rng, { r: r * 0.55, h: 0.05, sx: 1.3 });
+      alignUp(m.rotateY(rng.next() * TAU), sl.ou * sl.s, 1, sl.ow * sl.s).translate(u - sl.ou * r * 0.25, y + r * sy * 0.5, w - sl.ow * r * 0.25);
+      R.add(MM.moss, m, { color: rng.pick(MOSS), cast: false });
+      if (rng.chance(0.6)) wallFern(R, rng, [u + sl.ou * dep * 0.45, y - r * sy * 0.1, w + sl.ow * dep * 0.45], [sl.ou, 0.1, sl.ow], { size: rng.range(0.3, 0.45), fronds: rng.int(6, 8) });
     }
   }
 

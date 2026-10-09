@@ -299,23 +299,37 @@ export function buildBanks(ctx, B, rng, rocks) {
     }
   }
 
-  // ── stepping stones across the outlet below the pond ──
+  // ── stepping stones across the outlet below the pond: river stones of
+  // different sizes and flatness, set in a staggered line (the way you'd hop
+  // across), dark and wet at the waterline, a few with moss on their crowns ──
   {
     const c = lineAt(LENGTH - 7.5);
-    for (let k = -3; k <= 3; k++) {
-      const u = k * 0.62 + rng.jitter(0.08);
-      const x = c.x - c.dz * u + c.dx * rng.jitter(0.12), z = c.z + c.dx * u + c.dz * rng.jitter(0.12);
+    const STONES = ['#5f5e57', '#6a665a', '#55554f', '#71695d', '#5d5a50', '#666354'];
+    let u = -1.95;
+    let k = 0;
+    while (u < 2.0) {
+      const r = rng.range(0.19, 0.36);
+      const stagger = (k % 2 ? 1 : -1) * rng.range(0.1, 0.22);
+      const x = c.x - c.dz * u + c.dx * stagger, z = c.z + c.dx * u + c.dz * stagger;
       const gy = getHeight(x, z);
-      const top = Math.max(WL + 0.12, gy + 0.08);
-      const r = rng.range(0.24, 0.32);
-      const g = stoneGeo(rng, { r, sy: 0.9, sx: 1.1, detail: 1, flatTop: 0.25, flatBottom: -2, lump: 0.15 });
+      const flat = rng.range(0.45, 0.85);
+      const top = Math.max(WL + rng.range(0.04, 0.13), gy + 0.05);
+      const g = stoneGeo(rng, { r, sy: flat, sx: rng.range(1.0, 1.35), sz: rng.range(0.8, 1.05), detail: 1, sphere: [10, 7], flatTop: rng.range(0.4, 0.6), flatBottom: -2, lump: rng.range(0.16, 0.26) });
+      g.rotateY(rng.next() * TAU);
       const h0 = gy - 0.25;
       deform(g, (v) => {
-        if (v.y < 0) v.y *= (top - h0) / (r * 0.6) * 0.8;
+        if (v.y < 0) v.y *= ((top - h0) / (r * flat)) * 0.8;
       });
-      wetPaint(g, rng.pick(['#8f8a7e', '#9a9384', '#85827a']), top - r * 0.2);
-      g.translate(x, top - r * 0.2, z);
+      wetPaint(g, rng.pick(STONES), top - r * flat * 0.45);
+      g.translate(x, top - r * flat * 0.45, z);
       B.add(MM.pebble, g);
+      if (rng.chance(0.6)) {
+        const m = mossGeo(rng, { r: r * rng.range(0.45, 0.7), h: 0.035, sx: rng.range(1, 1.4), sz: 0.8 });
+        xf(m, [x + rng.jitter(r * 0.15), top - r * flat * 0.45 + r * flat * 0.5, z + rng.jitter(r * 0.15)], [0, rng.next() * TAU, 0]);
+        B.add(MM.moss, m, { color: rng.pick(['#6f8f3a', '#5d7d30', '#7f9a44']), cast: false });
+      }
+      u += r * 1.25 + rng.range(0.32, 0.5);
+      k++;
     }
   }
 

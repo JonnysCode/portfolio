@@ -89,7 +89,7 @@ export default async function build(ctx) {
     vintage.group.rotation.set(0, yaw, 0);
     vintage.group.rotateX(-0.2);
     vintage.group.updateMatrix();
-    const bike = makeBike({ style: 'vintage', seed: 'vintage', scale: 0.72, detail: 'lite', batch: B, matrix: vintage.group.matrix });
+    const bike = makeBike({ style: 'vintage', seed: 'vintage', scale: 0.66, detail: 'lite', batch: B, matrix: vintage.group.matrix });
     const d = bike.dims;
     const proxy = new THREE.Mesh(new THREE.BoxGeometry(d.length, d.height, 0.42), ctx.materials.basic('#ffffff', { visible: false }));
     proxy.position.set((d.frontAxle.x + d.rearAxle.x) / 2, d.height / 2, 0);
@@ -107,15 +107,35 @@ export default async function build(ctx) {
   const pond = buildPond(ctx, B, createRng('riverside-pond'));
   const drifters = buildDrifters(ctx, createRng('riverside-drift'));
   lap('pond');
-  const water = buildWater(ctx, { rocks, impacts: falls.impacts });
+  // the water mirrors the bridge (its frame + profile) and the Velowerkstatt
+  // (its bell cap and stone drum, as simple shapes)
+  const shed = shop.toWorld(0, 0, 0);
+  const water = buildWater(ctx, {
+    rocks,
+    impacts: falls.impacts,
+    bridge: { x: bridge.frame.elements[12], z: bridge.frame.elements[14], dx: bridge.X.x, dz: bridge.X.z },
+    proxies: [
+      { kind: 'ellipsoid', x: shed.x, y: 3.05, z: shed.z, rx: 2.9, ry: 3.1, rz: 2.9, yMin: 3.0, color: '#cc632b' },
+      { kind: 'cylinder', x: shed.x, z: shed.z, r: 2.05, y0: -0.2, y1: 3.2, color: '#8d8676' },
+    ],
+  });
   lap('water');
   B.build(root, 'riverside');
   lap('merge');
-  for (const p of bridge.anchors.lanterns) halos.push({ x: p.x, y: p.y, z: p.z, size: 1.0 });
+  for (const p of bridge.anchors.lanterns) halos.push({ x: p.x, y: p.y, z: p.z, size: 0.85 });
+  // (every other bulb of the bridge's fairy string gets a small halo)
+  bridge.anchors.fairy.forEach((p, i) => {
+    if (i % 2 === 0) halos.push({ x: p.x, y: p.y, z: p.z, size: 0.26 });
+  });
   if (pond.lantern) halos.push({ x: pond.lantern.x, y: pond.lantern.y, z: pond.lantern.z, size: 0.8 });
-  // warm light from the bridge's east lantern (by the workshop)
-  const east = bridge.anchors.lanterns.reduce((a, b) => (b.x > a.x ? b : a), bridge.anchors.lanterns[0]);
-  if (east) ctx.lights?.addPoint?.(east.clone().add(new THREE.Vector3(0, -0.1, 0)), { color: '#ffbf70', day: 0, night: 3.5, distance: 6 });
+  // warm light from the two downstream pier lanterns (the east one by the
+  // workshop first); every request also gets a light pool on the deck
+  {
+    const L = bridge.anchors.lanterns;
+    const down = L.slice(2).sort((a, b) => b.x - a.x); // (side +1: the last two, east first)
+    if (down[0]) ctx.lights?.addPoint?.(down[0].clone().add(new THREE.Vector3(0, 0.05, 0)), { color: '#ffbf70', day: 0, night: 3.2, distance: 5.5 });
+    if (down[1]) ctx.lights?.addPoint?.(down[1].clone().add(new THREE.Vector3(0, 0.05, 0)), { color: '#ffbf70', day: 0, night: 2.6, distance: 5 });
+  }
   // ALL the riverside's static halos in ONE draw call, tinted per halo (the tint
   // carries each kind's strength relative to the warm lamps' 0.5 at night):
   // lanterns, windows & fairy lights (warm, drawn at 0.72 of their size like
@@ -135,8 +155,8 @@ export default async function build(ctx) {
 
   // ── hotspots ──
   const area = 'bikes';
-  ctx.interactions.add(shop.hero.group, { entryId: 'bike-build', area, focus: { distance: 3.2, height: 0.4 } });
-  ctx.interactions.add(vintage.group, { entryId: 'bike-restoration', area, focus: { distance: 3.0, height: 0.4 } });
+  ctx.interactions.add(shop.hero.group, { entryId: 'bike-build', area, focus: { distance: 2.4, height: 0.3 } });
+  ctx.interactions.add(vintage.group, { entryId: 'bike-restoration', area, focus: { distance: 2.5, height: 0.3 } });
   ctx.interactions.add(shop.truing, { entryId: 'wheel-building', area, focus: { distance: 2.6, height: 0.7 } });
 
   // what this module costs: objects it added to the scene (for the perf budget)
