@@ -159,8 +159,9 @@ function zoneColor(zones, t, out) {
  * pore/gill plate. The half-dome wraps past ±90° so its back is sunk into the
  * bark (no floating saucer). Returns:
  *   top   — with `color` (concentric zones),
- *   under — with `color` = a grey ramp: dark and unlit at the bark, full at
- *           the rim (the glow material multiplies its emissive by it),
+ *   under — with `color` = a warm buff ramp: dark and unlit at the bark,
+ *           full at the rim (the glow material multiplies its emissive by
+ *           the ramp's red channel),
  *   depth — the shelf's depth out of the bark.
  */
 function shelfGeos(r, rng, zonesKey = 'glow') {
@@ -170,6 +171,9 @@ function shelfGeos(r, rng, zonesKey = 'glow') {
   const th = r * 0.44; // thickness at the bark
   const phMax = Math.PI / 2 + 0.34; // wrap into the bark at the sides
   const ph = rng.range(0, 6), lob = rng.int(2, 4), wav = rng.range(0.04, 0.08);
+  // per-shelf variation: some darker chestnut, some lighter ochre
+  const tone = rng.range(0.82, 1.08);
+  const lipT = zonesKey === 'sulphur' ? 0.86 : rng.range(0.6, 0.76);
   const outline = (phi) => 1 + wav * Math.sin(lob * phi + ph) + 0.03 * Math.sin(7 * phi + ph * 2);
   const droop = (rho) => r * (0.06 * rho * rho);
   const yTop = (rho, phi) => th * Math.pow(1 - rho, 0.62) * (1 - 0.1 * rho) + r * 0.075 - droop(rho) + Math.sin(5 * phi + ph) * 0.025 * r * rho * rho;
@@ -203,8 +207,11 @@ function shelfGeos(r, rng, zonesKey = 'glow') {
       const k = i * (SEG + 1) + j;
       posT.set([v.x, v.y, v.z], k * 3);
       const t = Math.min(rho, 1);
-      zoneColor(zones, i > RINGS ? 1 : t + Math.sin(phi * 3 + ph) * 0.025, c);
-      const n = 0.94 + 0.12 * hash2(j * 1.7 + ph, i * 3.1);
+      // the pale growing edge is only a thin line on top: the lip that rolls
+      // under (all a visitor below sees of the edge) is a warm ochre-brown, so
+      // from the glen a shelf reads as a brown bracket, not a white saucer
+      zoneColor(zones, i > RINGS ? lipT : t + Math.sin(phi * 3 + ph) * 0.025, c);
+      const n = (0.94 + 0.12 * hash2(j * 1.7 + ph, i * 3.1)) * tone;
       colT.set([c.r * n, c.g * n, c.b * n], k * 3);
       uvT.set([j / SEG, Math.min(rho, 1)], k * 2);
     }
@@ -231,14 +238,15 @@ function shelfGeos(r, rng, zonesKey = 'glow') {
   const uvU = new Float32Array(rowsU * (SEG + 1) * 2);
   for (let i = 0; i < rowsU; i++) {
     const rho = i / RINGS;
-    // dark & unlit where it grows from the bark, full glow towards the rim
+    // dark & unlit where it grows from the bark, full glow towards the rim;
+    // a warm buff pore plate (r channel = the glow ramp, see fungusGlow)
     const g = 0.3 + 0.7 * THREE.MathUtils.smoothstep(rho, 0.2, 0.95);
     for (let j = 0; j <= SEG; j++) {
       const phi = -phMax + (2 * phMax * j) / SEG;
       at(rho, phi, yUnder(rho, phi), v);
       const k = i * (SEG + 1) + j;
       posU.set([v.x, v.y, v.z], k * 3);
-      colU.set([g, g, g], k * 3);
+      colU.set([g, g * 0.84, g * 0.62], k * 3);
       uvU.set([0.5 + (0.5 * v.x) / (r * 1.12), 0.5 + (0.5 * v.z) / (r * 1.12)], k * 2);
     }
   }
@@ -489,7 +497,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
     rope: materials.surface('rope'),
     iron: materials.surface('metal', { color: '#3b3431' }),
     stone: materials.surface('stone'),
-    boulder: materials.surface('rock', { mossy: 0.62 }),
+    boulder: materials.surface('rock', { mossy: 0.34 }),
     dark: materials.standard('#1a120c', { roughness: 1 }),
     critter: materials.standard('#ffffff', { vertexColors: true, roughness: 0.78 }),
     eyeGlow: materials.glow('#ffb43c', { day: 0.25, night: 2.2 }),
@@ -505,7 +513,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
   // Bioluminescent shelf fungi: fungi first, lights second. Cream pores by
   // day; at night only the pore plate under each shelf glows a soft mint (the
   // glen's enchanted-gill mint), fading to nothing towards the bark — the
-  // emissive is multiplied by the underside's grey ramp (vertex colour). A
+  // emissive is multiplied by the underside's ramp (vertex colour, red). A
   // clone with its own program key, so the cached gills material is never
   // touched; its glow follows env.night.
   const fungusGlow = materials.surface('gills', { vertexColors: true }).clone();
@@ -563,6 +571,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
         const g = 0.55 + 0.45 * col.getX(i);
         col.setXYZ(i, g * 0.98, g * 0.84, g * 0.46);
       }
+      // (no glow ramp needed: the sulphur shelves' pores are plain yellow)
       B.add(mats.fungusTop, under.applyMatrix4(sunk), { color: 'keep' });
     }
   };
@@ -614,13 +623,20 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
         m.multiply(new THREE.Matrix4().makeRotationX(rng.range(-0.04, 0.16)));
         addShelf(m, r, rng, { zones, halo: i === 0 });
       }
-      // next shelf: up by less than its thickness-and-a-bit (so it tucks over
-      // this one like a roof tile), smaller, wandering sideways — and now and
-      // then the tier turns the other way
-      yy += r * rng.range(0.36, 0.6);
-      if (rng.chance(0.3)) drift = -drift;
-      aa += (drift * rng.range(0.3, 0.75) * r) / Math.max(R, 1);
-      r *= rng.range(0.74, 0.94);
+      // next shelf: either a sibling beside this one at about the same level
+      // (the tier fans out sideways, overlapping at the edges), or up by less
+      // than its thickness-and-a-bit, tucked over it like a roof tile and
+      // shifted sideways — smaller each time; now and then the tier turns
+      if (i > 0 && rng.chance(0.35)) {
+        yy += r * rng.range(-0.12, 0.12);
+        aa += (drift * rng.range(0.95, 1.25) * r) / Math.max(R, 1);
+        r *= rng.range(0.86, 1.0);
+      } else {
+        yy += r * rng.range(0.32, 0.52);
+        if (rng.chance(0.3)) drift = -drift;
+        aa += (drift * rng.range(0.5, 0.95) * r) / Math.max(R, 1);
+        r *= rng.range(0.74, 0.92);
+      }
     }
   }
   // …and on two limbs, near the fork
@@ -1188,7 +1204,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
   {
     const silk = [];
     const dot = new THREE.SphereGeometry(1, 6, 4);
-    const per = { 'front-left-low': 16, front: 12, 'left-high': 10, right: 8, 'front-right-high': 7, 'back-left': 8, 'back-right': 6, leader: 4, 'back-high': 6 };
+    const per = { 'front-left-low': 24, front: 18, 'left-high': 14, right: 10, 'front-right-high': 9, 'back-left': 12, 'back-right': 8, leader: 5, 'back-high': 8 };
     const v = new THREE.Vector3();
     for (const L of limbs) {
       const n = per[L.id] ?? 0;
@@ -1212,9 +1228,9 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
           const t = 1 - b * rng.range(0.1, 0.18);
           if (t < 0.25) break;
           v.copy(P).lerp(bottom, t);
-          const sz = (b === 0 ? rng.range(0.03, 0.042) : rng.range(0.018, 0.028));
+          const sz = (b === 0 ? rng.range(0.042, 0.058) : rng.range(0.024, 0.036));
           B.add(glowDot, dot.clone().scale(sz, sz * 1.25, sz).translate(v.x, v.y, v.z));
-          if (b === 0) fungusHalos.push({ x: v.x, y: v.y, z: v.z, size: 0.2 });
+          if (b === 0) fungusHalos.push({ x: v.x, y: v.y, z: v.z, size: 0.26 });
         }
       }
     }
@@ -1236,7 +1252,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
         if (night === last) return;
         last = night;
         const k = smoothstep(0.35, 0.85, night);
-        silkMat.opacity = 0.32 * k;
+        silkMat.opacity = 0.45 * k;
         lines.visible = k > 0.01;
       });
     }

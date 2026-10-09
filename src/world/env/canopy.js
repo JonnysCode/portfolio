@@ -21,6 +21,9 @@
 //     high-contrast flecks (≈ 0.5–2.5 units), with a slow regional density so
 //     sunny openings alternate with denser shade instead of an even leopard
 //     print; fades out up in the canopy (the crowns are the occluders);
+//   • a CLEARING (canopyParams.c): a soft round opening over the middle of
+//     the glen where the flecks grow denser and merge into a sunlit meadow —
+//     the bright heart of the composition (golden ground under the god rays);
 //   • the uniforms are shared live Float32Arrays (UniformsUtils.clone copies
 //     typed arrays by reference), registered in ShaderLib / UniformsLib.lights
 //     before anything compiles. A material compiled without them sees zeros,
@@ -32,6 +35,7 @@
 //
 // canopyParams.a = [time, strength, canopy plane height, fade start height]
 // canopyParams.b = [shade level, fleck gain, pattern frequency, detail octave (0/1)]
+// canopyParams.c = [clearing centre x, z, radius, strength (0 = none)]
 // installCanopy() is idempotent and runs on import.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
@@ -39,16 +43,19 @@ import * as THREE from 'three';
 export const canopyParams = {
   a: new Float32Array([0, 1, 22, 15]),
   b: new Float32Array([0.3, 1.3, 0.42, 1]),
+  c: new Float32Array([0, 0, 1, 0]),
 };
 
 const EXTRA_UNIFORMS = {
   woodlandCanopyA: { value: canopyParams.a },
   woodlandCanopyB: { value: canopyParams.b },
+  woodlandCanopyC: { value: canopyParams.c },
 };
 
 const PARS = /* glsl */ `
 uniform vec4 woodlandCanopyA;
 uniform vec4 woodlandCanopyB;
+uniform vec4 woodlandCanopyC;
 float wcHash( vec2 p ) {
 	vec3 p3 = fract( vec3( p.xyx ) * 0.1031 );
 	p3 += dot( p3, p3.yzx + 33.33 );
@@ -79,7 +86,10 @@ vec3 woodlandCanopy( vec3 viewPos, vec3 lightDirView ) {
 	}
 	// sunny openings vs dense leaf cover (a few metres across)
 	float region = wcNoise( q * 0.075 + 3.7 );
-	float thr = mix( 0.66, 0.43, region );
+	// the glen's sunny clearing: denser, merging flecks (ground position)
+	vec2 dc = wp.xz - woodlandCanopyC.xy;
+	float clearing = woodlandCanopyC.w * exp( - dot( dc, dc ) / max( woodlandCanopyC.z * woodlandCanopyC.z, 1e-3 ) );
+	float thr = mix( 0.66, 0.43, region ) - 0.2 * clearing;
 	// crisp edges, widened with distance so they never shimmer into speckle
 	// (an estimate of the pattern's change per pixel — no derivatives, so it
 	// is safe inside the lit-only branch)

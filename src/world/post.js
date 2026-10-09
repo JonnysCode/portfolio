@@ -26,24 +26,30 @@
 //              bulbs) never explode into big bokeh discs.
 //   finish     ONE pass: AO + DOF composite + bloom + the renderer's tone mapping &
 //              exposure + colour grade + warm vignette + fine animated grain +
-//              sRGB output. The grade is a golden storybook afternoon: warm
-//              highlights, neutral-warm shadows and lifted blacks (the cool
-//              blue-green lives only in the fog / misty distance), wood &
-//              warm hues glow honey-amber (olive is nudged back to amber).
-//              Saturation is hue-selective: reds, oranges and wood keep their
-//              boost, while yellow-greens (hue ≈ 70–140°: lawns, ferns, sunlit
-//              leaves) are pulled towards sage/olive with slightly cooler
-//              shadows — painterly greens, never neon.
+//              sRGB output. The grade is a golden storybook afternoon painted
+//              with a restrained palette: a highlight shoulder lifts sunlit cap
+//              tops, roofs and path stones to real highlights, overall
+//              saturation is lower by day, warm hues (reds, caps, wood,
+//              lamplight) keep theirs and glow honey-amber (olive is nudged
+//              back to amber), yellow-greens (hue ≈ 70–140°: lawns, ferns,
+//              leaves) are pulled towards sage — shaded greens drift towards a
+//              cool teal depth, sunlit greens towards a warm gold-green — and
+//              shadows get a cool teal-blue tint that spares warm hues.
 //              Night: a moonlit blue shadow tint that is MULTIPLICATIVE
 //              (hue-preserving — dark reds never clip to black) and spares
-//              warm hues, so red & ochre caps stay burgundy & ochre.
+//              warm hues, so red & ochre caps stay burgundy & ochre; mid and
+//              shadow greens lose their colour towards moonlit blue-teal
+//              (Purkinje), lamps & fireflies keep theirs.
 //              Saturation has a soft floor (never pushes a channel below 0).
 //
 // Tiers (quality.post): 'full' (high) = everything; 'lite' (medium) = bloom +
-// grade, 2× MSAA (no depth → no AO/DOF); false (low) = plain renderer (tone
-// mapping only). NaN/Inf pixels from any material are dropped before they can
-// be smeared by the blurs. If anything throws — setup or a frame — we fall
-// back to plain rendering for good.
+// grade, 2× MSAA (no depth → no AO/DOF); false (low) = a grade-only finishing
+// pass (quality.grade: the same tone curve & grade at DPR 1, no bloom, AO, DOF
+// or MSAA) — or the plain renderer (tone mapping only) where float targets are
+// not renderable or with ?grade=0. The engine's frame-time governor may switch
+// quality.ao / dof / bloom off at runtime. NaN/Inf pixels from any material
+// are dropped before they can be smeared by the blurs. If anything throws —
+// setup or a frame — we fall back to plain rendering for good.
 //
 // ctx.post = { composer (null — custom chain), bloom, settings, target, enabled, setEnabled(on) }
 //   settings are live-tunable (see SETTINGS).
@@ -80,22 +86,28 @@ const SETTINGS = {
   /** Day exposure (the night keeps `exposure`). */
   exposureDay: 1.06,
   /** Global saturation by day / night (night: the moonlit look, unchanged). */
-  saturationDay: 0.84,
+  saturationDay: 0.87,
   saturation: 1.12,
   /** Warm hues (reds, wood, caps, lamplight) keep at least this saturation by day. */
-  warmSaturationDay: 1.06,
-  /** Yellow-greens (hue 70–140°): saturation × this (sage, not neon) — 0..1 strength in `sage`. */
-  greenSaturationDay: 0.74,
+  warmSaturationDay: 1.1,
+  /**
+   * Yellow-greens (hue ≈ 65–145°): saturation × this (sage, not neon) — 0..1
+   * strength in `sage`. By day shaded greens lose more colour than sunlit ones
+   * (greenSaturationDay → greenSaturationSunDay across `greenPivot`).
+   */
+  greenSaturationDay: 0.57,
+  greenSaturationSunDay: 0.82,
   greenSaturation: 0.84,
   sage: 1,
   /**
    * Painterly greens by day (degrees of hue rotation, greens only): greens in
-   * shade turn towards a cool teal-blue depth, sunlit greens towards a warm
-   * yellow-green; `pivot` = display luminance [shade end, sun start].
+   * shade turn towards a cool teal depth, sunlit greens towards a warm
+   * gold-green; `pivot` = display luminance [shade end, sun start]. (Moderate:
+   * stronger turns ice the moss & ivy cyan.)
    */
-  greenShade: 62,
-  greenSun: -12,
-  greenPivot: [0.03, 0.2],
+  greenShade: 30,
+  greenSun: -20,
+  greenPivot: [0.014, 0.1],
   /** Night: Purkinje shift — mid & shadow greens drift towards moonlit blue-teal (0..1). */
   purkinje: 0.3,
   /**
@@ -108,7 +120,8 @@ const SETTINGS = {
   /** Highlights keep their hue (0..1) instead of bleaching to white — warm lights stay warm. */
   highlightHueDay: 0.2,
   highlightHueNight: 0.55,
-  warmth: 0.07,
+  /** Day: golden warmth of the upper mid tones & highlights. */
+  warmth: 0.12,
   /**
    * Shadow tint — MULTIPLICATIVE (hue-preserving: a dark red stays a dark red,
    * it is never subtracted to black) plus a tiny additive lift, weighted
@@ -386,6 +399,7 @@ class FinishMaterial extends THREE.ShaderMaterial {
         uHighlightHue: { value: 0.2 },
         uSaturation: { value: SETTINGS.saturation },
         uGreenSat: { value: SETTINGS.greenSaturation },
+        uGreenSatSun: { value: SETTINGS.greenSaturation },
         uWarmSat: { value: SETTINGS.warmSaturationDay },
         uSage: { value: SETTINGS.sage },
         uGreenShift: { value: new THREE.Vector4(SETTINGS.greenShade, SETTINGS.greenSun, ...SETTINGS.greenPivot) },
@@ -410,7 +424,7 @@ class FinishMaterial extends THREE.ShaderMaterial {
         uniform sampler2D tColor, tBloom, tBokeh, tAO;
         uniform float uUseBloom, uUseDof, uAO;
         uniform float uExposure, uSaturation, uWarmth, uLift, uVignette, uGrain, uAspect, uNight, uTime, uHighlightHue;
-        uniform float uWarmProtect, uWoodGlow, uGreenSat, uWarmSat, uSage, uPurkinje;
+        uniform float uWarmProtect, uWoodGlow, uGreenSat, uGreenSatSun, uWarmSat, uSage, uPurkinje;
         uniform vec4 uGreenShift;
         uniform vec3 uShadowMul, uShadowAdd, uLiftColor, uVignetteColor, uHiLift;
         varying vec2 vUv;
@@ -489,20 +503,21 @@ class FinishMaterial extends THREE.ShaderMaterial {
           float warm = hueBand(hue, 22.0, 24.0, 40.0) * chroma;
           // yellow-greens (≈ 70–140°: lawns, ferns, sunlit leaves): sage/olive, not neon;
           // by moonlight they lose even more colour (Purkinje: the eye's rods see no green)
-          float green = hueBand(hue, 105.0, 35.0, 50.0) * chroma;
+          float green = hueBand(hue, 105.0, 38.0, 55.0) * chroma;
           float sageK = uSage * green * (1.0 + 0.5 * uNight);
+          // shade (0) … sun (1) for the greens' saturation & hue turn
+          float sunK = smoothstep(uGreenShift.z, uGreenShift.w, l);
           // saturation with a soft floor: the boost may never push a channel
           // below half its value (so dark reds are never clipped to black).
           // Day: a painterly, lower overall saturation — warm hues (reds, wood,
-          // caps, lamplight) keep theirs.
-          float sat = uSaturation * mix(1.0, uGreenSat, sageK);
+          // caps, lamplight) keep theirs; shaded greens lose the most.
+          float sat = uSaturation * mix(1.0, mix(uGreenSat, uGreenSatSun, sunK), sageK);
           sat = mix(sat, max(sat, uWarmSat), warm);
           if (sat > 1.0 && cmn < l) sat = min(sat, (l - 0.5 * cmn) / max(l - cmn, 1e-5));
           col = mix(vec3(l), col, sat);
           // painterly greens (day): greens in shade turn towards a cool teal-blue
           // depth, sunlit greens towards a warm yellow-green (luminance mostly kept)
           if (green > 0.0 && day > 0.0) {
-            float sunK = smoothstep(uGreenShift.z, uGreenShift.w, l);
             float ang = radians(mix(uGreenShift.x, uGreenShift.y, sunK)) * green * day;
             col = max(hueRotate(col, ang), 0.0);
             float l2 = dot(col, vec3(0.2126, 0.7152, 0.0722));
@@ -640,10 +655,19 @@ export default async function build(ctx) {
   ctx.lights?.allocate?.();
   // quality.post: 'full' (high: AO + DOF + bloom + grade), 'lite' (medium:
   // bloom + grade, 2× MSAA), false (low: plain renderer, tone mapping only).
-  const mode = quality.post === true ? (quality.tier === 'high' ? 'full' : 'lite') : quality.post;
-  if (mode !== 'full' && mode !== 'lite') return {};
+  // 'low' (post false, quality.grade): a grade-only finishing pass — the scene in
+  // a half-float target at DPR 1, then ONE fullscreen quad with the same tone
+  // curve, lift, gamma, gain and hue-selective saturation (no bloom, AO or DOF),
+  // so the low tier keeps the art direction. Needs a renderable float target.
+  let mode = quality.post === true ? (quality.tier === 'high' ? 'full' : 'lite') : quality.post;
   const renderer = engine.renderer;
+  if (mode !== 'full' && mode !== 'lite' && quality.grade && engine.params?.get('grade') !== '0') {
+    const ext = renderer.extensions;
+    if (renderer.capabilities.isWebGL2 && (ext.has('EXT_color_buffer_float') || ext.has('EXT_color_buffer_half_float'))) mode = 'grade';
+  }
+  if (mode !== 'full' && mode !== 'lite' && mode !== 'grade') return {};
   const useDof = mode === 'full';
+  const useBloom = mode !== 'grade';
 
   let sceneRT, bloom, preRT, bokehRT, aoRT, aoBlurRT, finishMat, quads;
   try {
@@ -653,13 +677,16 @@ export default async function build(ctx) {
     // the scene's MSAA happens here)
     sceneRT = new THREE.WebGLRenderTarget(size.x, size.y, {
       type: THREE.HalfFloatType,
-      samples: mode === 'lite' || pr >= 1.75 ? 2 : 4,
+      // ('grade' — low — keeps the plain renderer's lack of MSAA)
+      samples: mode === 'grade' ? 0 : mode === 'lite' || pr >= 1.75 ? 2 : 4,
       depthTexture: useDof ? new THREE.DepthTexture(size.x, size.y) : null,
     });
     sceneRT.texture.name = 'woodland.post.scene';
     const css = renderer.getSize(new THREE.Vector2());
-    bloom = new WoodlandBloom(new THREE.Vector2(css.x, css.y), SETTINGS.bloomDay.strength, SETTINGS.bloomDay.radius, SETTINGS.bloomDay.threshold);
-    bloom.highPassUniforms.smoothWidth.value = SETTINGS.bloomDay.knee;
+    if (useBloom) {
+      bloom = new WoodlandBloom(new THREE.Vector2(css.x, css.y), SETTINGS.bloomDay.strength, SETTINGS.bloomDay.radius, SETTINGS.bloomDay.threshold);
+      bloom.highPassUniforms.smoothWidth.value = SETTINGS.bloomDay.knee;
+    }
     finishMat = new FinishMaterial();
     quads = { finish: new FullScreenQuad(finishMat) };
     if (useDof) {
@@ -685,7 +712,7 @@ export default async function build(ctx) {
     const pr = renderer.getPixelRatio();
     const W = Math.floor(w * pr), H = Math.floor(h * pr);
     sceneRT.setSize(W, H);
-    bloom.setSize(w, h);
+    bloom?.setSize(w, h);
     if (useDof) {
       preRT.setSize(Math.ceil(W / 2), Math.ceil(H / 2));
       bokehRT.setSize(Math.ceil(W / 2), Math.ceil(H / 2));
@@ -831,11 +858,13 @@ export default async function build(ctx) {
       if (n !== lastNight) {
         lastNight = n;
         const D = SETTINGS.bloomDay, N = SETTINGS.bloomNight;
-        bloom.strength = D.strength + (N.strength - D.strength) * n;
-        bloom.radius = D.radius + (N.radius - D.radius) * n;
-        bloom.threshold = D.threshold + (N.threshold - D.threshold) * n;
-        bloom.highPassUniforms.smoothWidth.value = D.knee + (N.knee - D.knee) * n;
-        bloom.highPassUniforms.uExcess.value = D.excess + (N.excess - D.excess) * n;
+        if (bloom) {
+          bloom.strength = D.strength + (N.strength - D.strength) * n;
+          bloom.radius = D.radius + (N.radius - D.radius) * n;
+          bloom.threshold = D.threshold + (N.threshold - D.threshold) * n;
+          bloom.highPassUniforms.smoothWidth.value = D.knee + (N.knee - D.knee) * n;
+          bloom.highPassUniforms.uExcess.value = D.excess + (N.excess - D.excess) * n;
+        }
         fu.uVignetteColor.value.copy(vignetteDay).lerp(vignetteNight, n);
         fu.uLiftColor.value.copy(liftDay).lerp(liftNight, n);
         fu.uNight.value = n;
@@ -845,6 +874,7 @@ export default async function build(ctx) {
       fu.uSaturation.value = SETTINGS.saturationDay + (SETTINGS.saturation - SETTINGS.saturationDay) * n;
       fu.uWarmSat.value = SETTINGS.warmSaturationDay + (SETTINGS.saturation - SETTINGS.warmSaturationDay) * n;
       fu.uGreenSat.value = SETTINGS.greenSaturationDay + (SETTINGS.greenSaturation - SETTINGS.greenSaturationDay) * n;
+      fu.uGreenSatSun.value = SETTINGS.greenSaturationSunDay + (SETTINGS.greenSaturation - SETTINGS.greenSaturationSunDay) * n;
       fu.uSage.value = SETTINGS.sage;
       fu.uGreenShift.value.set(SETTINGS.greenShade, SETTINGS.greenSun, SETTINGS.greenPivot[0], SETTINGS.greenPivot[1]);
       fu.uHiLift.value.set(...SETTINGS.highlightLiftDay);

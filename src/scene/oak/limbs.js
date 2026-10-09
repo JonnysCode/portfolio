@@ -34,7 +34,13 @@ const CROWN_GAPS = {
  * instead of a low hedge hanging over the cottages.
  */
 const LOW_LIMB = 'front-left-low';
-const LOW_LIMB_MIN_Y = 14.8;
+const LOW_LIMB_MIN_Y = 15.4;
+
+/** Deterministic hash of a point in [0, 1). */
+function hash3(x, y, z) {
+  const v = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453;
+  return v - Math.floor(v);
+}
 
 /** A main limb's curve and radius (u = arc-length fraction). */
 export function limbCurve(L) {
@@ -91,9 +97,16 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
   function addClump(p, s, tier) {
     if (p.y < 12.2) return;
     if (lowLimb) {
-      // lifted & thinned: no hanging skirt, small high clumps at the twig tips
+      // lifted & thinned: no hanging skirt, only a share of the twig-tip and
+      // bough clumps, smaller and high above the limb (a hash, not the rng,
+      // decides — the rest of the crown keeps its shape)
       if (tier === 3 || p.y < LOW_LIMB_MIN_Y) return;
-      s *= 0.92;
+      // (a twig keeps a small tuft rather than ending bare and dead-looking)
+      const h = hash3(p.x, p.y, p.z);
+      if ((tier === 2 && h > 0.72) || (tier === 1 && h > 0.62)) return;
+      s *= tier === 2 ? (h > 0.4 ? 0.55 : 0.72) : 0.8;
+      p = p.clone();
+      p.y += tier === 2 ? 0.2 : 0.5;
     }
     if (crownBlocked(p, s * 0.85)) return;
     clumps.push({ p: p.clone(), s, tier, limb: currentLimb });

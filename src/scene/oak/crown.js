@@ -19,6 +19,7 @@ import * as THREE from 'three';
 import { SUN_LIGHT_DIR, MOON_LIGHT_DIR } from '../../world/env/celestial.js';
 import { OAK } from '../../world/layout.js';
 import { sharedUniforms } from '../../core/materials.js';
+import { crownBlocked } from './shape.js';
 
 const TAU = Math.PI * 2;
 const _q = new THREE.Quaternion();
@@ -205,9 +206,11 @@ function crownGaps(rng, clumps, limbs, branches) {
     p.y += 0.4;
     gaps.push({ c: p, r: rng.range(1.2, 1.7) });
   }
-  // sky holes: whole high clumps knocked out
+  // sky holes: whole high clumps knocked out (the backdrop & the sky show
+  // through the upper crown in the wide frames)
   for (const c of clumps) {
     if (c.tier === 1 && c.p.y > 21 && rng.chance(0.2)) gaps.push({ c: c.p.clone(), r: c.s * 0.9 });
+    else if (c.tier === 2 && c.p.y > 25 && rng.chance(0.16)) gaps.push({ c: c.p.clone(), r: c.s * 0.85 });
   }
   return gaps;
 }
@@ -237,6 +240,13 @@ function moonlitCrownMaterial(base, bounce = []) {
   m.onBeforeCompile = (shader, renderer) => {
     prev?.call(m, shader, renderer);
     shader.uniforms.uOakNight = sharedUniforms.uNight;
+    // moonlight scattered through the leaves (the foliage translucency) turned
+    // every crown top into frosted felt: at night the crown keeps only a
+    // trace of it — a dark silhouette, the silver lives in the thin rim below
+    shader.fragmentShader = shader.fragmentShader.replace(
+      'float t = (0.35 * back + 0.9 * toward) * sfLight.y;',
+      'float t = (0.35 * back + 0.9 * toward) * sfLight.y * (1.0 - 0.8 * uOakNight);'
+    );
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>\nuniform float uOakNight;\nfloat oakUnder;\n#define MOON_DIR ${v3([moon.x, moon.y, moon.z])}`)
       .replace(
@@ -253,7 +263,7 @@ function moonlitCrownMaterial(base, bounce = []) {
     //  silver edge, not a frosted, moon-lit felt)
     vec3 oakMoonV = normalize((viewMatrix * vec4(MOON_DIR, 0.0)).xyz);
     float oakMoonLit = clamp(dot(normalize(vNormal), oakMoonV), 0.0, 1.0);
-    diffuseColor.rgb = mix(diffuseColor.rgb, oakDeep, 0.35 * uOakNight) * mix(1.0, 0.4 * (1.0 - 0.62 * oakUnder) * (1.0 - 0.35 * oakMoonLit), uOakNight);
+    diffuseColor.rgb = mix(diffuseColor.rgb, oakDeep, 0.35 * uOakNight) * mix(1.0, 0.4 * (1.0 - 0.62 * oakUnder) * (1.0 - 0.55 * oakMoonLit), uOakNight);
   }`
       )
       .replace(
@@ -268,7 +278,7 @@ function moonlitCrownMaterial(base, bounce = []) {
     float oF2 = oFres * oFres;
     float oRim = smoothstep(0.15, 0.8, dot(oN, oM)) * oF2 * oF2 * oF2;
     float oLeaf = 0.55 + 2.2 * dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
-    totalEmissiveRadiance += vec3(0.5, 0.6, 0.72) * oRim * 0.16 * oLeaf * uOakNight;
+    totalEmissiveRadiance += vec3(0.5, 0.6, 0.72) * oRim * 0.2 * oLeaf * uOakNight;
     // warm bounce under the masses near the loft & the lanterns
     vec3 oW = (vec4(-vViewPosition, 0.0) * viewMatrix).xyz + cameraPosition;
     float oakWarm = 0.0;
@@ -278,7 +288,7 @@ function moonlitCrownMaterial(base, bounce = []) {
       );
   };
   const key = m.customProgramCacheKey();
-  m.customProgramCacheKey = () => `${key}|oak-crown-night3`;
+  m.customProgramCacheKey = () => `${key}|oak-crown-night6`;
   return m;
 }
 
@@ -320,13 +330,20 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
     const t = under ? (rng.chance(0.5) ? 2 : ci % 2) : ci % 2;
     _e.set(rng.range(-0.2, 0.2), rng.range(0, Math.PI * 2), rng.range(-0.2, 0.2));
     _q.setFromEuler(_e);
-    _s.set(c.s * rng.range(0.88, 1.18), c.s * rng.range(0.78, 1.0), c.s * rng.range(0.88, 1.18));
+    // masses of very different sizes (no stack of equal puffs), spread wide
+    // and flat like an old oak's layered foliage pads
+    const hk = hash2(c.p.x * 0.37 + c.p.z, c.p.y * 0.61);
+    const k = c.tier === 0 ? 1.08 + 0.2 * hk : 0.74 + 0.56 * hk * hk;
+    _s.set(c.s * k * rng.range(0.95, 1.22), c.s * k * rng.range(0.78, 0.96), c.s * k * rng.range(0.95, 1.22));
     const M = new THREE.Matrix4().compose(c.p, _q, _s);
     return { t, M, under, drift: rng.range(-1, 1), shade: rng.range(0.9, 1.06) };
   });
   const gaps = crownGaps(rng.fork('gaps'), clumps, limbs, branches);
   const tv = new THREE.Vector3();
   const inGap = (p, ci, k) => {
+    // (a card of a wide pad that would reach into a spot camera's view or the
+    //  Code Loft is dropped too — the views stay clear card by card)
+    if (crownBlocked(p, 0.3)) return true;
     for (const g of gaps) {
       const r = g.r * (0.78 + 0.44 * hash2(ci + 0.37, k)); // ragged rims
       // ellipsoids, taller than wide: windows that read from above and below
@@ -373,6 +390,16 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
     e.p.multiplyScalar(1 / e.w);
     e.p.y -= 2.5;
   }
+  // each limb's mass spans this height range: its top is sunlit, its belly
+  // dark — one big gradient across the mass, so the clumps merge into
+  // painterly masses instead of reading as a stack of separate lit puffs
+  const massY = new Map();
+  for (const c of clumps) {
+    const e = massY.get(c.limb) ?? { lo: Infinity, hi: -Infinity };
+    e.lo = Math.min(e.lo, c.p.y - c.s * 0.55);
+    e.hi = Math.max(e.hi, c.p.y + c.s * 0.75);
+    massY.set(c.limb, e);
+  }
   let yMin = Infinity, yMax = -Infinity;
   for (const c of clumps) {
     yMin = Math.min(yMin, c.p.y);
@@ -407,6 +434,7 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
     const g = geos[pl.t];
     NM.getNormalMatrix(pl.M);
     const centre = centres.get(c.limb).p;
+    const my = massY.get(c.limb);
     // per-clump hue: olive ↔ sage drift; height in the crown makes it warmer
     const h = THREE.MathUtils.clamp((c.p.y - yMin) / Math.max(1, yMax - yMin) + pl.drift * 0.15, 0, 1);
     hue.copy(MID).lerp(pl.drift > 0 ? OLIVE : SAGE, Math.abs(pl.drift) * 0.7);
@@ -439,7 +467,8 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
         const lobeLight = 0.5 + 0.5 * aux[sv * 3];
         const inner = aux[sv * 3 + 1];
         const clumpLight = 0.5 + 0.5 * aux[sv * 3 + 2];
-        let light = THREE.MathUtils.clamp(0.42 * clumpLight + 0.33 * lobeLight + 0.25 * (0.5 + 0.5 * n.y), 0, 1);
+        const massLight = THREE.MathUtils.clamp((v.y - my.lo) / Math.max(1, my.hi - my.lo), 0, 1);
+        let light = THREE.MathUtils.clamp(0.3 * massLight + 0.27 * clumpLight + 0.25 * lobeLight + 0.18 * (0.5 + 0.5 * n.y), 0, 1);
         if (pl.under) light *= 0.8;
         light = light * light * (3 - 2 * light);
         tmpC.copy(UNDER).lerp(hue, THREE.MathUtils.smoothstep(light, 0.12, 0.62));

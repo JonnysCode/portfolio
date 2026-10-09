@@ -201,7 +201,7 @@ function buildLookDev(ctx) {
   // row 7 (z = -36.5) — end grain & small joinery at the Schreinerei's scale, and
   // vertex-coloured mossy rocks next to plain ones (the moss must look the same)
   //   --custom "chest:-1.3,0.95,-35.2:-1.6,0.55,-36.5"  --custom "endgrain:0.3,0.8,-35.1:0.2,0.2,-36.5"
-  //   --custom "vcmoss:5,1.1,-34.6:5,0.25,-36.6"
+  //   --custom "vcmoss:5,1.1,-34.6:5,0.25,-36.6"  --custom "ends:0,0.38,-35.5:-0.1,0.05,-36.3"  --custom "posttop:0.75,1.35,-36.3:0.45,0.9,-36.7"
   const Z3 = -36.5;
   const part = (w, h, d, grain) => materials.boxUV(new THREE.BoxGeometry(w, h, d), 1.4, { grain, offset: [rand() * 7, rand() * 7] });
   // a little oak chest (62 cm): front/back boards run along x, the sides along z
@@ -231,6 +231,19 @@ function buildLookDev(ctx) {
     add(g, vcWood, 1.0 + i * 0.2, 0.25, Z3 + 0.1);
   });
   tag('vc wood', 1.3, 0.75, Z3 + 0.1);
+  // the loft / riverside / cottage way: species oak + vertex colours (the grain must
+  // average to the vertex colour — not a doubly saturated orange)
+  //   --custom "vcspecies:1.3,0.75,-35.4:1.3,0.25,-36.9"
+  const vcOak = materials.surface('wood', { species: 'oak', vertexColors: true });
+  [['#a8845a', 'oak'], ['#cbb088', 'spruce'], ['#5e4433', 'walnut'], ['#985c40', 'cherry'], ['#8f8478', 'grey']].forEach(([c], i) => {
+    const g = part(0.16, 0.5, 0.05, 'y');
+    const col = new THREE.Color(c);
+    g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count).fill(0).flatMap(() => [col.r, col.g, col.b]), 3));
+    add(g, vcOak, 0.9 + i * 0.2, 0.25, Z3 - 0.5);
+  });
+  // a fieldstone wall shell ('masonry', the low tier's bridge/workshop walls)
+  add(new THREE.BoxGeometry(1.2, 0.6, 0.2), materials.surface('masonry', { mossy: 0.35, scale: 0.75 }), 2.9, 0.3, Z3 - 0.4);
+  tag('masonry', 2.9, 0.9, Z3 - 0.4);
   // vertex-coloured mossy rocks (grey, dark) beside plain mossy rocks
   const rockVC = materials.surface('rock', { vertexColors: true, mossy: 0.6 });
   const rockPlain = materials.surface('rock', { mossy: 0.6 });

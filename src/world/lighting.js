@@ -11,8 +11,9 @@
 //                          moonlight (silver-lavender, back-right). On 'medium'
 //                          the shadow map is re-rendered every other frame and
 //                          small casters are left out of it.
-//   hemi HemisphereLight   soft sage sky fill (warm-neutral: the teal lives only
-//                          in the misty distance) / warm golden ground bounce.
+//   hemi HemisphereLight   soft, cool teal-grey sky fill (the shade reads as
+//                          cool depth, never green felt) / warm golden ground
+//                          bounce.
 //   rim  DirectionalLight  faint cool light from the back-right that separates
 //                          the shaded sides from the misty background; by
 //                          night a stronger cool moon-rim from the west
@@ -34,7 +35,12 @@
 //   canopy cookie          every lit material's key light is dappled by a
 //                          world-space leaf-gap pattern (env/canopy.js — a
 //                          global light-chunk patch): sun flecks on lawns,
-//                          paths, roofs and trunks, shimmering as leaves sway.
+//                          paths, roofs and trunks, shimmering as leaves sway;
+//                          bright golden flecks over deep shade by day, and a
+//                          sunny clearing in the heart of the glen.
+//   light pools            (night) every point request and lit doorway gets an
+//                          additive warm pool on the ground (props/glow.js
+//                          lightPools) — see buildLightPools.
 //   scene.environment      a painted "under the canopy" PMREM (env/envmap.js) so
 //                          PBR surfaces get soft ambient and gentle
 //                          reflections; swapped for a night version at dusk.
@@ -60,7 +66,9 @@ import { SUN_LIGHT_DIR, MOON_LIGHT_DIR, dirFromAngles, envUniforms } from './env
 import { installFog } from './env/fog.js';
 import { installCanopy, canopyParams } from './env/canopy.js';
 import { buildEnvMaps } from './env/envmap.js';
-import { SPOTS, OAK, SCHREINEREI } from './layout.js';
+import { SPOTS, OAK, SCHREINEREI, RIVERSIDE, STREAM } from './layout.js';
+import { getHeight, isInWater, getPathDistance } from './ground.js';
+import { lightPools } from '../props/glow.js';
 
 // Patch the fog & light chunks before any material compiles (idempotent).
 installFog();
@@ -69,9 +77,16 @@ installCanopy();
 const DAY = {
   key: new THREE.Color('#ffd49a'),
   keyI: 4.05,
-  hemiSky: new THREE.Color('#aebf9f'),
+  // a cool teal-grey sky fill: the shade reads as cool depth (not green felt),
+  // the warm key paints the sunlit flecks gold
+  hemiSky: new THREE.Color('#a2bcbe'),
   hemiGround: new THREE.Color('#7a6440'),
   hemiI: 0.85,
+  /** canopy cookie: shade level between the flecks and the flecks' gain (sunlit cap tops, roofs, path stones) */
+  canopyShade: 0.28,
+  canopyFleck: 1.5,
+  /** the glen's sunny clearing (env/canopy.js): strength */
+  clearing: 0.85,
   rim: new THREE.Color('#a9d2e6'),
   rimI: 0.4,
   envI: 0.5,
@@ -90,7 +105,12 @@ const NIGHT = {
   envI: 0.56,
   beam: new THREE.Color('#a8c0ff'),
   beamI: 1.8,
+  canopyShade: 0.3,
+  canopyFleck: 1.3,
+  clearing: 0, // (the moonlit night stays exactly as it was)
 };
+/** The glen's sunny clearing (ground x, z, radius): the open heart of the glen in front of the oak. */
+const CLEARING = [-1, 7, 6.5];
 
 /** The moonlit glen is exposed a touch brighter (all tiers; lights are tamed by post's night bloom). */
 const NIGHT_EXPOSURE_BOOST = 0.07;
@@ -324,6 +344,11 @@ export default async function build(ctx) {
       chosen.add(r);
     }
     for (const r of requests) if (chosen.has(r)) enable(r.light);
+    try {
+      buildLightPools(chosen);
+    } catch (err) {
+      console.warn('[lighting] light pools failed', err);
+    }
     if (q.shadows) trimShadowCasters(q.tier === 'high' ? { mesh: 0.75, instance: 0.5, keepSkinned: true } : { mesh: 1.5, instance: 0.5, keepSkinned: false });
     ctx.lights.pointRequests = requests.map((r) => ({ spot: r.spot, priority: +r.priority.toFixed(1), on: chosen.has(r), p: r.light.position.toArray().map((v) => +v.toFixed(1)) }));
     // the moonbeam finds the fairy ring (a secret hotspot of the vegetation)
@@ -380,6 +405,252 @@ export default async function build(ctx) {
     });
     ctx.lights.trimmedCasters = trimmed;
   }
+  /**
+   * Night light pools (props/glow.js lightPools — additive ground decals, one
+   * draw call): the point-light budget cannot cover every lamp, so EVERY
+   * addPoint request (live or not) gets a warm pool on the surface below it
+   * (the highest flat surface below it: a floor, a deck, the path), and every lit
+   * doorway (mushroom houses incl. the Wohnatelier arch, the Velowerkstatt,
+   * the Schreinerei door & annex) spills an elongated pool over its threshold.
+   * A pool next to a LIVE point light is weaker (that light already lights
+   * the ground), on 'low' (no point lights) the pools are all there is.
+   * They light in the lamplighter cascade and are hidden by day.
+   */
+  function buildLightPools(live) {
+    const t0 = performance.now();
+    scene.updateMatrixWorld();
+    const pools = [];
+    const groundY = (x, z) => (isInWater(x, z) ? Math.max(getHeight(x, z), STREAM.waterLevel) : getHeight(x, z));
+
+    // lanterns without a point request: the oak's hanging lanterns, both
+    // bridge lanterns and the path lanterns on posts (collider tag
+    // 'path-lantern'; their arm reaches over the path)
+    const extra = [];
+    {
+      const near = (p) => requests.some((r) => Math.hypot(r.light.position.x - p.x, r.light.position.z - p.z) < 0.7);
+      const add = (p) => {
+        if (!near(p)) extra.push(p);
+      };
+      for (const p of ctx.oak?.lanterns ?? []) add({ x: p.x, y: p.y, z: p.z });
+      for (const p of ctx.modules?.riverside?.anchors?.bridgeLanterns ?? []) add({ x: p.x, y: p.y, z: p.z });
+      for (const sh of ctx.colliders?.shapes ?? []) {
+        if (sh.tag !== 'path-lantern') continue;
+        // nudge towards the path (down the path-distance gradient)
+        const gx = getPathDistance(sh.x + 0.1, sh.z) - getPathDistance(sh.x - 0.1, sh.z);
+        const gz = getPathDistance(sh.x, sh.z + 0.1) - getPathDistance(sh.x, sh.z - 0.1);
+        const gl = Math.hypot(gx, gz) || 1;
+        const x = sh.x - (gx / gl) * 0.3, z = sh.z - (gz / gl) * 0.3;
+        add({ x, y: groundY(x, z) + 0.75, z });
+      }
+    }
+
+    // Surfaces a pool may lie on (floors, decks, porches, the bridge, steps): the
+    // FLAT-ish triangles (|normal.y| > 0.75) of the building modules' opaque
+    // static meshes within reach of a lamp, collected once. No terrain (getHeight
+    // is exact), no oak / vegetation (huge batches, leaf cards), no glows, no
+    // characters. "What is below this point" is then a 2D point-in-triangle test.
+    const CELL = 2;
+    const cells = new Set();
+    for (const p of [...requests.map((r) => r.light.position), ...extra]) {
+      if (p.y - groundY(p.x, p.z) > 7.5) continue;
+      for (let i = -2; i <= 2; i++) for (let k = -2; k <= 2; k++) cells.add(`${Math.floor(p.x / CELL) + i},${Math.floor(p.z / CELL) + k}`);
+    }
+    const tri = []; // ax, az, ay, bx, bz, by, cx, cz, cy
+    {
+      const roots = ['schreinerei', 'loft', 'cottage', 'riverside'].flatMap((id) => ctx.moduleRoots?.[id] ?? []);
+      const m4 = new THREE.Matrix4();
+      const v = new THREE.Vector3();
+      let wp = new Float32Array(0);
+      const addMesh = (o, g, mw) => {
+        const pos = g.attributes.position;
+        const n = pos.count;
+        if (wp.length < n * 3) wp = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) {
+          v.fromBufferAttribute(pos, i).applyMatrix4(mw);
+          wp[i * 3] = v.x;
+          wp[i * 3 + 1] = v.y;
+          wp[i * 3 + 2] = v.z;
+        }
+        const idx = g.index;
+        const count = idx ? idx.count : n;
+        for (let t = 0; t + 2 < count; t += 3) {
+          const a = (idx ? idx.getX(t) : t) * 3, b = (idx ? idx.getX(t + 1) : t + 1) * 3, c = (idx ? idx.getX(t + 2) : t + 2) * 3;
+          const ax = wp[a], az = wp[a + 2], bx = wp[b], bz = wp[b + 2], cx = wp[c], cz = wp[c + 2];
+          const minX = Math.floor(Math.min(ax, bx, cx) / CELL), maxX = Math.floor(Math.max(ax, bx, cx) / CELL);
+          const minZ = Math.floor(Math.min(az, bz, cz) / CELL), maxZ = Math.floor(Math.max(az, bz, cz) / CELL);
+          if (maxX - minX > 3 || maxZ - minZ > 3) continue; // a huge triangle is no floor of a lamp
+          let hit = false;
+          for (let i = minX; i <= maxX && !hit; i++) for (let k = minZ; k <= maxZ && !hit; k++) hit = cells.has(`${i},${k}`);
+          if (!hit) continue;
+          // flat-ish? (normal from the world-space edges)
+          const e1x = bx - ax, e1y = wp[b + 1] - wp[a + 1], e1z = bz - az;
+          const e2x = cx - ax, e2y = wp[c + 1] - wp[a + 1], e2z = cz - az;
+          const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+          const nl = Math.hypot(nx, ny, nz);
+          if (nl < 1e-9 || Math.abs(ny) / nl < 0.75) continue;
+          tri.push(ax, az, wp[a + 1], bx, bz, wp[b + 1], cx, cz, wp[c + 1]);
+        }
+      };
+      for (const r of roots) {
+        r.traverse((o) => {
+          if (!o.isMesh || o.isSkinnedMesh || !o.visible || o === ctx.terrainMesh) return;
+          const m = Array.isArray(o.material) ? o.material[0] : o.material;
+          if (!m || m.transparent || m.depthWrite === false || m.alphaTest > 0 || m.isShaderMaterial) return;
+          if (o.raycast !== THREE.Mesh.prototype.raycast && !o.isInstancedMesh) return; // glows, smoke, helpers
+          const g = o.geometry;
+          if (!g?.attributes?.position) return;
+          if (o.isInstancedMesh) {
+            for (let i = 0; i < o.count; i++) {
+              o.getMatrixAt(i, m4);
+              addMesh(o, g, m4.premultiply(o.matrixWorld));
+            }
+          } else addMesh(o, g, o.matrixWorld);
+        });
+      }
+    }
+    /** y of the highest flat-ish surface at least `near` below p (else the ground). */
+    function surfaceBelow(p, near = 0.3) {
+      const gy = groundY(p.x, p.z);
+      if (p.y - gy < near + 0.3) return gy;
+      const top = p.y - near;
+      let best = gy;
+      const x = p.x, z = p.z;
+      for (let t = 0; t < tri.length; t += 9) {
+        const ax = tri[t], az = tri[t + 1], bx = tri[t + 3], bz = tri[t + 4], cx = tri[t + 6], cz = tri[t + 7];
+        // barycentric point-in-triangle (xz)
+        const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+        if (Math.abs(d) < 1e-12) continue;
+        const u = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / d;
+        if (u < 0 || u > 1) continue;
+        const w = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / d;
+        if (w < 0 || u + w > 1) continue;
+        const y = u * tri[t + 2] + w * tri[t + 5] + (1 - u - w) * tri[t + 8];
+        if (y < top && y > best) best = y;
+      }
+      return best;
+    }
+
+    /** Does a flat floor at height y cover the ring of radius r around (x, z)? */
+    const probe = new THREE.Vector3();
+    function floorCovers(x, y, z, r) {
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        probe.set(x + Math.cos(a) * r, y + 0.4, z + Math.sin(a) * r);
+        const fy = surfaceBelow(probe, 0.25);
+        if (Math.abs(fy - y) > 0.12) return false;
+      }
+      return true;
+    }
+
+    // ① under every point request (live or not)
+    for (const r of requests) {
+      const l = r.light;
+      const p = l.position;
+      const y = surfaceBelow(p);
+      const h = p.y - y;
+      if (h > 7) continue; // high in a giant: its light never reaches the ground as a pool
+      const night = l.userData.intensity.night;
+      const reach = Math.sqrt((l.distance || 7) / 7);
+      const warm = isWarmColor(l.color);
+      // high-up surfaces (decks, floors, the loft) get a flat pool, the ground a draped one
+      const flat = Math.abs(y - groundY(p.x, p.z)) > 0.05;
+      let size = THREE.MathUtils.clamp(0.9 + 0.38 * h, 1.15, 2.3) * reach;
+      // a flat pool must not overhang its deck (it would float in the air): shrink
+      // it until a ring at 85 % of its radius still finds the same floor
+      if (flat) {
+        let ok = false;
+        for (let k = 0; k < 4 && !ok; k++, size *= 0.72) ok = floorCovers(p.x, y, p.z, size * 0.85);
+        if (!ok) continue;
+        size /= 0.72;
+      }
+      pools.push({
+        x: p.x,
+        y,
+        z: p.z,
+        size,
+        color: l.color.getStyle(),
+        strength: (live.has(r) ? 0.45 : 1) * THREE.MathUtils.clamp(night / 4.5, 0.55, 1.25) * (warm ? 1 : 0.55) / (1 + 0.06 * h * h),
+        flat,
+      });
+    }
+
+    // ①b lanterns without a point request (see `extra` above)
+    {
+      const pt = new THREE.Vector3();
+      for (const e of extra) {
+        pt.set(e.x, e.y, e.z);
+        const y = surfaceBelow(pt);
+        const h = e.y - y;
+        if (h > 6) continue;
+        const flat = Math.abs(y - groundY(e.x, e.z)) > 0.05;
+        let size = THREE.MathUtils.clamp(0.75 + 0.35 * h, 0.95, 1.9);
+        if (flat) {
+          let ok = false;
+          for (let k = 0; k < 3 && !ok; k++, size *= 0.72) ok = floorCovers(e.x, y, e.z, size * 0.85);
+          if (!ok) continue;
+          size /= 0.72;
+        }
+        pools.push({ x: e.x, y, z: e.z, size, color: '#ffb35c', strength: 0.75 / (1 + 0.06 * h * h), flat });
+      }
+    }
+
+    // ② lit doorways: a long pool spilling out over the threshold
+    // (an interior light never reaches the threshold as a pool: walls, decay —
+    // so doorway pools keep their strength whether or not that light is live)
+    const doorway = (x, z, dx, dz, opts = {}) => {
+      const y = groundY(x, z);
+      pools.push({ x, y, z, dir: { x: dx, z: dz }, size: opts.size ?? 1.35, stretch: opts.stretch ?? 1.55, back: 0.45, color: opts.color ?? '#ffaa58', strength: opts.strength ?? 1, delay: opts.delay ?? 0 });
+    };
+    const v = new THREE.Vector3(), c0 = new THREE.Vector3();
+    scene.traverse((o) => {
+      const u = o.userData;
+      if (o.name !== 'mushroomHouse' || !u?.doorTarget) return;
+      c0.set(0, 0, 0).applyMatrix4(o.matrixWorld);
+      if (u.door) {
+        v.copy(u.door).applyMatrix4(o.matrixWorld);
+        doorway(v.x, v.z, v.x - c0.x, v.z - c0.z, { strength: 0.85 });
+      }
+      if (u.interior) {
+        // the Wohnatelier's open arch: a wide pool over the terrace
+        const I = u.interior;
+        const s = Math.sin(I.phi ?? 0), cz = Math.cos(I.phi ?? 0);
+        v.set(s * (I.facadeZ + 0.1), 0, cz * (I.facadeZ + 0.1)).applyMatrix4(o.matrixWorld);
+        const d = new THREE.Vector3(s, 0, cz).transformDirection(o.matrixWorld);
+        doorway(v.x, v.z, d.x, d.z, { size: Math.max(1.5, (I.width ?? 2.6) * 0.62), stretch: 1.5, strength: 1.1, color: '#ffb465' });
+      }
+    });
+    // the Velowerkstatt's double doors (riverside anchors) …
+    const shopDoor = ctx.modules?.riverside?.anchors?.workshopDoor;
+    if (shopDoor) doorway(shopDoor.x, shopDoor.z, shopDoor.x - RIVERSIDE.bikeShed.x, shopDoor.z - RIVERSIDE.bikeShed.z, { size: 1.6, stretch: 1.5, strength: 1.1 });
+    // … the round Schreinerei door in the oak (facing +Z) and the annex's double door
+    // (the round door's own point light already pools warm light on the path: a lighter touch)
+    doorway(OAK.door.x, OAK.door.z + 0.35, Math.sin(OAK.door.rotY ?? 0), Math.cos(OAK.door.rotY ?? 0), { size: 1.4, stretch: 1.5, strength: 0.55 });
+    {
+      const A = SCHREINEREI.annex;
+      const cs = Math.cos(A.rotY), sn = Math.sin(A.rotY);
+      // annex-local door centre (x = (s0 + s1) / 2 − hx ≈ −0.28, z = hz + 0.15)
+      const lx = -0.28, lz = A.depth / 2 + 0.15;
+      doorway(A.x + lx * cs + lz * sn, A.z - lx * sn + lz * cs, sn, cs, { size: 1.35, stretch: 1.4, strength: 0.8 });
+    }
+
+    if (!pools.length) return;
+    // flat pools (decks, floors) and terrain-draped pools in one mesh each
+    const flat = pools.filter((p) => p.flat);
+    const draped = pools.filter((p) => !p.flat);
+    lightPoolMeshes.length = 0;
+    if (draped.length) lightPoolMeshes.push(lightPools(draped, { height: groundY, lift: 0.1 }));
+    if (flat.length) lightPoolMeshes.push(lightPools(flat, { lift: 0.03 }));
+    for (const m of lightPoolMeshes) {
+      m.visible = (env?.night ?? 0) > 0.02;
+      scene.add(m);
+    }
+    ctx.lights.pools = { count: pools.length, meshes: lightPoolMeshes, ms: Math.round(performance.now() - t0), list: pools };
+  }
+  function isWarmColor(c) {
+    const hsl = c.getHSL({ h: 0, s: 0, l: 0 });
+    return (hsl.h < 0.17 || hsl.h > 0.95) && hsl.s > 0.25;
+  }
+  const lightPoolMeshes = [];
   function applyPoint(l, n) {
     // Lanterns swell a little beyond linear as dusk falls (they "come on").
     const k = smoothstep(0.15, 0.9, n);
@@ -433,6 +704,10 @@ export default async function build(ctx) {
     hemi.intensity = DAY.hemiI + (nightHemiI - DAY.hemiI) * n;
     rim.color.copy(DAY.rim).lerp(NIGHT.rim, n);
     rim.intensity = DAY.rimI + (nightRimI - DAY.rimI) * n;
+    // the canopy cookie: deeper shade & brighter flecks by day, the clearing open
+    canopyParams.b[0] = DAY.canopyShade + (NIGHT.canopyShade - DAY.canopyShade) * n;
+    canopyParams.b[1] = DAY.canopyFleck + (NIGHT.canopyFleck - DAY.canopyFleck) * n;
+    canopyParams.c.set([CLEARING[0], CLEARING[1], CLEARING[2], DAY.clearing + (NIGHT.clearing - DAY.clearing) * n]);
     // the beam: golden sunbeam on the Schreinerei, fading out towards dusk, then
     // (relocated while dark) a silver moonbeam on the fairy ring
     const phase = n < 0.5 ? 0 : 1;
@@ -503,6 +778,8 @@ export default async function build(ctx) {
     if (n !== lastNight) {
       lastNight = n;
       update(n);
+      // the night light pools cost nothing by day
+      for (const m of lightPoolMeshes) m.visible = n > 0.02;
     }
     if (throttleShadows && frameNo++ % (q.shadowEvery || 2) === 0) renderer.shadowMap.needsUpdate = true;
   }, 21);

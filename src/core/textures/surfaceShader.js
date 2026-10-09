@@ -50,12 +50,17 @@ const DIRECT_OVERRIDE = /* glsl */ `
 uniform vec4 sfLight; // x: wrap, y: translucency, z: unused, w: unused
 #ifdef SF_BARK
 vec3 sfDirK = vec3(1.0); // per-fragment albedo multiplier for DIRECT light only (set by the surface)
+vec3 sfDirN = vec3(0.0); // the unmapped geometry normal (view space), set by the surface
 #endif
 void RE_Direct_Woodland(const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in PhysicalMaterial material, inout ReflectedLight reflectedLight) {
 #ifdef SF_BARK
+  // bark in direct light: the furrows' walls turned from the sun would go
+  // black against sunlit plates (a painted tiger band) — light it with the
+  // relief half flattened; shade & ambient keep the full relief
   PhysicalMaterial sfMD = material;
   sfMD.diffuseContribution *= sfDirK;
-  RE_Direct_Physical(directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, sfMD, reflectedLight);
+  vec3 sfNB = normalize(mix(geometryNormal, sfDirN, 0.5));
+  RE_Direct_Physical(directLight, geometryPosition, sfNB, geometryViewDir, geometryClearcoatNormal, sfMD, reflectedLight);
 #else
   RE_Direct_Physical(directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
 #endif
@@ -350,10 +355,15 @@ const SURFACE_MAIN = /* glsl */ `
     float lift = mix(clamp(sfS.w / max(lum, 1e-4), 1.0, 4.0), 1.0, sfMossM);
     vec3 c = sfCol * lift;
     float l2 = dot(c, LW);
-    float hi = smoothstep(1.15, 1.9, l2 / max(sfS.w * 2.5, 1e-4)) * (1.0 - sfMossM);
-    c = mix(c, vec3(l2) * vec3(1.05, 1.0, 0.92), hi * 0.45);
+    // the warm sun × warm grade would turn brown plates yellow: desaturate the
+    // sunlit bark a little everywhere, the bright plates more (warm grey-tan)
+    float hi = smoothstep(1.1, 1.8, l2 / max(sfS.w * 2.5, 1e-4)) * (1.0 - sfMossM);
+    c = mix(c, vec3(l2) * vec3(1.06, 1.0, 0.9), (0.35 + 0.3 * hi) * (1.0 - sfMossM));
+    // …and the brightest plates don't take the full sun (no blown yellow band)
+    c *= 1.0 - 0.18 * hi;
     // …and no painterly crevice darkening on the sunlit side (it stays on ambient)
     sfDirK = c / max(sfCol, vec3(1e-4)) / mix(1.0, sfAO, sfP.y * 0.3);
+    sfDirN = sfNormal0;
   }
 #endif
   diffuseColor.rgb *= sfCol;
