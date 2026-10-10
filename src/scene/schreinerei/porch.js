@@ -24,7 +24,7 @@ import {
   addLantern, addIvy, paint, SPECIES, noiseA, addBowSaw, turned, pushHalo, count,
 } from './kit.js';
 import { mossVCMaterial, paintMoss, mossTone } from './door.js';
-import { ANNEX, annexFrame, annexMatrix, crook, annexToWorld, decalMaterial, decalGeo, DECAL, frameMat, paintMember } from './annex.js';
+import { ANNEX, annexFrame, annexMatrix, crook, annexToWorld, decalMaterial, decalGeo, DECAL, frameMat, paintMember, shakeScale } from './annex.js';
 import { makeShavings, shavingGeo } from './fx.js';
 
 /**
@@ -124,6 +124,7 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
   const odd = [];
   const SILVER = new THREE.Color(0.74, 0.74, 0.72);
   const MOSSC = new THREE.Color(0.55, 0.7, 0.4);
+  const SH = shakeScale(); // (larger shakes on the low tier, as on the annex)
   layShingles(field, {
     origin: sOrigin,
     alongDir: along,
@@ -131,6 +132,8 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
     normal,
     length: sLen,
     height: sH,
+    w: 0.2 * SH,
+    exposure: 0.125 * SH,
     rng,
     skip: (u, v) => {
       if (v > 0.1 && v < sH - 0.2 && shRng.next() < 0.06) {
@@ -228,7 +231,7 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
     const mRng = createRng('porch-roof-moss');
     const mossVC = mossVCMaterial(ctx);
     const roofAt = (x, v, off) => [x, sOrigin.y + up.y * v + normal.y * off, sOrigin.z + up.z * v + normal.z * off];
-    const exp = 0.125; // the shakes' course exposure (layShingles)
+    const exp = 0.125 * SH; // the shakes' course exposure (layShingles)
     const cushion = (x, v, size, { drape = 0, sun = 0.7 } = {}) => {
       const h = size * mRng.range(0.6, 0.9);
       const g = mossPadGeo(mRng, { r: size, h, sx: mRng.range(1.0, 1.45), sz: mRng.range(0.7, 1.0), lobes: 1 });

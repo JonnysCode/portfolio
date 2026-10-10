@@ -16,11 +16,13 @@ export function buildViews() {
   };
   for (const s of SPOTS) {
     const p = s.camera.position, t = s.camera.target;
-    views[s.id] = { position: p, target: t };
+    views[s.id] = { position: p, target: t, focus: s.focus };
     const lerpTo = (k) => [t[0] + (p[0] - t[0]) * k, t[1] + (p[1] - t[1]) * k, t[2] + (p[2] - t[2]) * k];
     views[`${s.id}-wide`] = { position: lerpTo(1.8), target: t };
     views[`${s.id}-close`] = s.close ?? { position: lerpTo(0.55), target: s.focus ?? t };
-    if (s.portrait) views[`${s.id}-portrait`] = { position: s.portrait.position ?? p, target: s.portrait.target ?? t, fov: s.portrait.fov ?? (s.camera.fov ?? 40) + 5 };
+    if (s.portrait) views[`${s.id}-portrait`] = { position: s.portrait.position ?? p, target: s.portrait.target ?? t, fov: s.portrait.fov ?? (s.camera.fov ?? 40) + 5, focus: s.portrait.focus ?? s.focus };
+    // further phone stops: '<spot>-portrait-2', …
+    (s.portraitMore ?? []).forEach((m, i) => (views[`${s.id}-portrait-${i + 2}`] = { position: m.position, target: m.target, fov: m.fov ?? 45, focus: m.focus ?? s.focus }));
   }
   return views;
 }
@@ -33,7 +35,8 @@ export function installDebug(ctx) {
     view(nameOrDef) {
       const def = typeof nameOrDef === 'string' ? views[nameOrDef] : nameOrDef;
       if (!def) throw new Error(`unknown view ${nameOrDef}; known: ${Object.keys(views).join(', ')}`);
-      ctx.cameraRig.setOverride(v3(def.position), v3(def.target));
+      // (a composed spot shot is focused where the rig would focus it: its point of interest)
+      ctx.cameraRig.setOverride(v3(def.position), v3(def.target), def.focus ? v3(def.focus) : null);
       // (every composed shot is 40° unless it says otherwise: a portrait view must not leak its lens into the next)
       const fov = def.fov ?? 40;
       if (ctx.camera.fov !== fov) {
@@ -52,6 +55,11 @@ export function installDebug(ctx) {
     goTo(id, instant = true) {
       ctx.cameraRig.clearOverride();
       return ctx.cameraRig.goTo(id, { instant });
+    },
+    /** Step to a phone stop of the current spot (rig.toStop), like a flick would. */
+    toStop(i, instant = true) {
+      ctx.cameraRig.clearOverride();
+      return ctx.cameraRig.toStop(i, { instant });
     },
     openEntry(id) {
       ctx.ui.openEntry(id);
@@ -113,7 +121,7 @@ export function installDebug(ctx) {
     /**
      * QA: plan the glide between every pair of spots (as a visitor would fly it,
      * at the current screen shape) and report the worst frame occupancy by caps
-     * (share of 5 rays from the lens hitting a cap within 4 units) and the
+     * (share of 5 rays from the lens hitting a cap within 6 units) and the
      * closest shave past a cap rim. No frames are rendered.
      */
     auditGlides(ids = SPOTS.map((s) => s.id)) {

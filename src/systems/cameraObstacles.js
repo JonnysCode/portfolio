@@ -14,7 +14,7 @@
 //                                   + 2 while planning, 0.6 for penetration), and —
 //                                   given the look points t0 → t3 — rejects arcs on
 //                                   which a cap would fill the frame (5 rays from the
-//                                   lens, > half of them on a cap within 4 units);
+//                                   lens, > half of them on a cap within 6 units);
 //                                   a glide leaving (or landing) among the caps may
 //                                   rise over their apexes first
 //   obs.decorAlong(a, b, skipEnd) → how many soft occluders (fairy-light bulbs,
@@ -297,8 +297,12 @@ export function createCameraObstacles(ctx) {
   /** …and this much above its apex / below its rim. */
   const PLAN_CAP_ABOVE = 1.2;
   const PLAN_CAP_BELOW = 0.6;
-  /** Frame occupancy: rays this long (from the lens) that hit a cap count; more than this share of them hit = a frame full of cap. */
-  const OCC_REACH = 4;
+  /**
+   * Frame occupancy: rays this long (from the lens) that hit a cap count; more
+   * than OCC_MAX of them hit = a frame full of cap. (A cottage cap is ~3 in
+   * radius: 6 units away it still spans more than a 40° frame.)
+   */
+  let occReach = 6;
   const OCC_MAX = 0.5;
   /** Per plan: the caps near the glide, with the margin each keeps (never more than its endpoints have). */
   const planCaps = [];
@@ -314,11 +318,39 @@ export function createCameraObstacles(ctx) {
     return worst;
   }
 
-  /** Is p inside the cap itself (a drum from just below the rim to the apex)? */
-  function inCap(p) {
+  /**
+   * Does the ray eye + t·d (|d| = 1, t in [tMin, tMax]) run into a cap itself (a
+   * drum from just below the rim to the apex)? Analytic: the span of t inside
+   * each drum's circle, clipped to the span inside its height.
+   */
+  function rayHitsCap(e, d, tMin, tMax) {
+    const a = d.x * d.x + d.z * d.z;
     for (const c of planCaps) {
-      if (p.y < c.y0 || p.y > c.y1) continue;
-      if (Math.hypot(p.x - c.x, p.z - c.z) < c.R + 0.15) return true;
+      // height slab
+      let lo = tMin, hi = tMax;
+      if (Math.abs(d.y) < 1e-6) {
+        if (e.y < c.y0 || e.y > c.y1) continue;
+      } else {
+        let ta = (c.y0 - e.y) / d.y, tb = (c.y1 - e.y) / d.y;
+        if (ta > tb) [ta, tb] = [tb, ta];
+        lo = Math.max(lo, ta);
+        hi = Math.min(hi, tb);
+        if (lo > hi) continue;
+      }
+      // circle (R + a little air)
+      const ox = e.x - c.x, oz = e.z - c.z;
+      const r = c.R + 0.15;
+      const cc = ox * ox + oz * oz - r * r;
+      if (a < 1e-9) {
+        if (cc <= 0) return true;
+        continue;
+      }
+      const b = ox * d.x + oz * d.z;
+      const disc = b * b - a * cc;
+      if (disc < 0) continue;
+      const sq = Math.sqrt(disc);
+      const t0 = (-b - sq) / a, t1 = (-b + sq) / a;
+      if (Math.max(lo, t0) <= Math.min(hi, t1)) return true;
     }
     return false;
   }
@@ -327,11 +359,10 @@ export function createCameraObstacles(ctx) {
   const oR = new THREE.Vector3();
   const oU = new THREE.Vector3();
   const oD = new THREE.Vector3();
-  const oP = new THREE.Vector3();
   const OCC_DIRS = [[0, 0], [0.5, 0], [-0.5, 0], [0, 0.5], [0, -0.5]];
   /**
    * Share (0..1) of five rays from the lens (the centre and halfway to each edge of
-   * the frame) that run into a cap within OCC_REACH: how much of the frame a cap fills.
+   * the frame) that run into a cap within occReach: how much of the frame a cap fills.
    */
   function occupancy(eye, look, tanV, aspect) {
     if (!planCaps.length) return 0;
@@ -345,13 +376,7 @@ export function createCameraObstacles(ctx) {
     let hits = 0;
     for (const [a, b] of OCC_DIRS) {
       oD.copy(of).addScaledVector(oR, a * tanV * aspect).addScaledVector(oU, b * tanV).normalize();
-      for (let t = 0.3; t <= OCC_REACH; t += 0.3) {
-        oP.copy(eye).addScaledVector(oD, t);
-        if (inCap(oP)) {
-          hits++;
-          break;
-        }
-      }
+      if (rayHitsCap(eye, oD, 0.3, occReach)) hits++;
     }
     return hits / OCC_DIRS.length;
   }
@@ -488,6 +513,10 @@ export function createCameraObstacles(ctx) {
     auditGlide,
     set legacyPlan(on) {
       legacy = !!on;
+    },
+    /** QA: how far from the lens a cap counts as filling the frame (default 6). */
+    set occReach(v) {
+      occReach = v;
     },
     bezier,
     decorAlong,

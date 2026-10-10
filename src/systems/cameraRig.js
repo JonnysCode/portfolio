@@ -21,7 +21,9 @@
 //                                   follows whatever is in the middle of the frame
 //   rig.setInset({ right, bottom, top }) keep the subject centred in the part of
 //                                   the screen a panel / bottom sheet / HUD leaves free (px)
-// Phones: SPOTS[].portrait (layout.js) is the composed shot on a tall screen.
+// Phones: SPOTS[].portrait (layout.js) is the composed shot on a tall screen;
+//   SPOTS[].portraitMore adds further phone stops of the same place (a flick
+//   steps through them before travelling on): rig.stop, rig.stops(id?), rig.toStop(i).
 //   rig.holdIntro()                 hover high above the canopy (behind the intro card)
 //   rig.playIntro() → Promise       cinematic flight: down from above the canopy to eye
 //                                   level on the path, a few steps among the giants, then
@@ -113,18 +115,19 @@ function monotone(xs, ys) {
  * chairs, so their close-ups stood far back — framed on the piece itself, a
  * little from above. (Clear sight lines past the fairy lights, the rose arch
  * and the lamp posts are found by the search below, not by tweaks.)
- *   quiet: frame the entry's marker-less sibling hotspot instead (About Me: the
- *          portrait in the window, not the door leaf — the big arch stones and
- *          the stepping-stone slabs read as smeared slabs this close)
- *   offset: [x, y, z] world offset of the look point (from the window down to
- *          the bench under it, where the cat sleeps)
+ *   offset: [x, y, z] world offset of the look point from the centre of the
+ *          hotspot's bounds (About Me: from the door leaf over to the bench
+ *          under the little cap, where the cat sleeps — seen from a step further
+ *          back and a little above, the big arch stones and the stepping-stone
+ *          slabs no longer fill the frame as smeared slabs)
  */
 const FRAMING = {
   'coffee-table': { radius: 0.62, lift: 0.08, polar: 1.1 },
   'dining-table': { radius: 1.05, polar: 1.12 },
-  'about-me': { quiet: true, offset: [0.25, -0.95, -0.2], radius: 1.35, azimuth: 0.32, polar: 1.3, distance: 3.6 },
-  // the hero bike, swung away from the mechanic at its rear wheel (his head filled the left of the frame)
-  'bike-build': { azimuth: 0.45 },
+  'about-me': { offset: [0.45, 0.15, -0.55], radius: 1.4, polar: 1.2, distance: 4.4 },
+  // the hero bike, swung round towards the stream, away from the mechanic at its
+  // rear wheel (from the spot's side his head filled the left of the frame)
+  'bike-build': { azimuth: -0.4 },
   // This Woodland: the lens sits in the big window's opening, so the casement
   // frames and the transom (within a hand's width) dissolve in the near fade
   'this-portfolio': { distance: 1.75 },
@@ -176,6 +179,8 @@ export function createCameraRig(ctx) {
   let base = null; // current spot
   let focusBase = null; // a framed detail
   let spot = null;
+  /** Which of the current spot's phone stops is shown (0: SPOTS[].portrait, n: portraitMore[n − 1]). */
+  let stop = 0;
   let transition = null;
   let override = null;
   let introHover = false;
@@ -213,16 +218,18 @@ export function createCameraRig(ctx) {
     o.range = ORBIT[id] ?? ORBIT.woodworking;
     o.spot = id;
     const p = portrait();
-    if (p > 0 && s.portrait) {
+    // (a phone stop beyond the first: SPOTS[].portraitMore)
+    const P = (id === spot && stop > 0 && p >= 0.5 && s.portraitMore?.[stop - 1]) || s.portrait;
+    if (p > 0 && P) {
       // a tall phone screen has its own composed shot (layout.js SPOTS[].portrait);
       // tablets in portrait get a blend of the two
-      const q = toOrbit(s.portrait.position ?? s.camera.position, s.portrait.target ?? s.camera.target);
+      const q = toOrbit(P.position ?? s.camera.position, P.target ?? s.camera.target);
       o.target.lerp(q.target, p);
       o.azimuth += wrap(q.azimuth - o.azimuth) * p;
       o.polar += (q.polar - o.polar) * p;
       o.distance += (q.distance - o.distance) * p;
-      o.fov += ((s.portrait.fov ?? o.fov + 5) - o.fov) * p;
-      if (s.portrait.focus) o.focus.lerp(new THREE.Vector3(...s.portrait.focus), p);
+      o.fov += ((P.fov ?? o.fov + 5) - o.fov) * p;
+      if (P.focus) o.focus.lerp(new THREE.Vector3(...P.focus), p);
     } else if (p > 0) {
       // no composed phone shot: step back, look a little more from above, widen
       // the lens a touch, and slide the look point onto the subject (the 16:9
@@ -405,6 +412,15 @@ export function createCameraRig(ctx) {
       // undo toast: a visitor who just wanted to look must never be lost
       const flick = Math.abs(totalX) > 70 && ms < 380 && Math.abs(totalX) > 2.2 * Math.abs(totalY);
       const toward = totalX < 0 ? 1 : -1; // dragging left swings dAz up
+      // a place with more than one phone stop (the Schreinerei: the porch, then the
+      // deck): a flick steps through them first — still the same place, nobody is lost
+      if (pointerType !== 'mouse' && !ctx.ui?.isPanelOpen && flick && !focusBase) {
+        const want = stop + toward;
+        if (want >= 0 && want < rig.stops()) {
+          rig.toStop(want);
+          return;
+        }
+      }
       if (pointerType !== 'mouse' && !ctx.ui?.isPanelOpen && flick && azPinned === toward) {
         const from = spot;
         if (totalX < 0) rig.next();
@@ -486,6 +502,7 @@ export function createCameraRig(ctx) {
       if (!SPOT_BY_ID[id]) return Promise.resolve(false);
       const prev = spot;
       spot = id;
+      stop = 0;
       focusBase = null;
       base = spotBase(id);
       introHover = false;
@@ -498,6 +515,29 @@ export function createCameraRig(ctx) {
       }
       resetOffsets();
       return glideTo(base, { duration, kind: 'spot', arriveSpot: id });
+    },
+    /** The current phone stop (0 = the spot's portrait composition). */
+    get stop() {
+      return stop;
+    },
+    /** How many phone stops a spot has here (1 unless SPOTS[].portraitMore, on a tall screen). */
+    stops(id = spot) {
+      const s = SPOT_BY_ID[id];
+      return s && portrait() >= 0.5 ? 1 + (s.portraitMore?.length ?? 0) : 1;
+    },
+    /** Glide to another phone stop of the current spot (no new arrival: it is the same place). */
+    toStop(i, { instant = false } = {}) {
+      if (!spot || i === stop || i < 0 || i >= rig.stops()) return Promise.resolve(false);
+      stop = i;
+      focusBase = null;
+      base = spotBase(spot);
+      resetOffsets();
+      if (instant) {
+        applyPose(base);
+        focusPoint.copy(base.focus);
+        return Promise.resolve(true);
+      }
+      return glideTo(base, { kind: 'stop' });
     },
     next() {
       const i = SPOTS.findIndex((s) => s.id === spot);
@@ -520,13 +560,7 @@ export function createCameraRig(ctx) {
      */
     focus(what, opts = {}) {
       const entryId = what?.isObject3D ? what.userData?.__hotspot?.entryId : null;
-      if (entryId && FRAMING[entryId]) {
-        opts = { ...opts, ...FRAMING[entryId] };
-        if (opts.quiet) {
-          const sib = ctx.interactions?.hotspots?.find((h) => h.entryId === entryId && h.marker === false && h.enabled);
-          if (sib) what = sib.object;
-        }
-      }
+      if (entryId && FRAMING[entryId]) opts = { ...opts, ...FRAMING[entryId] };
       const p = new THREE.Vector3();
       let radius = opts.radius ?? 0;
       let facing = null;
@@ -555,6 +589,7 @@ export function createCameraRig(ctx) {
       if (opts.spot && SPOT_BY_ID[opts.spot] && opts.spot !== spot) {
         const prev = spot;
         spot = opts.spot;
+        stop = 0;
         base = spotBase(spot);
         for (const fn of spotListeners) fn(spot, prev);
       }
@@ -648,8 +683,9 @@ export function createCameraRig(ctx) {
       inset.bottom = bottom;
       inset.top = top;
     },
-    setOverride(position, lookAtPoint) {
-      override = { position: new THREE.Vector3().copy(position), lookAt: new THREE.Vector3().copy(lookAtPoint) };
+    /** (focusAt: the point the depth of field is focused on — default the look point) */
+    setOverride(position, lookAtPoint, focusAt = null) {
+      override = { position: new THREE.Vector3().copy(position), lookAt: new THREE.Vector3().copy(lookAtPoint), focus: focusAt ? new THREE.Vector3().copy(focusAt) : null };
     },
     clearOverride() {
       override = null;
@@ -736,7 +772,7 @@ export function createCameraRig(ctx) {
       camera.position.copy(override.position);
       camera.lookAt(override.lookAt);
       target.copy(override.lookAt);
-      rig.focusDistance = camera.position.distanceTo(override.lookAt);
+      rig.focusDistance = camera.position.distanceTo(override.focus ?? override.lookAt);
       applyDofScale();
       return;
     }
@@ -891,18 +927,31 @@ export function createCameraRig(ctx) {
   }, 80);
 
   /**
-   * A tall phone screen holds a deep slice of the glen (from the bank at the
-   * bottom of the frame to the crown at the top): the 16:9 lens blur turned
+   * The lens on a tall phone screen. It holds a deep slice of the glen (from the
+   * bank at the bottom of the frame to the crown at the top) on a frame only
+   * ~390 px wide, so the 16:9 lens blur (authored per 720 px of height) turned
    * half of it into soft bokeh. On portrait the depth of field is gentler —
    * rig.dofScale (1 on landscape → PORTRAIT_DOF on a phone, a touch less by
-   * night when the lit village must read) scales the post chain's aperture
-   * (ctx.post.settings, live-tunable: a value someone else sets is adopted as
-   * the new base). Only the 'full' post tier has depth of field at all.
+   * night, when the lit village must read) scales the post chain's aperture, the
+   * near-field blur is capped lower (a foreground cap or fern stays a soft
+   * shape, not a blob), and the night is exposed a little brighter (a small
+   * screen held at arm's length). All through ctx.post.settings, which is
+   * live-tunable: a value someone else sets is adopted as the new base. Only the
+   * 'full' post tier has depth of field at all.
    */
   const PORTRAIT_DOF = 0.5;
   const PORTRAIT_DOF_NIGHT = 0.42;
-  let apBase = null;
-  let apWritten = null;
+  const PORTRAIT_NEAR_MAX = 0.5;
+  const PORTRAIT_NIGHT_EXPOSURE = 0.08;
+  const lensBase = {};
+  const lensWritten = {};
+  function lens(S, key, f) {
+    if (typeof S[key] !== 'number') return;
+    if (lensBase[key] === undefined || S[key] !== lensWritten[key]) lensBase[key] = S[key];
+    const want = f(lensBase[key]);
+    if (S[key] !== want) S[key] = want;
+    lensWritten[key] = S[key];
+  }
   rig.dofScale = 1;
   function applyDofScale() {
     const p = portrait();
@@ -910,11 +959,11 @@ export function createCameraRig(ctx) {
     const k = 1 - p * (1 - (PORTRAIT_DOF + (PORTRAIT_DOF_NIGHT - PORTRAIT_DOF) * n));
     rig.dofScale = k;
     const S = ctx.post?.settings;
-    if (!S || typeof S.aperture !== 'number') return;
-    if (apBase === null || S.aperture !== apWritten) apBase = S.aperture;
-    const want = apBase * k;
-    if (S.aperture !== want) S.aperture = want;
-    apWritten = S.aperture;
+    if (!S) return;
+    lens(S, 'aperture', (b) => b * k);
+    lens(S, 'nearMaxBlur', (b) => b * (1 - p * (1 - PORTRAIT_NEAR_MAX)));
+    // (settings.exposure is the night's exposure: the day keeps exposureDay)
+    lens(S, 'exposure', (b) => b + p * PORTRAIT_NIGHT_EXPOSURE);
   }
 
   /** Distance along the line of sight camera → look point to the first solid thing (analytic, cheap). */

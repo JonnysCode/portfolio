@@ -398,8 +398,8 @@ export function buildDoor(ctx, B, mats) {
         const x = cx + rng.jitter(0.16), z = cz + rng.jitter(0.12);
         const hgt = rng.range(0.05, 0.13), cr = hgt * rng.range(0.32, 0.5);
         const tilt = [rng.jitter(0.25), 0, rng.jitter(0.25)];
-        D.add(stem, xf(new THREE.CylinderGeometry(cr * 0.18, cr * 0.25, hgt, 5), [x, hgt / 2, z], tilt), { color: '#e9f2e6', cast: false });
-        const cap = new THREE.SphereGeometry(cr, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2);
+        D.add(stem, xf(new THREE.CylinderGeometry(cr * 0.18, cr * 0.25, hgt, segs(5, 4), 1, LOD.tier === 'low'), [x, hgt / 2, z], tilt), { color: '#e9f2e6', cast: false });
+        const cap = new THREE.SphereGeometry(cr, segs(8, 6), segs(4, 2), 0, Math.PI * 2, 0, Math.PI / 2);
         cap.scale(1, 0.75, 1);
         D.add(glowCap, xf(cap, [x + tilt[2] * -hgt, hgt, z + tilt[0] * hgt], tilt), { cast: false, receive: false });
       }
@@ -581,9 +581,11 @@ export function buildDoor(ctx, B, mats) {
   group.add(spill);
 
   const paper = cert.userData.paper;
+  const still = !!ctx.engine?.reducedMotion;
   function update(dt, t) {
     const n = ctx.env?.night ?? 0;
-    const flicker = Math.sin(t * 7.3) * 0.03 * n + Math.sin(t * 13.1) * 0.02 * n;
+    // (the candle's flicker; a steady flame with reduced motion)
+    const flicker = still ? 0 : Math.sin(t * 7.3) * 0.03 * n + Math.sin(t * 13.1) * 0.02 * n;
     glimpse.emissiveIntensity = 0.5 + n * 0.75 + flicker;
     room.glow.value = ROOM_GLOW.day + (ROOM_GLOW.night - ROOM_GLOW.day) * n + flicker * 1.5;
     spill.material.uniforms.uK.value = 0.05 + n * 0.6;
@@ -828,14 +830,17 @@ export function rootGeo(rng, pts, { r0 = 0.3, r1 = 0.08, flat = 0.75, radial = 1
  * the near-level stretches, gone where the root runs steeply up or down.
  * `t0..t1` limits it along the root; `cover` (0..1) how far round it reaches.
  */
-export function mossCapGeo(rng, curve, radiusAt, { flat = 0.75, t0 = 0.05, t1 = 0.95, cover = 0.55, thick = 0.05, radial = 12, tubular = 22 } = {}) {
+export function mossCapGeo(rng, curve, radiusAt, { flat = 0.75, t0 = 0.05, t1 = 0.95, cover = 0.55, thick = 0.05, radial = 12, tubular = 22, side = null } = {}) {
   const pos = [];
   const col = [];
   const idx = [];
   const P = new THREE.Vector3(), T = new THREE.Vector3(), N = new THREE.Vector3(), Bn = new THREE.Vector3();
-  const UP = new THREE.Vector3(0, 1, 0);
+  // (`side`: the moss faces that way instead of up — the damp, shaded flank
+  // of a root that stands upright, where moss on its top could never be seen)
+  const UP = side ? new THREE.Vector3(side[0], side[1], side[2]).normalize() : new THREE.Vector3(0, 1, 0);
   const ox = rng.next() * 40;
   const span = Math.PI * cover;
+  const o = new THREE.Vector3();
   for (let j = 0; j <= tubular; j++) {
     const t = t0 + ((t1 - t0) * j) / tubular;
     curve.getPointAt(t, P);
@@ -846,7 +851,7 @@ export function mossCapGeo(rng, curve, radiusAt, { flat = 0.75, t0 = 0.05, t1 = 
     Bn.crossVectors(T, N).normalize();
     const r = radiusAt(t);
     // moss settles where the root is level, not on its steep stretches
-    const level = 1 - THREE.MathUtils.smoothstep(Math.abs(T.y), 0.45, 0.85);
+    const level = side ? 1 : 1 - THREE.MathUtils.smoothstep(Math.abs(T.y), 0.45, 0.85);
     const ends = THREE.MathUtils.smoothstep(j / tubular, 0, 0.12) * THREE.MathUtils.smoothstep(1 - j / tubular, 0, 0.12);
     for (let k = 0; k <= radial; k++) {
       const u = k / radial;
@@ -857,7 +862,12 @@ export function mossCapGeo(rng, curve, radiusAt, { flat = 0.75, t0 = 0.05, t1 = 
       const rim = Math.pow(Math.max(0, 1 - Math.abs(phi) / span), 0.55);
       const lift = thick * Math.max(0, lump) * rim * level * ends - (1 - rim) * 0.012 - 0.004;
       const rr = r + lift;
-      pos.push(P.x + (N.x * c * flat + Bn.x * s) * rr, P.y + (N.y * c * flat + Bn.y * s) * rr, P.z + (N.z * c * flat + Bn.z * s) * rr);
+      if (side) {
+        // the root's own section: squashed vertically (as rootGeo builds it)
+        o.copy(N).multiplyScalar(c).addScaledVector(Bn, s);
+        o.y *= flat;
+        pos.push(P.x + o.x * rr, P.y + o.y * rr, P.z + o.z * rr);
+      } else pos.push(P.x + (N.x * c * flat + Bn.x * s) * rr, P.y + (N.y * c * flat + Bn.y * s) * rr, P.z + (N.z * c * flat + Bn.z * s) * rr);
       // sunlit yellow-green on the crowns of the cushions, dark olive at the rim
       mossTone(THREE.MathUtils.clamp(lift / thick, 0, 1) * (0.75 + 0.25 * c), _mc);
       col.push(_mc.r, _mc.g, _mc.b);
@@ -956,7 +966,7 @@ export function stepStoneMaterial(ctx) {
  * sides and towards the ground.
  */
 export function wornStone(rng, w, h, d, { walkX = 0, tone = '#928b7e', dish = 0.022, chips = 2 } = {}) {
-  const sx = Math.max(3, Math.round((w / 0.07) * LOD.k)), sz = Math.max(3, Math.round((d / 0.07) * LOD.k));
+  const sx = Math.max(3, Math.round((w / 0.085) * LOD.k)), sz = Math.max(3, Math.round((d / 0.085) * LOD.k));
   const g = new THREE.BoxGeometry(w, h, d, sx, 2, sz);
   const ox = rng.next() * 40;
   const hw = w / 2, hd = d / 2, hh = h / 2;

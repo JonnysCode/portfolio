@@ -146,7 +146,8 @@ export const PATH_HALF_WIDTH = { main: 1.15, cottage: 0.85, bridge: 0.85, farBan
  * SPOTS — the places the camera glides to. `focus` is the point of interest
  * (used for depth of field and markers); `camera` is the composed shot (16:9).
  * Optional `portrait: { position, target, fov?, focus? }` is the shot on a tall
- * phone screen (blended in on portrait tablets), `close: { position, target }`
+ * phone screen (blended in on portrait tablets), `portraitMore: [ {…} ]` further
+ * phone stops of the same place (a flick steps through them), `close: { position, target }`
  * the '<id>-close' screenshot view (debug.js).
  * `areas` lists the content areas (src/content/content.js) presented here.
  */
@@ -159,14 +160,15 @@ export const SPOTS = [
     areas: [],
     focus: [0, 4, -2],
     camera: { position: [4, 17, 40], target: [0, 6.5, -2], fov: 40 },
-    // phones: the village on one tall screen, seen from the east over the far bank
-    // (seen from there the houses line up in a band only ~10 units wide — from the
-    // front they spread over 25): the red caps of the cottages on the left, the
-    // Schreinerei annex and the oak door in the middle, the deck with the finished
-    // pieces below, the trunk with its loft rising to the top of the frame. Low
-    // enough that nothing stands between the lens and the village (no bank, stream
-    // or Velowerkstatt cap in the foreground), and focused on the village itself.
-    portrait: { position: [27, 18.7, 11.7], target: [-7.4, 7.4, -2], fov: 51, focus: [-4.5, 2.4, 0.4] },
+    // phones: the village on one tall screen, seen from the east-south-east over
+    // the far bank (from there the houses line up in a band ~10 units wide — from
+    // the front they spread over 25): the red caps of the cottages on the left,
+    // the Schreinerei annex in the middle with the oak door beside it, the deck
+    // with the finished pieces below, the trunk with its loft and limbs rising to
+    // the top of the frame. Nothing stands between the lens and the village (no
+    // bank, stream or Velowerkstatt cap in the foreground), and the village —
+    // not the crown — is what the lens is focused on, by day and by night.
+    portrait: { position: [25, 16, 5], target: [-7.5, 5.8, -1.5], fov: 52, focus: [-6, 2.5, 0] },
   },
   {
     id: 'woodworking',
@@ -179,12 +181,15 @@ export const SPOTS = [
     focus: [-1.4, 1.1, -0.8],
     // (trucked right and a step back: the deck's four pieces sit inside the right third, not on the edge)
     camera: { position: [1.6, 3.05, 12.3], target: [0.0, 2.2, -0.8], fov: 40 },
-    // phones: a 3/4 view from the front right, where the porch, the door and the
-    // deck line up in a band narrow enough for a tall screen — Jonny at the
-    // Hobelbank on the left, the round door and the EFZ certificate in the middle,
-    // the deck with its four pieces in front, the trunk towering above: all six
-    // pages in one frame (from the front the porch and the deck lie 9 units apart)
-    portrait: { position: [9.0, 6.4, 12.8], target: [0.55, 1.5, -0.4], fov: 60, focus: [0.6, 1.0, 0.2] },
+    // phones: two stops (a flick steps from one to the other before travelling on).
+    // First, low and close in front of the porch: Jonny planing at the Hobelbank
+    // and the sawhorses with the board mid-cut on the left, the round door on the
+    // right, only the trunk's foot rising above them. Then the deck, from the
+    // stream side: the four finished pieces large in front, the door and the EFZ
+    // certificate behind them, the porch at the far left. (No tall frame holds the
+    // porch and the deck — 8 units apart — at a size where the craft reads.)
+    portrait: { position: [-4.0, 4.0, 8.9], target: [-2.0, 2.9, -1.5], fov: 62, focus: [-3.2, 1.1, 0] },
+    portraitMore: [{ position: [8.9, 3.6, 5.6], target: [0.5, 1.5, -1.0], fov: 64, focus: [3.4, 0.8, 0.9] }],
   },
   {
     id: 'code',

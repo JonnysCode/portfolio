@@ -1154,13 +1154,14 @@ function makeMarkerMaterial() {
           float ping = exp(-pow((length(uv0) - pr) / 0.045, 2.0)) * (1.0 - pt) * (1.0 - pt) * step(vPing, 1.5) * 0.85;
           vec3 starCol = mix(uCream, uCore * 1.15, clamp(core * 1.6, 0.0, 1.0));
           vec3 glowCol = mix(uMint, uSilver, 0.3);
-          vec3 ringCol = mix(uCream, uMint, 0.55);
+          vec3 ringCol = mix(uCream, uMint, 0.72);
           // by night: mint-white and as bright as the lamps (bloom picks the core up)
-          float lift = 1.25 + uNight * 0.9;
+          float lift = 1.25 + uNight * 1.3;
           starCol = mix(starCol, mix(uSilver, uMint, 0.25), uNight * 0.6) * lift * (0.92 + 0.08 * vTw);
-          glowCol *= 1.0 + uNight * 0.6;
-          ringCol *= 1.05 + uNight * 0.55;
-          a = clamp(star + glow * 0.75 + ring + ping + keyline, 0.0, 1.0);
+          glowCol *= 1.0 + uNight * 0.7;
+          ringCol *= 1.05 + uNight * 0.65;
+          // (a light glow fill: a heavier one read as a milky grey disc inside the ring)
+          a = clamp(star + glow * 0.6 + ring + ping + keyline, 0.0, 1.0);
           col = glowCol;
           col = mix(col, ringCol, clamp((ring + ping) / max(a, 1e-3), 0.0, 1.0));
           col = mix(col, uEdge, clamp(keyline / max(a, 1e-3), 0.0, 1.0));
