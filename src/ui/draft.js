@@ -8,11 +8,19 @@
 //
 //   showDrafts                       true in dev (override: ?drafts=show | hide)
 //   isDraft(text)                    'DRAFT', 'DRAFT — …'
-//   presentEntry(entry) → { year, yearDraft, body: [{ text, draft }], facts: [[k, v, draft]] }
+//   presentEntry(entry, { profile }) → { year, yearDraft, subtitle, body: [{ text, draft }],
+//        bodyFallback, facts: [[k, v, draft]] }
+//        With a profile: the About page stands in the profile's intro (not its one-line
+//        summary) while its own words are drafts, and without a mail address the copy
+//        never promises a letter (see withoutMailPromise; an entry's own
+//        `noMail: { subtitle, body }` wins when the owner has written one).
 //   mailAddress(profile) → { email, draft } | null
 //   reachOut(profile) → { mail, primary, others }   how to get in touch: the mail
 //        address when there is one, else the strongest link (LinkedIn, then GitHub,
 //        then the first) as the primary "Find me on …" — never a letter without an address
+//   withoutMailPromise(text) → text   the owner's sentence / clause that promises a
+//        letter ("Drop me a line.", "— and the mailbox is always open") left out
+//   linkAddress(link) → 'github.com/JonnysCode'   a link's address, as printed on a card
 // ─────────────────────────────────────────────────────────────────────────────
 const param = (() => {
   try {
@@ -29,15 +37,81 @@ export const isDraft = (s) => typeof s === 'string' && /^\s*DRAFT\b/.test(s);
 const strip = (s) => (isDraft(s) ? s.replace(/^\s*DRAFT\b\s*[—–:-]?\s*/, '') || '…' : s);
 const isExampleMail = (e) => typeof e === 'string' && /@example\.(com|org|net)$/i.test(e.trim());
 
+// a letter, a mailbox, an e-mail: words that need an address to keep their promise
+const MAIL_PROMISE = /\b(mail ?box(es)?|e-?mails?|mail|letters?|drop me a (line|note)|write (to )?me|postbox)\b/i;
+/**
+ * The owner's words without the part that promises a letter (no address to send
+ * one to): a clause after a dash, else the whole sentence, is left out. Nothing
+ * left → ''.
+ */
+export function withoutMailPromise(text) {
+  if (typeof text !== 'string' || !MAIL_PROMISE.test(text)) return text;
+  const sentences = text.split(/(?<=[.!?…])\s+/);
+  const kept = [];
+  for (const s of sentences) {
+    if (!MAIL_PROMISE.test(s)) {
+      kept.push(s);
+      continue;
+    }
+    // "Here is a bit about me — and the mailbox is always open." → "Here is a bit about me."
+    const clauses = s.split(/\s+[—–]\s+/);
+    const ok = clauses.filter((c) => !MAIL_PROMISE.test(c));
+    if (ok.length && ok.length < clauses.length) {
+      let t = ok.join(' — ').trim();
+      if (!/[.!?…]$/.test(t)) t += /[!?]$/.test(s.trim()) ? s.trim().slice(-1) : '.';
+      kept.push(t);
+    }
+  }
+  return kept.join(' ').trim();
+}
+
+/** 'https://github.com/JonnysCode' → 'github.com/JonnysCode' (as printed on a calling card). */
+export function linkAddress(link) {
+  try {
+    const u = new URL(link.href);
+    if (u.protocol === 'mailto:') return u.pathname;
+    return `${u.hostname.replace(/^www\./, '')}${u.pathname.replace(/\/$/, '')}`;
+  } catch {
+    return link.label ?? '';
+  }
+}
+
 /** What of an entry is shown (drafts filtered out unless showDrafts). */
-export function presentEntry(entry) {
+export function presentEntry(entry, { profile = null } = {}) {
   const yearDraft = isDraft(entry.year);
   const year = !entry.year || (yearDraft && !showDrafts) ? null : yearDraft ? 'draft' : String(entry.year);
+  let subtitle = entry.subtitle && !isDraft(entry.subtitle) ? entry.subtitle : entry.subtitle && showDrafts ? strip(entry.subtitle) : null;
   let body = (entry.body ?? []).map((text) => ({ text: strip(text), draft: isDraft(text) })).filter((p) => showDrafts || !p.draft);
-  // nothing real to say yet: the one-line summary stands in (it is the owner's own text)
-  if (!body.length && entry.summary && !isDraft(entry.summary)) body = [{ text: entry.summary, draft: false }];
+  let bodyFallback = false;
+  // no address to write to: the contact copy must not promise a letter
+  const noMail = !!profile && (entry.kind === 'contact' || entry.kind === 'about') && !mailAddress(profile);
+  if (noMail) {
+    const own = entry.noMail;
+    if (own?.subtitle !== undefined || own?.body !== undefined) {
+      if (own.subtitle !== undefined) subtitle = own.subtitle || null;
+      if (own.body !== undefined) body = [].concat(own.body ?? []).filter(Boolean).map((text) => ({ text, draft: false }));
+    } else {
+      body = body.map((p) => ({ ...p, text: withoutMailPromise(p.text) })).filter((p) => p.text);
+      if (subtitle && withoutMailPromise(subtitle) !== subtitle) {
+        // ("The mailbox is always open" → the page's own summary, when that promises nothing)
+        const sum = entry.summary && !isDraft(entry.summary) ? withoutMailPromise(entry.summary) : '';
+        subtitle = sum && sum === entry.summary ? sum : withoutMailPromise(subtitle) || null;
+      }
+    }
+  }
+  // nothing real to say yet: the owner's own words stand in — on the About page the
+  // profile's introduction (not the one-line teaser), elsewhere the summary
+  if (!body.length) {
+    const intro = entry.kind === 'about' && profile?.intro && !isDraft(profile.intro) ? profile.intro : null;
+    const summary = entry.summary && !isDraft(entry.summary) ? (noMail ? withoutMailPromise(entry.summary) : entry.summary) : null;
+    const text = intro ?? (summary && summary !== subtitle ? summary : null);
+    if (text) {
+      body = [{ text, draft: false }];
+      bodyFallback = true;
+    }
+  }
   const facts = (entry.facts ?? []).map(([k, v]) => [strip(k), strip(v), isDraft(v) || isDraft(k)]).filter((f) => showDrafts || !f[2]);
-  return { year, yearDraft, body, facts };
+  return { year, yearDraft, subtitle, body, bodyFallback, facts };
 }
 
 /** The mail address to offer (null when there is none or it is the placeholder in production). */

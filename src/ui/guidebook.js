@@ -14,7 +14,7 @@ import { SPOTS } from '../world/layout.js';
 import { h } from './dom.js';
 import { icon, spotIcon } from './icons.js';
 import { sketchFor } from './sketches.js';
-import { presentEntry, reachOut, showDrafts } from './draft.js';
+import { presentEntry, reachOut, showDrafts, withoutMailPromise } from './draft.js';
 
 const LINK_ICON = { github: 'github', linkedin: 'linkedin' };
 
@@ -42,6 +42,9 @@ export function renderGuidebook(ctx, { show3d = true, onShow, onVisit, linkFor, 
     reach.others.map((l) => linkBtn(l, false)),
   );
 
+  // (no address to write to: the owner's words never promise a letter — "… and the mailbox is always open")
+  const areaText = (text) => (text && !mail ? withoutMailPromise(text) : text);
+
   const toc = h(
     'nav',
     { class: 'guide__toc', 'aria-label': 'Places in the glen' },
@@ -61,19 +64,19 @@ export function renderGuidebook(ctx, { show3d = true, onShow, onVisit, linkFor, 
         h('div', {}, h('div', { class: 'guide__kicker' }, info?.kicker ?? s.subtitle), h('h3', { id: `guide-h-${s.id}`, class: 'guide__areatitle' }, info?.title ?? s.title)),
         show3d && h('button', { type: 'button', class: 'guide__visit', onclick: () => onVisit?.(s.id) }, 'Go there ', h('span', { html: icon('right') })),
       ),
-      info?.text && h('p', { class: 'guide__areatext' }, info.text),
+      areaText(info?.text) && h('p', { class: 'guide__areatext' }, areaText(info.text)),
       list.length > 0 && h('div', { class: 'guide__entries' }, list.map((e) => entryCard(e))),
     );
   });
 
   function entryCard(e) {
     const visited = ctx.interactions?.isVisited?.(e.id);
-    const shown = presentEntry(e);
-    const meta = [e.subtitle, shown.year && !shown.yearDraft ? shown.year : null].filter(Boolean).join(' · ');
+    const shown = presentEntry(e, { profile: P });
+    const meta = [shown.subtitle, shown.year && !shown.yearDraft ? shown.year : null].filter(Boolean).join(' · ');
     const link = linkFor?.(e.id);
-    // (an entry with no body yet shows its summary as the page: not twice here)
+    // (an entry with no words of its own yet stands in its summary / the intro: not twice here)
     const words = [
-      shown.body.filter((p) => p.text !== e.summary).map((p) => h('p', { class: p.draft ? 'is-draft' : null }, p.text)),
+      shown.body.filter((p) => !shown.bodyFallback && p.text !== e.summary).map((p) => h('p', { class: p.draft ? 'is-draft' : null }, p.text)),
       shown.facts.length > 0 && h('dl', { class: 'guide__facts' }, shown.facts.flatMap(([k, v, draft]) => [h('dt', { class: draft ? 'is-draft' : null }, k), h('dd', { class: draft ? 'is-draft' : null }, v)])),
     ].flat().filter(Boolean);
     const tags = e.tags?.length ? h('ul', { class: 'journal__tags' }, e.tags.map((t) => h('li', { class: 'paper-tag' }, t))) : null;

@@ -778,7 +778,7 @@ function buildCoffeeTable(ctx, mats, rng) {
       const p = check[i], q = check[i + 1];
       const len = Math.hypot(q.x - p.x, q.z - p.z) + 0.0015;
       // (each piece a thin wedge: as wide as the crack where it starts, a hair narrower where it ends)
-      const g = new THREE.BoxGeometry(len, 0.001, 1, 1, 1, 1);
+      const g = new THREE.BoxGeometry(len, 0.0004, 1, 1, 1, 1);
       const pa = g.attributes.position;
       for (let k = 0; k < pa.count; k++) pa.setZ(k, pa.getZ(k) * (pa.getX(k) < 0 ? p.w : q.w));
       Bk.add(vc, xf(g, [(p.x + q.x) / 2, top + 0.0003, (p.z + q.z) / 2], [0, -Math.atan2(q.z - p.z, q.x - p.x), 0]), { color: '#1f140c', cast: false, receive: false });
@@ -810,8 +810,8 @@ function buildCoffeeTable(ctx, mats, rng) {
       const c = at(x);
       // long axis across the crack: the shape's x turned onto the slab's z (square to the crack's run)
       const yaw = Math.PI / 2 - c.a;
-      Bk.add(vc, xf(recess.clone(), [x, top + 0.0001, c.z], [0, yaw, 0]), { color: '#24160d', cast: false, receive: false });
-      Bk.add(mats.wood('#3e2a1e', OIL), xf(key.clone(), [x, top + 0.0005, c.z], [0, yaw, 0]), { cast: false, receive: true });
+      Bk.add(vc, xf(recess.clone(), [x, top + 0.0002, c.z], [0, yaw, 0]), { color: '#24160d', cast: false, receive: false });
+      Bk.add(mats.wood('#4a3325', OIL), xf(key.clone(), [x, top + 0.0008, c.z], [0, yaw, 0]), { cast: false, receive: true });
     }
   }
   // walnut legs, through-tenoned into the slab and wedged with maple

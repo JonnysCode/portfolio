@@ -27,6 +27,10 @@
 // sight line), with a tighter lens and the background softly out of focus;
 // without such a view (the guidebook) it keeps its sketch until then. No WebGL /
 // post chain off / no hotspot / an empty frame → null (the sketch stays).
+// The cast (villagers, snails: userData.person / .snail) never shows its back: one
+// turned away from the lens, or standing between it and the piece, steps out of
+// the picture for the exposure (in place, the sun's shadow map is redrawn without
+// them, and once more for the glen's next frame).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
@@ -482,6 +486,41 @@ export function createPolaroids(ctx) {
     return { flat, context, focus: D, shadow: { x: foot.x * 0.5 + 0.5, y: foot.y * 0.5 + 0.5, w: Math.min(0.48, halfW * 0.62), h: Math.min(0.12, halfW * 0.16 + 0.02) } };
   }
 
+  // ── the cast: a villager (or a snail) turned away from the lens, or one standing
+  // between it and the piece, steps out of the picture for the exposure ──
+  const cPos = new THREE.Vector3(), cFwd = new THREE.Vector3(), cLens = new THREE.Vector3(), cRel = new THREE.Vector3(), cSight = new THREE.Vector3(), cNdc = new THREE.Vector3();
+  function hideCast(cam, root, hidden) {
+    let reach = 0;
+    for (const c of corners) reach = Math.max(reach, c.distanceTo(centre));
+    cSight.subVectors(centre, cam.position);
+    const D = cSight.length();
+    if (D < 1e-4) return hidden;
+    cSight.divideScalar(D);
+    root.traverse((o) => {
+      const ud = o.userData;
+      if (!ud || !(ud.person || ud.snail) || o.visible === false) return;
+      o.getWorldPosition(cPos);
+      cPos.y += 0.35; // (about chest height: the point that hides the piece)
+      // only who is in the picture
+      cNdc.copy(cPos).project(cam);
+      if (cNdc.z > 1 || Math.abs(cNdc.x) > 1.25 || Math.abs(cNdc.y) > 1.25) return;
+      cFwd.setFromMatrixColumn(o.matrixWorld, 2).setY(0); // villagers & snails face their +Z
+      cLens.subVectors(cam.position, cPos).setY(0);
+      let away = false;
+      if (cFwd.lengthSq() > 1e-8 && cLens.lengthSq() > 1e-8) away = cFwd.normalize().dot(cLens.normalize()) < 0.3;
+      // standing in front of the piece (between it and the lens)
+      cRel.subVectors(cPos, cam.position);
+      const t = cRel.dot(cSight);
+      const lateral = Math.sqrt(Math.max(0, cRel.lengthSq() - t * t));
+      const inFrontOf = t > 0.1 && t < D - reach * 0.35 && lateral < 0.45 + reach * 0.8 * (t / D);
+      if (away || inFrontOf) {
+        o.visible = false;
+        hidden.push(o);
+      }
+    });
+    return hidden;
+  }
+
   // ── the exposure ─────────────────────────────────────────────────────────
   const saveClear = new THREE.Color();
   function shoot(id, eye = null) {
@@ -493,6 +532,14 @@ export function createPolaroids(ctx) {
     if (!shot) return null;
     const scene = ctx.scene;
     const n = ctx.env?.night ?? (ctx.env?.isNight ? 1 : 0);
+    // (in place, the whole glen is in the picture; isolated, only the piece's own group)
+    const cast = [];
+    try {
+      hideCast(G.cam, shot.context ? scene : hs.object, cast);
+    } catch {
+      for (const o of cast) o.visible = true;
+      cast.length = 0;
+    }
     // the object and every light on the polaroid layer (in place: the whole glen)
     const tagged = [];
     if (shot.context) G.cam.layers.enableAll();
@@ -522,8 +569,8 @@ export function createPolaroids(ctx) {
       renderer.autoClear = true;
       renderer.setClearColor(0x000000, 0);
       // isolated: self-shadows only (the glen's map is redrawn on its next frame);
-      // in place: the glen's own shadow map as it is
-      if (sm.enabled) sm.needsUpdate = !shot.context;
+      // in place: the glen's own shadow map as it is (redrawn without anyone who stepped out)
+      if (sm.enabled) sm.needsUpdate = !shot.context || cast.length > 0;
       renderer.setRenderTarget(G.hdr);
       renderer.clear(true, true, true);
       renderer.render(scene, G.cam);
@@ -583,11 +630,12 @@ export function createPolaroids(ctx) {
       url = null;
     } finally {
       for (const o of tagged) o.layers.disable(LAYER);
+      for (const o of cast) o.visible = true;
       scene.background = prevBg;
       renderer.setRenderTarget(prevTarget);
       renderer.setClearColor(saveClear, prevAlpha);
       renderer.autoClear = prevAutoClear;
-      if (sm.enabled) sm.needsUpdate = shot.context ? prevShadowUpdate : true;
+      if (sm.enabled) sm.needsUpdate = shot.context && !cast.length ? prevShadowUpdate : true;
     }
     return url;
   }

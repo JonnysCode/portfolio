@@ -551,10 +551,59 @@ export function createUI(ctx) {
     ctx.audio?.setEnabled?.(ctx.audio?.preference ?? true);
     syncSound();
     hideIntro();
-    ctx.cameraRig?.playIntro?.().then((ok) => {
-      if (ok) showHintOnce();
-    });
+    const flight = ctx.cameraRig?.playIntro?.();
+    if (flight) {
+      startFlight();
+      flight.then((ok) => {
+        endFlight();
+        if (ok) showHintOnce();
+      });
+    }
     ctx.engine?.renderer?.domElement?.focus?.({ preventScroll: true });
+  }
+
+  // ── the flight in: the glen alone (no HUD over the giants), the HUD fades in on the crane ──
+  /** Seconds into the flight when the HUD comes back (cameraRig INTRO: the crane rises 8.4 → 9.6 s). */
+  const HUD_BACK_AT = 9.2;
+  let flying = null; // { t }
+  const skipChip = h('button', { class: 'intro-skip', type: 'button', tabindex: '-1', 'aria-label': 'Skip the flight in', onclick: () => skipFlight() }, 'skip', h('span', { html: icon('right') }));
+  root.append(skipChip);
+  function startFlight() {
+    flying = { t: 0 };
+    root.classList.add('is-flying');
+    skipChip.tabIndex = 0;
+    window.addEventListener('pointerdown', onFlightInput, true);
+    window.addEventListener('keydown', onFlightInput, true);
+    window.addEventListener('wheel', onFlightInput, { capture: true, passive: true });
+  }
+  /** Any input during the flight (the rig hurries it along): the HUD is wanted now. */
+  function onFlightInput(e) {
+    if (skipChip.contains(e.target)) return; // (the chip does its own thing)
+    showHud();
+  }
+  function showHud() {
+    if (!root.classList.contains('is-flying')) return;
+    root.classList.remove('is-flying');
+    skipChip.tabIndex = -1;
+    if (document.activeElement === skipChip) ctx.engine?.renderer?.domElement?.focus?.({ preventScroll: true });
+    window.removeEventListener('pointerdown', onFlightInput, true);
+    window.removeEventListener('keydown', onFlightInput, true);
+    window.removeEventListener('wheel', onFlightInput, { capture: true });
+  }
+  function endFlight() {
+    flying = null;
+    showHud();
+  }
+  /** "skip ›": straight to the overview (a soft cut). */
+  function skipFlight() {
+    const rig = ctx.cameraRig;
+    showHud();
+    if (!flying || !rig?.transitioning) return;
+    if (reduced) return rig.snap();
+    ui.fade(true).then(() => {
+      rig.snap();
+      setTimeout(() => ui.fade(false), 60);
+    });
   }
   function skipToGuidebook() {
     hideIntro();
@@ -648,10 +697,12 @@ export function createUI(ctx) {
     return out;
   }
   const placed = [];
-  function frame() {
+  function frame(dt = 0) {
     const rig = ctx.cameraRig;
     const cam = ctx.camera;
     if (!rig || !cam) return;
+    // the flight in: the HUD fades back in as the camera cranes up into the overview
+    if (flying && (flying.t += dt) >= HUD_BACK_AT) showHud();
     cam.updateMatrixWorld(); // the rig moved it this frame; project with fresh matrices
     measureView();
     const W = view.w, H = view.h;

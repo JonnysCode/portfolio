@@ -703,11 +703,10 @@ export function addStickeredStack(F, mats, rng, { len = 0.9, layers = 4, width =
       const t = rng.range(0.026, 0.034);
       const c = species[(((layer + Math.round(x * 10)) % species.length) + species.length) % species.length];
       F.add(mats.wood(c), board(w - 0.008, t, len + rng.jitter(0.03), { along: 'z', rng, r: 0.004 }).translate(x + w / 2, y + t / 2, rng.jitter(0.015)), { cast: layer === layers - 1 });
-      // sawn ends: pale end grain, the waxed red band at the top edge
-      for (const sz of [-1, 1]) {
-        F.add(mats.wood(c), xf(new THREE.PlaneGeometry(w - 0.012, t * 0.86), [x + w / 2, y + t / 2, sz * (len / 2 + 0.003)], [0, sz < 0 ? Math.PI : 0, 0]), { color: '#d6bd92', cast: false });
-        if (sz > 0) F.add(mats.wood(c), xf(new THREE.PlaneGeometry(w - 0.012, t * 0.32), [x + w / 2, y + t * 0.82, len / 2 + 0.0035]), { color: '#a8382a', cast: false });
-      }
+      // the sawn ends are the board's own end grain (real Hirnholz from the
+      // box UVs: rings, darker); every other board carries the yard's red
+      // batch mark across the top of its visitor end
+      if (rng.next() < 0.5) F.add(mats.wood(c), xf(new THREE.PlaneGeometry(w - 0.016, t * 0.28), [x + w / 2, y + t * 0.8, len / 2 + 0.0035]), { color: '#a8382a', cast: false });
       x += w;
     }
     y += 0.034;
@@ -751,21 +750,32 @@ export function addShavingTrail(B, mats, rng, gh, pts, { n = 26, spread = 0.22, 
  * A flat flagstone (Steinplatte): an irregular, slightly lumpy polygon of
  * dressed stone, a flat top with the faintest dome, a chamfered (worn) top
  * edge and a body sunk into the soil. Origin on the ground under its middle,
- * top at y = top. ≈ 7·n triangles (n = 7…9 corners).
+ * top at y = top. ≈ 7·n triangles (n = 10…14 outline points: 5–7 blunted corners).
  * opts: { r, sx, sz, top (height of the top above the ground), c (chamfer), depth }
  */
 export function flagstoneGeo(rng, { r = 0.18, sx = 1, sz = 1, top = 0.03, c = 0.012, depth = 0.08 } = {}) {
-  // an irregular split slab: 5–8 corners at uneven angles and radii, now and
-  // then a corner knocked in (never a tidy hexagon tile)
-  const n = rng.int(5, 8);
+  // an irregular split slab: 5–7 corners at uneven angles and radii, now and
+  // then one a little knocked in (never a tidy hexagon tile) — and every
+  // corner worn off (cut back along both edges), so the outline reads as
+  // split stone with blunted corners rather than a polygon cut from card
+  const nc = rng.int(5, 7);
   const ph = rng.next() * Math.PI * 2;
-  const bite = rng.next() < 0.45 ? rng.int(0, n - 1) : -1;
-  const out = [];
-  for (let i = 0; i < n; i++) {
-    const a = ph + ((i + rng.jitter(0.36)) / n) * Math.PI * 2;
-    const k = (i === bite ? 0.72 : 1) * rng.range(0.78, 1.16);
-    out.push([Math.cos(a) * r * sx * k, Math.sin(a) * r * sz * k]);
+  const bite = rng.next() < 0.4 ? rng.int(0, nc - 1) : -1;
+  const corners = [];
+  for (let i = 0; i < nc; i++) {
+    const a = ph + ((i + rng.jitter(0.3)) / nc) * Math.PI * 2;
+    const k = (i === bite ? 0.86 : 1) * rng.range(0.84, 1.12);
+    corners.push([Math.cos(a) * r * sx * k, Math.sin(a) * r * sz * k]);
   }
+  // (medium & low: the plain split outline, no worn corners, no dome ring)
+  const out = LOD.k < 1 ? corners : [];
+  for (let i = 0; i < nc && LOD.k >= 1; i++) {
+    const p0 = corners[(i + nc - 1) % nc], p1 = corners[i], p2 = corners[(i + 1) % nc];
+    const f0 = rng.range(0.14, 0.24), f1 = rng.range(0.14, 0.24);
+    out.push([p1[0] + (p0[0] - p1[0]) * f0, p1[1] + (p0[1] - p1[1]) * f0]);
+    out.push([p1[0] + (p2[0] - p1[0]) * f1, p1[1] + (p2[1] - p1[1]) * f1]);
+  }
+  const n = out.length;
   const dome = rng.range(0.002, 0.006);
   // centroid & an inset ring for the chamfer
   let cx = 0, cz = 0;
@@ -787,6 +797,11 @@ export function flagstoneGeo(rng, { r = 0.18, sx = 1, sz = 1, top = 0.03, c = 0.
     const idx = [];
     for (let i = 0; i < n; i++) {
       const j = (i + 1) % n;
+      if (LOD.k < 1) {
+        // (no dome ring: one fan from the centre to the chamfer's edge)
+        idx.push(0, 1 + n + j, 1 + n + i);
+        continue;
+      }
       idx.push(0, 1 + j, 1 + i);
       idx.push(1 + i, 1 + j, 1 + n + i, 1 + j, 1 + n + j, 1 + n + i);
     }
@@ -835,7 +850,7 @@ export function addFlagApron(F, mats, rng, { x0, x1, z0, z1, cw = 0.3, cd = 0.27
       const x = x0 + w * (i + 0.5 + (j % 2) * 0.25) + rng.jitter(w * 0.08);
       const z = z0 + d * (j + 0.5) + rng.jitter(d * 0.08);
       if (x > x1) continue;
-      const g = flagstoneGeo(rng, { r: 0.5, sx: w * 0.86, sz: d * 0.86, top: 0.036 + rng.jitter(0.005), c: 0.011 });
+      const g = flagstoneGeo(rng, { r: 0.5, sx: w * 0.86, sz: d * 0.86, top: 0.027 + rng.jitter(0.004), c: 0.01 });
       F.add(mats.stone(), xf(g, [x, gy(x, z), z], [rng.jitter(0.025), rng.jitter(0.3), rng.jitter(0.025)]), { cast: false });
       stones.push({ x, z, r: Math.max(w, d) * 0.42 });
     }
@@ -863,16 +878,21 @@ export function addChoppingBlock(F, mats, rng, { r = 0.21, h = 0.4 } = {}) {
   // a few axe scars (dark short cuts on the end grain)
   const vc = mats.vc();
   for (let i = 0; i < 4; i++) F.add(vc, xf(new THREE.BoxGeometry(rng.range(0.05, 0.1), 0.001, 0.0035), [rng.jitter(r * 0.5), h + 0.0045, rng.jitter(r * 0.5)], [0, rng.next() * 3, 0]), { color: '#5a4430', cast: false, receive: false });
-  // the axe: hickory-pale haft, the head bitten into the block
+  // the axe, left stuck in the block as an axe is: the head's bit bitten a few
+  // cm into the end grain, the blade square to the haft, the hickory-pale
+  // haft rising at a low angle out over the block's edge
   {
-    const a = -0.62; // haft lean (towards −x)
-    const m = mat4([0.02, h + 0.015, 0.01], [0.12, 0.35, a]);
-    F.add(mats.wood('#c4a272'), xf(board(0.032, 0.6, 0.022, { along: 'y', rng, r: 0.009 }), [0, 0.3, 0]).applyMatrix4(m));
-    const head = new THREE.Shape([[-0.02, 0.0], [0.03, 0.0], [0.11, -0.03], [0.12, 0.05], [0.11, 0.075], [0.03, 0.05], [-0.02, 0.05]].map(([x, y]) => new THREE.Vector2(x, y)));
-    const hg = new THREE.ExtrudeGeometry(head, { depth: 0.022, bevelEnabled: false });
-    hg.translate(0, -0.03, -0.011).rotateZ(-Math.PI / 2 - 0.0);
-    // (the head sits at the haft's lower end, its bit buried in the end grain)
-    F.add(mats.metal('#6d6f72'), hg.translate(0.0, 0.035, 0).applyMatrix4(m), { cast: false });
+    // (haft frame: the haft runs up local +y from the eye; the blade points
+    // along local +x, which the 63° lean turns down into the block)
+    const m = mat4([0.02, h + 0.05, 0.01], [0.1, 0.35, -1.1]);
+    F.add(mats.wood('#c4a272'), xf(board(0.032, 0.62, 0.022, { along: 'y', rng, r: 0.009 }), [0, 0.29, 0]).applyMatrix4(m));
+    // the head: poll & eye round the haft's end, the cheeks flaring to the bit
+    const head = new THREE.Shape([[-0.026, -0.022], [0.03, -0.02], [0.094, -0.046], [0.104, 0.0], [0.094, 0.046], [0.03, 0.022], [-0.026, 0.022]].map(([x, y]) => new THREE.Vector2(x, y)));
+    const hg = new THREE.ExtrudeGeometry(head, { depth: 0.024, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 1 });
+    hg.translate(0, 0, -0.012);
+    F.add(mats.metal('#6d6f72'), hg.applyMatrix4(m), { cast: false });
+    // the bright honed edge where the bit enters the wood
+    F.add(mats.metal('#b9bcbe'), xf(new THREE.BoxGeometry(0.006, 0.07, 0.026), [0.1, 0, 0]).applyMatrix4(m), { cast: false });
   }
   // split kindling round its foot, a couple leaning on it, chips
   for (let i = 0, n = count(8, 4); i < n; i++) {
@@ -905,7 +925,7 @@ export function addSweptShavings(B, mats, rng, gh, from, to, { n = 24, heaps = 3
     const t = rng.range(0, 0.3);
     const x = from.x + (to.x - from.x) * t + rng.jitter(spread), z = from.z + (to.z - from.z) * t + rng.jitter(spread * 0.5);
     // (mounded, a warm tan: sawdust, not paper)
-    B.add(vc, xf(mossGeo(rng, { r: rng.range(0.07, 0.11), h: rng.range(0.03, 0.045), sx: 1.35 }), [x, gh(x, z), z], [0, rng.next() * 3, 0]), { color: rng.pick(['#c9a46e', '#bf9963', '#cfac78']), cast: false });
+    B.add(vc, xf(mossGeo(rng, { r: rng.range(0.05, 0.08), h: rng.range(0.028, 0.04), sx: 1.3 }), [x, gh(x, z), z], [0, rng.next() * 3, 0]), { color: rng.pick(['#b38d5c', '#a98455', '#bb9564']), cast: false });
   }
   const mid = { x: (from.x + to.x) / 2 + rng.jitter(0.2), z: (from.z + to.z) / 2 };
   return addShavingTrail(B, mats, rng, gh, [from, mid, to], { n, spread, scale });

@@ -31,7 +31,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createRng } from '../../core/rng.js';
 import { getHeight } from '../../world/ground.js';
-import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, mossPadGeo, uvBox, uvCyl, paintBy, addToadstool, addFern, addLanternPost, SPECIES, LOD, segs, count } from './kit.js';
+import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, mossPadGeo, uvBox, uvCyl, paintBy, addToadstool, addFern, addLanternPost, LOD, segs, count } from './kit.js';
 import { SPOTS } from '../../world/layout.js';
 import { ANNEX, annexFrame, annexToWorld } from './annex.js';
 import { addTrack, addHandcart, addDowelBucket, addOffcuts, addLeaningBoards, addBesom, addRipVignette, addStickeredStack, addShavingTrail, leafGeo, flagstoneGeo, addFlagApron, addChoppingBlock, addSweptShavings } from './craft.js';
@@ -91,8 +91,7 @@ export function buildYard(ctx, B, mats) {
           const sp = lv.sp[(k + layer) % lv.sp.length];
           const b = board(len, t, w, { along: 'x', rng, r: 0.006 });
           F.add(mats.wood(sp), xf(b, [x - w / 2, y + t / 2, z0 - len / 2], [0, Math.PI / 2 + rng.jitter(0.008), 0]));
-          // bright end grain on the front ends (sawn, seen by the visitor)
-          F.add(mats.wood(sp), xf(new THREE.PlaneGeometry(w * 0.96, t * 0.9), [x - w / 2, y + t / 2, z0 + 0.002]), { color: lighten(SPECIES[sp], 0.12), cast: false });
+          // (the front ends, seen by the visitor, are the boards' own end grain: real Hirnholz from the box UVs)
           x -= w + 0.012;
         }
         y += 0.05;
@@ -134,7 +133,8 @@ export function buildYard(ctx, B, mats) {
         const barkC = rng.pick(['#4e3b2c', '#5a4434', '#463528']);
         paintBy(log, (nx, ny) => (Math.abs(ny) > 0.7 ? endC : barkC));
         log.rotateX(Math.PI / 2);
-        uvBox(log, 'z');
+        // (each log its own UV offset: its own end-grain rings, never a stamped pattern)
+        uvBox(log, 'z', undefined, [(i * 3.71 + k * 1.37) % 9, (i * 1.93 + k * 2.89) % 9]);
         // logs point radially: end grain shows all round the stack
         F.add(mats.wood('oak'), xf(log, [c[0] + Math.sin(a) * (r - 0.17), c[1] + y, c[2] + Math.cos(a) * (r - 0.17)], [rng.jitter(0.1), a, rng.jitter(0.3)]));
       }
@@ -218,8 +218,8 @@ export function buildYard(ctx, B, mats) {
         if (x + w > 0.3) break;
         const s = sp[(layer + k) % sp.length];
         parts.push([mats.wood(s), board(w - 0.008, t, len + rng.jitter(0.04), { along: 'z', rng, r: 0.005 }).translate(x + w / 2, y + t / 2, rng.jitter(0.02))]);
-        // the sawn front ends: pale end grain, waxed red at the edge
-        parts.push([mats.wood(s), new THREE.PlaneGeometry(w - 0.012, t * 0.9).translate(x + w / 2, y + t / 2, len / 2 + 0.003), lighten(SPECIES[s], 0.1)]);
+        // the sawn front ends: the board's own end grain (real Hirnholz from
+        // the box UVs), a stroke of red end-sealing wax along the top edge
         parts.push([mats.wood(s), new THREE.PlaneGeometry(w - 0.012, t * 0.3).translate(x + w / 2, y + t * 0.85, len / 2 + 0.0035), '#a8382a']);
         x += w;
       }
@@ -347,7 +347,7 @@ export function buildYard(ctx, B, mats) {
       const sx = rng.range(0.2, 0.27), sz = rng.range(0.16, 0.22);
       const x = p.x + rng.jitter(0.08), z = p.z + rng.jitter(0.08);
       const gy = getHeight(x, z) + 0.008, yaw = rng.next() * 3;
-      B.add(mats.stone(), xf(flagstoneGeo(rng, { r: 1, sx, sz, top: 0.034, c: 0.012 }), [x, gy, z], [rng.jitter(0.045), yaw, rng.jitter(0.045)]), { cast: false });
+      B.add(mats.stone(), xf(flagstoneGeo(rng, { r: 1, sx, sz, top: 0.026, c: 0.011 }), [x, gy, z], [rng.jitter(0.03), yaw, rng.jitter(0.03)]), { cast: false });
       B.add(mats.moss(), xf(mossPadGeo(rng, { r: 1.3, sx, sz, h: 0.028, lobes: 0.7 }), [x, gy - 0.004, z], [0, yaw + rng.jitter(0.5), 0]), { cast: false });
       stones.push({ x, z, r: Math.max(sx, sz) });
     }
@@ -443,7 +443,12 @@ export function buildYard(ctx, B, mats) {
     const o = addOffcuts(B.at(mat4([ox, getHeight(ox, oz), oz], [0, 0.6, 0])), mats, rng);
     keep.push({ x: ox, z: oz, r: o.r });
     const D0 = ctx.layout.OAK.door;
-    addSweptShavings(B, mats, rng, getHeight, { x: D0.x - 0.2, z: D0.z + 1.75 }, { x: D0.x + 0.15, z: D0.z + 3.6 }, { n: 28, heaps: 4, spread: 0.34 });
+    // the threshold the Schreiner walks every day: a tamped-soil apron from the
+    // door steps out along the path (it covers the painted litter there; only
+    // a few leaves blow over its edges), the swept shavings & sawdust on it
+    tracks.push(addTrack(B, mats, rng, getHeight, [{ x: D0.x - 0.04, z: D0.z + 1.3 }, { x: D0.x + 0.06, z: D0.z + 2.5 }, { x: D0.x + 0.2, z: D0.z + 3.9 }], { width: 1.2, leaves: 0.35 }));
+    const onTrack = (x, z) => getHeight(x, z) + 0.011;
+    addSweptShavings(B, mats, rng, onTrack, { x: D0.x - 0.2, z: D0.z + 1.75 }, { x: D0.x + 0.15, z: D0.z + 3.6 }, { n: 28, heaps: 4, spread: 0.34 });
   }
   {
     // rough boards seasoning against the oak, left of the door (past its root)
@@ -721,18 +726,12 @@ function scatterGround(ctx, B, mats, rng, { chest = null, keep = [], stones = []
         // (in front of the oak door half as many leaf drifts: the swept
         // shavings, the chopping block and the moss carry that floor)
         const nearDoor = Math.hypot(x - OAK.door.x, z - (OAK.door.z + 1.8)) < 3;
-        if (roll < (nearDoor ? 0.22 : 0.45)) clumps.leaves(x, z);
+        if (roll < (nearDoor ? 0.12 : 0.45)) clumps.leaves(x, z);
         else if (roll < 0.75) clumps.moss(x, z, rng.range(1.0, 1.5));
         else clumps.clover(x, z);
       }
     }
   }
-}
-
-function lighten(hex, k) {
-  const c = new THREE.Color(hex);
-  c.offsetHSL(0, -0.05, k);
-  return '#' + c.getHexString();
 }
 
 /**
