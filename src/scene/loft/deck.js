@@ -28,9 +28,14 @@ export const ELEVATOR_AZ = 56;
 /**
  * The snail lift's size: snail scale, hook arm, basket radius — and the slot
  * it needs through the deck and the stair landing (radial depth from the
- * bark, tangential half width).
+ * bark, tangential half width). The basket hangs 1.24–1.91 out from the bark
+ * (the hook sits on top of a tall shell), so the slot runs 2.16 out: its outer
+ * edge falls on a plank seam and the basket passes 0.25 clear of the header.
+ * planDepth is the slot the plank layout was first drawn round — the deck's
+ * random stream (and so every later prop of the loft) follows that layout, so
+ * the planks are laid out round it and then cut back to the real slot.
  */
-export const LIFT = { scale: 0.82, arm: 0.2, basketR: 0.3, slotDepth: 1.62, slotHalf: 0.5 };
+export const LIFT = { scale: 0.82, arm: 0.2, basketR: 0.3, slotDepth: 2.16, slotHalf: 0.5, planDepth: 1.62 };
 /** The stairwell: azimuth range (deg) along the bark, and how far out from the bark it is open. */
 export const STAIR_WELL = { a0: 2, a1: 31, depth: 1.42 };
 
@@ -53,16 +58,21 @@ export function buildDeck(ctx, B, mats, env) {
     return p.r - bark(p.a, y);
   };
   const elevA = ELEVATOR_AZ * DEG;
-  const inSlot = (x, z) => {
+  /** in the lift slot (depth: the real slot, or planDepth — the one the plank layout was drawn round) */
+  const slotTest = (x, z, depth) => {
     const p = frame.polarOf(x, z);
     const da = Math.abs(p.a - elevA) * p.r;
-    return da < LIFT.slotHalf && p.r - bark(p.a, DECK_Y) < LIFT.slotDepth;
+    return da < LIFT.slotHalf && p.r - bark(p.a, DECK_Y) < depth;
   };
+  const inPlanSlot = (x, z) => slotTest(x, z, LIFT.planDepth);
+  const inSlot = (x, z) => slotTest(x, z, LIFT.slotDepth);
   const inWell = (x, z) => {
     const p = frame.polarOf(x, z);
     return p.a > STAIR_WELL.a0 * DEG && p.a < STAIR_WELL.a1 * DEG && p.r - bark(p.a, DECK_Y) < STAIR_WELL.depth;
   };
   const deckOK = (x, z) => insideOutline(x, z) && barkGap(x, z) > 0.04 && !inSlot(x, z) && !inWell(x, z);
+  /** deckOK round the slot the plank layout was drawn round (the random stream follows it) */
+  const deckPlanOK = (x, z) => insideOutline(x, z) && barkGap(x, z) > 0.04 && !inPlanSlot(x, z) && !inWell(x, z);
   /** inside the treehouse's walls (its back is against the bark: no moss, leaves or toadstools on its floor) */
   const hc = Math.cos(HOUSE.yaw), hs = Math.sin(HOUSE.yaw);
   const inHouse = (x, z) => {
@@ -83,7 +93,7 @@ export function buildDeck(ctx, B, mats, env) {
     let start = null;
     const step = 0.02;
     for (let z = -R0 * 1.1; z <= R0 * 1.1 + step; z += step) {
-      const ok = z <= R0 * 1.1 && deckOK(x, z);
+      const ok = z <= R0 * 1.1 && deckPlanOK(x, z);
       if (ok && start === null) start = z;
       if (!ok && start !== null) {
         if (z - start > 0.16) plankRuns.push({ x, z0: start, z1: z - step });
@@ -94,8 +104,8 @@ export function buildDeck(ctx, B, mats, env) {
   const plankMat = mats.wood();
   for (const run of plankRuns) {
     // ragged outer ends, scribed (slightly short) inner ends at the bark
-    const nearBark0 = barkGap(run.x, run.z0 - 0.04) < 0.08 || inSlot(run.x, run.z0 - 0.04) || inWell(run.x, run.z0 - 0.04);
-    const nearBark1 = barkGap(run.x, run.z1 + 0.04) < 0.08 || inSlot(run.x, run.z1 + 0.04) || inWell(run.x, run.z1 + 0.04);
+    const nearBark0 = barkGap(run.x, run.z0 - 0.04) < 0.08 || inPlanSlot(run.x, run.z0 - 0.04) || inWell(run.x, run.z0 - 0.04);
+    const nearBark1 = barkGap(run.x, run.z1 + 0.04) < 0.08 || inPlanSlot(run.x, run.z1 + 0.04) || inWell(run.x, run.z1 + 0.04);
     let z0 = run.z0 + (nearBark0 ? rng.range(0.0, 0.05) : -rng.range(-0.04, 0.1));
     let z1 = run.z1 - (nearBark1 ? rng.range(0.0, 0.05) : -rng.range(-0.04, 0.1));
     // long runs: two boards with a butt joint somewhere in the middle
@@ -107,18 +117,58 @@ export function buildDeck(ctx, B, mats, env) {
       const L = b - a;
       if (L < 0.14) continue;
       const w = pitch - rng.range(0.02, 0.04);
-      const g = board(w, PLANK_T * rng.range(0.9, 1.08), L, { along: 'z', rng, c: 0.012, segs: Math.max(1, Math.round(L / 0.5)) });
+      const g0 = board(w, PLANK_T * rng.range(0.9, 1.08), L, { along: 'z', rng, c: 0.012, segs: Math.max(1, Math.round(L / 0.5)) });
       // a gentle twist / cup along the board
       const tw = rng.jitter(0.012), bow = rng.jitter(0.01);
-      for (let v = 0, pos = g.attributes.position; v < pos.count; v++) {
-        const t = pos.getZ(v) / L;
-        pos.setY(v, pos.getY(v) + pos.getX(v) * tw * t * 2 + bow * (1 - 4 * t * t));
-      }
-      g.computeVertexNormals();
-      xf(g, [run.x + rng.jitter(0.008), -PLANK_T / 2 + rng.jitter(0.005), (a + b) / 2], [rng.jitter(0.006), rng.jitter(0.008), rng.jitter(0.008)]);
+      const jx = rng.jitter(0.008), jy = rng.jitter(0.005);
+      const rot = [rng.jitter(0.006), rng.jitter(0.008), rng.jitter(0.008)];
       const tone = rng.next() < 0.05 ? '#a88d68' : rng.pick(plankTones);
-      F.add(plankMat, g, { color: tone });
+      // a board over the lift slot is cut back to its two sides (scribed a hair short)
+      for (const g of cutForSlot(g0, run.x, a, b, L)) {
+        for (let v = 0, pos = g.attributes.position; v < pos.count; v++) {
+          const t = pos.getZ(v) / L;
+          pos.setY(v, pos.getY(v) + pos.getX(v) * tw * t * 2 + bow * (1 - 4 * t * t));
+        }
+        g.computeVertexNormals();
+        xf(g, [run.x + jx, -PLANK_T / 2 + jy, (a + b) / 2], rot);
+        F.add(plankMat, g, { color: tone });
+      }
     }
+  }
+  /**
+   * The parts of a board (deck-local row x, from z = a to b, length L, centred
+   * on z = 0) outside the lift slot: none cut → the board itself; else the
+   * board's far end moved back to each side of the slot (end band and chamfer
+   * kept), the pieces shorter than 0.14 dropped.
+   */
+  function cutForSlot(g, x, a, b, L) {
+    let s0 = Infinity, s1 = -Infinity;
+    for (let z = a; z <= b; z += 0.01) {
+      if (!inSlot(x, z)) continue;
+      s0 = Math.min(s0, z);
+      s1 = Math.max(s1, z);
+    }
+    if (s0 > s1) return [g];
+    const zc = (a + b) / 2, E = 0.05;
+    const h = (k) => {
+      const s = Math.sin(x * 91.7 + k * 13.1) * 43758.5453;
+      return s - Math.floor(s);
+    };
+    const parts = [];
+    const hi0 = s0 - 0.012 - 0.03 * h(1), lo1 = s1 + 0.012 + 0.03 * h(2);
+    if (hi0 - a > 0.14) parts.push([-L / 2, hi0 - zc]);
+    if (b - lo1 > 0.14) parts.push([lo1 - zc, L / 2]);
+    return parts.map(([lo, hi]) => {
+      const c = g.clone();
+      const pos = c.attributes.position;
+      for (let v = 0; v < pos.count; v++) {
+        let z = pos.getZ(v);
+        if (hi < L / 2 - 1e-6) z = z > L / 2 - E ? hi - (L / 2 - z) : Math.min(z, hi - E);
+        if (lo > -L / 2 + 1e-6) z = z < -L / 2 + E ? lo + (z + L / 2) : Math.max(z, lo + E);
+        pos.setZ(v, z);
+      }
+      return c;
+    });
   }
 
   // ── joists: a fan from the bark outwards, on a ledger bolted to the trunk ──
@@ -149,12 +199,15 @@ export function buildDeck(ctx, B, mats, env) {
     if (deg > STAIR_WELL.a0 && deg < STAIR_WELL.a1) rIn = bark(a, yJ) + STAIR_WELL.depth + 0.04;
     const rOut = outerR(a) - 0.16;
     if (rOut - rIn < 0.4) continue;
-    const pIn = polar(a, rIn, yJ), pOut = polar(a, rOut, yJ);
+    // beside the lift slot the joist starts at the slot's trimmer joist (it is hung on it)
+    const dLift = Math.abs(deg - ELEVATOR_AZ) * DEG;
+    const rDraw = dLift < 15 * DEG ? Math.max(rIn, (LIFT.slotHalf + 0.145) / Math.sin(dLift)) : rIn;
+    const pIn = polar(a, rDraw, yJ), pOut = polar(a, rOut, yJ);
     B.add(timberMat, timber(pIn, pOut, 0.13, JOIST_H, { rng, wobble: 0.01 }));
     joists.push({ a, rIn, rOut, deg, brace });
     // bolt heads where the joist meets the ledger
     const side = new THREE.Vector3(Math.cos(a), 0, -Math.sin(a));
-    const bp = polar(a, rIn + 0.3, yJ - 0.02).addScaledVector(side, 0.07);
+    const bp = polar(a, rDraw + 0.3, yJ - 0.02).addScaledVector(side, 0.07);
     const bolt = new THREE.CylinderGeometry(0.028, 0.028, 0.03, lodRadial(6, 5)).rotateZ(Math.PI / 2);
     alongX(bolt, bp.clone().addScaledVector(side, -0.015), bp.clone().addScaledVector(side, 0.015));
     B.add(ironMat, bolt, { cast: false });
@@ -411,9 +464,9 @@ export function buildDeck(ctx, B, mats, env) {
       const nearBark = gap < 0.9;
       const nearRim = !insideOutline(x, z, 0.55);
       if (!nearBark && !nearRim && rng.next() > 0.08) continue;
-      if (inSlot(x, z) || inWell(x, z)) continue;
+      if (inPlanSlot(x, z) || inWell(x, z)) continue;
       const s = nearBark ? rng.range(0.12, 0.3) : rng.range(0.08, 0.18);
-      (inHouse(x, z) ? SINK : F).add(mossMat, xf(mossGeo(rng, { r: s, h: s * 0.35, sx: rng.range(0.8, 1.6), sz: rng.range(0.7, 1.2) }), [x, 0.005, z], [0, rng.next() * TAU, 0]), { cast: false });
+      (inHouse(x, z) || inSlot(x, z) ? SINK : F).add(mossMat, xf(mossGeo(rng, { r: s, h: s * 0.35, sx: rng.range(0.8, 1.6), sz: rng.range(0.7, 1.2) }), [x, 0.005, z], [0, rng.next() * TAU, 0]), { cast: false });
       placed++;
     }
     for (const run of railRuns) {
@@ -477,7 +530,7 @@ export function buildDeck(ctx, B, mats, env) {
     let placed = 0;
     for (let i = 0; i < 900 && placed < 140 * density; i++) {
       const x = rng.range(-R0, R0), z = rng.range(-R0, R0);
-      if (!deckOK(x, z)) continue;
+      if (!deckPlanOK(x, z)) continue;
       const nearEdge = !insideOutline(x, z, 0.55);
       const nearBark = barkGap(x, z) < 0.6;
       if (!nearEdge && !nearBark && rng.next() > 0.12) continue;
@@ -486,7 +539,7 @@ export function buildDeck(ctx, B, mats, env) {
       // curled a little
       for (let v = 0, pos = g.attributes.position; v < pos.count; v++) pos.setY(v, Math.abs(pos.getX(v)) * 0.4 * rng.next());
       xf(g, [x, 0.018 + rng.next() * 0.012, z], [rng.jitter(0.12), rng.next() * TAU, rng.jitter(0.12)], s);
-      (inHouse(x, z) ? SINK : F).add(paintMat, g, { color: rng.pick(leafCols), cast: false });
+      (inHouse(x, z) || inSlot(x, z) ? SINK : F).add(paintMat, g, { color: rng.pick(leafCols), cast: false });
       placed++;
     }
   }
@@ -496,7 +549,7 @@ export function buildDeck(ctx, B, mats, env) {
     let placed = 0;
     for (let i = 0; i < 200 && placed < 9; i++) {
       const x = rng.range(-R0, R0), z = rng.range(-R0, R0);
-      if (!insideOutline(x, z, 0.3) || inSlot(x, z) || inWell(x, z)) continue;
+      if (!insideOutline(x, z, 0.3) || inPlanSlot(x, z) || inWell(x, z)) continue;
       const gap = barkGap(x, z);
       if (gap < 0.05 || gap > 0.35) continue;
       const cluster = rng.int(1, 3);
@@ -505,36 +558,67 @@ export function buildDeck(ctx, B, mats, env) {
     }
   }
 
-  // ── the snail-lift slot: trimmed with boards, a little gate sign post ─────
+  // ── the snail-lift slot: a framed opening, a little gate sign post ─────────
   const slot = {};
   {
     const a = elevA;
     const rb = bark(a, DECK_Y);
     const side = new THREE.Vector3(Math.cos(a), 0, -Math.sin(a));
     const n = radial(a);
-    const c = polar(a, rb + LIFT.slotDepth / 2, DECK_Y);
-    // trimmer boards along the slot's two sides and its outer edge
+    const D = LIFT.slotDepth, Hs = LIFT.slotHalf;
+    const c = polar(a, rb + D / 2, DECK_Y);
+    // trim boards along the slot's two sides and its outer edge, flush with the planks
     for (const s of [-1, 1]) {
-      const p0 = polar(a, rb + 0.02, DECK_Y - 0.06).addScaledVector(side, s * (LIFT.slotHalf + 0.04));
-      const p1 = polar(a, rb + LIFT.slotDepth + 0.02, DECK_Y - 0.06).addScaledVector(side, s * (LIFT.slotHalf + 0.04));
+      const p0 = polar(a, rb + 0.02, DECK_Y - 0.06).addScaledVector(side, s * (Hs + 0.04));
+      const p1 = polar(a, rb + D + 0.02, DECK_Y - 0.06).addScaledVector(side, s * (Hs + 0.04));
       B.add(timberMat, timber(p0, p1, 0.12, 0.14, { rng, wobble: 0.004 }));
     }
     {
-      const p0 = polar(a, rb + LIFT.slotDepth + 0.04, DECK_Y - 0.06).addScaledVector(side, -LIFT.slotHalf - 0.1);
-      const p1 = polar(a, rb + LIFT.slotDepth + 0.04, DECK_Y - 0.06).addScaledVector(side, LIFT.slotHalf + 0.1);
+      const p0 = polar(a, rb + D + 0.04, DECK_Y - 0.06).addScaledVector(side, -Hs - 0.1);
+      const p1 = polar(a, rb + D + 0.04, DECK_Y - 0.06).addScaledVector(side, Hs + 0.1);
       B.add(timberMat, timber(p0, p1, 0.12, 0.14, { rng, wobble: 0.004 }));
+    }
+    // …and framed underneath like a stairwell: a trimmer joist under each side
+    // (on a cleat bolted into the bark), a header across the outer end, so the
+    // opening reads from below and the snail and its basket pass clear
+    // (own random stream: the deck's stays as it was)
+    {
+      const lr = ctx.rng('code-loft-lift-slot');
+      const yT = DECK_Y - PLANK_T - JOIST_H / 2;
+      for (const s of [-1, 1]) {
+        const p0 = polar(a, rb + 0.03, yT).addScaledVector(side, s * (Hs + 0.05));
+        const p1 = polar(a, rb + D + 0.14, yT).addScaledVector(side, s * (Hs + 0.05));
+        B.add(timberMat, timber(p0, p1, 0.12, JOIST_H, { rng: lr, wobble: 0.006 }));
+        // the cleat under its inner end, two lag bolts into the trunk
+        const cc = polar(a, rb + 0.08, yT - JOIST_H / 2 - 0.13).addScaledVector(side, s * (Hs + 0.05));
+        const cleat = board(0.18, 0.26, 0.12, { along: 'y', rng: lr });
+        cleat.applyMatrix4(new THREE.Matrix4().makeRotationY(a).setPosition(cc));
+        B.add(mats.wood(WOOD.frame), cleat);
+        for (const k of [-1, 1]) {
+          const bp = cc.clone().addScaledVector(side, k * 0.045).add(new THREE.Vector3(0, k * 0.05, 0)).addScaledVector(n, 0.065);
+          B.add(ironMat, xf(new THREE.CylinderGeometry(0.022, 0.022, 0.03, lodRadial(6, 5)), [bp.x, bp.y, bp.z], [Math.PI / 2, a, 0, 'YXZ']), { cast: false });
+        }
+      }
+      const h0 = polar(a, rb + D + 0.1, yT).addScaledVector(side, -Hs - 0.13);
+      const h1 = polar(a, rb + D + 0.1, yT).addScaledVector(side, Hs + 0.13);
+      B.add(timberMat, timber(h0, h1, 0.13, JOIST_H, { rng: lr, wobble: 0.006 }));
+      // iron straps on the trimmers' outer faces where the header crosses them
+      for (const s of [-1, 1]) {
+        const hp = polar(a, rb + D + 0.06, yT).addScaledVector(side, s * (Hs + 0.117));
+        B.add(ironMat, xf(new THREE.BoxGeometry(0.15, 0.2, 0.012), [hp.x, hp.y - 0.01, hp.z], [0, a + Math.PI / 2, 0]), { cast: false });
+      }
     }
     // the lift gate: two tall branch posts at the outer corners joined by a
     // crooked crossbar (the sign hangs from it), and low rails along the sides
     const tops = [];
     for (const s of [-1, 1]) {
-      const b0 = polar(a, rb + LIFT.slotDepth + 0.06, DECK_Y - 0.2).addScaledVector(side, s * (LIFT.slotHalf + 0.1));
+      const b0 = polar(a, rb + D + 0.06, DECK_Y - 0.2).addScaledVector(side, s * (Hs + 0.1));
       const b1 = b0.clone().add(new THREE.Vector3(0, 1.62, 0)).addScaledVector(n, 0.03).addScaledVector(side, s * 0.04);
       B.add(barkMat, branch([b0, b0.clone().lerp(b1, 0.45).add(new THREE.Vector3(rng.jitter(0.04), 0, rng.jitter(0.04))), b1], 0.06, 0.045, { radial: 7, seed: s * 7 }));
       slot['post' + (s > 0 ? 'L' : 'R')] = b1;
       tops.push(b1);
       // side rail back to the bark
-      const r0 = polar(a, rb + 0.08, DECK_Y + 0.55).addScaledVector(side, s * (LIFT.slotHalf + 0.06));
+      const r0 = polar(a, rb + 0.08, DECK_Y + 0.55).addScaledVector(side, s * (Hs + 0.06));
       const r1 = b0.clone().setY(DECK_Y + 0.58);
       B.add(barkMat, branch([r0, r0.clone().lerp(r1, 0.5).add(new THREE.Vector3(0, 0.03, 0)), r1], 0.032, 0.03, { radial: 6, seed: s * 3 }), { cast: false });
     }
@@ -550,7 +634,8 @@ export function buildDeck(ctx, B, mats, env) {
     }
     slot.centre = c;
     slot.a = a;
-    slot.outer = polar(a, rb + LIFT.slotDepth + 0.06, DECK_Y);
+    slot.outer = polar(a, rb + D + 0.06, DECK_Y);
+    slot.rb = rb;
   }
 
   // ── railing along the stairwell's outer edge ──────────────────────────────

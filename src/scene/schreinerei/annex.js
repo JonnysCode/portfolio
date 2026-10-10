@@ -819,6 +819,20 @@ export function buildAnnex(ctx, B, mats) {
   for (const s of [0.08, 1.9, 3.7, L - 0.08]) back.timber(s, ys, s, yp);
   back.timber(0.16, 1.4, L - 0.16, 1.4, 0.12);
   back.plaster([[0, ys], [L, ys], [L, yp + 0.16], [0, yp + 0.16]]);
+  // the back gable, against the oak: weathered board-and-batten up under
+  // the rafters (closed, so an orbit round the back never looks into the loft)
+  {
+    const y0 = yp + 0.14, yTop = (x) => eave + (hx - Math.abs(x)) * T - 0.02;
+    const sh = new THREE.Shape([new THREE.Vector2(-hx - 0.02, y0), new THREE.Vector2(hx + 0.02, y0), new THREE.Vector2(hx + 0.02, yTop(hx)), new THREE.Vector2(0, yTop(0)), new THREE.Vector2(-hx - 0.02, yTop(hx))]);
+    const g = new THREE.ExtrudeGeometry(sh, { depth: 0.035, bevelEnabled: false });
+    uvBox(g, 'y');
+    F.add(mats.wood('#6f5a44'), xf(g, [0, 0, -hz - 0.06]), { cast: false });
+    for (let x = -hx + 0.12; x < hx - 0.05; x += 0.3) {
+      const h = yTop(Math.abs(x) + 0.03) - y0 - 0.02;
+      if (h < 0.08) continue;
+      F.add(mats.wood('#62503c'), xf(board(0.045, h, 0.025, { along: 'y', rng }), [x + rng.jitter(0.01), y0 + h / 2, -hz - 0.075]), { cast: false });
+    }
+  }
   // LEFT side: two windows (seen from the cottage side), braces
   for (const s of [0.08, 1.45, 2.95, Dd - 0.08]) left.timber(s, ys, s, yp);
   left.timber(0.16, 1.05, Dd - 0.16, 1.05, 0.12);

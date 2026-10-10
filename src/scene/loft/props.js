@@ -16,6 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { DEG, TAU, IRON, BRASS, COPPER, lodRadial, lodSegs, addFlowerTuft, Batch, smallBitsRemap, shelfFungus, radial, polar, board, timber, branch, tubeAlong, xf, mat4, alongX, mossGeo, addToadstool, ivyCard, deform, noiseA } from './kit.js';
+import { LIFT } from './deck.js';
 
 // one bulb colour: every colour of string light costs two more draw calls
 const FAIRY = ['#ffd9a0'];
@@ -121,12 +122,23 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
     g.add(fan);
     if (!reduced) updates.push((dt) => (blades.rotation.z -= dt * 3.2));
     out.server = g;
-    // cable bundle from the log to the house's left wall (lying on the deck)
+    // cable bundle from the log to the house's left wall (lying on the deck),
+    // led round the outer end of the lift slot (never across the opening)
     {
       const a = toW(-0.25, 0.04, -0.25);
       const door = house.door.centre;
-      const pts = [a, a.clone().lerp(door, 0.3).add(new THREE.Vector3(0.1, -0.02, 0.1)), a.clone().lerp(door, 0.65).add(new THREE.Vector3(-0.15, -0.02, 0)), door.clone().add(new THREE.Vector3(-0.2, -0.75, -0.05))];
-      pts.forEach((p, i) => (p.y = deck.y + 0.03 + (i === 3 ? 0.04 : 0)));
+      let pts = [a, a.clone().lerp(door, 0.3).add(new THREE.Vector3(0.1, -0.02, 0.1)), a.clone().lerp(door, 0.65).add(new THREE.Vector3(-0.15, -0.02, 0)), door.clone().add(new THREE.Vector3(-0.2, -0.75, -0.05))];
+      const sl = deck.slot;
+      if (sl?.rb !== undefined) {
+        const sa = sl.a, side = new THREE.Vector3(Math.cos(sa), 0, -Math.sin(sa));
+        const lat = (p) => p.clone().sub(sl.outer).dot(side);
+        const s0 = Math.sign(lat(a)) || 1;
+        // past the gate posts (0.6 out to either side of the slot's middle)
+        const corner = (s, k) => polar(sa, sl.rb + LIFT.slotDepth + 0.3 + k, deck.y).addScaledVector(side, s * (LIFT.slotHalf + 0.32));
+        const d = pts[3];
+        pts = [a, a.clone().lerp(corner(s0, 0.02), 0.55).add(new THREE.Vector3(0.05, 0, -0.04)), corner(s0, 0), corner(-s0, 0.05), corner(-s0, 0.05).lerp(d, 0.5).add(new THREE.Vector3(-0.06, 0, 0.05)), d];
+      }
+      pts.forEach((p, i, all) => (p.y = deck.y + 0.03 + (i === all.length - 1 ? 0.04 : 0)));
       for (let k = 0; k < 3; k++) {
         const off = new THREE.Vector3(k * 0.015, k * 0.01, k * 0.012);
         B.add(mats.paint(['#202020', '#3a4a6a', '#a8402a'][k]), tubeAlong(pts.map((p) => p.clone().add(off)), 0.011, 5), { cast: false });

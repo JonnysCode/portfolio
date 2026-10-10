@@ -31,11 +31,16 @@
 // Hotspots (area 'code'): 'this-portfolio' (the workstation behind the big
 // window), 'project-backend' (the hollow-log server), 'project-side' (the
 // tinkering bench & robot), the rubber duck (kind 'secret') and the snail
-// lift (glides the camera to the loft).
+// lift — a RIDE (loft/ride.js): the snail itself (up, or down from the Code
+// Loft), the bell at its boarding platform on the roots (up; its ✦ beckons
+// from the Schreinerei) and the lift gate on the deck (down to the Schreinerei,
+// area 'woodworking': its ✦ beckons from the Code Loft).
 //
-// Exposes ctx.sites.loft = { deck, house, elevator, anchors: { deck, door,
+// Exposes ctx.sites.loft = { deck, house, elevator, ride, anchors: { deck, door,
 //   window, chimneyTop, telescope, stairBottom, liftBottom, liftTop } }.
-// elevator.setPhase(u) / setTime(t) jump the lift (screenshots & debugging).
+// elevator.setPhase(u) / setTime(t) jump the lift (screenshots & debugging);
+// ride.start('up' | 'down') rides it (debug.activateHotspot('Snail lift up to
+// the Code Loft') does the same as a click).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { OAK } from '../world/layout.js';
@@ -48,14 +53,17 @@ import { createBoards } from './loft/boards.js';
 import { buildProps } from './loft/props.js';
 import { buildStairs } from './loft/stairs.js';
 import { buildElevator } from './loft/elevator.js';
+import { createLiftRide } from './loft/ride.js';
 import { makeSmoke } from './cottage/smoke.js';
 import { sharedUniforms } from '../core/materials.js';
 
 /**
  * Triangle budget per tier (moduleStats: budget / overBudget). Measured with the
  * shared props (lanterns, string lights, the snail, the coder) included:
- * high ≈ 171k, medium ≈ 119k, low ≈ 90k triangles (before round 4: 171k / 169k /
- * 168k); shadow-pass triangles high ≈ 63k, medium ≈ 40k (were 98k / 92k).
+ * high ≈ 173k, medium ≈ 120k, low ≈ 91k triangles (round 5: + the lift slot's
+ * framing; before round 4: 171k / 169k / 168k); shadow-pass triangles high ≈
+ * 63k, medium ≈ 40k (were 98k / 92k). (moduleStats also counts the two
+ * invisible lift hotspot boxes as draws: they are never rendered.)
  */
 export const LOFT_BUDGET = { high: 185000, medium: 130000, low: 110000 };
 
@@ -166,13 +174,65 @@ export default async function build(ctx) {
       duck.scale.set(1 + s * 0.12, 1 - s * 0.15, 1 + s * 0.12);
     });
   }
+  // the snail lift is a RIDE ("hop on a snail"): the camera rides along up the
+  // trunk (or down it) beside the basket — loft/ride.js
+  let ride = null;
   if (elevator?.hotspot) {
-    ctx.interactions?.add?.(elevator.hotspot, {
+    ride = createLiftRide(ctx, { elevator, deck });
+    updates.push((dt) => ride.update(dt));
+    const UP = 'Snail lift up to the Code Loft', DOWN = 'Snail lift down to the Schreinerei';
+    const hidden = new THREE.MeshBasicMaterial({ visible: false });
+    /** an invisible box to click (excluded from the solid things that hide hotspots) */
+    const proxy = (centre, size, name) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(size[0], size[1], size[2]), hidden);
+      m.name = name;
+      m.position.copy(centre);
+      m.rotation.y = elevator.axis.a;
+      m.userData.__hotspotProxy = true;
+      m.castShadow = m.receiveShadow = false;
+      root.add(m);
+      m.updateMatrixWorld(true);
+      return m;
+    };
+    // the snail itself: up from anywhere, down from the Code Loft (no ✦ of its
+    // own — the stations' ✦ stay put while it crawls)
+    const snailHs = ctx.interactions?.add?.(elevator.hotspot, {
       area,
-      label: 'Snail lift to the Code Loft',
+      label: UP,
+      summary: 'Hop on: it carries you up the trunk.',
       approach: false,
-      onActivate: () => ctx.cameraRig?.goTo?.('code'),
+      marker: false,
+      onActivate: () => ride.start(ctx.cameraRig?.spot === 'code' ? 'down' : 'up'),
     });
+    if (snailHs) {
+      updates.push(() => {
+        const down = ctx.cameraRig?.spot === 'code';
+        if (snailHs.label !== (down ? DOWN : UP)) {
+          snailHs.label = down ? DOWN : UP;
+          snailHs.summary = down ? 'Hop on: it carries you down to the workshop.' : 'Hop on: it carries you up the trunk.';
+        }
+      });
+    }
+    // the bell at the boarding platform on the roots: its ✦ beckons from the
+    // Schreinerei and the places around (a ride UP, to the Code Loft)
+    ctx.interactions?.add?.(proxy(elevator.boarding.centre, elevator.boarding.size, 'lift-bell-hotspot'), {
+      area,
+      label: UP,
+      summary: 'Ring the bell and ride the snail up the trunk.',
+      approach: false,
+      onActivate: () => ride.start('up'),
+    });
+    // the lift gate up on the deck: a ride DOWN to the Schreinerei (it belongs
+    // there, so its ✦ beckons from the Code Loft)
+    if (deck.slot?.outer) {
+      ctx.interactions?.add?.(proxy(deck.slot.outer.clone().add(new THREE.Vector3(0, 0.85, 0)), [1.45, 1.7, 0.4], 'lift-gate-hotspot'), {
+        area: 'woodworking',
+        label: DOWN,
+        summary: 'Ride the snail down the trunk to the workshop.',
+        approach: false,
+        onActivate: () => ride.start('down'),
+      });
+    }
   }
 
   ctx.colliders?.addCircle?.(stairs.bottom.x, stairs.bottom.z, 0.5, 'loft-stair');
@@ -189,6 +249,7 @@ export default async function build(ctx) {
     deck,
     house,
     elevator,
+    ride,
     anchors: {
       deck: new THREE.Vector3(OAK.loft.x, OAK.loft.y, OAK.loft.z),
       door: house.door.centre,
