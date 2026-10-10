@@ -119,8 +119,10 @@ mushroom houses on platforms in a giant tree with rope bridges). Look at them.
   out (one per spot first, then by priority) — a request may never go live, so
   always pair it with emissive glow. Glow = emissive + bloom + glow sprites.
   At night every request (live or not), the oak and bridge lanterns, collider
-  posts tagged `'path-lantern'` and lit doorways also get a warm **light pool**
-  on the ground (`lightPool(s)` in `props/glow.js`, one draw call for all).
+  posts tagged `'path-lantern'`, lit doorways and every cluster of small fairy-light
+  bulbs (`props-glow-halo` materials) also get a warm **light pool** on the surface
+  below (`lightPool(s)` in `props/glow.js`, one draw call for all), and a night-only
+  "warm air" pass in post.js glows softly around warm lights.
 * **Life:** villagers busy with tasks, snails crawling (one is the treehouse
   elevator), smoke, swaying lanterns, fireflies, butterflies, the stream
   flowing, the waterfall foaming, motes drifting in sunbeams.
@@ -147,7 +149,10 @@ discoveries. Content lives only in `src/content/content.js`.
   and `systems/nearFade.js` dither-fades anything within ~0.9 of the lens (it appends to
   three's `dithering_fragment` chunk: append, never replace). Phones use each spot's
   `portrait` camera override (layout.js). The intro descends to an eye-level glide on the
-  main path before craning up into the overview (`debug.intro(sec)`, view `eyelevel`).
+  main path before craning up into the overview (`debug.intro(sec)`, view `eyelevel`); the
+  HUD stays hidden while it flies (`.is-flying`, with a skip chip). A spot can have several
+  phone stops (`rig.stop`, `rig.stops(id)`, `rig.toStop(i)`; a flick steps through them).
+  The snail lift is a real ride (`scene/loft/ride.js`).
 * **Hotspots** (`ctx.interactions`): `add(object, { entryId, area, label, focus, kind })`,
   `forSpot(id)`, `findByEntry(id)`, `markVisited(id)`, `progress()`. `kind: 'secret'`
   hotspots get no marker, sparkle on hover and count as discoveries; after a while
@@ -161,7 +166,12 @@ discoveries. Content lives only in `src/content/content.js`.
   into a spot or entry, and Back/Forward walk the history.
 * **DRAFT content** (`src/ui/draft.js`): entries marked DRAFT in `content.js` are
   flagged in dev and hidden in production builds, together with the placeholder
-  `example.com` mail button. `?drafts=show|hide` overrides this.
+  `example.com` mail button. `?drafts=show|hide` overrides this. `presentEntry(entry,
+  { profile })` decides what a page shows; without an email the contact copy drops its
+  letter promise (an entry's `noMail: { subtitle, body }` overrides that).
+* **Polaroids** (`src/ui/polaroid.js`): until an entry has `images`, its page shows a
+  one-off render of the in-world piece (cached per entry, day and night; characters
+  turned away or in front are hidden for the photo).
 * **Link previews:** `public/og.jpg` (1200 × 630). The `og:image` URL in `index.html`
   is absolute and assumes GitHub Pages at `jonnyscode.github.io/portfolio`.
 
