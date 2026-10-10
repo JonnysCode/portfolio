@@ -41,7 +41,10 @@ page.on('console', (m) => {
   if ((t === 'error' || t === 'warning') && !IGN.some((re) => re.test(m.text()))) problems.push(`[console.${t}] ${m.text()}`);
 });
 page.on('pageerror', (e) => problems.push(`[pageerror] ${e.stack || e.message}`));
-const q = `shots=1&q=high&night=0${extra ? '&' + extra : ''}`;
+// defaults first, then --params on top (a repeated key would lose: URLSearchParams.get returns the first)
+const qp = new URLSearchParams('shots=1&q=high&night=0');
+for (const [k, v] of new URLSearchParams(extra)) qp.set(k, v);
+const q = qp.toString();
 const t0 = Date.now();
 const stamp = () => ((Date.now() - t0) / 1000).toFixed(0) + 's';
 try {

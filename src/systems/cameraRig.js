@@ -17,17 +17,25 @@
 //   rig.transitioning               true while gliding
 //   rig.target                      THREE.Vector3 the camera looks at (lighting/DOF follow it)
 //   rig.focusDistance               distance camera → point of interest (for depth of field),
-//                                   accurate during glides, focus and orbiting
+//                                   accurate during focus and orbiting; mid-glide it
+//                                   follows whatever is in the middle of the frame
 //   rig.setInset({ right, bottom, top }) keep the subject centred in the part of
 //                                   the screen a panel / bottom sheet / HUD leaves free (px)
-// Phones: SPOTS[].portrait (layout.js) is the composed shot on a tall screen.
+// Phones: SPOTS[].portrait (layout.js) is the composed shot on a tall screen;
+//   SPOTS[].portraitMore adds further phone stops of the same place (a flick
+//   steps through them before travelling on): rig.stop, rig.stops(id?), rig.toStop(i).
 //   rig.holdIntro()                 hover high above the canopy (behind the intro card)
-//   rig.playIntro() → Promise       cinematic descent from above the canopy into the glen
+//   rig.playIntro() → Promise       cinematic flight: down from above the canopy to eye
+//                                   level on the path, a few steps among the giants, then
+//                                   a crane up and back into the overview (input hurries it)
 //   rig.setOverride(position, lookAt) / rig.clearOverride() / rig.snap()   (debug, cut-scenes)
 //
 // Feel: glides follow planned Bézier arcs that rise over obstacles and bend
 // around the Great Oak (cameraObstacles.js); orbit has inertia and soft limits
 // per spot; after a few idle seconds the camera "breathes" (a slow drift).
+// Close-ups (focus) look for a clear line of sight: solid things by raycast,
+// thin decor (fairy-light bulbs and wires, lanterns, lamp posts) by the soft
+// occluders of cameraObstacles.js.
 // prefers-reduced-motion: glides become soft cross-fade cuts, no drift.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
@@ -37,7 +45,6 @@ import { clamp, damp } from '../core/rng.js';
 import { createCameraObstacles } from './cameraObstacles.js';
 
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
-const easeIntro = (t) => 0.5 - 0.5 * Math.cos(Math.PI * Math.pow(t, 0.92));
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
 /**
@@ -47,7 +54,8 @@ const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
  */
 const ORBIT = {
   glen: { az: 0.62, up: 0.32, down: 0.1, zoom: [0.42, 1.22], pan: 9 },
-  woodworking: { az: 0.55, up: 0.42, down: 0.06, zoom: [0.42, 1.45], pan: 3.5 },
+  // (capSafe: swung far round, the deck's string lights and lamp posts sit right at the lens)
+  woodworking: { az: 0.55, up: 0.42, down: 0.06, zoom: [0.42, 1.45], pan: 3.5, capSafe: 0.55 },
   code: { az: 0.5, up: 0.32, down: 0.12, zoom: [0.45, 1.4], pan: 3 },
   // (capSafe: orbited far round, a zoom-in would park the lens under the cap
   // rim / behind a door leaf — the closest zoom is held back a little there)
@@ -59,13 +67,70 @@ const ORBIT = {
 
 /**
  * The intro flight: hover just above the glen, framed by the giant trunks and
- * the canopy (behind the intro card), then sink into the overview.
- * (From much higher up only the outskirts showed around the card.)
+ * the canopy (behind the intro card); then sink in over the front of the glen
+ * down to eye level on the main path — tiny among the giants, ferns blurring
+ * past the lens, looking up the trunk of the Great Oak to its loft — glide a
+ * few steps along the path, and crane up and back into the overview.
+ * keys: { t (s), position, target, focus (depth of field), fov (+ fovPortrait on phones) }.
+ * The first key is the hover pose, the last one the glen spot's composition.
  */
 const INTRO = {
   hover: { position: [10, 50, 72], target: [0, 3, -4] },
-  via: { position: [7, 31, 55], target: [0, 5, -3] },
-  duration: 5.6,
+  keys: [
+    { t: 2.9, position: [7.5, 19, 43], target: [0, 5.5, -4], focus: [0, 3, -3], fov: 40, fovPortrait: 12 },
+    { t: 4.8, position: [1.8, 3.4, 28.5], target: [0, 6.4, -4], focus: [0, 2.6, -2.6], fov: 42, fovPortrait: 17 },
+    // touching down on the path, then eye level: the giants rise out of the frame, the oak's door glows ahead
+    { t: 5.7, position: [0.4, 1.55, 23.6], target: [0, 6.8, -4], focus: [0, 2.2, -2.6], fov: 43, fovPortrait: 19 },
+    { t: 6.6, position: [0.1, 1.45, 21.2], target: [0, 6.9, -4], focus: [0, 2.2, -2.6], fov: 43, fovPortrait: 19 },
+    { t: 8.4, position: [0.2, 1.5, 17.0], target: [0, 7.2, -4], focus: [0, 2.2, -2.6], fov: 43, fovPortrait: 19 },
+    // the crane: up first, then back into the overview
+    { t: 9.6, position: [0.7, 4.4, 18.9], target: [0, 7.0, -3.5], focus: [0, 3, -2.4], fov: 42, fovPortrait: 17 },
+  ],
+  duration: 12,
+  /** Any input during the flight hurries it along (× speed). */
+  hurry: 3.5,
+};
+
+/** Monotone cubic interpolation (Fritsch–Carlson) through (xs, ys), flat at both ends. */
+function monotone(xs, ys) {
+  const n = xs.length;
+  const d = [];
+  for (let i = 0; i < n - 1; i++) d.push((ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]));
+  const m = new Array(n).fill(0);
+  for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (2 * d[i - 1] * d[i]) / (d[i - 1] + d[i]);
+  return (x) => {
+    if (x <= xs[0]) return ys[0];
+    if (x >= xs[n - 1]) return ys[n - 1];
+    let i = 0;
+    while (i < n - 2 && x > xs[i + 1]) i++;
+    const h = xs[i + 1] - xs[i], t = (x - xs[i]) / h;
+    const t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h * m[i] + (-2 * t3 + 3 * t2) * ys[i + 1] + (t3 - t2) * h * m[i + 1];
+  };
+}
+
+/**
+ * Close-up framing per entry (merged over the hotspot's / UI's focus options):
+ * the coffee table's and the dining table's bounds include the rug and the
+ * chairs, so their close-ups stood far back — framed on the piece itself, a
+ * little from above. (Clear sight lines past the fairy lights, the rose arch
+ * and the lamp posts are found by the search below, not by tweaks.)
+ *   offset: [x, y, z] world offset of the look point from the centre of the
+ *          hotspot's bounds (About Me: from the door leaf over to the bench
+ *          under the little cap, where the cat sleeps — seen from a step further
+ *          back and a little above, the big arch stones and the stepping-stone
+ *          slabs no longer fill the frame as smeared slabs)
+ */
+const FRAMING = {
+  'coffee-table': { radius: 0.62, lift: 0.08, polar: 1.1 },
+  'dining-table': { radius: 1.05, polar: 1.12 },
+  'about-me': { offset: [0.45, 0.15, -0.55], radius: 1.4, polar: 1.2, distance: 4.4 },
+  // the hero bike, swung round towards the stream, away from the mechanic at its
+  // rear wheel (from the spot's side his head filled the left of the frame)
+  'bike-build': { azimuth: -0.4 },
+  // This Woodland: the lens sits in the big window's opening, so the casement
+  // frames and the transom (within a hand's width) dissolve in the near fade
+  'this-portfolio': { distance: 1.75 },
 };
 
 /** How much of the free part of the screen a framed detail may fill (its bounding sphere). */
@@ -78,6 +143,10 @@ const FOCUS_TRIES_WIDE = [...FOCUS_TRIES, [0, -0.42], [0.3, -0.42], [-0.3, -0.42
 const NEAR_RAYS = [[0, -1], [0, 1], [-1, 0], [1, 0]];
 /** …and for a wide search also two fifths out (a rail across the bottom third counts as blocking). */
 const NEAR_RAYS_WIDE = [...NEAR_RAYS, [0, -2], [-2, 0], [2, 0], [0, 2]];
+/** Soft occluders (cameraObstacles decor) are looked for along these lines too (fifths of the frame), and cost: */
+const DECOR_RAYS = [[0, -1], [0, 1], [-1, 0], [1, 0], [-2, -1], [2, -1], [-2, 1], [2, 1]];
+const DECOR_CENTRE = 0.5;
+const DECOR_SIDE = 0.12;
 
 /** Convert a composed shot (position + target) into orbit parameters. */
 function toOrbit(position, target) {
@@ -110,11 +179,15 @@ export function createCameraRig(ctx) {
   let base = null; // current spot
   let focusBase = null; // a framed detail
   let spot = null;
+  /** Which of the current spot's phone stops is shown (0: SPOTS[].portrait, n: portraitMore[n − 1]). */
+  let stop = 0;
   let transition = null;
   let override = null;
   let introHover = false;
   // the point of interest (depth of field)
   const focusPoint = new THREE.Vector3(0, 4, -2);
+  /** 0..1 this frame: how much the depth of field follows the centre of the frame instead (mid-glide). */
+  let glideFocusW = 0;
   // idle "breathing"
   let idle = 0;
   let breathW = 0;
@@ -145,16 +218,18 @@ export function createCameraRig(ctx) {
     o.range = ORBIT[id] ?? ORBIT.woodworking;
     o.spot = id;
     const p = portrait();
-    if (p > 0 && s.portrait) {
+    // (a phone stop beyond the first: SPOTS[].portraitMore)
+    const P = (id === spot && stop > 0 && p >= 0.5 && s.portraitMore?.[stop - 1]) || s.portrait;
+    if (p > 0 && P) {
       // a tall phone screen has its own composed shot (layout.js SPOTS[].portrait);
       // tablets in portrait get a blend of the two
-      const q = toOrbit(s.portrait.position ?? s.camera.position, s.portrait.target ?? s.camera.target);
+      const q = toOrbit(P.position ?? s.camera.position, P.target ?? s.camera.target);
       o.target.lerp(q.target, p);
       o.azimuth += wrap(q.azimuth - o.azimuth) * p;
       o.polar += (q.polar - o.polar) * p;
       o.distance += (q.distance - o.distance) * p;
-      o.fov += ((s.portrait.fov ?? o.fov + 5) - o.fov) * p;
-      if (s.portrait.focus) o.focus.lerp(new THREE.Vector3(...s.portrait.focus), p);
+      o.fov += ((P.fov ?? o.fov + 5) - o.fov) * p;
+      if (P.focus) o.focus.lerp(new THREE.Vector3(...P.focus), p);
     } else if (p > 0) {
       // no composed phone shot: step back, look a little more from above, widen
       // the lens a touch, and slide the look point onto the subject (the 16:9
@@ -252,7 +327,8 @@ export function createCameraRig(ctx) {
       p1.y += hop * 0.08;
       p2.y += hop * 0.08;
     } else {
-      const plan = obstacles.plan(p0, p3, { lift: Math.min(5, hop * 0.1) });
+      // (the look points ride along: the planner rejects arcs on which a cap fills the frame)
+      const plan = obstacles.plan(p0, p3, { lift: Math.min(5, hop * 0.1), t0, t3: dest.target, fov: Math.max(fov, dest.fov ?? fov), aspect: camera.aspect || 16 / 9 });
       p1 = plan.p1;
       p2 = plan.p2;
     }
@@ -267,6 +343,8 @@ export function createCameraRig(ctx) {
         dest,
         fov0: fov,
         position: (k, out) => obstacles.bezier(p0, p1, p2, p3, k, out),
+        handles: [p0, p1, p2, p3],
+        look0: t0,
         // the eye leads the body a little: the look point travels slightly ahead
         target: (k, out) => out.lerpVectors(t0, dest.target, Math.min(1, k * 1.08 - 0.08 * k * k)),
         f0,
@@ -296,6 +374,14 @@ export function createCameraRig(ctx) {
     pan.addScaledVector(right, -dx * k).addScaledVector(fwd, dy * k);
   }
   const canInput = () => !override && !introHover && !(transition && transition.kind === 'intro');
+  /** A visitor who touches anything during the intro flight wants to get going: speed it up. */
+  const hurryIntro = () => {
+    if (transition?.kind === 'intro') transition.hurry = true;
+  };
+  canvas.addEventListener('pointerdown', hurryIntro);
+  window.addEventListener('keydown', (e) => {
+    if (!e.metaKey && !e.ctrlKey && !e.altKey) hurryIntro();
+  });
   const gestures = ctx.interactions?.gestures;
   if (gestures) {
     gestures.on('input', () => (idle = 0));
@@ -326,6 +412,15 @@ export function createCameraRig(ctx) {
       // undo toast: a visitor who just wanted to look must never be lost
       const flick = Math.abs(totalX) > 70 && ms < 380 && Math.abs(totalX) > 2.2 * Math.abs(totalY);
       const toward = totalX < 0 ? 1 : -1; // dragging left swings dAz up
+      // a place with more than one phone stop (the Schreinerei: the porch, then the
+      // deck): a flick steps through them first — still the same place, nobody is lost
+      if (pointerType !== 'mouse' && !ctx.ui?.isPanelOpen && flick && !focusBase) {
+        const want = stop + toward;
+        if (want >= 0 && want < rig.stops()) {
+          rig.toStop(want);
+          return;
+        }
+      }
       if (pointerType !== 'mouse' && !ctx.ui?.isPanelOpen && flick && azPinned === toward) {
         const from = spot;
         if (totalX < 0) rig.next();
@@ -350,6 +445,7 @@ export function createCameraRig(ctx) {
     (e) => {
       e.preventDefault();
       idle = 0;
+      hurryIntro();
       if (!canInput()) return;
       if (transition) settleTransition();
       const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
@@ -388,6 +484,11 @@ export function createCameraRig(ctx) {
     get transitioning() {
       return !!transition;
     },
+    /** Debug / QA: the running glide's Bézier handles and look points (null when not gliding a planned arc). */
+    get glide() {
+      const tr = transition;
+      return tr?.handles ? { handles: tr.handles, t0: tr.look0, t3: tr.dest.target, fov: Math.max(tr.fov0, tr.dest.fov ?? tr.fov0) } : null;
+    },
     obstacles,
     onSpotChange(fn) {
       spotListeners.add(fn);
@@ -401,6 +502,7 @@ export function createCameraRig(ctx) {
       if (!SPOT_BY_ID[id]) return Promise.resolve(false);
       const prev = spot;
       spot = id;
+      stop = 0;
       focusBase = null;
       base = spotBase(id);
       introHover = false;
@@ -413,6 +515,29 @@ export function createCameraRig(ctx) {
       }
       resetOffsets();
       return glideTo(base, { duration, kind: 'spot', arriveSpot: id });
+    },
+    /** The current phone stop (0 = the spot's portrait composition). */
+    get stop() {
+      return stop;
+    },
+    /** How many phone stops a spot has here (1 unless SPOTS[].portraitMore, on a tall screen). */
+    stops(id = spot) {
+      const s = SPOT_BY_ID[id];
+      return s && portrait() >= 0.5 ? 1 + (s.portraitMore?.length ?? 0) : 1;
+    },
+    /** Glide to another phone stop of the current spot (no new arrival: it is the same place). */
+    toStop(i, { instant = false } = {}) {
+      if (!spot || i === stop || i < 0 || i >= rig.stops()) return Promise.resolve(false);
+      stop = i;
+      focusBase = null;
+      base = spotBase(spot);
+      resetOffsets();
+      if (instant) {
+        applyPose(base);
+        focusPoint.copy(base.focus);
+        return Promise.resolve(true);
+      }
+      return glideTo(base, { kind: 'stop' });
     },
     next() {
       const i = SPOTS.findIndex((s) => s.id === spot);
@@ -434,6 +559,8 @@ export function createCameraRig(ctx) {
      * swings the camera a little around the detail, or moves it in closer.
      */
     focus(what, opts = {}) {
+      const entryId = what?.isObject3D ? what.userData?.__hotspot?.entryId : null;
+      if (entryId && FRAMING[entryId]) opts = { ...opts, ...FRAMING[entryId] };
       const p = new THREE.Vector3();
       let radius = opts.radius ?? 0;
       let facing = null;
@@ -457,10 +584,12 @@ export function createCameraRig(ctx) {
         if (opts.height) p.y += opts.height;
       }
       p.y += opts.lift ?? 0;
+      if (opts.offset) p.add(fV.set(opts.offset[0], opts.offset[1], opts.offset[2]));
       // clicked from another spot (e.g. the overview): that spot becomes current
       if (opts.spot && SPOT_BY_ID[opts.spot] && opts.spot !== spot) {
         const prev = spot;
         spot = opts.spot;
+        stop = 0;
         base = spotBase(spot);
         for (const fn of spotListeners) fn(spot, prev);
       }
@@ -482,8 +611,9 @@ export function createCameraRig(ctx) {
       if (subject) {
         const eye = new THREE.Vector3(), side = new THREE.Vector3(), upv = new THREE.Vector3(), q = new THREE.Vector3();
         const skip = Math.min(0.5, radius * 0.6);
+        const decorSkip = Math.min(0.9, radius * 0.75 + 0.15);
         const tanV = Math.tan(THREE.MathUtils.degToRad(fovNow) / 2);
-        let best = { az: az0, pol, clear: -1, score: -1, dist };
+        let best = { az: az0, pol, clear: -1, score: -Infinity, dist, found: false };
         const wide = opts.search === 'wide';
         // (a wide search also steps back — a secret wedged between a trunk and a deck
         // may only be seen from a little further away, over the things around it)
@@ -495,12 +625,12 @@ export function createCameraRig(ctx) {
             if (eye.y < getHeight(eye.x, eye.z) + 0.5 || obstacles.penetration(eye) > 0.05) continue;
             const clear = sightClear(p, eye, subject, skip);
             let score = clear;
+            fV.subVectors(p, eye).normalize();
+            side.crossVectors(fV, F_UP).normalize();
+            upv.crossVectors(side, fV);
+            const k = dd * tanV * 0.2;
             if (clear >= 0.999) {
               // the near field: rays to points a fifth of the frame beside / above / below the lens
-              fV.subVectors(p, eye).normalize();
-              side.crossVectors(fV, F_UP).normalize();
-              upv.crossVectors(side, fV);
-              const k = dd * tanV * 0.2;
               let off = 1;
               for (const [a, b] of wide ? NEAR_RAYS_WIDE : NEAR_RAYS) {
                 q.copy(eye).addScaledVector(side, a * k * camera.aspect).addScaledVector(upv, b * k);
@@ -508,12 +638,20 @@ export function createCameraRig(ctx) {
               }
               score = 1 + off;
             }
-            if (score > best.score + 0.02) best = { az: az0 + dAz, pol: pp, clear, score, dist: dd };
+            // soft occluders too thin for the rays (fairy-light bulbs and their wire,
+            // lanterns, lamp posts): a bulb across the middle of a close-up — or
+            // strung across its near field — ruins it as surely as a wall
+            if (obstacles.decorAlong(eye, p, decorSkip)) score -= DECOR_CENTRE;
+            for (const [a, b] of DECOR_RAYS) {
+              q.copy(eye).addScaledVector(side, a * k * camera.aspect).addScaledVector(upv, b * k);
+              if (obstacles.decorAlong(q, p, decorSkip)) score -= DECOR_SIDE;
+            }
+            if (score > best.score + 0.02) best = { az: az0 + dAz, pol: pp, clear, score, dist: dd, found: true };
             if (score >= 1.97) break search;
           }
         }
         // a secret with no clear look from anywhere: better to stay put than to park inside something
-        if (wide && best.score < 0) return Promise.resolve(false);
+        if (wide && !best.found) return Promise.resolve(false);
         dist = best.dist;
         az = best.az;
         polF = best.pol;
@@ -545,8 +683,9 @@ export function createCameraRig(ctx) {
       inset.bottom = bottom;
       inset.top = top;
     },
-    setOverride(position, lookAtPoint) {
-      override = { position: new THREE.Vector3().copy(position), lookAt: new THREE.Vector3().copy(lookAtPoint) };
+    /** (focusAt: the point the depth of field is focused on — default the look point) */
+    setOverride(position, lookAtPoint, focusAt = null) {
+      override = { position: new THREE.Vector3().copy(position), lookAt: new THREE.Vector3().copy(lookAtPoint), focus: focusAt ? new THREE.Vector3().copy(focusAt) : null };
     },
     clearOverride() {
       override = null;
@@ -567,7 +706,10 @@ export function createCameraRig(ctx) {
       target.set(...INTRO.hover.target);
       focusPoint.set(0, 4, -2);
     },
-    /** The cinematic descent from above the canopy into the glen overview. */
+    /**
+     * The cinematic flight from above the canopy down to eye level on the path,
+     * a few steps towards the oak, then up and back into the glen overview.
+     */
     playIntro() {
       const glen = spotBase('glen');
       const prev = spot;
@@ -579,10 +721,21 @@ export function createCameraRig(ctx) {
       if (prev !== 'glen') for (const fn of spotListeners) fn('glen', prev);
       if (reduced) return glideTo(glen, { kind: 'spot', arriveSpot: 'glen' });
       if (transition?.resolve) transition.resolve(false);
-      const end = posePosition(glen);
-      const posCurve = new THREE.CatmullRomCurve3([camera.position.clone(), new THREE.Vector3(...INTRO.via.position), end], false, 'centripetal');
-      const t0 = target.clone();
-      const tv = new THREE.Vector3(...INTRO.via.target);
+      const v3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
+      const pq = portrait();
+      const keys = INTRO.keys;
+      const P = [camera.position.clone(), ...keys.map((k) => v3(k.position)), posePosition(glen)];
+      const T = [target.clone(), ...keys.map((k) => v3(k.target)), glen.target.clone()];
+      const F = [focusPoint.clone(), ...keys.map((k) => v3(k.focus ?? k.target)), glen.focus.clone()];
+      const fovs = [fov, ...keys.map((k) => (k.fov ?? 40) + pq * (k.fovPortrait ?? 0)), glen.fov];
+      const times = [0, ...keys.map((k) => k.t), INTRO.duration];
+      const us = P.map((_, i) => i / (P.length - 1));
+      const pc = new THREE.CatmullRomCurve3(P, false, 'centripetal');
+      const tc = new THREE.CatmullRomCurve3(T, false, 'centripetal');
+      const fc = new THREE.CatmullRomCurve3(F, false, 'centripetal');
+      // (time → curve parameter: each key reached at its own time, speed continuous through it)
+      const toU = monotone(times, us);
+      const fovAt = monotone(us, fovs);
       return new Promise((resolve) => {
         transition = {
           kind: 'intro',
@@ -592,11 +745,13 @@ export function createCameraRig(ctx) {
           arriveSpot: 'glen',
           dest: glen,
           fov0: fov,
-          position: (k, out) => posCurve.getPoint(k, out),
-          target: (k, out) => (k < 0.5 ? out.lerpVectors(t0, tv, k * 2) : out.lerpVectors(tv, glen.target, (k - 0.5) * 2)),
+          position: (k, out) => pc.getPoint(k, out),
+          target: (k, out) => tc.getPoint(k, out),
+          focusAt: (k, out) => fc.getPoint(k, out),
+          fovAt,
           f0: focusPoint.clone(),
           f3: glen.focus.clone(),
-          ease: easeIntro,
+          ease: (lin) => toU(lin * INTRO.duration),
         };
       });
     },
@@ -617,7 +772,8 @@ export function createCameraRig(ctx) {
       camera.position.copy(override.position);
       camera.lookAt(override.lookAt);
       target.copy(override.lookAt);
-      rig.focusDistance = camera.position.distanceTo(override.lookAt);
+      rig.focusDistance = camera.position.distanceTo(override.focus ?? override.lookAt);
+      applyDofScale();
       return;
     }
     idle += dt;
@@ -634,13 +790,19 @@ export function createCameraRig(ctx) {
       distance = camPos.distanceTo(target);
     } else if (transition) {
       const tr = transition;
-      tr.t = Math.min(tr.duration, tr.t + dt);
+      tr.t = Math.min(tr.duration, tr.t + dt * (tr.hurry ? INTRO.hurry : 1));
       const lin = tr.t / tr.duration;
       const k = tr.ease(lin);
       tr.position(k, camPos);
       tr.target(k, target);
-      fov = tr.fov0 + ((tr.dest.fov ?? fov) - tr.fov0) * k;
-      focusPoint.lerpVectors(tr.f0, tr.f3, k);
+      fov = tr.fovAt ? tr.fovAt(k) : tr.fov0 + ((tr.dest.fov ?? fov) - tr.fov0) * k;
+      if (tr.focusAt) tr.focusAt(k, focusPoint);
+      else {
+        focusPoint.lerpVectors(tr.f0, tr.f3, k);
+        // mid-glide the lerped subject floats in empty air: focus on what the
+        // lens looks at instead (fading in and out with the glide)
+        glideFocusW = tr.kind === 'focus' ? 0 : Math.sin(Math.PI * lin);
+      }
       // keep the orbit state in sync so a new glide / grab starts from here
       offset.subVectors(camPos, target);
       distance = Math.max(0.01, offset.length());
@@ -752,8 +914,72 @@ export function createCameraRig(ctx) {
       lookAt.addScaledVector(camUp, -((inset.b - inset.t) / H) * d * tanV);
     }
     camera.lookAt(lookAt);
-    rig.focusDistance = camPos.distanceTo(focusPoint);
+    let fd = camPos.distanceTo(focusPoint);
+    if (glideFocusW > 0.001 && transition) {
+      // what sits in the middle of the frame: the first thing (ground, trunk, cap,
+      // house) along the line of sight, or the look point when the view is open
+      const hit = centreHit(camPos, lookAt);
+      fd += (hit - fd) * glideFocusW;
+    }
+    glideFocusW = 0;
+    rig.focusDistance = fd;
+    applyDofScale();
   }, 80);
+
+  /**
+   * The lens on a tall phone screen. It holds a deep slice of the glen (from the
+   * bank at the bottom of the frame to the crown at the top) on a frame only
+   * ~390 px wide, so the 16:9 lens blur (authored per 720 px of height) turned
+   * half of it into soft bokeh. On portrait the depth of field is gentler —
+   * rig.dofScale (1 on landscape → PORTRAIT_DOF on a phone, a touch less by
+   * night, when the lit village must read) scales the post chain's aperture, the
+   * near-field blur is capped lower (a foreground cap or fern stays a soft
+   * shape, not a blob), and the night is exposed a little brighter (a small
+   * screen held at arm's length). All through ctx.post.settings, which is
+   * live-tunable: a value someone else sets is adopted as the new base. Only the
+   * 'full' post tier has depth of field at all.
+   */
+  const PORTRAIT_DOF = 0.5;
+  const PORTRAIT_DOF_NIGHT = 0.42;
+  const PORTRAIT_NEAR_MAX = 0.5;
+  const PORTRAIT_NIGHT_EXPOSURE = 0.08;
+  const lensBase = {};
+  const lensWritten = {};
+  function lens(S, key, f) {
+    if (typeof S[key] !== 'number') return;
+    if (lensBase[key] === undefined || S[key] !== lensWritten[key]) lensBase[key] = S[key];
+    const want = f(lensBase[key]);
+    if (S[key] !== want) S[key] = want;
+    lensWritten[key] = S[key];
+  }
+  rig.dofScale = 1;
+  function applyDofScale() {
+    const p = portrait();
+    const n = ctx.env?.night ?? 0;
+    const k = 1 - p * (1 - (PORTRAIT_DOF + (PORTRAIT_DOF_NIGHT - PORTRAIT_DOF) * n));
+    rig.dofScale = k;
+    const S = ctx.post?.settings;
+    if (!S) return;
+    lens(S, 'aperture', (b) => b * k);
+    lens(S, 'nearMaxBlur', (b) => b * (1 - p * (1 - PORTRAIT_NEAR_MAX)));
+    // (settings.exposure is the night's exposure: the day keeps exposureDay)
+    lens(S, 'exposure', (b) => b + p * PORTRAIT_NIGHT_EXPOSURE);
+  }
+
+  /** Distance along the line of sight camera → look point to the first solid thing (analytic, cheap). */
+  const chDir = new THREE.Vector3();
+  const chP = new THREE.Vector3();
+  function centreHit(from, at) {
+    chDir.subVectors(at, from);
+    const toLook = chDir.length();
+    chDir.divideScalar(toLook || 1);
+    const far = Math.max(toLook * 1.6, 24);
+    for (let s = 0.75; s < far; s += s < 12 ? 0.75 : 1.5) {
+      chP.copy(chDir).multiplyScalar(s).add(from);
+      if (chP.y < getHeight(chP.x, chP.z) + 0.15 || obstacles.penetration(chP, { ground: false }) > 0.9) return Math.max(1, s);
+    }
+    return toLook;
+  }
 
   // a rotated phone / resized window: re-fit the current composition
   engine.onResize?.(() => {

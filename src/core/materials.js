@@ -46,6 +46,18 @@ try {
   /* no media queries (workers, tests) */
 }
 
+/**
+ * End-grain marker for UV-mapped wood: a UV generator adds END_GRAIN_V to V on
+ * faces that cut ACROSS the grain (normal ∥ grain axis). The surface shader
+ * strips it again and draws those faces as darker end grain (Hirnholz) with
+ * ring arcs, rays and — on timber — a drying check. materials.boxUV() does it
+ * automatically; a module's own box-UV helper only has to add it in its
+ * "normal along the grain axis" branch:  v = v * scale + off + END_GRAIN_V.
+ * Only surface() materials understand the marker (it is a whole number of
+ * tiles, but keep it away from other materials' maps).
+ */
+export const END_GRAIN_V = 1024;
+
 /** Uniforms shared by every material that opts into wind / time effects. */
 export const sharedUniforms = {
   uTime: { value: 0 },
@@ -201,6 +213,8 @@ export function applyWind(material, { strength = 0.06, base = 0, speed = 1.6 } =
 export const materials = {
   palette,
   sharedUniforms,
+  /** V offset that marks end-grain faces for the wood surfaces (see END_GRAIN_V). */
+  END_GRAIN_V,
   gradientMap: toonGradient,
   softGradientMap: softToonGradient,
 
@@ -289,14 +303,20 @@ export const materials = {
    *
    * Kinds (mapping in brackets — triplanar needs no UVs, it is WORLD space, so
    * use it for static things; uv kinds need UVs, see boxUV()):
-   *   bark [tri]      deep vertical furrows, fibrous plates, lichen
+   *   bark [tri]      deep vertical furrows, fibrous plates, lichen. In DIRECT light the furrows
+   *                   are lifted and the plates desaturated (no tiger stripes in the sun)
    *   wood [uv]       opts.species = oak|walnut|spruce|ash|cherry|maple; opts.planks → boards with seams.
-   *                   Grain runs along U (opts.grain = 'v' to run along V)
-   *   timber [uv]     weathered, silvered beams with drying checks (grain along U)
+   *                   Grain runs along U (opts.grain = 'v' to run along V). Scale: one UV unit =
+   *                   1.4 world units (boxUV's tile) → ~8–11 growth rings per 10 cm, pores, light
+   *                   ray flecks (opts.rays, default per species: oak 1, spruce 0). Faces marked with
+   *                   END_GRAIN_V (boxUV does it) render as darker end grain with ring arcs.
+   *   timber [uv]     weathered, silvered beams with drying checks (grain along U); end grain too
    *   shingles [uv]   wooden shakes in rows, V = up the roof (U around a cone)
    *   thatch [uv]     straw layers, V = up the roof
    *   plaster [uv]    mottled lime plaster, hairline cracks, stones peeking through
-   *   stone [tri]     fieldstone wall with recessed mortar
+   *   stone [tri]     a single field / dressed stone's face: grain, pits, a rare hairline crack,
+   *                   worn pale edges, chips, lichen — for individually modelled stones
+   *   masonry [tri]   fieldstone WALL texture (stones + recessed mortar) for flat wall shells
    *   cobble [tri]    rounded cobbles, soil & moss in the joints
    *   rock [tri]      layered mossy boulders/cliffs (mossy 0.35 by default)
    *   moss [tri]      velvety cushions          soil [tri]  humus, pebbles, twigs, fallen leaves
@@ -308,7 +328,8 @@ export const materials = {
    *   leaf [uv]       one leaf over the UV square (base V=0, tip V=1, midrib U=0.5)
    *   fabric [uv]     plain weave (opts.color)   rope [uv] twisted strands (TubeGeometry UVs)
    *   metal [tri]     forged iron with rust (opts.color)   glass [uv] old crown glass (transparent)
-   *   paper [uv]      clay [uv] terracotta with throwing rings (opts.color)
+   *   paper [uv]      clay [uv] terracotta with throwing rings; opts.color = any body / glaze colour
+   *                   (celadon, grey stoneware, white…), opts.glaze = true → glossy glazed ceramic
    *
    * opts: {
    *   color      tint: for colorize kinds (wood, mushroomCap, fabric, metal, clay) the base colour;
@@ -321,8 +342,17 @@ export const materials = {
    *   grain      'u' (default) | 'v' — which UV axis the wood grain / fibres follow
    *   swapUV     same as grain: 'v' — swaps U and V for any uv kind (e.g. bark with
    *              triplanar: false on a TubeGeometry branch: furrows then run along the tube)
-   *   vertexColors  multiply by vertex colours (the texture is normalised to average white)
+   *   vertexColors  multiply by vertex colours (the texture is normalised to average white;
+   *              wood + species: per channel, so the vertex colour IS the average wood colour;
+   *              wood + color: luminance only, the redder late wood keeps a faint warm cast;
+   *              leaf: the leaf map's value only (veins, midrib) — the vertex colour sets the
+   *              hue, so petals, autumn leaves and blossoms keep theirs (no olive cast);
+   *              clay: a neutral body, the vertex colour is the glaze / body colour)
+   *   glaze      clay: glossy glazed ceramic (lower roughness)
    *   bump       normal-map strength multiplier     breakup  painterly colour variation (0 = off)
+   *   mossGain   brightness of the moss overlay (1). The moss ignores vertex colours: a
+   *              vertex-coloured mossy rock gets the same velvet moss as any other surface
+   *   rays       wood: strength of the ray flecks (species default; 0 = none)
    *   side, transparent, opacity, wind: { strength, base, speed }, roughness (multiplier)
    * }
    * Note: triplanar kinds sample WORLD space — an object that moves will swim
@@ -422,10 +452,12 @@ export const materials = {
    * size. `tile` is a number or a surface kind ('shingles' → its natural tile).
    * opts.grain: 'x' | 'y' | 'z' | 'auto' (longest bbox axis) — the axis the
    * texture's U (wood grain, shingle rows' run) follows wherever possible.
+   * Faces across the grain get the END_GRAIN_V marker (wood/timber draw them
+   * as end grain; every other surface ignores it) unless opts.endGrain = false.
    * Returns the geometry. Apply before merging/transforming parts.
    */
-  boxUV(geometry, tile = 1, { grain = 'auto', offset = [0, 0] } = {}) {
-    return boxUV(geometry, typeof tile === 'string' ? KINDS[tile]?.tile ?? 1 : tile, grain, offset);
+  boxUV(geometry, tile = 1, { grain = 'auto', offset = [0, 0], endGrain = true } = {}) {
+    return boxUV(geometry, typeof tile === 'string' ? KINDS[tile]?.tile ?? 1 : tile, grain, offset, endGrain);
   },
 
   /**
@@ -528,7 +560,11 @@ function colorizeColors(kind, opts) {
     const sp = WOOD_SPECIES[opts.species] ?? null;
     if (sp && opts.color === undefined) return { a: lin(sp.a), b: lin(sp.b), c: lin(sp.c) };
     const base = lin(opts.color ?? palette[opts.species] ?? WOOD_SPECIES.oak.a);
-    return { a: base.clone().multiplyScalar(1.05), b: base.clone().multiplyScalar(0.55), c: base.clone().multiplyScalar(0.25) };
+    // late wood darker AND a little redder-browner than early wood (as in real
+    // wood) — on the shared vertex-coloured wood this is what keeps the grain
+    // from reading as a flat blond plywood under the warm grade
+    const late = new THREE.Color(1.08, 0.9, 0.72);
+    return { a: base.clone().multiplyScalar(1.05), b: base.clone().multiplyScalar(0.52).multiply(late), c: base.clone().multiplyScalar(0.24).multiply(late) };
   }
   if (kind === 'mushroomCap') {
     const base = lin(opts.color ?? '#c4301f');
@@ -541,17 +577,34 @@ function colorizeColors(kind, opts) {
     return { a: base, b: base.clone().multiplyScalar(0.45), c: lin('#8a4a22') };
   }
   if (kind === 'clay') {
+    if (opts.color === undefined && !opts.glaze) {
+      // fired terracotta: darker & redder where the fire hit, pale lime bloom
+      const base = lin('#b5633e');
+      return { a: base, b: base.clone().multiplyScalar(0.62).lerp(lin('#6a2e1a'), 0.2), c: base.clone().lerp(lin('#e8c8a8'), 0.55) };
+    }
+    // a tinted body or glaze (celadon, grey stoneware, blue, white…): the
+    // variation stays IN the tint's own hue — darker where the glaze pools, paler
+    // where it breaks thin over the rings — so it never drifts to terracotta
     const base = lin(opts.color ?? '#b5633e');
-    return { a: base, b: base.clone().multiplyScalar(0.62).lerp(lin('#6a2e1a'), 0.2), c: base.clone().lerp(lin('#e8c8a8'), 0.55) };
+    return { a: base, b: base.clone().multiplyScalar(0.72), c: base.clone().lerp(WHITE, 0.3) };
   }
   // fabric & anything else
   const base = lin(opts.color ?? '#c9b79a');
   return { a: base, b: base.clone().multiplyScalar(0.55), c: base.clone().lerp(WHITE, 0.35) };
 }
 
+/** rgb kinds whose vertex-coloured variant uses the map's luminance only (see makeSurface). */
+const NEUTRAL_VC = new Set(['leaf']);
+
 let _mossMaps = null;
 /** Low tier: cheaper surface shader (no painterly breakup noise). Set by setRenderer(r, { tier: 'low' }). */
 let lite = false;
+
+/** Expected linear mean of an rgb kind's albedo after the material's tint (for the bark sun lift). */
+function meanLum(kd, colA) {
+  const m = new THREE.Color(kd.mean ?? '#808080');
+  return 0.2126 * m.r * colA.r + 0.7152 * m.g * colA.g + 0.0722 * m.b * colA.b;
+}
 
 function makeSurface(kindIn, opts) {
   let kind = KINDS[kindIn] && kindIn !== 'woodPlanks' ? kindIn : 'stone';
@@ -567,16 +620,55 @@ function makeSurface(kindIn, opts) {
   let colA, colB, colC;
   if (colorize) {
     ({ a: colA, b: colB, c: colC } = colorizeColors(kind, opts));
-    if (opts.vertexColors) {
+    if (opts.vertexColors && (kind === 'wood' || kind === 'woodPlanks')) {
+      // wood (weighted like the map: mostly early wood)
+      const mr = 0.62 * colA.r + 0.38 * colB.r || 1, mg = 0.62 * colA.g + 0.38 * colB.g || 1, mb = 0.62 * colA.b + 0.38 * colB.b || 1;
+      if (opts.color === undefined) {
+        // a species + vertex colours: normalise PER CHANNEL so the grain averages
+        // to white and the vertex colour alone sets the hue (a scalar mean kept
+        // the species' own orange: species oak × an oak vertex colour came out a
+        // doubly saturated butter-orange)
+        for (const c of [colA, colB, colC]) c.setRGB(c.r / mr, c.g / mg, c.b / mb);
+      } else {
+        // a neutral colour + vertex colours (the Schreinerei): normalise the
+        // LUMINANCE only, so the redder late wood keeps a faint warm cast
+        const l = 0.2126 * mr + 0.7152 * mg + 0.0722 * mb || 1;
+        for (const c of [colA, colB, colC]) c.multiplyScalar(1 / l);
+      }
+    } else if (opts.vertexColors && kind === 'clay' && opts.color === undefined) {
+      // clay + vertex colours (mugs, vases, pots): a NEUTRAL body, so the vertex
+      // colour alone sets the hue — white mugs stay white, blue stays blue
+      // (the terracotta preset's own orange used to survive a scalar normalisation)
+      const k = opts.glaze ? 0.72 : 0.66;
+      colA.setRGB(1, 1, 1); colB.setRGB(k, k, k); colC.setRGB(1.3, 1.3, 1.3);
+      const mean = 0.62 + 0.38 * k;
+      for (const c of [colA, colB, colC]) c.multiplyScalar(1 / mean);
+    } else if (opts.vertexColors) {
       // normalise so the texture averages to white and the vertex colour sets the hue
       const mean = (colA.r + colA.g + colA.b + colB.r + colB.g + colB.b) / 6 || 1;
       colA.multiplyScalar(1 / mean); colB.multiplyScalar(1 / mean); colC.multiplyScalar(1 / mean);
     }
+  } else if (opts.vertexColors && NEUTRAL_VC.has(kind)) {
+    // a strongly coloured map (the leaf's green) cannot be normalised per
+    // channel (its blue mean is ~3 %): use its VALUE only, normalised to its mean
+    // luminance — the vertex colour alone sets the hue (pink petals stay pink)
+    const mc = new THREE.Color(kd.mean ?? '#808080');
+    const l = 0.2126 * mc.r + 0.7152 * mc.g + 0.0722 * mc.b || 1;
+    colA = new THREE.Color(1 / l, 1 / l, 1 / l);
+    colB = WHITE.clone();
+    colC = WHITE.clone();
   } else {
     colA = opts.vertexColors ? tintFor('#ffffff', kd.mean) : opts.color !== undefined ? tintFor(opts.color, kd.mean) : WHITE.clone();
     colB = WHITE.clone();
     colC = WHITE.clone();
   }
+  const neutralVC = !colorize && !!opts.vertexColors && NEUTRAL_VC.has(kind);
+
+  // wood: end grain + ray flecks (uv-mapped only: the end-grain marker lives in the UVs)
+  const woody = !!kd.woody && !triplanar;
+  const isWood = kind === 'wood' || kind === 'woodPlanks';
+  const sp = WOOD_SPECIES[opts.species];
+  const rays = woody ? opts.rays ?? (isWood ? (sp && opts.color === undefined ? sp.rays : opts.species === 'oak' ? 1 : 0.55) : 0.5) : 0;
 
   const rep = opts.repeat ?? 1;
   // kd.aspect: the map covers `aspect` tiles along V (e.g. bark: tall 1:2 map → no short vertical repeat)
@@ -593,10 +685,11 @@ function makeSurface(kindIn, opts) {
     sfColB: { value: colB },
     sfColC: { value: colC },
     sfTile: { value: tile },
-    sfP: { value: new THREE.Vector4((kd.normal ?? 1) * (opts.bump ?? 1), kd.ao ?? 1, opts.roughness ?? 1, opts.breakup ?? kd.breakup ?? 1) },
+    sfP: { value: new THREE.Vector4((kd.normal ?? 1) * (opts.bump ?? 1), kd.ao ?? 1, (opts.roughness ?? 1) * (opts.glaze ? 0.42 : 1), opts.breakup ?? kd.breakup ?? 1) },
     sfQ: { value: new THREE.Vector4(mossy, 1 / (KINDS.moss.tile * 0.9), kd.velvet ?? 0, kd.metalRust ?? 0) },
     sfR: { value: new THREE.Vector4(opts.grain === 'v' || opts.swapUV ? 1 : 0, kd.polar ? (opts.gills === 'cone' ? 2 : 1) : 0, opts.metalness ?? kd.metalness ?? 0, triplanar ? kd.antiTile ?? 0 : 0) },
-    sfLight: { value: new THREE.Vector4(opts.wrap ?? kd.wrap ?? 0, 0, 0, 0) },
+    sfLight: { value: new THREE.Vector4(opts.wrap ?? kd.wrap ?? 0, 0, 0, neutralVC ? 1 : 0) },
+    sfS: { value: new THREE.Vector4(opts.mossGain ?? 1, rays, 1, kind === 'bark' ? meanLum(kd, colA) : 0) },
   };
   if (moss) {
     _mossMaps ??= surfaceMaps('moss');
@@ -620,9 +713,11 @@ function makeSurface(kindIn, opts) {
   if (colorize) defines.SF_COLORIZE = '';
   if (moss) defines.SF_MOSS = '';
   if (lite) defines.SF_LITE = '';
+  if (woody) defines.SF_WOOD = '';
+  if (kind === 'bark') defines.SF_BARK = '';
   m.defines = { ...m.defines, ...defines }; // keep STANDARD
   m.userData.surface = { kind };
-  installPatch(m, patchSurface, u, `sf|${triplanar ? 't' : 'u'}${colorize ? 'c' : ''}${moss ? 'm' : ''}${lite ? 'l' : ''}`, opts.wind);
+  installPatch(m, patchSurface, u, `sf|${triplanar ? 't' : 'u'}${colorize ? 'c' : ''}${moss ? 'm' : ''}${lite ? 'l' : ''}${woody ? 'w' : ''}${kind === 'bark' ? 'b' : ''}`, opts.wind);
   return m;
 }
 
@@ -684,7 +779,7 @@ function foliageDepthMaterial(wind) {
 // ─── geometry helpers ───────────────────────────────────────────────────────
 const AXES = ['x', 'y', 'z'];
 
-function boxUV(geometry, tile, grain, offset) {
+function boxUV(geometry, tile, grain, offset, endGrain = true) {
   const pos = geometry.attributes.position;
   if (!geometry.attributes.normal) geometry.computeVertexNormals();
   const nrm = geometry.attributes.normal;
@@ -714,7 +809,7 @@ function boxUV(geometry, tile, grain, offset) {
     // vertical faces: V runs up (Y) whenever Y is one of the face axes
     if (dom !== 1 && ua === 1 && gi !== 1) [ua, va] = [va, ua];
     uv[i * 2] = p[ua] / tile + offset[0];
-    uv[i * 2 + 1] = p[va] / tile + offset[1];
+    uv[i * 2 + 1] = p[va] / tile + offset[1] + (endGrain && dom === gi ? END_GRAIN_V : 0);
   }
   geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   return geometry;

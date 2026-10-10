@@ -9,13 +9,18 @@ import { TAU, TRUNK_TOP, FORK_Y, polar, trunkRadius, trunkMoss, baseRadius, HOLL
 import { smoothstep, clamp } from '../../core/rng.js';
 import { weldSeamNormals } from './tubes.js';
 
-/** Row heights: dense near the ground (door niche, flare), coarser up the trunk. */
-function trunkRows() {
+/**
+ * Row heights: dense near the ground (door niche, flare), coarser up the trunk.
+ * `rowK` stretches the spacing on the lower quality tiers (the door arch
+ * itself — up to y ≈ 2.6 — keeps rows at most 0.13 apart).
+ */
+function trunkRows(rowK = 1) {
   const ys = [];
   let y = -0.9;
   while (y < TRUNK_TOP - 0.08) {
     ys.push(y);
-    y += y < 5.3 ? 0.1 : y < FORK_Y - 1 ? 0.19 : 0.13; // fine up to the nook above the door
+    const dy = y < 5.3 ? 0.1 : y < FORK_Y - 1 ? 0.19 : 0.13; // fine up to the nook above the door
+    y += y < 2.6 ? Math.min(dy * rowK, 0.13) : dy * rowK;
   }
   ys.push(TRUNK_TOP);
   return ys;
@@ -71,8 +76,8 @@ function revolveGrid(ys, cols, radiusFn, { keepTri = null, uvScale = [11, 0.42] 
  * or flute, for the painterly crevice darkening) and `userData.grid`
  * ({ ys, cols, moss, cav }) for the moss shell.
  */
-export function buildTrunkGeometry({ cols = 176 } = {}) {
-  const ys = trunkRows();
+export function buildTrunkGeometry({ cols = 176, rowK = 1 } = {}) {
+  const ys = trunkRows(rowK);
   const rows = ys.length;
   const c1 = cols + 1;
   const rad = new Float32Array(rows * c1);

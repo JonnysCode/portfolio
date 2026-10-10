@@ -153,6 +153,23 @@ function buildLookDev(ctx) {
   // forest giant scale
   add(new THREE.CylinderGeometry(2.0, 2.5, 18, 72, 20), materials.surface('bark', { mossy: 0.3, scale: 1.8 }), -15.5, 9, Z - 1);
   tag('bark s1.8 m0.3', -15.5, 0.6, Z + 2);
+  // a silver birch the forest's way: bark + chalk-white vertex colours with dark
+  // patches (a near-white vertex colour turns the bark smooth & papery)
+  //   --custom "birch:-12.4,2.2,-14.5:-12.4,2.6,-19"
+  {
+    const g = new THREE.CylinderGeometry(0.42, 0.5, 9, 28, 30);
+    const p = g.attributes.position, col = [], w = new THREE.Color('#e9e4d6'), d = new THREE.Color('#2b2724'), c = new THREE.Color();
+    for (let i = 0; i < p.count; i++) {
+      const a = Math.atan2(p.getZ(i), p.getX(i)), y = p.getY(i);
+      const dash = Math.sin(a * 3 + y * 2.6) * Math.sin(y * 7.1 + a) > 0.55 ? 0.75 : 0;
+      const foot = THREE.MathUtils.smoothstep(-y, 2.5, 4.2) * 0.9;
+      c.copy(w).lerp(d, Math.max(dash, foot));
+      col.push(c.r, c.g, c.b);
+    }
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    add(g, materials.surface('bark', { vertexColors: true, mossy: 0.12, scale: 0.6 }), -12.4, 4.5, Z + 3);
+    tag('birch (vc white)', -12.4, 0.6, Z + 3.8);
+  }
   // boxy field stones: plain, mossy, rock — a little course + loose stones
   const kinds = [
     ['stone', {}], ['stone', { mossy: 0.3 }], ['stone', { mossy: 0.4 }], ['rock', { scale: 0.5, mossy: 0.1 }],
@@ -197,6 +214,139 @@ function buildLookDev(ctx) {
   add(ground, materials.surface('moss'), 9, 0.015, Z2);
   add(new THREE.BoxGeometry(0.9, 0.18, 0.5), materials.surface('stone', { mossy: 0.3 }), 9.4, 0.09, Z2 - 0.6);
   tag('moss ground', 9, 0.9, Z2 + 1.5);
+
+  // row 7 (z = -36.5) — end grain & small joinery at the Schreinerei's scale, and
+  // vertex-coloured mossy rocks next to plain ones (the moss must look the same)
+  //   --custom "chest:-1.3,0.95,-35.2:-1.6,0.55,-36.5"  --custom "endgrain:0.3,0.8,-35.1:0.2,0.2,-36.5"
+  //   --custom "vcmoss:5,1.1,-34.6:5,0.25,-36.6"  --custom "ends:0,0.38,-35.5:-0.1,0.05,-36.3"  --custom "posttop:0.75,1.35,-36.3:0.45,0.9,-36.7"
+  const Z3 = -36.5;
+  const part = (w, h, d, grain) => materials.boxUV(new THREE.BoxGeometry(w, h, d), 1.4, { grain, offset: [rand() * 7, rand() * 7] });
+  // a little oak chest (62 cm): front/back boards run along x, the sides along z
+  // → the side boards' end grain shows at the front corners, like through-dovetails
+  const chest = new THREE.Group();
+  const T = 0.022, CW = 0.62, CH = 0.3, CD = 0.36;
+  for (const zz of [-1, 1]) chest.add(new THREE.Mesh(part(CW, CH, T, 'x'), oak).translateZ(zz * (CD / 2 - T / 2)));
+  for (const xx of [-1, 1]) chest.add(new THREE.Mesh(part(T, CH, CD, 'z'), oak).translateX(xx * (CW / 2 - T / 2)));
+  chest.add(new THREE.Mesh(part(CW, T, CD, 'x'), oak).translateY(-CH / 2 + T / 2));
+  chest.position.set(-1.6, 0.42 + CH / 2, Z3);
+  chest.rotation.y = 0.35;
+  chest.traverse((o) => o.isMesh && (o.castShadow = o.receiveShadow = true));
+  ctx.scene.add(chest);
+  add(new THREE.BoxGeometry(0.5, 0.42, 0.3), materials.surface('wood', { species: 'walnut' }), -1.6, 0.21, Z3);
+  tag('oak chest 62 cm', -1.6, 1.05, Z3);
+  // Hirnholz: a stack of board offcuts showing their ends, a post, a beam
+  for (let i = 0; i < 6; i++) add(part(0.13 + 0.03 * (i % 3), 0.032, 0.5, 'z'), materials.surface('wood', { species: i % 2 ? 'spruce' : 'oak' }), -0.25 + (i % 3) * 0.17, 0.016 + Math.floor(i / 3) * 0.034, Z3);
+  add(part(0.12, 0.9, 0.12, 'y'), oak, 0.45, 0.45, Z3 - 0.2);
+  add(part(0.9, 0.16, 0.16, 'x'), materials.surface('timber'), 0.2, 0.3, Z3 + 0.45, 0.6);
+  tag('end grain', 0.1, 1.05, Z3);
+  // the shared vertex-coloured wood the Schreinerei uses (neutral colour + species on the vertices)
+  const vcWood = materials.surface('wood', { color: '#bdbdbd', vertexColors: true });
+  [['#a88c68', 'oak'], ['#d2bb90', 'spruce'], ['#5c4334', 'walnut'], ['#9c5a43', 'cherry']].forEach(([c, n], i) => {
+    const g = part(0.16, 0.5, 0.05, 'y');
+    const col = new THREE.Color(c);
+    g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count).fill(0).flatMap(() => [col.r, col.g, col.b]), 3));
+    add(g, vcWood, 1.0 + i * 0.2, 0.25, Z3 + 0.1);
+  });
+  tag('vc wood', 1.3, 0.75, Z3 + 0.1);
+  // the loft / riverside / cottage way: species oak + vertex colours (the grain must
+  // average to the vertex colour — not a doubly saturated orange)
+  //   --custom "vcspecies:1.3,0.75,-35.4:1.3,0.25,-36.9"
+  const vcOak = materials.surface('wood', { species: 'oak', vertexColors: true });
+  [['#a8845a', 'oak'], ['#cbb088', 'spruce'], ['#5e4433', 'walnut'], ['#985c40', 'cherry'], ['#8f8478', 'grey']].forEach(([c], i) => {
+    const g = part(0.16, 0.5, 0.05, 'y');
+    const col = new THREE.Color(c);
+    g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count).fill(0).flatMap(() => [col.r, col.g, col.b]), 3));
+    add(g, vcOak, 0.9 + i * 0.2, 0.25, Z3 - 0.5);
+  });
+  // a fieldstone wall shell ('masonry', the low tier's bridge/workshop walls)
+  add(new THREE.BoxGeometry(1.2, 0.6, 0.2), materials.surface('masonry', { mossy: 0.35, scale: 0.75 }), 2.9, 0.3, Z3 - 0.4);
+  tag('masonry', 2.9, 0.9, Z3 - 0.4);
+  // vertex-coloured mossy rocks (grey, dark) beside plain mossy rocks
+  const rockVC = materials.surface('rock', { vertexColors: true, mossy: 0.6 });
+  const rockPlain = materials.surface('rock', { mossy: 0.6 });
+  [['#6d6a64', rockVC], ['#3a3833', rockVC], [null, rockPlain]].forEach(([c, mat], i) => {
+    const g = fieldStone(30 + i, 0.55, 0.4, 0.45);
+    if (c) {
+      const col = new THREE.Color(c);
+      g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count).fill(0).flatMap(() => [col.r, col.g, col.b]), 3));
+    }
+    add(g, mat, 4.2 + i * 0.75, 0.18, Z3, i);
+  });
+  tag('rock m0.6: vc grey · vc dark · plain', 5, 0.9, Z3);
+
+  // row 8 (z = -41) — worn stone steps like the oak door's (door.js slab()):
+  // left as the door builds them (2 + 3 stones per step), right as single
+  // simple slabs — 'stone' must read as natural stone on both, never concrete
+  //   --custom "steps:-1.6,1.25,-37.6:-1.5,0.25,-41.2"  --custom "slabs:2.6,1.25,-37.6:2.6,0.25,-41.2"
+  const Z4 = -41;
+  const stoneMat = materials.surface('stone');
+  const soilGround = new THREE.PlaneGeometry(14, 9);
+  soilGround.rotateX(-Math.PI / 2);
+  add(soilGround, materials.surface('soil'), 1, 0.005, -43.5);
+  const steps = (x0, split) => {
+    const y0 = 0.36, stepH = y0 / 2;
+    const rows = [
+      { top: y0, z0: -0.02, depth: 0.5, w: 1.79, n: split ? 2 : 1 },
+      { top: stepH, z0: 0.48, depth: 0.46, w: 2.24, n: split ? 3 : 1 },
+    ];
+    for (const row of rows) {
+      const segW = row.w / row.n;
+      for (let i = 0; i < row.n; i++) {
+        const sw = segW - 0.035;
+        const cx = -row.w / 2 + (i + 0.5) * segW;
+        add(stepSlab(rand() * 40, sw, row.top + 0.04, row.depth), stoneMat, x0 + cx, row.top / 2 - 0.02, Z4 + row.z0 + row.depth / 2, (rand() - 0.5) * 0.04);
+      }
+    }
+    // a bark-ish backdrop like the oak's (so the lichen/dirt gradient reads against it)
+    add(new THREE.BoxGeometry(2.6, 2.2, 0.3), materials.surface('bark', { scale: 1.6 }), x0, 1.1, Z4 - 0.2);
+  };
+  steps(-1.5, true);
+  steps(2.6, false);
+  tag('door steps (2+3 stones)', -1.5, 2.5, Z4);
+  tag('simple slabs', 2.6, 2.5, Z4);
+
+  // row 9 (z = -45) — vertex-coloured leaf (must keep the vertex colour's hue), clay tints
+  //   --custom "leafclay:2,1.6,-41.4:2,0.8,-45"
+  const Z5 = -45;
+  const vcLeaf = materials.surface('leaf', { vertexColors: true, side: THREE.DoubleSide });
+  [['#d9708f', 'pink'], ['#f2f0e6', 'white'], ['#e7c04a', 'yellow'], ['#6d9a3a', 'green']].forEach(([c], i) => {
+    const g = new THREE.PlaneGeometry(0.45, 0.8);
+    const col = new THREE.Color(c);
+    g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count).fill(0).flatMap(() => [col.r, col.g, col.b]), 3));
+    add(g, vcLeaf, -2.6 + i * 0.55, 0.6, Z5, 0.2);
+  });
+  add(new THREE.PlaneGeometry(0.45, 0.8), materials.surface('leaf', { side: THREE.DoubleSide }), -0.4, 0.6, Z5, 0.2);
+  tag('leaf vc: pink white yellow green · plain', -1.6, 1.3, Z5);
+  const potGeo = new THREE.LatheGeometry([
+    [0.0, 0], [0.22, 0], [0.27, 0.06], [0.31, 0.26], [0.26, 0.48], [0.18, 0.56], [0.21, 0.62], [0.19, 0.63],
+  ].map(([x, y]) => new THREE.Vector2(x, y)), 32);
+  [undefined, '#5f8f8a', '#8a8a86', '#2f4f7a', '#e8e2d2', '#7a4a2e'].forEach((c, i) => {
+    add(potGeo, materials.surface('clay', { color: c, repeat: [3, 1] }), 0.6 + i * 0.75, 0, Z5);
+  });
+  tag('clay: default · celadon · stoneware · blue · white · brown', 2.5, 1.1, Z5);
+}
+
+/** A thick worn stone slab like door.js slab(): rounded top edges, a dished top, lumpy sides. */
+function stepSlab(ox, w, h, d) {
+  const g = new THREE.BoxGeometry(w, h, d, 6, 2, 4);
+  const p = g.attributes.position;
+  const v = new THREE.Vector3();
+  const nA = (x, y) => Math.sin(x * 1.7 + y * 2.3) * 0.6 + Math.sin(x * 3.1 - y * 1.3 + 1.7) * 0.4;
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    const ex = Math.abs(v.x) / (w / 2), ez = Math.abs(v.z) / (d / 2);
+    const edge = Math.max(ex, ez);
+    if (v.y > 0) {
+      v.y -= Math.pow(Math.max(0, edge - 0.6) / 0.4, 2) * 0.05;
+      v.y -= 0.016 * Math.exp(-(v.x * v.x) / 0.06) * (1 - ez * 0.6);
+    }
+    v.x += nA(v.z * 4 + ox, v.y * 4) * 0.025;
+    v.z += nA(v.x * 4 + ox + 9, v.y * 4) * 0.025;
+    v.y += nA(v.x * 6 - ox, v.z * 6) * 0.006;
+    p.setXYZ(i, v.x, v.y, v.z);
+  }
+  g.computeVertexNormals();
+  return g;
 }
 
 export default async function build(ctx) {

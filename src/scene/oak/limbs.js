@@ -16,14 +16,35 @@ const _w = new THREE.Vector3();
 /**
  * Windows in the crown: stretches of these limbs (arc-length fractions) carry
  * no hanging leaf skirt, so from the glen the dark, kinked limbs show against
- * the lit foliage beyond instead of one undivided green mass.
+ * the lit foliage beyond — a few windows, not a crown of separate pom-poms
+ * (round 5: back to the round-3 windows, which kept the masses lush).
  */
 const CROWN_GAPS = {
   right: [[0.2, 0.58]],
   front: [[0.22, 0.6]],
   'front-right-high': [[0.28, 0.62]],
   'back-left': [[0.3, 0.5]],
+  'left-high': [[0.3, 0.52]],
+  leader: [[0.35, 0.58]],
+  // the long low limb: ONE window near the trunk (its first lantern, the ivy
+  // and the elbow show), a full skirt on its outer two thirds
+  'front-left-low': [[0.2, 0.44]],
 };
+/**
+ * The long low limb over the cottage path carries the lanterns, the ivy and
+ * the moss curtains. Its skirt hangs a little HIGHER than the others' (lifted
+ * by LOW_LIMB_LIFT, nothing below LOW_LIMB_MIN_Y) so it frames the top of the
+ * glen like a lush green awning instead of a low hedge over the cottages.
+ */
+const LOW_LIMB = 'front-left-low';
+const LOW_LIMB_MIN_Y = 13.8;
+const LOW_LIMB_LIFT = 0.9;
+/**
+ * The high crown: the limbs that climb past the top of the wide frames carry
+ * extra crowning masses above their outer halves, so the old oak tops out
+ * level with the giants' canopy instead of ending in a few lumps under it.
+ */
+const HIGH_CROWN = { leader: [0.55, 0.78, 0.97], 'left-high': [0.6, 0.8, 0.98], 'back-high': [0.62, 0.82, 0.98], 'front-right-high': [0.72, 0.95], 'back-left': [0.85, 1], 'back-right': [0.85, 1] };
 
 /** A main limb's curve and radius (u = arc-length fraction). */
 export function limbCurve(L) {
@@ -69,15 +90,22 @@ function perpendicular(v, roll, out) {
  * Build the limbs and their branches.
  * @returns {{ tubes: BufferGeometry[], limbs: Array, branches: Array, clumps: Array<{p:THREE.Vector3, s:number, tier:number}> }}
  */
-export function buildLimbs(rng, { detail = 1 } = {}) {
+export function buildLimbs(rng, { detail = 1, segK = 1 } = {}) {
   const tubes = [];
   const limbs = [];
   const branches = [];
   const clumps = [];
 
   let currentLimb = 0;
+  let lowLimb = false;
   function addClump(p, s, tier) {
     if (p.y < 12.2) return;
+    if (lowLimb) {
+      // the low limb's masses sit a little higher (see LOW_LIMB_LIFT)
+      p = p.clone();
+      p.y += tier === 3 ? LOW_LIMB_LIFT : LOW_LIMB_LIFT * 0.5;
+      if (p.y < LOW_LIMB_MIN_Y) return;
+    }
     if (crownBlocked(p, s * 0.85)) return;
     clumps.push({ p: p.clone(), s, tier, limb: currentLimb });
   }
@@ -134,15 +162,17 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
       tubes.push(
         organicTube({
           curve: bcurve,
-          segments: Math.max(5, Math.ceil(blen / (depth === 1 ? 0.4 : 0.5))),
-          radial: Math.max(5, Math.round(radial * detail)),
+          segments: Math.max(depth === 1 ? 5 : 3, Math.ceil(blen / ((depth === 1 ? 0.4 : 0.5) * segK))),
+          radial: Math.max(depth === 1 ? 5 : 4, Math.round(radial * detail)),
           size: (t, o) => {
             o.w = o.h = radiusAtB(t);
           },
           frame: 'transport',
           furrows: depth === 1 ? 0.1 : 0.04,
           furrowFreq: 2.6,
-          twist: 0.35,
+          // (a slow lean only: a tighter twist wound the furrows — and the
+          //  texture along them — into helical bands)
+          twist: 0.08,
           lumps: 0.05,
           seed: rng.range(0, 50),
           uvScale: 0.7,
@@ -154,6 +184,8 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
       const tip = bcurve.getPointAt(1);
       if (depth === 1) {
         grow(child, rng.int(2, 4), 2);
+        // every bough carries a hanging skirt: the underside of the crown is
+        // what most cameras look at (the gaps in crown.js open the windows)
         skirt(child, 0.35, 0.3, 0.85);
         addClump(tip.clone().add(new THREE.Vector3(0, 0.7, 0)), rng.range(2.3, 3.0), 1);
         // a fuller clump half-way out so the crown has body, not just a rim
@@ -174,6 +206,7 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
     const side = new THREE.Vector3();
     for (let u = from + rng.range(0, step * 0.5); u < 0.98; u += step * rng.range(0.8, 1.2)) {
       if (gaps && gaps.some(([u0, u1]) => u > u0 && u < u1)) continue;
+      if (rng.chance(0.16)) continue; // a ragged, broken hem, not a hedge
       const P = b.curve.getPointAt(u);
       const T = b.curve.getTangentAt(u);
       side.set(-T.z, 0, T.x);
@@ -187,12 +220,13 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
 
   LIMBS.forEach((L, li) => {
     currentLimb = li;
+    lowLimb = L.id === LOW_LIMB;
     const { curve, radiusAt, radiusAtParam } = limbCurve(L);
     const len = curve.getLength();
     tubes.push(
       organicTube({
         curve,
-        segments: Math.ceil(len / 0.3),
+        segments: Math.ceil(len / (0.3 * segK)),
         radial: Math.max(10, Math.round(22 * detail)),
         size: (t, o, tp) => {
           o.w = o.h = radiusAtParam(tp);
@@ -200,7 +234,7 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
         frame: 'transport',
         furrows: 0.13,
         furrowFreq: 3.6,
-        twist: 0.12,
+        twist: 0.03,
         lumps: 0.1,
         seed: li * 3 + 7,
         uvScale: 0.55,
@@ -210,9 +244,19 @@ export function buildLimbs(rng, { detail = 1 } = {}) {
     const limb = { id: L.id, curve, radiusAt, length: len, depth: 0 };
     limbs.push(limb);
     grow(limb, L.branches, 1);
+    // the main limbs' skirts hang from their outer two thirds: the inner
+    // limbs stay bare and dark against the lit masses beyond (the skeleton)
     skirt(limb, 0.3, 0.1, 1, CROWN_GAPS[L.id]);
     const tip = curve.getPointAt(1);
     addClump(tip.add(new THREE.Vector3(0, 0.6, 0)), rng.range(2.6, 3.2), 0);
+    // the high crown: crowning masses above the outer half of the climbing limbs
+    for (const u of HIGH_CROWN[L.id] ?? []) {
+      const P = curve.getPointAt(Math.min(u, 1));
+      const out = new THREE.Vector3(P.x - CX, 0, P.z - CZ).normalize();
+      P.addScaledVector(out, rng.range(0.3, 1.4));
+      P.y += rng.range(1.7, 3.0);
+      addClump(P, rng.range(2.6, 3.3), 0);
+    }
   });
 
   return { tubes, limbs, branches, clumps };

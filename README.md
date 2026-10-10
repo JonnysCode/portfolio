@@ -36,6 +36,12 @@ tags and links without touching any three.js code. Placeholder copy is marked
 `DRAFT`: it shows (with a little "draft" marker) while you run `npm run dev`,
 and is hidden from visitors in the production build — so replace it before
 you publish, and set `profile.email` (the example address is hidden too).
+`npm run build` lists what is still a placeholder. Also check the profile
+lines that are *not* marked DRAFT but were written for you: `tagline`, `intro`
+and `location: 'Switzerland'` — the About and contact pages show them.
+Until an entry has photos, its page shows a live "polaroid" of the piece in
+the glen; without an email the contact page leads with your strongest link
+(add LinkedIn with `icon: 'linkedin'` and it leads with that).
 
 Every place and page has a deep link: `#woodworking`, `#woodworking/dining-table`,
 `#guidebook` — handy for sharing a single piece.

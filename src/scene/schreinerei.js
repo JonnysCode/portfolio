@@ -26,7 +26,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { SCHREINEREI, SPOTS, OAK } from '../world/layout.js';
-import { Batch, makeMats, takeHalos } from './schreinerei/kit.js';
+import { Batch, makeMats, takeHalos, setDetail } from './schreinerei/kit.js';
 import { buildDoor, DOOR } from './schreinerei/door.js';
 import { buildAnnex, ANNEX, annexToWorld } from './schreinerei/annex.js';
 import { makeMotes } from './schreinerei/fx.js';
@@ -34,7 +34,17 @@ import { buildPorch, BENCH } from './schreinerei/porch.js';
 import { buildDeck } from './schreinerei/deck.js';
 import { buildYard } from './schreinerei/yard.js';
 
+/**
+ * Triangle budget per tier (moduleStats: budget / overBudget) — a regression
+ * guard measured after round 4 (high ≈ 233k, medium ≈ 158k, low ≈ 142k). The
+ * kit's LOD (setDetail) does the cutting; the next big lever on low is the
+ * annex (≈ 45k of it) and the hotspot pieces & characters (≈ 30k).
+ */
+const BUDGET = { high: 250000, medium: 170000, low: 150000 };
+
 export default async function build(ctx) {
+  // per-tier geometry detail (kit.LOD): medium & low drop tessellation and the tiniest decor
+  setDetail(ctx.quality?.tier ?? 'high');
   const mats = makeMats(ctx);
   const root = new THREE.Group();
   root.name = 'schreinerei';
@@ -42,11 +52,19 @@ export default async function build(ctx) {
   const B = new Batch();
   const area = 'woodworking';
 
-  const door = buildDoor(ctx, B, mats);
-  const annex = buildAnnex(ctx, B, mats);
-  const porch = buildPorch(ctx, B, mats, annex.shingles);
-  const deck = buildDeck(ctx, B, mats);
-  const yard = buildYard(ctx, B, mats);
+  // (what each builder adds to the shared batch, in triangles — ctx.sites.schreinerei.cost)
+  const cost = {};
+  const timed = (name, fn) => {
+    const t0 = B.added;
+    const r = fn();
+    cost[name] = Math.round(B.added - t0);
+    return r;
+  };
+  const door = timed('door', () => buildDoor(ctx, B, mats));
+  const annex = timed('annex', () => buildAnnex(ctx, B, mats));
+  const porch = timed('porch', () => buildPorch(ctx, B, mats, annex.shingles));
+  const deck = timed('deck', () => buildDeck(ctx, B, mats));
+  const yard = timed('yard', () => buildYard(ctx, B, mats));
 
   // ── hotspots (every one frames its piece when its entry opens) ────────────
   // the certificate is framed straight on (the rig looks from the spot
@@ -120,8 +138,10 @@ export default async function build(ctx) {
       return deck.playing;
     },
     anchors: { chimneyTop: annex.anchors.chimneyTop, lantern: door.anchors.lantern, sign: door.anchors.sign },
+    cost: { ...cost, ...(yard.cost ?? {}) },
   };
   return {
+    budget: BUDGET,
     update(dt, t) {
       for (const u of updates) u(dt, t);
     },

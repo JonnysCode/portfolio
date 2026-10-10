@@ -22,6 +22,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { materials, sharedUniforms } from '../../core/materials.js';
 import { createNoise2D } from '../../core/noise.js';
 import { haloColor } from '../../props/glow.js';
+import { mats as cottageMats } from '../cottage/kit.js';
 
 export const TAU = Math.PI * 2;
 export const noiseA = createNoise2D(5113);
@@ -85,7 +86,11 @@ export function M() {
     planks: m.surface('wood', { species: 'oak', planks: true, vertexColors: true }),
     timber: m.surface('timber', { vertexColors: true }),
     metal: m.surface('metal', { vertexColors: true }),
-    cap: m.surface('mushroomCap', { color: '#ffffff', vertexColors: true }),
+    // the cottages' painterly cap skin (fine fibril streaks, velvet bloom; UVs:
+    // U = around × 2, V = rim → apex) for the Velowerkstatt and every toadstool,
+    // and their torn cream veil flakes (shared cached materials, never mutated)
+    cap: cottageMats().cap,
+    warts: cottageMats().warts,
     gills: m.surface('gills', { side: THREE.DoubleSide, vertexColors: true }),
     stem: m.surface('mushroomStem', { vertexColors: true }),
     plaster: m.surface('plaster', { vertexColors: true }),
@@ -768,6 +773,16 @@ export function archStone(rng, r0, r1, a0, a1, d, opts = {}) {
   return g;
 }
 
+const _UP = new THREE.Vector3(0, 1, 0);
+const _nq = new THREE.Quaternion();
+const _nv = new THREE.Vector3();
+/** Tip a geometry standing on y = 0 over so its up axis follows the normal (nx, ny, nz) — moss hugging a slope. */
+export function alignUp(geo, nx, ny, nz) {
+  _nv.set(nx, ny, nz).normalize();
+  geo.applyQuaternion(_nq.setFromUnitVectors(_UP, _nv));
+  return geo;
+}
+
 /** A soft moss cushion (flattened lumpy dome) sitting on y = 0. */
 export function mossGeo(rng, { r = 0.25, h = 0.08, sx = 1, sz = 1, seg: nSeg = 8 } = {}) {
   const seg = segs(nSeg, 5);
@@ -947,16 +962,27 @@ export function addGrass(cards, rng, x, y, z, { size = 0.32, blades = 3, spread 
   }
 }
 
-/** A fern (arched frond cards fanning out) at (x, y, z) into `cards`. */
+/**
+ * A fern at (x, y, z) into `cards`: a fountain of narrow fronds leaving the
+ * crown steeply and ARCHING over, their tips drooping (never a flat, cupped
+ * rosette) — the older outer fronds longer and lower, young ones upright.
+ * tilt: how far the fronds lean out (0.75 upright … 1.35 spreading).
+ */
 export function addFern(cards, rng, x, y, z, { size = 0.5, fronds = 7, tilt = 0.75 } = {}) {
   const rot = rng.next() * TAU;
+  const rows = LOD.k < 0.5 ? 2 : 3;
   for (let i = 0; i < fronds; i++) {
-    const a = rot + (i / fronds) * TAU + rng.jitter(0.3);
+    const a = rot + (i / fronds) * TAU + rng.jitter(0.35);
+    const age = rng.next(); // 0 young (short, upright) … 1 old (long, leaning out)
     const out = new THREE.Vector3(Math.sin(a), 0, Math.cos(a));
-    const up = new THREE.Vector3(out.x * tilt, 0.75 + rng.jitter(0.15), out.z * tilt).normalize();
+    const lean = tilt * (0.45 + 0.45 * age);
+    const up = new THREE.Vector3(out.x * lean, 1.0 + rng.jitter(0.12), out.z * lean).normalize();
     const nrm = new THREE.Vector3().crossVectors(up, new THREE.Vector3(Math.cos(a), 0, -Math.sin(a))).normalize();
     if (nrm.y < 0) nrm.negate();
-    cards.add(new THREE.Vector3(x, y, z), up, nrm, size * rng.range(0.75, 1.15), { aspect: 0.55, bend: 0.25, rows: LOD.k < 0.5 ? 1 : LOD.k < 1 ? 2 : 3 });
+    // (a little roll, so the fronds don't all face the sky)
+    nrm.applyAxisAngle(up, rng.jitter(0.35));
+    const len = size * (0.62 + 0.5 * age) * rng.range(0.9, 1.1);
+    cards.add(new THREE.Vector3(x + out.x * 0.01, y, z + out.z * 0.01), up, nrm, len, { aspect: 0.4, bend: -(0.45 + 0.4 * age), rows });
   }
 }
 

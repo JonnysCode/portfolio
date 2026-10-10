@@ -17,14 +17,17 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { KINDS } from '../../core/textures/index.js';
+import { sharedUniforms } from '../../core/materials.js';
 
 const VERT_PARS = /* glsl */ `
 attribute vec4 aSplat;
 attribute vec4 aPatch;
 attribute vec2 aRelief;
+attribute vec4 aBloom;
 varying vec4 vSplat;
 varying vec4 vPatch;
 varying vec2 vRelief;
+varying vec4 vBloom;
 varying vec3 vTWorld;
 `;
 const VERT_MAIN = /* glsl */ `
@@ -32,6 +35,7 @@ const VERT_MAIN = /* glsl */ `
 vSplat = aSplat;
 vPatch = aPatch;
 vRelief = aRelief;
+vBloom = aBloom;
 vTWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
 `;
 
@@ -39,6 +43,7 @@ const FRAG_PARS = /* glsl */ `
 varying vec4 vSplat;
 varying vec4 vPatch;
 varying vec2 vRelief;
+varying vec4 vBloom;
 varying vec3 vTWorld;
 uniform sampler2D tMossA;
 uniform sampler2D tMossD;
@@ -54,6 +59,7 @@ uniform vec3 tLitter;    // leaf-litter tint (linear)
 uniform vec3 tDriftCol;  // drifted autumn leaves (linear)
 uniform vec3 tNeedleCol; // rusty needles on bare soil (linear)
 uniform vec3 tCloverCol; // clover leaflets (linear)
+uniform float tNight;    // the shared night uniform (0 day → 1 night)
 float tHash(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
   p3 += dot(p3, p3.yzx + 33.33);
@@ -255,6 +261,33 @@ const FRAG_MAIN = /* glsl */ `
       tCol = mix(tCol, f2, m2 * fade * 0.9);
     }
   }
+  // the flower drifts' ground (vegetation/drifts.js paints aBloom: the flower's
+  // colour premultiplied by the drift's strength): up close a dense carpet of
+  // tiny flowers of that colour between the cushions, from afar — where the
+  // dots would shimmer — their average colour, so a drift reads as a wash of
+  // blue, white, pink or yellow across the glen
+  if (vBloom.a > 0.02) {
+    vec3 bc = vBloom.rgb / vBloom.a;
+    // (moonlight: the flowers' colour fades to grey-blue, never a cobalt puddle)
+    bc = mix(bc, vec3(dot(bc, vec3(0.2126, 0.7152, 0.0722))) * vec3(0.9, 0.95, 1.05), 0.6 * tNight) * (1.0 - 0.4 * tNight);
+    float bk = vBloom.a * (1.0 - tWPath) * (0.75 + 0.5 * nFine);
+    float px = max(fwidth(tP.x), fwidth(tP.y));
+    float bNear = 1.0 - smoothstep(0.03, 0.075, px);
+    float bm = 0.0;
+    if (bNear > 0.01) {
+      vec2 q = tP / 0.1;
+      vec2 cell = floor(q);
+      vec2 f = fract(q);
+      if (tHash(cell + 41.0) < bk * 0.85) {
+        vec2 c = vec2(tHash(cell + 2.9), tHash(cell + 6.1)) * 0.5 + 0.25;
+        float r = 0.2 + 0.12 * tHash(cell + 8.3);
+        float d = length(f - c);
+        bm = 1.0 - smoothstep(r * 0.6, r, d);
+        bm *= smoothstep(r * 0.12, r * 0.3, d) * 0.85 + 0.15;
+      }
+    }
+    tCol = mix(tCol, bc * (0.9 + 0.2 * nFine), mix(bk * 0.55, bm * 0.95, bNear));
+  }
   // darker trampled band where the moss gives way to the path
   tCol *= 1.0 - tFringe * 0.12;
 
@@ -310,7 +343,9 @@ export function makeTerrainMaterial(ctx) {
     tTile: { value: new THREE.Vector4(1 / (KINDS.moss.tile * 0.8), 1 / (KINDS.soil.tile * 0.9), 0, 0) },
     tSoilMean: { value: v3(lin(KINDS.soil.mean)) },
     tMossMean: { value: v3(lin(KINDS.moss.mean)) },
-    tMossSun: { value: v3(lin('#86913a')) },
+    // (round 5: the sunlit moss a touch warmer — golden afternoon patches)
+    tMossSun: { value: v3(lin('#8e9238')) },
+    tNight: sharedUniforms.uNight,
     tMossDeep: { value: v3(lin('#34532a')) },
     tPathCol: { value: v3(lin('#9c7f5c')) },
     tLitter: { value: v3(lin('#6e4526')) },
@@ -336,7 +371,7 @@ export function makeTerrainMaterial(ctx) {
       .replace('#include <aomap_fragment>', FRAG_AO)
       .replace('#include <lights_fragment_end>', FRAG_VELVET);
   };
-  m.customProgramCacheKey = () => `forest-floor-v3-${detail}`;
+  m.customProgramCacheKey = () => `forest-floor-v5-${detail}`;
   m.userData.uniforms = uniforms;
   return m;
 }

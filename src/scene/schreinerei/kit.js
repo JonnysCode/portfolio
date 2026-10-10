@@ -15,9 +15,32 @@ import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { createNoise2D } from '../../core/noise.js';
+import { END_GRAIN_V } from '../../core/materials.js';
 
 const noiseA = createNoise2D(91731);
 const noiseB = createNoise2D(5531);
+
+// ─── level of detail ─────────────────────────────────────────────────────────
+/**
+ * Geometry detail for the quality tier (high 1, medium 0.6, low 0.4), set once
+ * at the start of the Schreinerei build (schreinerei.js → setDetail(tier)).
+ * The kit's stones, moss cushions, toadstools, ferns, ivy, fairy lights and
+ * shingles scale their tessellation and counts by it, and builders ask
+ * `LOD.small` before adding the tiniest decor (nail heads, loose shavings,
+ * pebbles, toadstool spots) — high draws all of it, medium and low skip it.
+ * (Builds are synchronous, so a module-level value is safe.)
+ */
+export const LOD = { k: 1, tier: 'high', small: true };
+export function setDetail(tier = 'high') {
+  LOD.tier = tier;
+  LOD.k = tier === 'low' ? 0.4 : tier === 'medium' ? 0.6 : 1;
+  LOD.small = tier !== 'low' && tier !== 'medium';
+  return LOD.k;
+}
+/** A segment count scaled by the tier's detail (never below `min`). */
+export const segs = (n, min = 3) => Math.max(min, Math.round(n * LOD.k));
+/** A repeat count (leaves, tufts, pebbles …) scaled by the tier: √k keeps the look, drops the cost. */
+export const count = (n, min = 0) => Math.max(min, Math.round(n * Math.sqrt(LOD.k)));
 
 // ─── materials ───────────────────────────────────────────────────────────────
 /** Colour of the annex's timber frame (Ochsenblut-red oak, see mats.frame). */
@@ -67,6 +90,8 @@ export function makeMats(ctx) {
     rope: () => proxy(vcSurface('wood'), '#b39a6c'),
     /** Terracotta pots (tiny): painted on the shared wood material. */
     clay: (color = '#b5633e') => proxy(vcSurface('wood'), color),
+    /** Bare tamped soil on the ground (tracks, worn patches): the painterly humus, tinted by vertex colour. */
+    soilSurface: () => m.surface('soil', { vertexColors: true }),
     /** Potting soil in boxes & planters. */
     soil: () => proxy(m.standard('#ffffff', { vertexColors: true, roughness: 0.78 }), '#3b2a1e'),
     /**
@@ -101,7 +126,7 @@ export function makeMats(ctx) {
  * clearly red-brown, maple cream, spruce straw, beech pinkish.
  */
 export const SPECIES = {
-  oak: '#a88c68',
+  oak: '#9c7a55',
   walnut: '#5c4334',
   spruce: '#d2bb90',
   ash: '#cdc2a8',
@@ -168,11 +193,14 @@ export class Batch {
   constructor() {
     this.lists = new Map();
     this.tris = 0;
+    /** Triangles added so far (before merging) — builders read it to report what each part costs. */
+    this.added = 0;
   }
   /**
    * Add a geometry (consumed). opts: { cast = true, receive = true, color (vc materials), matrix }
    */
   add(material, geo, opts = {}) {
+    this.added += (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
     if (material.isProxy) {
       // a geometry painted beforehand (paintBy) keeps its own colours
       if (opts.color === undefined && !geo.attributes.color) opts = { ...opts, color: material.color };
@@ -327,14 +355,36 @@ export const TILE = { wood: 1.4, timber: 1.6, plaster: 2.2, shingles: 1.4, rope:
  * 1 / wood tile), so a texture keeps the same density on every part. The
  * grain (texture U — the look-dev convention) runs along `along`. `off`
  * shifts the UVs (vary it per board so neighbours differ).
+ *
+ * Real end grain: faces that cut ACROSS the grain (normal along `along`: a
+ * board's ends, a tenon's end, a peg's head, a dovetail's end) get the
+ * END_GRAIN_V marker added to V (after scale & offset), so the wood & timber
+ * surfaces draw them as Hirnholz (darker, ring arcs, a drying check on
+ * timber); every other surface kind strips the marker again.
+ * opts.endGrain: 'ends' (default) marks only faces lying at the part's
+ * extremes along the grain (the cut ends of boards, beams, posts, pegs,
+ * flat inlays) — curved outlines that merely turn towards the grain axis
+ * (an arch segment's flank, a ring) keep long grain; true marks every face
+ * across the grain (a carved backrest's top edge, a heart cut-out); false
+ * never marks (ropes, twigs, bent parts).
  */
-export function uvBox(geo, along = 'y', scale = 1 / TILE.wood, off = [0, 0]) {
+export function uvBox(geo, along = 'y', scale = 1 / TILE.wood, off = [0, 0], { endGrain = 'ends' } = {}) {
   const pos = geo.attributes.position;
   if (!geo.attributes.normal) geo.computeVertexNormals();
   const nor = geo.attributes.normal;
   const A = AX[along];
   const uv = new Float32Array(pos.count * 2);
   const p = [0, 0, 0];
+  // the part's extent along the grain (for 'ends': a cut end lies at an extreme)
+  let lo = Infinity, hi = -Infinity;
+  if (endGrain === 'ends') {
+    for (let i = 0; i < pos.count; i++) {
+      const a = A === 0 ? pos.getX(i) : A === 1 ? pos.getY(i) : pos.getZ(i);
+      if (a < lo) lo = a;
+      if (a > hi) hi = a;
+    }
+  }
+  const tol = Math.max(1e-4, (hi - lo) * 0.015);
   for (let i = 0; i < pos.count; i++) {
     p[0] = pos.getX(i);
     p[1] = pos.getY(i);
@@ -343,18 +393,20 @@ export function uvBox(geo, along = 'y', scale = 1 / TILE.wood, off = [0, 0]) {
     let dom = 0;
     if (ny > nx && ny >= nz) dom = 1;
     else if (nz > nx && nz > ny) dom = 2;
-    let u, v;
+    let u, v, end = 0;
     if (dom === A) {
-      // end grain: any two other axes
+      // end grain: the two other axes
       u = p[(A + 1) % 3];
       v = p[(A + 2) % 3];
+      if (endGrain === true) end = END_GRAIN_V;
+      else if (endGrain === 'ends' && (A === 0 ? nx : A === 1 ? ny : nz) > 0.9 && (p[A] - lo < tol || hi - p[A] < tol)) end = END_GRAIN_V;
     } else {
       const across = 3 - A - dom;
       u = p[A];
       v = p[across];
     }
     uv[i * 2] = u * scale + off[0];
-    uv[i * 2 + 1] = v * scale + off[1];
+    uv[i * 2 + 1] = v * scale + off[1] + end;
   }
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   return geo;
@@ -445,7 +497,8 @@ export function beamBox(w, h, d, along = 'x', c = 0.012, segs = 1) {
  */
 export function board(w, h, d, { along = 'x', r = 0.01, rng = null, scale = 1 / TILE.wood, segs = 0 } = {}) {
   const len = along === 'x' ? w : along === 'y' ? h : d;
-  const g = beamBox(w, h, d, along, r, segs || Math.max(1, Math.round(len / 0.7)));
+  // (length segments only matter where a deform bends the board: fewer on the lower tiers)
+  const g = beamBox(w, h, d, along, r, segs || Math.max(1, Math.round((len / 0.7) * LOD.k)));
   return uvBox(g, along, scale, rng ? [rng.next() * 7, rng.next() * 7] : [0, 0]);
 }
 
@@ -455,8 +508,8 @@ export function board(w, h, d, { along = 'x', r = 0.01, rng = null, scale = 1 / 
  */
 export function timber(a, b, w, h, { rng = null, up = [0, 1, 0], r = 0.018, wobble = 0.012, scale = 1 / TILE.timber } = {}) {
   const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-  const segs = Math.max(1, Math.round(len / 0.5));
-  const g = beamGeo(len, h, w, r, segs);
+  const n = Math.max(1, Math.round((len / 0.5) * (LOD.k < 1 ? Math.max(0.5, LOD.k) : 1)));
+  const g = beamGeo(len, h, w, r, n);
   if (rng && wobble > 0) {
     const s1 = rng.next() * 10, s2 = rng.next() * 10;
     const k1 = rng.jitter(1), k2 = rng.jitter(1);
@@ -483,7 +536,9 @@ export function peg(r = 0.018, len = 0.03) {
  * opts: { r, flat (y squash), lump, detail, seed }
  */
 export function stoneGeo(rng, { r = 0.2, sx = 1, sy = 0.6, sz = 1, lump = 0.22, detail = 1 } = {}) {
-  let g = new THREE.IcosahedronGeometry(1, detail);
+  // (medium & low: small stones drop a subdivision level — 80 → 20 triangles)
+  const lod = LOD.k < 1 && detail > 0 && r * Math.max(sx, sz) < (LOD.k < 0.5 ? 0.3 : 0.16) ? 1 : 0;
+  let g = new THREE.IcosahedronGeometry(1, detail - lod);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -502,7 +557,7 @@ export function stoneGeo(rng, { r = 0.2, sx = 1, sy = 0.6, sz = 1, lump = 0.22, 
 
 /** A soft moss cushion (flattened lumpy blob), sitting on y = 0. */
 export function mossGeo(rng, { r = 0.25, h = 0.08, sx = 1, sz = 1 } = {}) {
-  let g = new THREE.SphereGeometry(1, 7, 4, 0, Math.PI * 2, 0, Math.PI / 2);
+  let g = new THREE.SphereGeometry(1, segs(7, 5), segs(4, 2), 0, Math.PI * 2, 0, Math.PI / 2);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -513,6 +568,54 @@ export function mossGeo(rng, { r = 0.25, h = 0.08, sx = 1, sz = 1 } = {}) {
     v.set(v.x * r * sx * k, v.y * h * (0.8 + n * 0.5) - 0.01, v.z * r * sz * k);
   });
   uvBox(g, 'y', 2, [ox, ox]);
+  return g;
+}
+
+/**
+ * A ground moss pad: a lumpy cushion with a BROKEN outline — lobes and bays
+ * round its rim, two scales of bumps on top, the rim sunk a few millimetres
+ * into the ground so it grows out of the litter instead of lying on it like
+ * a mat. Sits on y = 0. opts: { r, h, sx, sz, lobes (0..1 how ragged) }.
+ */
+export function mossPadGeo(rng, { r = 0.25, h = 0.08, sx = 1, sz = 1, lobes = 1 } = {}) {
+  const sec = segs(14, 7), rings = segs(4, 2);
+  const ox = rng.next() * 40, oz = rng.next() * 40;
+  const pos = [0, h, 0];
+  const idx = [];
+  // outline: a lobed, bitten radius per sector
+  const rim = [];
+  const ph = rng.next() * 6.28, ph2 = rng.next() * 6.28, nl = rng.int(3, 5);
+  for (let i = 0; i < sec; i++) {
+    const a = (i / sec) * Math.PI * 2;
+    const k = 1 + lobes * (0.2 * Math.sin(a * nl + ph) + 0.12 * Math.sin(a * (nl + 2) + ph2) + 0.16 * noiseA(Math.cos(a) * 1.7 + ox, Math.sin(a) * 1.7 + oz));
+    rim.push(Math.max(0.45, k));
+  }
+  for (let j = 1; j <= rings; j++) {
+    const t = j / rings; // 0 centre → 1 rim
+    for (let i = 0; i < sec; i++) {
+      const a = (i / sec) * Math.PI * 2;
+      const rr = t * rim[i];
+      const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+      // domed, lumpy top; the rim dives under the ground
+      const dome = Math.pow(Math.max(0, 1 - t * t), 0.55);
+      const lump = 0.72 + 0.3 * noiseA(x * 3.1 + ox, z * 3.1 + oz) + 0.18 * noiseB(x * 7.3 - oz, z * 7.3 + ox);
+      const y = j === rings ? -0.006 : h * dome * lump;
+      pos.push(x * r * sx, y, z * r * sz);
+    }
+  }
+  for (let i = 0; i < sec; i++) idx.push(0, 1 + ((i + 1) % sec), 1 + i);
+  for (let j = 1; j < rings; j++) {
+    const a0 = 1 + (j - 1) * sec, a1 = 1 + j * sec;
+    for (let i = 0; i < sec; i++) {
+      const i1 = (i + 1) % sec;
+      idx.push(a0 + i, a0 + i1, a1 + i, a0 + i1, a1 + i1, a1 + i);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  uvBox(g, 'y', 2, [ox, oz]);
   return g;
 }
 
@@ -561,7 +664,8 @@ export function sagCurve(a, b, sag, segments = 12) {
 export function tube(points, radius = 0.01, radial = 4, tubular = null) {
   const curve = new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(p[0], p[1], p[2])));
   const g = new THREE.TubeGeometry(curve, tubular ?? Math.max(4, points.length * 3), radius, radial, false);
-  return uvBox(g, 'y', 3);
+  // (ropes, wires, twigs: no end grain on a bent part)
+  return uvBox(g, 'y', 3, [0, 0], { endGrain: false });
 }
 
 /** An ivy leaf (3-lobed, slightly cupped) in the XY plane facing +Z, stem at the origin. */
@@ -614,9 +718,9 @@ export function addIvy(F, mats, rng, start, dir, { length = 1.2, droop = 0.6, si
     d.addScaledVector(nrm, -d.dot(nrm)).normalize();
     p.addScaledVector(d, step);
   }
-  F.add(mats.bark(), tube(pts, 0.006, 3, pts.length), { cast: false });
+  F.add(mats.bark(), tube(pts, 0.006, 3, segs(pts.length, 4)), { cast: false });
   const leafMat = mats.leaf();
-  const count = Math.round(n * 0.9 * density * leafy);
+  const count = Math.round(n * 0.9 * density * leafy * Math.sqrt(LOD.k));
   const lm = new THREE.Matrix4();
   const up = new THREE.Vector3();
   for (let i = 0; i < count; i++) {
@@ -640,12 +744,12 @@ export function addIvy(F, mats, rng, start, dir, { length = 1.2, droop = 0.6, si
 export function addToadstool(F, mats, rng, x, y, z, { size = 0.1, color = '#c9352a', lean = 0.15 } = {}) {
   const h = size * rng.range(1.0, 1.7);
   // open-ended stem (its ends hide in the soil and under the cap)
-  const stem = new THREE.CylinderGeometry(size * 0.16, size * 0.22, h, 6, 1, true);
+  const stem = new THREE.CylinderGeometry(size * 0.16, size * 0.22, h, segs(6, 4), 1, true);
   stem.translate(0, h / 2, 0);
-  const cap = new THREE.SphereGeometry(size * 0.55, 8, 3, 0, Math.PI * 2, 0, Math.PI / 2);
+  const cap = new THREE.SphereGeometry(size * 0.55, segs(8, 5), LOD.k < 0.8 ? 2 : 3, 0, Math.PI * 2, 0, Math.PI / 2);
   cap.scale(1, 0.65 + rng.next() * 0.3, 1);
   cap.translate(0, h, 0);
-  const gill = new THREE.CircleGeometry(size * 0.53, 8);
+  const gill = new THREE.CircleGeometry(size * 0.53, segs(8, 5));
   gill.rotateX(Math.PI / 2);
   gill.translate(0, h + 0.002, 0);
   const rx = rng.jitter(lean), rz = rng.jitter(lean);
@@ -656,7 +760,7 @@ export function addToadstool(F, mats, rng, x, y, z, { size = 0.1, color = '#c935
   }
   // white spots
   if (color !== '#b98a4e') {
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0, n = LOD.small ? 4 : 2; i < n; i++) {
       const a = rng.next() * Math.PI * 2, el = rng.range(0.35, 1.1);
       const sp = new THREE.SphereGeometry(size * 0.075, 4, 2);
       const rr = size * 0.55;
@@ -701,7 +805,8 @@ export { noiseA, noiseB };
  * plane: width along X, length along +Y (butt at y = 0), facing +Z.
  */
 export function shingleGeo(w = 0.2, l = 0.34, t = 0.022) {
-  const g = new THREE.BoxGeometry(w, l, t, 2, 1, 1);
+  // (medium & low: one segment across — the cupping goes, 12 → 8 triangles a shake)
+  const g = new THREE.BoxGeometry(w, l, t, LOD.k < 1 ? 1 : 2, 1, 1);
   g.translate(0, l / 2, 0);
   deform(g, (v) => {
     const xn = v.x / (w / 2);
@@ -724,8 +829,9 @@ export function shingleGeo(w = 0.2, l = 0.34, t = 0.022) {
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   // keep only what can ever be seen: the face, the butt edge and the two
   // sides (the top edge hides under the next course, the back lies on the
-  // roof boards) → 12 triangles per shake
-  const keep = new Set([0, 1, 3, 4]); // BoxGeometry groups: px nx py ny pz nz
+  // roof boards) → 12 triangles per shake; medium & low keep the face and
+  // the butt edge only (4 triangles: the 2 cm sides vanish at that size)
+  const keep = new Set(LOD.k < 1 ? [3, 4] : [0, 1, 3, 4]); // BoxGeometry groups: px nx py ny pz nz
   const src = g.index.array;
   const idx = [];
   for (const gr of g.groups) if (keep.has(gr.materialIndex)) for (let i = gr.start; i < gr.start + gr.count; i++) idx.push(src[i]);
@@ -858,13 +964,13 @@ export function addFairyLights(F, mats, points, toWorld, { sag = 0.08, spacing =
     const a = points[i], b = points[i + 1];
     const span = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
     const curve = sagCurve(a, b, span * sag, 16);
-    const g = new THREE.TubeGeometry(curve, Math.max(8, Math.round(span * 8)), 0.006, 3, false);
+    const g = new THREE.TubeGeometry(curve, Math.max(6, Math.round(span * 8 * LOD.k)), 0.006, 3, false);
     F.add(wire, g, { cast: false });
     const n = Math.max(1, Math.floor(span / spacing));
     for (let k = 0; k < n; k++) {
       const p = curve.getPointAt((k + 0.5) / n);
-      F.add(wire, new THREE.CylinderGeometry(0.011, 0.011, 0.022, 5).translate(p.x, p.y - 0.014, p.z), { cast: false });
-      const bulb = new THREE.SphereGeometry(0.022, 6, 4);
+      F.add(wire, new THREE.CylinderGeometry(0.011, 0.011, 0.022, segs(5, 4), 1, !LOD.small).translate(p.x, p.y - 0.014, p.z), { cast: false });
+      const bulb = new THREE.SphereGeometry(0.022, segs(6, 4), segs(4, 3));
       bulb.scale(1, 1.3, 1);
       F.add(bulbMat, bulb.translate(p.x, p.y - 0.045, p.z), { cast: false, receive: false });
       tmp.set(p.x, p.y - 0.045, p.z);
@@ -1008,8 +1114,8 @@ export function addFClamp(F, mats, m, { len = 0.5, reach = 0.11, color = '#c4372
 }
 
 /** A turned part (LatheGeometry about Y) from [r, y] pairs. */
-export function turned(profile, segs = 10) {
-  return uvBox(new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y)), segs), 'y');
+export function turned(profile, n = 10) {
+  return uvBox(new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y)), segs(n, 5)), 'y');
 }
 
 /**

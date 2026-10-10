@@ -67,15 +67,15 @@ export const ROOTS = [
     ],
   },
   {
-    id: 'right-long',
+    id: 'right-long', // arches over a mossy boulder (BOULDER) and grips it
     a0: 64,
     flare: 1.2,
     pts: [
       [2.2, 0, 1.1, 1.05, 2.4],
       [3.7, 1.5, 0.55, 1, 1.55],
-      [5, 3, 0.46, 0.98, 1.24],
-      [6.4, 2, 1.22, 0.8, 0.88],
-      [7.5, 4, 0.32, 0.74, 0.82],
+      [5.0, 3, 0.62, 0.96, 1.2],
+      [6.4, 2.2, 1.78, 0.78, 0.74],
+      [7.7, 4, 0.5, 0.74, 0.8],
       [8.6, 6.5, 0.62, 0.62, 0.68],
       [9.8, 7.4, 0.1, 0.5, 0.52],
       [10.6, 7, -0.38, 0.34, 0.34],
@@ -227,10 +227,10 @@ export const ROOTS = [
     flare: 0,
     thin: true,
     pts: [
-      [6.3, 2, 0.42, 0.4, 0.44],
-      [7.2, 7.5, 0.2, 0.32, 0.32],
-      [8.1, 11, 0.15, 0.24, 0.23],
-      [8.7, 12, -0.24, 0.17, 0.16],
+      [7.5, 4, 0.5, 0.4, 0.44],
+      [8.1, 8.5, 0.2, 0.32, 0.32],
+      [8.7, 11.5, 0.15, 0.24, 0.23],
+      [9.2, 12.5, -0.24, 0.17, 0.16],
     ],
   },
   {
@@ -247,14 +247,22 @@ export const ROOTS = [
   },
 ];
 
+/**
+ * The mossy boulder the 'right-long' root arches over and grips (it was there
+ * first): centre at azimuth a (deg) / distance rho from the axis, `lift` above
+ * the ground, ellipsoid radii (radial = along the root, up, across the root).
+ */
+export const BOULDER = { a: 66.2, rho: 6.45, lift: 0.34, rRad: 1.0, rUp: 0.98, rAcross: 1.2 };
+
 // ─── Limbs ───────────────────────────────────────────────────────────────────
 // Main limbs: control points [ρ, a (deg), y, radius, elbow?]. The first point
 // sits inside the trunk so the limb grows out of the fork. They twist, sweep
 // and branch further (limbs.js). Every limb is kinked two or three times — an
 // old oak's limbs zig-zag where they once lost a leader — and `elbow` (a
 // fraction of the radius) swells the bark into a knobbly elbow at that point.
-// L1 is the long low limb reaching front-left over the cottage path (it
-// carries two lanterns and fairy lights). Nothing grows in front of the
+// L1 is the long low limb reaching front-left over the cottage path (a bare,
+// gnarled arm with a few high tufts — limbs.js — carrying lanterns, fairy
+// lights and moss curtains). Nothing grows in front of the
 // Code Loft (front-right, below y ≈ 16.5). The limbs to the back and right
 // stay low enough that the crown's underside forms a ceiling across the top
 // of the spot views. (Check: no limb tube may enter a spot camera frustum.)
@@ -411,15 +419,28 @@ export const BURLS = [
   { a: -30, y: 13.4, h: 0.22, r: 0.45 },
   // big old swellings (±15 % of the radius) that break the silhouette seen
   // from the glen: the left flank, high on the front-left, the back
-  { a: -104, y: 4.6, h: 0.46, r: 0.95 },
-  { a: -96, y: 10.6, h: 0.5, r: 1.1 },
+  { a: -104, y: 4.6, h: 0.5, r: 0.95 },
+  { a: -96, y: 10.6, h: 0.68, r: 1.15 },
   { a: -84, y: 14.6, h: 0.4, r: 0.9 },
   { a: -16, y: 9.4, h: 0.3, r: 0.8 },
   { a: 214, y: 9.8, h: 0.42, r: 1.0 },
   { a: 238, y: 2.6, h: 0.36, r: 0.9 },
+  // round-4 gnarl: a great swollen burl on the front above the door zone (the
+  // Schreinerei's shelf fungi grow on it), one low on the front-left flank
+  { a: -14, y: 11.3, h: 0.58, r: 1.05 },
+  { a: -63, y: 6.7, h: 0.5, r: 0.85 },
+  { a: -122, y: 13.0, h: 0.45, r: 0.9 },
 ];
-/** The trunk's broad lobes twist a quarter turn over 12 units of height. */
-export const LOBE_TWIST = Math.PI / 2 / 12;
+/**
+ * The bole's grain: lobes, cords, furrows and the bark texture all spiral the
+ * same way at this rate (radians per unit of height) — ≈ a quarter turn over
+ * the bole, a helix leaning ≈ 15° at the trunk's radius (the furrows also
+ * wander about it), so the trunk reads as wrung, fused stems instead of a
+ * fluted column.
+ */
+export const LOBE_TWIST = 0.1;
+/** Twist of the bark texture on the bole (oakBarkMaterial in oak.js follows the furrows). */
+export const GRAIN_TWIST = LOBE_TWIST;
 /** Knots: a ring of swollen bark around a dimple (old branch scars). */
 export const KNOTS = [
   { a: -47, y: 5.9, r: 0.32 },
@@ -433,7 +454,7 @@ export const KNOTS = [
 ];
 /** Hollows: a cup carved into the trunk with a swollen rim. `owl` gets a resident. */
 export const HOLLOWS = [
-  { id: 'owl', a: -50, y: 9.7, rx: 0.6, ry: 0.82, depth: 1.05 },
+  { id: 'owl', a: -50, y: 9.7, rx: 0.7, ry: 0.96, depth: 1.2 },
   { id: 'den', a: 183, y: 1.55, rx: 0.7, ry: 0.95, depth: 1.15 },
   // a shallow, mossy nook above the Schreinerei door (left of the sign) where
   // a tiny family of toadstools lives — the hero shot's bark gets a story
@@ -512,7 +533,8 @@ export function trunkSample(a, y) {
   for (let i = 0; i < ROOTS.length; i++) {
     const root = ROOTS[i];
     if (!root.flare) continue;
-    const ac = root.a0 * DEG + TWIST * yc * 0.85;
+    // (the buttresses wind into the bole's spiral as they climb)
+    const ac = root.a0 * DEG + LOBE_TWIST * yc * 0.6;
     const d = angDiff(a, ac) * R0;
     const w = 0.55 + 0.6 * Math.exp(-yc / 1.4);
     // buttresses: ≈1.6× the radius at the ground, still clearly flared at y ≈ 1.5
@@ -524,7 +546,7 @@ export function trunkSample(a, y) {
   // the bark is free, gentler on the loft side
   for (let i = 0; i < LIMBS.length; i++) {
     if (LIMBS[i].noTendon) continue;
-    const ac = LIMBS[i].a0 * DEG + TWIST * (yc - FORK_Y);
+    const ac = LIMBS[i].a0 * DEG + LOBE_TWIST * 0.8 * (yc - FORK_Y);
     const d = angDiff(a, ac) * R0;
     const amp = (0.16 + 0.62 * free) * smoothstep(9, 16.5, yc) * (LIMBS[i].pts[0][3] / 1.45);
     r += amp * smoothBump(d * d, 0.75 + 0.9 * free);
@@ -539,14 +561,27 @@ export function trunkSample(a, y) {
     r += lobe * R0 * (0.035 + 0.11 * free) * (1 - 0.6 * smoothstep(14, 17.5, yc));
     // …wound with a few thick cords (the fused stems' fibre bundles) that
     // follow the same twist, so the bole reads as wrung, not turned
-    const pc = 6 * ph + 1.4 * nBig(Math.cos(a) * 0.9 - 7, Math.sin(a) * 0.9, yc * 0.09 + 40);
+    // (irregular: the spacing wanders and every cord swells, thins and
+    //  merges along its length — sinews, not a turned column's flutes)
+    const pc = 5 * ph + 2.1 * nBig(Math.cos(ph) * 0.9 - 7, Math.sin(ph) * 0.9, yc * 0.09 + 40);
     const cord = 0.5 + 0.5 * Math.cos(pc);
-    r += (cord * cord - 0.36) * R0 * (0.015 + 0.12 * free) * (1 - smoothstep(15.5, 18.5, yc)) * smoothstep(-0.4, 1.2, yc);
+    const cordAmp = 0.45 + 0.8 * (0.5 + 0.5 * nFur2(Math.cos(ph) * 1.6 + 30, Math.sin(ph) * 1.6, yc * 0.16));
+    r += (cord * cord - 0.36) * cordAmp * R0 * (0.02 + 0.13 * free) * (1 - smoothstep(15.5, 18.5, yc)) * smoothstep(-0.4, 1.2, yc);
+  }
+  // 1c. Girth: the old bole swells and pinches as it rises (a belly low on
+  //     the left & back, a waist under the fork, a swelling into the limbs) —
+  //     only where nothing attaches, so the silhouette from the glen is gnarled.
+  {
+    const ph = a - yc * LOBE_TWIST * 0.5;
+    const swell = nBig(Math.cos(ph) * 0.7 + 23, Math.sin(ph) * 0.7, yc * 0.12 + 5);
+    const belly = Math.exp(-((yc - 9.6) * (yc - 9.6)) / 7) * 0.42 - Math.exp(-((yc - 13.6) * (yc - 13.6)) / 2.2) * 0.2;
+    r += (belly + swell * 0.34) * free * smoothstep(1.5, 4, yc) * (1 - smoothstep(16.5, 18.5, yc));
   }
 
   // 2. Furrows: V-shaped fissures (zero crossings of noise), stretched along
   //    the twisting grain.
-  const at = a + TWIST * yc;
+  // along the bole's spiral grain, wandering about it (no barber-pole stripes)
+  const at = a - LOBE_TWIST * yc + 0.4 * nBig(Math.cos(a) * 0.8 + 50, Math.sin(a) * 0.8, yc * 0.09 - 20);
   const ca = Math.cos(at), sa = Math.sin(at);
   const f1 = Math.abs(nFur(ca * 4.4, sa * 4.4, yc * 0.42));
   const f2 = Math.abs(nFur2(ca * 9.5 + 3, sa * 9.5, yc * 1.1));
@@ -718,8 +753,57 @@ const viewTests = [];
     }
   }
 }
+// The glen overview may be framed by the crown, but two things in it must stay
+// in sight: the treehouse (a cone from the glen camera and from the high
+// overview to the Code Loft's house), and the hero moon at night (a keep-out
+// rectangle on the glen frame, 1280 × 720 px: the moon & its halo above the
+// waterfall, x ≈ 955–1075, below y ≈ 72).
+const glenSpot = SPOTS.find((s) => s.id === 'glen');
+const LOFT_SEE = new THREE.Vector3(OAK.loft.x + 1.0, 15.2, OAK.loft.z + 0.5);
+const sightLines = [];
+if (glenSpot) {
+  const p = new THREE.Vector3(...glenSpot.camera.position);
+  const t = new THREE.Vector3(...glenSpot.camera.target);
+  sightLines.push({ a: p, b: LOFT_SEE, r0: 0.4, r1: 3.0 });
+  // (its "-wide" variant and the high overview the critics and the intro use)
+  sightLines.push({ a: t.clone().add(p.clone().sub(t).multiplyScalar(1.8)), b: LOFT_SEE, r0: 0.4, r1: 3.0 });
+}
+sightLines.push({ a: new THREE.Vector3(0, 34, 52), b: LOFT_SEE, r0: 0.4, r1: 3.2 });
+const MOON_RECT = { x0: 955, x1: 1075, y0: 72, y1: 330 };
+const moonCam = new THREE.PerspectiveCamera(glenSpot?.camera.fov ?? 40, ASPECT, 0.1, 400);
+if (glenSpot) {
+  moonCam.position.set(...glenSpot.camera.position);
+  moonCam.lookAt(...glenSpot.camera.target);
+  moonCam.updateMatrixWorld(true);
+  moonCam.updateProjectionMatrix();
+}
+const _seg = new THREE.Vector3();
+const _q = new THREE.Vector3();
+function inSightLine(p, r) {
+  for (const L of sightLines) {
+    _seg.subVectors(L.b, L.a);
+    const len2 = _seg.lengthSq();
+    const t = Math.min(1, Math.max(0, _q.subVectors(p, L.a).dot(_seg) / len2));
+    _q.copy(L.a).addScaledVector(_seg, t);
+    if (p.distanceTo(_q) < L.r0 + (L.r1 - L.r0) * t + r) return true;
+  }
+  return false;
+}
+function inMoonRect(p, r) {
+  if (!glenSpot) return false;
+  _q.copy(p).applyMatrix4(moonCam.matrixWorldInverse);
+  if (_q.z > -1) return false;
+  const depth = -_q.z;
+  _q.copy(p).project(moonCam);
+  const px = (_q.x + 1) * 640, py = (1 - _q.y) * 360;
+  const rp = (r / (depth * Math.tan((moonCam.fov * Math.PI) / 360))) * 360;
+  return px + rp > MOON_RECT.x0 && px - rp < MOON_RECT.x1 && py + rp > MOON_RECT.y0 && py - rp < MOON_RECT.y1;
+}
 const _sphere = new THREE.Sphere();
-/** True if a sphere at p with radius r would block a spot camera or crowd the Code Loft. */
+/**
+ * True if a sphere at p with radius r would block a spot camera, crowd the
+ * Code Loft, hide the treehouse from the glen / overview, or the hero moon.
+ */
 export function crownBlocked(p, r = 0) {
   // the Code Loft and the air in front of it
   const lx = p.x - OAK.loft.x, lz = p.z - OAK.loft.z;
@@ -727,5 +811,6 @@ export function crownBlocked(p, r = 0) {
   _sphere.center.copy(p);
   _sphere.radius = r;
   for (const v of viewTests) if (v.frustum.intersectsSphere(_sphere)) return true;
+  if (p.y + r > 12 && (inSightLine(p, r) || inMoonRect(p, r))) return true;
   return false;
 }

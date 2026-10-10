@@ -2,7 +2,7 @@
 // Shader patches that turn MeshStandardMaterial into the glen's painterly
 // surfaces (used by materials.surface() / materials.foliage()).
 //
-// SURFACE (defines: SF_TRIPLANAR, SF_COLORIZE, SF_MOSS, SF_POLAR)
+// SURFACE (defines: SF_TRIPLANAR, SF_COLORIZE, SF_MOSS, SF_WOOD, SF_BARK, SF_LITE)
 //   • world position & normal are reconstructed in the fragment shader from
 //     vViewPosition / viewMatrix — no vertex changes, so instancing, batching,
 //     skinning and wind all keep working
@@ -12,6 +12,16 @@
 //     noisy world-space edges (opts.mossy)
 //   • painterly world-space value/temperature breakup — nothing is CG-uniform
 //   • soft "wrap" terminator and a velvet rim sheen (moss, mushroom caps)
+//   • wood (SF_WOOD, uv-mapped wood / planks / timber): light lenticular ray
+//     flecks and END GRAIN drawn analytically (crisp at any scale). A face is
+//     end grain when its V carries the END_GRAIN_V marker (materials.boxUV adds
+//     it on faces across the grain): darker Hirnholz with ring arcs around a
+//     pith, rays and (timber) drying checks
+//   • bark (SF_BARK): in direct (warm) sun the furrows are lifted and the
+//     plates' highlights desaturated, so a sunlit trunk never reads as a tiger
+//     stripe; a near-white vertex colour turns it into smooth birch bark
+//     (birches skip the sun treatment: they stay chalk-white, not warm tan)
+//   • sfLight.w = 1: vertex-colour-neutral rgb kinds (leaf) use the map's value only
 // FOLIAGE
 //   • the same wrap lighting + translucency: leaves glow when back-lit by the
 //     sun (and by lantern point lights), shadow-aware
@@ -41,8 +51,28 @@ float sfNoise3(vec3 p) {
 /** Lighting override: soft wrap terminator (+ translucency for foliage). */
 const DIRECT_OVERRIDE = /* glsl */ `
 uniform vec4 sfLight; // x: wrap, y: translucency, z: unused, w: unused
+#ifdef SF_BARK
+vec3 sfDirK = vec3(1.0); // per-fragment albedo multiplier for the sun's light only (set by the surface)
+vec3 sfDirN = vec3(0.0); // the unmapped geometry normal (view space), set by the surface
+int sfDirectCalls = 0;   // three lights point → spot → sun → directional: counts which one this is
+#endif
 void RE_Direct_Woodland(const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in PhysicalMaterial material, inout ReflectedLight reflectedLight) {
+#ifdef SF_BARK
+  // bark in direct sun: the furrows' walls turned from the light would go black
+  // against sunlit plates (a painted tiger band) — light it with lifted furrows
+  // and the relief partly flattened. Only the warm directional SUN: lanterns &
+  // the spot beam (point / spot lights come first in three's light loops) keep
+  // the full raking relief, as do the cool moon, shade & ambient.
+  float sfSunW = sfDirectCalls >= NUM_POINT_LIGHTS + NUM_SPOT_LIGHTS ? 1.0 : 0.0;
+  sfSunW *= clamp((directLight.color.r - directLight.color.b) / max(directLight.color.r, 1e-4) * 4.0, 0.0, 1.0);
+  sfDirectCalls++;
+  PhysicalMaterial sfMD = material;
+  sfMD.diffuseContribution *= mix(vec3(1.0), sfDirK, sfSunW);
+  vec3 sfNB = normalize(mix(geometryNormal, sfDirN, 0.6 * sfSunW));
+  RE_Direct_Physical(directLight, geometryPosition, sfNB, geometryViewDir, geometryClearcoatNormal, sfMD, reflectedLight);
+#else
   RE_Direct_Physical(directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
+#endif
   float ndl = dot(geometryNormal, directLight.direction);
   if (sfLight.x > 0.0) {
     float extra = saturate((ndl + sfLight.x) / (1.0 + sfLight.x)) - saturate(ndl);
@@ -70,6 +100,7 @@ uniform vec2 sfTile;   // triplanar: (1/tile, 1/aspect) · uv: repeat (u, v)
 uniform vec4 sfP;      // x normal strength, y ao strength, z roughness mul, w breakup
 uniform vec4 sfQ;      // x mossy, y moss frequency, z velvet, w metal-rust coupling
 uniform vec4 sfR;      // x uv swap (grain along V), y polar mode (1 disc, 2 cone), z metalness, w anti-tile warp (triplanar)
+uniform vec4 sfS;      // x moss brightness, y wood ray flecks, z end-grain value, w bark: albedo mean (sun lift)
 #ifdef SF_MOSS
 uniform sampler2D sfMossMap;
 uniform sampler2D sfMossDetail;
@@ -129,8 +160,10 @@ const SURFACE_MAIN = /* glsl */ `
   // ── woodland surface ──
   vec3 sfWPos = (vec4(-vViewPosition, 0.0) * viewMatrix).xyz + cameraPosition;
   vec3 sfGN = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
+  vec3 sfNormal0 = normal;   // interpolated geometry normal (view space), before any map
   vec4 sfA, sfD;
   vec3 sfN;
+  float sfEnd = 0.0;         // 1 on end-grain faces (UV marker, see materials.END_GRAIN_V)
 #ifdef SF_TRIPLANAR
   vec3 sfTP = sfWPos * sfTile.x;
 #ifndef SF_LITE
@@ -145,6 +178,9 @@ const SURFACE_MAIN = /* glsl */ `
   normal = normalize((viewMatrix * vec4(sfN, 0.0)).xyz);
 #else
   vec2 sfUv = vUv;
+  // end-grain marker: boxUV adds END_GRAIN_V (1024) to V on faces across the grain
+  sfEnd = step(512.0, sfUv.y);
+  sfUv.y -= 1024.0 * sfEnd;
   if (sfR.x > 0.5) sfUv = vec2(sfUv.y, -sfUv.x);
   vec2 sfDx, sfDy;
   if (sfR.y > 0.5) {
@@ -181,7 +217,8 @@ const SURFACE_MAIN = /* glsl */ `
   vec3 sfCol = mix(sfColA, sfColB, sfA.r) * (sfA.g * 2.0);
   sfCol = mix(sfCol, sfColC, sfA.b);
 #else
-  vec3 sfCol = sfA.rgb * sfColA;
+  // sfLight.w: vertex-colour-neutral kinds (leaf) keep only the map's value
+  vec3 sfCol = mix(sfA.rgb, vec3(dot(sfA.rgb, vec3(0.2126, 0.7152, 0.0722))), sfLight.w) * sfColA;
 #endif
   float sfRough = sfD.z;
   float sfAO = sfD.w;
@@ -190,6 +227,112 @@ const SURFACE_MAIN = /* glsl */ `
   sfMet *= 1.0 - sfA.b * sfQ.w;
 #endif
 
+#ifdef SF_WOOD
+  if (sfEnd > 0.5) {
+    // ── END GRAIN (Hirnholz): darker, rings as arcs around a pith ──
+    // one pith per ~0.4 tile (≈ 56 cm): every part, at its own UV offset, cuts
+    // the log somewhere else — near-circles on a post, flat arcs on a board end,
+    // almost straight lines on a quarter-sawn one
+    vec2 eP = sfUv / 0.4;
+    vec2 eC = floor(eP);
+    float eBest = 1e9;
+    vec2 ePith = vec2(0.0), eId = vec2(0.0);
+    for (int j = -1; j <= 1; j++)
+    for (int i = -1; i <= 1; i++) {
+      vec2 c = eC + vec2(float(i), float(j));
+      vec2 pp = c + 0.15 + 0.7 * vec2(sfHash13(vec3(c, 1.7)), sfHash13(vec3(c, 4.3)));
+      float dd = dot(eP - pp, eP - pp);
+      if (dd < eBest) { eBest = dd; ePith = pp; eId = c; }
+    }
+    vec2 eD = (eP - ePith) * 0.4;                    // tile units from the pith
+    float eR = length(eD * vec2(1.0, 1.07));
+    float eA = atan(eD.y, eD.x);
+    float eH = sfHash13(vec3(eId, 9.1));
+    // rings (≈ the long grain's density): never perfect circles, their width breathes
+    float eF = eR * (128.0 + 30.0 * eH)
+             + 1.1 * sfNoise3(vec3(cos(eA) * 1.5, sin(eA) * 1.5, eR * 8.0 + eH * 7.0))
+             + 2.0 * sfNoise3(vec3(eR * 9.0, eH * 13.0, 0.5));
+    float eRing = fract(eF);
+    float eW = fwidth(eF);
+    float eLate = smoothstep(0.5, 0.86, eRing) * (1.0 - smoothstep(0.88, 1.0, eRing));
+    eLate = mix(eLate, 0.27, smoothstep(0.3, 0.8, eW));   // sub-pixel rings → their mean
+    // rays: fine pale lines radiating from the pith (strong in oak)
+    float eS = (eA / 6.2831853 + 0.5) * (120.0 + 50.0 * eH);
+    float eSw = fwidth(eS);
+    float eSi = floor(eS + 0.5);
+    float eRay = (1.0 - smoothstep(0.04, 0.04 + eSw * 1.2, abs(eS - eSi))) * step(0.6, sfHash13(vec3(eSi, eId)));
+    // rays start at different radii and fade where they get sub-pixel (near the pith)
+    eRay *= (1.0 - smoothstep(0.25, 0.5, eSw)) * smoothstep(0.01 + 0.05 * sfHash13(vec3(eSi, eId + 3.1)), 0.03 + 0.06 * sfHash13(vec3(eSi, eId + 3.1)), eR);
+    float eN = sfNoise3(vec3(sfUv * 60.0, 3.0));
+#ifdef SF_COLORIZE
+    float eRc = clamp(0.5 + 0.42 * eLate + 0.08 * (eN - 0.5), 0.0, 1.0);
+    sfCol = mix(sfColA, sfColB, eRc) * (0.84 + 0.1 * eN);
+    sfCol = mix(sfCol, sfColA * 1.0, eRay * sfS.y * 0.35);
+#else
+    sfCol *= (0.62 + 0.1 * eN) * (1.0 - 0.32 * eLate);
+    sfCol = mix(sfCol, sfCol * 1.3, eRay * sfS.y * 0.35);
+    // drying check: a dark radial crack from the heart (most timbers have one)
+    float eCa = (sfHash13(vec3(eId, 11.0)) - 0.5) * 6.2831853;
+    float eDa = abs(mod(eA - eCa + 3.14159265, 6.2831853) - 3.14159265) * eR;   // arc distance
+    float eCw = 0.0035 * smoothstep(0.01, 0.05, eR) * (1.0 - smoothstep(0.12, 0.3, eR)) * step(0.3, eH);
+    sfCol *= 1.0 - 0.75 * (1.0 - smoothstep(eCw * 0.5, eCw + fwidth(eDa), eDa));
+#endif
+    sfCol *= sfS.z;
+    // end grain is matt and has no long-grain relief
+    normal = sfNormal0;
+    sfN = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
+    sfRough = 0.86;
+    sfAO = 0.95;
+  }
+#ifdef SF_COLORIZE
+  else if (sfS.y > 0.0) {
+    // ── ray flecks: short, light, lenticular (spindle) flecks along the grain,
+    // ~3 mm × 2–4 cm on oak, a little glossier (the "silver grain")
+    vec2 fp = sfUv * vec2(1.0 / 0.035, 1.0 / 0.005);
+    fp.x += sfHash13(vec3(floor(fp.y), 3.7, 1.3));          // stagger the rows
+    vec2 fc = floor(fp), ff = fract(fp) - 0.5;
+    float fh = sfHash13(vec3(fc, 7.1));
+    float fwY = fwidth(fp.y);
+    float fFade = 1.0 - smoothstep(0.3, 0.75, fwY);           // sub-pixel → off (no shimmer)
+    if (fh < 0.3 && fFade > 0.0) {
+      float k = fh / 0.3;
+      vec2 o = (vec2(sfHash13(vec3(fc, 2.3)), sfHash13(vec3(fc, 5.9))) - 0.5) * vec2(0.25, 0.3);
+      float hl = 0.25 + 0.17 * k;                             // half length (cells along)
+      float hw = 0.2 + 0.12 * sfHash13(vec3(fc, 8.8));        // half width (cells across)
+      vec2 d = ff - o;
+      float sx = 1.0 - (d.x / hl) * (d.x / hl);
+      float edge = hw * sx - abs(d.y);
+      float fleck = smoothstep(-fwY, fwY, edge) * step(0.0, sx) * fFade * sfS.y;
+      sfCol = mix(sfCol, sfCol * 1.3 + sfColA * 0.04, fleck * 0.7);
+      sfRough *= 1.0 - 0.25 * fleck;
+    }
+  }
+#endif
+#endif
+
+  float sfBirch = 0.0;
+#if defined(SF_BARK) && (defined(USE_COLOR) || defined(USE_COLOR_ALPHA))
+  {
+    // a near-white vertex colour is a silver BIRCH: papery, smooth bark. The
+    // deep oak furrows × chalk white read as a black-and-yellow tiger stripe —
+    // keep only a trace of them and add fine horizontal lenticels instead
+    // (the builder's own dark dashes & patches stay: they are in the colour)
+    float birch = smoothstep(0.4, 0.6, dot(vColor.rgb, vec3(0.2126, 0.7152, 0.0722)));
+    sfBirch = birch;
+    if (birch > 0.0) {
+      sfCol = mix(sfCol, vec3(0.86, 0.85, 0.83), 0.8 * birch);
+      float ln = sfNoise3(vec3(sfWPos.x * 8.0, sfWPos.y * 42.0, sfWPos.z * 8.0));
+      float lnFade = 1.0 - smoothstep(0.4, 0.9, fwidth(sfWPos.y * 42.0));   // sub-pixel → off (no shimmer)
+      sfCol *= 1.0 - 0.5 * smoothstep(0.74, 0.86, ln) * birch * lnFade;
+      sfCol *= 1.0 + 0.1 * (sfNoise3(sfWPos * vec3(1.3, 4.0, 1.3) + 4.0) - 0.5) * birch;
+      normal = normalize(mix(normal, sfNormal0, 0.75 * birch));
+      sfN = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
+      sfAO = mix(sfAO, 1.0, 0.75 * birch);
+    }
+  }
+#endif
+
+  float sfMossM = 0.0;
 #ifdef SF_MOSS
   {
     vec4 mA, mD;
@@ -206,7 +349,15 @@ const SURFACE_MAIN = /* glsl */ `
     float fringe = smoothstep(thr - 0.16, thr - 0.04, field) * (1.0 - m);
     sfCol = mix(sfCol, sfCol * vec3(0.74, 0.84, 0.56), fringe * 0.65);  // damp, greenish edge
     // sunlit cushions on top are a touch brighter & yellower than moss on the sides
-    sfCol = mix(sfCol, mA.rgb * mix(vec3(1.0), vec3(1.1, 1.14, 0.9), up), m);
+    vec3 sfMossCol = mA.rgb * mix(vec3(1.0), vec3(1.1, 1.14, 0.9), up);
+#if defined(USE_COLOR) || defined(USE_COLOR_ALPHA)
+    // the vertex / instance colour tints the BASE albedo only: diffuseColor
+    // already carries it, so divide it out of the moss — velvet green moss on
+    // every vertex-coloured rock, log and root (not moss × grey = near black)
+    sfMossCol /= max(vColor.rgb, vec3(0.04));
+#endif
+    sfCol = mix(sfCol, sfMossCol * sfS.x, m);
+    sfMossM = m;
     sfN = normalize(mix(sfN, mN, m));
     normal = normalize((viewMatrix * vec4(sfN, 0.0)).xyz);
     sfRough = mix(sfRough, mD.z, m);
@@ -223,6 +374,30 @@ const SURFACE_MAIN = /* glsl */ `
     float k = sfP.w;
     sfCol *= 1.0 + ((b1 - 0.5) * 0.34 + (b3 - 0.5) * 0.1) * k;
     sfCol = mix(sfCol, sfCol * vec3(1.08, 1.0, 0.86), (b3 - 0.5) * 1.3 * k);
+  }
+#endif
+#ifdef SF_BARK
+  {
+    // Direct sun on bark: deep furrows would turn near-black stripes against
+    // bright plates (a painted tiger band). For DIRECT light only, lift the
+    // furrows to ≥ 70 % of the map's mean (sfS.w; crevice darkening stays
+    // < ~50 % in the sun), settle the plates into a warm, desaturated tan and
+    // keep the brightest from blowing out — shade & ambient keep the full depth.
+    const vec3 LW = vec3(0.2126, 0.7152, 0.0722);
+    float lum = dot(sfCol, LW);
+    float lift = mix(clamp(0.7 * sfS.w / max(lum, 1e-4), 1.0, 7.0), 1.0, sfMossM);
+    vec3 c = sfCol * lift;
+    float l2 = dot(c, LW);
+    // the warm sun × warm grade would turn brown plates yellow: desaturate the
+    // sunlit bark a little everywhere, the bright plates more (warm grey-tan)
+    float hi = smoothstep(1.1, 1.8, l2 / max(sfS.w, 1e-4)) * (1.0 - sfMossM);
+    c = mix(c, vec3(l2) * vec3(1.06, 1.0, 0.9), (0.35 + 0.3 * hi) * (1.0 - sfMossM));
+    c *= 1.0 - 0.2 * hi;
+    // …but a birch stays chalk-white in the sun: no lift, no warm-tan cast
+    c = mix(c, sfCol, sfBirch);
+    // …and no painterly crevice darkening on the sunlit side (it stays on ambient)
+    sfDirK = c / max(sfCol, vec3(1e-4)) / mix(1.0, sfAO, sfP.y * 0.3);
+    sfDirN = sfNormal0;
   }
 #endif
   diffuseColor.rgb *= sfCol;

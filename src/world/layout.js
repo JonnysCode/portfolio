@@ -146,7 +146,8 @@ export const PATH_HALF_WIDTH = { main: 1.15, cottage: 0.85, bridge: 0.85, farBan
  * SPOTS — the places the camera glides to. `focus` is the point of interest
  * (used for depth of field and markers); `camera` is the composed shot (16:9).
  * Optional `portrait: { position, target, fov?, focus? }` is the shot on a tall
- * phone screen (blended in on portrait tablets), `close: { position, target }`
+ * phone screen (blended in on portrait tablets), `portraitMore: [ {…} ]` further
+ * phone stops of the same place (a flick steps through them), `close: { position, target }`
  * the '<id>-close' screenshot view (debug.js).
  * `areas` lists the content areas (src/content/content.js) presented here.
  */
@@ -159,6 +160,15 @@ export const SPOTS = [
     areas: [],
     focus: [0, 4, -2],
     camera: { position: [4, 17, 40], target: [0, 6.5, -2], fov: 40 },
+    // phones: the village on one tall screen, seen from the east-south-east over
+    // the far bank (from there the houses line up in a band ~10 units wide — from
+    // the front they spread over 25): the red caps of the cottages on the left,
+    // the Schreinerei annex in the middle with the oak door beside it, the deck
+    // with the finished pieces below, the trunk with its loft and limbs rising to
+    // the top of the frame. Nothing stands between the lens and the village (no
+    // bank, stream or Velowerkstatt cap in the foreground), and the village —
+    // not the crown — is what the lens is focused on, by day and by night.
+    portrait: { position: [25, 16, 5], target: [-7.5, 5.8, -1.5], fov: 52, focus: [-6, 2.5, 0] },
   },
   {
     id: 'woodworking',
@@ -169,12 +179,17 @@ export const SPOTS = [
     // lower and closer than before: the porch Hobelbank with Jonny planing sits on
     // the left third, the oak door in the middle, the deck still on the right
     focus: [-1.4, 1.1, -0.8],
-    camera: { position: [0.9, 3.0, 11.4], target: [-0.6, 2.2, -0.7], fov: 40 },
-    // phones: the whole workshop at the foot of the giant oak — the Hobelbank with
-    // Jonny on the left, the door, the EFZ board and the deck with its four pieces
-    // on the right (all six sparkles in frame), the trunk and the loft stairs
-    // rising above: a tall frame for a tall tree
-    portrait: { position: [1.8, 5.9, 21.0], target: [1.1, 4.1, -0.5], fov: 60, focus: [0.8, 1.0, 0.3] },
+    // (trucked right and a step back: the deck's four pieces sit inside the right third, not on the edge)
+    camera: { position: [1.6, 3.05, 12.3], target: [0.0, 2.2, -0.8], fov: 40 },
+    // phones: two stops (a flick steps from one to the other before travelling on).
+    // First, low and close in front of the porch: Jonny planing at the Hobelbank
+    // and the sawhorses with the board mid-cut on the left, the round door on the
+    // right, only the trunk's foot rising above them. Then the deck, from the
+    // stream side: the four finished pieces large in front, the door and the EFZ
+    // certificate behind them, the porch at the far left. (No tall frame holds the
+    // porch and the deck — 8 units apart — at a size where the craft reads.)
+    portrait: { position: [-4.0, 4.0, 8.9], target: [-2.0, 2.9, -1.5], fov: 62, focus: [-3.2, 1.1, 0] },
+    portraitMore: [{ position: [8.9, 3.6, 5.6], target: [0.5, 1.5, -1.0], fov: 64, focus: [3.4, 0.8, 0.9] }],
   },
   {
     id: 'code',
@@ -207,7 +222,8 @@ export const SPOTS = [
     focus: [-21.5, 1.8, 2.5],
     camera: { position: [-24.6, 3.8, 12.6], target: [-21.4, 2.0, 2.8], fov: 40 },
     // phones: the open front with the moodboard easel on the left and the model table on the right
-    portrait: { position: [-24.8, 5.2, 19.0], target: [-22.1, 2.0, 3.6], fov: 52 },
+    // (from a little higher: the lens looks into the room, and the moss in front is in focus, not a blur)
+    portrait: { position: [-24.6, 7.8, 17.2], target: [-22.0, 2.0, 3.4], fov: 52 },
   },
   {
     id: 'bikes',
@@ -217,7 +233,10 @@ export const SPOTS = [
     areas: ['bikes'],
     focus: [16, 1.6, 6.6],
     camera: { position: [8.5, 4.6, 16.5], target: [15.2, 1.8, 6.2], fov: 40 },
-    portrait: { position: [10.2, 7.3, 18.4], target: [16.4, 2.3, 7.8] },
+    // phones: at eye level beside the bridge — the hero bike, the mechanic and the
+    // open door fill the frame, the bell cap crops off at the top (from above, the
+    // cap filled the screen and the bikes were a few pixels tall)
+    portrait: { position: [12.6, 2.5, 13.4], target: [15.6, 1.25, 7.4], fov: 55, focus: [15.0, 0.9, 7.6] },
     close: { position: [11.0, 6.6, 13.4], target: [16.2, 1.6, 6.8] },
   },
 ];

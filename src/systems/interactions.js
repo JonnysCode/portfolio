@@ -3,11 +3,19 @@
 // any more: the visitor explores by gliding the camera between spots
 // (cameraRig.js) and clicking the little things they discover.
 //
-// • Markers: gently bobbing golden sparkles (one Points draw call for all)
-//   float above the hotspots of the CURRENT spot; in the 'glen' overview only
-//   the featured pieces get a small one. Visited entries turn into a little
-//   leaf. Markers pop in one by one after the camera lands and hide while
-//   their panel is open.
+// • Markers: a ✦ — a cream four-point star with a mint glow inside a thin ring
+//   (one Points draw call for all) — stands above every page of the CURRENT
+//   spot; in the 'glen' overview only the featured pieces get one. Unread ones
+//   send a slow ping ring out every ~4 s (the first as they pop in); hovered /
+//   keyboard-focused, the ring brightens. Shape, colour and stillness set them
+//   apart from the warm round glows around them (fairy-light bulbs, lanterns,
+//   sun motes, fireflies), and a marker that would sit among bulbs is lifted
+//   clear of them. By night they glow mint-white, as bright as the lamps; far
+//   ones fade a little. Visited entries turn into a little leaf. Markers pop in
+//   one by one after the camera lands and hide while their panel is open.
+// • Secret tells: lingering at a place (~20 s untouched), or having read all
+//   its pages, makes one unfound secret in plain view twitch and glimmer once
+//   (with a soft twinkle) — remembered, never repeated; secrets stay markerless.
 // • Secrets (opts.kind === 'secret'): no marker at all — hovering one makes a
 //   pale sparkle appear; activating it the first time counts towards the
 //   "secrets found x/y" discovery counter (chime + toast).
@@ -27,6 +35,7 @@
 //   ctx.interactions.setOpen(h | null) / markVisited(entryId) / isVisited(entryId)   (UI bookkeeping)
 //   ctx.interactions.progress() → { visited, total }   ctx.interactions.onVisit(fn(h, progress))
 //   ctx.interactions.secrets({ by: 'day' }?) → { found, total }   ctx.interactions.onSecret(fn(h, secrets, isNew))
+//   ctx.interactions.onTell(fn(h))      (a secret gave its one-time tell)
 //   ctx.interactions.onGroundClick((point, event) => …)  (tap on empty ground)
 //   ctx.interactions.pickGround() / pickHotspot() / setPointerFromClient(x, y)
 //   ctx.interactions.refreshBounds(h)   (call if a hotspot object changes size a lot)
@@ -54,16 +63,23 @@ import { triGrid } from './triGrid.js';
  * tail-vise end instead.
  */
 const MARKER_TWEAKS = {
-  'workbench-wip': { dx: 0.7, dz: 0.35, y: 1.25 },
+  'workbench-wip': { dx: 0.55, dz: 0.35, y: 1.5 },
   // the two villagers sit at the table's back: the sparkle (and its leaf once read) floats over the free front end
   'dining-table': { dx: 0.62, dz: 0.25, y: 1.0 },
+  // the record player stands on the cabinet: the cabinet's wisp hangs at its free right end, the
+  // coffee table's low and to the front (four pieces on the deck, four clear places to tap)
+  'record-cabinet': { dx: 0.62, dz: 0.12, y: 0.98 },
+  'coffee-table': { dx: -0.12, dz: 0.4, y: 0.6 },
 };
 
 const VISITED_KEY = 'woodland:visited';
 const SECRETS_KEY = 'woodland:secrets';
+const TOLD_KEY = 'woodland:secret-tells';
 
 /** Marker kinds (shader). */
 const K_SPARKLE = 0, K_LEAF = 1, K_SECRET = 2, K_FEATURED = 3;
+/** An unread ✦ sends a ping ring out this often (s). */
+const PING_EVERY = 4;
 
 export function createInteractions(ctx) {
   const { engine, camera } = ctx;
@@ -142,6 +158,8 @@ export function createInteractions(ctx) {
     attr('aSize', 1);
     attr('aPhase', 1);
     attr('aKind', 1);
+    attr('aHot', 1);
+    attr('aPing', 1);
     markers.geometry = markerGeo;
   }
   ensureCapacity(48);
@@ -200,10 +218,38 @@ export function createInteractions(ctx) {
       out.x += tw.dx ?? 0;
       out.z += tw.dz ?? 0;
       out.y += tw.y;
-      return out;
-    }
-    out.y += h.markerHeight !== undefined ? h.markerHeight : b.top + 0.45;
+    } else out.y += h.markerHeight !== undefined ? h.markerHeight : b.top + 0.45;
+    out.y += bulbLift(h, out);
     return out;
+  }
+
+  /**
+   * A ✦ hanging among fairy-light bulbs or right by a lantern reads as one more
+   * bulb: lift it (once, remembered per hotspot) until no glowing bulb is
+   * within BULB_CLEAR of it. Uses the camera's soft-occluder list (every
+   * fairy-light bulb and lantern halo, cameraObstacles.js).
+   */
+  const BULB_CLEAR = 0.6;
+  function bulbLift(h, p) {
+    if (h.__bulbLift !== undefined) return h.__bulbLift;
+    const decor = ctx.cameraRig?.obstacles?.shapes?.decor;
+    if (!decor) return 0; // (the world is still being built: ask again next frame)
+    let lift = 0;
+    for (let step = 0; step < 8; step++) {
+      let hit = false;
+      for (const d of decor) {
+        if (d.kind !== 's') continue;
+        const dy = p.y + lift - d.y;
+        if (Math.abs(dy) < BULB_CLEAR && Math.hypot(p.x - d.x, dy, p.z - d.z) < BULB_CLEAR) {
+          hit = true;
+          break;
+        }
+      }
+      if (!hit) break;
+      lift += 0.15;
+    }
+    h.__bulbLift = lift;
+    return lift;
   }
 
   // ─── picking ───────────────────────────────────────────────────────────────
@@ -389,8 +435,12 @@ export function createInteractions(ctx) {
       if (v.z > 1) continue;
       const sx = r.left + ((v.x + 1) / 2) * r.width, sy = r.top + ((1 - v.y) / 2) * r.height;
       const pr = engine.renderer.getPixelRatio() || 1;
-      const px = Math.min(84 * pr, Math.max(24 * (h.__size ?? 1) * pr, ((h.__size ?? 1) * markerScale() * 0.75) / Math.max(dist, 0.1))) / pr;
-      const reach = px * 0.5 + (generous ? 22 : 6);
+      // (the sprite's size as the marker shader draws it: a ✦ sprite holds its ring at ~¾ of its
+      // radius; a leaf fills its sprite) — touch reaches ≥ 28 px round a ✦ whatever its size
+      const sz = h.__size ?? 1;
+      const star = h.__kind === K_SPARKLE || h.__kind === K_FEATURED;
+      const px = Math.min(64 * pr, Math.max((star ? 34 : 16) * sz * pr, (sz * markerScale() * (star ? 0.6 : 0.5)) / Math.max(dist, 0.1))) / pr;
+      const reach = px * (star ? 0.4 : 0.5) + (generous ? 22 : 7);
       const d = Math.hypot(sx - clientX, sy - clientY);
       if (d < reach && d < bestD) {
         bestD = d;
@@ -461,18 +511,22 @@ export function createInteractions(ctx) {
 
   // springy "boing" on the hotspot root; restores the exact original scale
   const bouncing = new Set();
-  function bounce(h) {
+  function bounce(h, { amp = 0.075, twice = false } = {}) {
     if (reduced || boundsOf(h).r > 3.6) return;
     if (!h.__bounce) h.__bounce = { base: h.object.scale.clone(), t: 0 };
     else h.__bounce.t = 0;
+    h.__bounce.amp = amp;
+    h.__bounce.twice = twice;
     bouncing.add(h);
   }
+  const wob = (t) => (t > 0 ? Math.sin(t * 19) * Math.exp(-t * 6.5) : 0);
   function updateBounces(dt) {
     for (const h of bouncing) {
       const b = h.__bounce;
       b.t += dt;
-      const s = 1 + 0.075 * Math.sin(b.t * 19) * Math.exp(-b.t * 6.5);
-      if (b.t > 0.9) {
+      // (a secret's tell: a second, smaller twitch — an ear flick, a bob)
+      const s = 1 + b.amp * (wob(b.t) + (b.twice ? 0.7 * wob(b.t - 0.55) : 0));
+      if (b.t > (b.twice ? 1.45 : 0.9)) {
         h.object.scale.copy(b.base);
         h.__bounce = null;
         bouncing.delete(h);
@@ -562,6 +616,7 @@ export function createInteractions(ctx) {
     if (focused && !isLive(focused)) api.setFocused(null);
 
     updateMarkers(dt, t, spot, moving, panelOpen);
+    if (f % 20 === 0) maybeTell(t, spot, moving, panelOpen);
     updateRing(dt, t, panelOpen);
     updateBounces(dt);
   }, 2);
@@ -573,7 +628,9 @@ export function createInteractions(ctx) {
     const sizeA = markerGeo.attributes.aSize.array;
     const phase = markerGeo.attributes.aPhase.array;
     const kind = markerGeo.attributes.aKind.array;
-    const kUp = damp(6, dt), kDown = damp(10, dt);
+    const hotA = markerGeo.attributes.aHot.array;
+    const pingA = markerGeo.attributes.aPing.array;
+    const kUp = damp(6, dt), kDown = damp(10, dt), kHot = damp(9, dt);
     const sinceLanding = t - settledAt;
     featuredSeen.clear();
     let n = 0, order = 0;
@@ -619,11 +676,18 @@ export function createInteractions(ctx) {
         }
         k = isVisited ? K_LEAF : spot === 'glen' && h.area !== 'glen' ? K_FEATURED : K_SPARKLE;
       }
-      const hot = h === hovered || h === focused;
-      if (hot && !isSecret) targetSize *= 1.25;
+      // hovered / keyboard-focused: a thin ring appears around the wisp
+      const hot = (h === hovered || h === focused) && !isSecret ? 1 : 0;
+      h.__hot = (h.__hot ?? 0) + (hot - (h.__hot ?? 0)) * kHot;
       const a0 = h.__alpha ?? 0;
       h.__alpha = a0 + (want - a0) * (want > a0 ? kUp : kDown);
-      if (h.__alpha < 0.01) continue;
+      if (h.__alpha < 0.01) {
+        h.__bornAt = undefined;
+        continue;
+      }
+      // the ping: the first one as the ✦ pops in, then every PING_EVERY seconds
+      if (h.__bornAt === undefined) h.__bornAt = t;
+      h.__kind = k;
       h.__size = (h.__size ?? targetSize) + (targetSize - (h.__size ?? targetSize)) * damp(8, dt);
       markerWorld(h, v);
       pos[n * 3] = v.x;
@@ -634,15 +698,19 @@ export function createInteractions(ctx) {
       sizeA[n] = h.__size * (reduced ? 1 : 1 + 0.35 * Math.sin(Math.min(1, h.__alpha) * Math.PI) * (want > a0 ? 1 : 0));
       phase[n] = (h.id * 1.618) % (Math.PI * 2);
       kind[n] = k;
+      hotA[n] = h.__hot;
+      // (reduced motion: no ping rolling out — a still ring)
+      pingA[n] = reduced || !(k === K_SPARKLE || k === K_FEATURED) ? 99 : (t - h.__bornAt) % (k === K_FEATURED ? PING_EVERY * 1.5 : PING_EVERY);
       n++;
     }
     markerGeo.setDrawRange(0, n);
-    for (const key of ['position', 'aAlpha', 'aSize', 'aPhase', 'aKind']) markerGeo.attributes[key].needsUpdate = n > 0;
+    for (const key of ['position', 'aAlpha', 'aSize', 'aPhase', 'aKind', 'aHot', 'aPing']) markerGeo.attributes[key].needsUpdate = n > 0;
     markers.visible = n > 0;
     markerMat.uniforms.uTime.value = reduced ? 0 : t;
     markerMat.uniforms.uTimeF.value = reduced ? 0 : t;
     markerMat.uniforms.uScale.value = markerScale();
     markerMat.uniforms.uPx.value = engine.renderer.getPixelRatio() || 1;
+    markerMat.uniforms.uNight.value = ctx.env?.night ?? (isNight() ? 1 : 0);
   }
 
   function updateRing(dt, t, panelOpen) {
@@ -680,6 +748,68 @@ export function createInteractions(ctx) {
     ringMat.uniforms.uTime.value = t;
     ring.visible = true;
   }
+
+  // ─── secrets: a one-time tell ─────────────────────────────────────────────
+  // A visitor who lingers at a place (~20 s without touching anything), or who
+  // has read every page there, gets one quiet hint of a secret in view: it
+  // twitches (the cat's ear, the duck's bob), a pale glimmer, a soft twinkle.
+  // Each secret tells only once (remembered); secrets keep no marker.
+  const told = loadSet(TOLD_KEY);
+  let lastInputAt = 0;
+  let toldThisVisit = null;
+  gestures.on('input', () => (lastInputAt = engine.elapsed));
+  canvas.addEventListener('pointermove', () => (lastInputAt = engine.elapsed), { passive: true });
+  const tellP = new THREE.Vector3();
+  const tellDir = new THREE.Vector3();
+  const tellS = {};
+  function maybeTell(t, spot, moving, panelOpen) {
+    if (!spot || moving || panelOpen || ctx.cameraRig?.focused || ctx.ui?.isModalOpen) return;
+    if (toldThisVisit === spot + settledAt) return;
+    const since = t - settledAt;
+    const quiet = t - lastInputAt;
+    const pages = api.forSpot(spot);
+    const allRead = pages.length > 0 && pages.every((h) => visited.has(h.entryId));
+    if (!((since > 20 && quiet > 10) || (allRead && since > 5 && quiet > 4))) return;
+    let best = null, bestD = Infinity;
+    for (const h of hotspots) {
+      if (h.kind !== 'secret' || !isLive(h) || secretsFound.has(secretKey(h)) || told.has(secretKey(h))) continue;
+      api.screenPosition(h, tellS);
+      if (!tellS.visible) continue;
+      const r = canvasRect;
+      const nx = (tellS.x - r.left) / r.width - 0.5, ny = (tellS.y - r.top) / r.height - 0.5;
+      if (Math.abs(nx) > 0.42 || ny < -0.36 || ny > 0.36) continue;
+      // in view only (not hidden behind a wall, a deck or the trunk): its middle or its top must be clear
+      centerOf(h, tellP);
+      if (tellP.distanceTo(camera.position) > 26) continue;
+      let seen = false;
+      for (let k = 0; k < 2 && !seen; k++) {
+        if (k === 1) markerWorld(h, tellP).y -= 0.3;
+        const dist = tellP.distanceTo(camera.position);
+        tellDir.subVectors(tellP, camera.position).divideScalar(dist || 1);
+        seen = firstSolidHit(camera.position, tellDir, camera.near, Math.max(camera.near, dist - boundsOf(h).r * 0.5 - 0.2), h.object) === Infinity;
+      }
+      if (!seen) continue;
+      // this place's own secrets first, then the most central one
+      const d = Math.hypot(nx, ny) - (h.area === spot ? 0.5 : 0);
+      if (d < bestD) {
+        bestD = d;
+        best = h;
+      }
+    }
+    // (nothing in view: look again a little later — the visitor may have turned round)
+    if (!best) {
+      lastInputAt = Math.max(lastInputAt, t - 6);
+      return;
+    }
+    toldThisVisit = spot + settledAt;
+    told.add(secretKey(best));
+    saveSet(TOLD_KEY, told);
+    bounce(best, { amp: 0.1, twice: true });
+    best.__sparkUntil = t + 2.4;
+    ctx.audio?.play?.('twinkle');
+    for (const fn of tellListeners) fn(best);
+  }
+  const tellListeners = new Set();
 
   function secretKey(h) {
     return h.secretId ?? `${h.area ?? 'glen'}:${h.label ?? h.id}`;
@@ -841,6 +971,11 @@ export function createInteractions(ctx) {
       visitListeners.add(fn);
       return () => visitListeners.delete(fn);
     },
+    /** fn(hotspot) when a secret gives its one-time tell (a twitch and a glimmer). */
+    onTell(fn) {
+      tellListeners.add(fn);
+      return () => tellListeners.delete(fn);
+    },
     /** fn(hotspot, { found, total }, isNew) whenever a secret is activated. */
     onSecret(fn) {
       secretListeners.add(fn);
@@ -899,7 +1034,16 @@ function saveSet(key, set) {
   }
 }
 
-/** Golden sparkle (unvisited) / little green leaf (visited) / pale secret twinkle point sprites. */
+/**
+ * Marker point sprites. Unvisited pages: a ✦ — a cream four-point star with a
+ * mint glow inside a thin ring that is always there (not only on hover), and
+ * a slow "ping" ring rolling out of it every few seconds (the first one as it
+ * pops in) — so it reads as "the ✦ sparkles" of the help text, never as one
+ * more amber fairy-light bulb, lantern, sun mote or firefly (those are warm
+ * round glows that drift; the ✦ is cool, pointed, ringed and stays put).
+ * Visited: a little green leaf. Secrets: a pale twinkling cross. By night the
+ * ✦ turns mint-white and glows as bright as the lamps; far ones fade a little.
+ */
 function makeMarkerMaterial() {
   const c = (hex) => new THREE.Color(hex);
   return new THREE.ShaderMaterial({
@@ -907,12 +1051,14 @@ function makeMarkerMaterial() {
       uTime: { value: 0 },
       uTimeF: { value: 0 },
       uScale: { value: 600 },
-      uGold: { value: c(palette.postYellow ?? '#ffcc33') },
+      uNight: { value: 0 },
+      uCream: { value: c('#fff3d2') },
       uCore: { value: c(palette.spots) },
-      uEdge: { value: c(palette.capBrown) },
+      uEdge: { value: c('#3b2a1c') },
       uLeaf: { value: c(palette.leafLight) },
       uLeafDark: { value: c(palette.leafDark) },
-      uMint: { value: c('#c8fff0') },
+      uMint: { value: c('#9ff2d6') },
+      uSilver: { value: c('#e4fbff') },
       uPx: { value: 1 },
     },
     vertexShader: /* glsl */ `
@@ -920,77 +1066,106 @@ function makeMarkerMaterial() {
       attribute float aSize;
       attribute float aPhase;
       attribute float aKind;
+      attribute float aHot;
+      attribute float aPing;
       uniform float uTime;
       uniform float uScale;
       uniform float uPx;
+      uniform float uNight;
       varying float vAlpha;
       varying float vKind;
       varying float vSpin;
       varying float vTw;
       varying float vPh;
+      varying float vHot;
+      varying float vGrow;
+      varying float vPing;
       void main() {
         vec3 p = position;
         vPh = aPhase;
-        p.y += sin(uTime * 2.1 + aPhase) * 0.09;
+        float star = aKind < 0.5 || aKind > 2.5 ? 1.0 : 0.0;
+        // the ✦ hangs still with a slow breath; leaves and secrets bob a little
+        p.y += sin(uTime * 1.3 + aPhase) * mix(0.06, 0.025, star);
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * mv;
-        float pulse = 1.0 + 0.07 * sin(uTime * 3.3 + aPhase * 1.7);
-        // never smaller than a readable dot, never a blob filling the screen
-        gl_PointSize = clamp(aSize * pulse * uScale * 0.75 / max(0.1, -mv.z), 24.0 * aSize * uPx, 84.0 * uPx) * step(0.001, aAlpha);
-        vAlpha = aAlpha;
+        float dist = max(0.1, -mv.z);
+        // ✦ sprites hold a ring and a ping: never smaller than ~34 CSS px (a ≥ 17 px star
+        // on a phone), never a blob filling the screen
+        float lo = mix(16.0, 34.0, star) * aSize;
+        float px = clamp(aSize * uScale * mix(0.5, 0.6, star) / dist, lo * uPx, 64.0 * uPx);
+        // hovered / focused: the sprite grows a little (the ring brightens)
+        vGrow = 1.0 + 0.22 * aHot * star;
+        gl_PointSize = px * vGrow * step(0.001, aAlpha);
+        // far away (the overview's featured pieces): a little quieter
+        vAlpha = aAlpha * mix(1.0, 0.72, smoothstep(24.0, 58.0, dist));
         vKind = aKind;
-        vSpin = aKind > 0.5 && aKind < 1.5 ? 0.5 + 0.25 * sin(uTime * 1.6 + aPhase) : sin(uTime * 0.9 + aPhase) * 0.35 + uTime * (aKind > 1.5 && aKind < 2.5 ? 0.8 : 0.0);
-        if (aKind > 2.5) gl_PointSize *= 1.6; // room for the halo ring
-        vTw = 0.75 + 0.25 * sin(uTime * 7.0 + aPhase * 3.0);
+        vHot = aHot;
+        vPing = aPing;
+        vSpin = aKind > 0.5 && aKind < 1.5 ? 0.5 + 0.25 * sin(uTime * 1.6 + aPhase) : star > 0.5 ? 0.12 * sin(uTime * 0.7 + aPhase) : sin(uTime * 0.9 + aPhase) * 0.35 + uTime * 0.8;
+        vTw = 0.82 + 0.18 * sin(uTime * 2.3 + aPhase * 3.0);
       }
     `,
     fragmentShader: /* glsl */ `
-      uniform vec3 uGold;
       uniform float uTimeF;
+      uniform float uNight;
+      uniform vec3 uCream;
       uniform vec3 uCore;
       uniform vec3 uEdge;
       uniform vec3 uLeaf;
       uniform vec3 uLeafDark;
       uniform vec3 uMint;
+      uniform vec3 uSilver;
       varying float vAlpha;
       varying float vKind;
       varying float vSpin;
       varying float vTw;
       varying float vPh;
+      varying float vHot;
+      varying float vGrow;
+      varying float vPing;
       void main() {
-        vec2 uv = gl_PointCoord * 2.0 - 1.0;
-        uv.y = -uv.y;
+        vec2 uv0 = gl_PointCoord * 2.0 - 1.0;
+        uv0.y = -uv0.y;
+        vec2 uv = uv0 * vGrow;
         float cs = cos(vSpin), sn = sin(vSpin);
         vec2 q = mat2(cs, -sn, sn, cs) * uv;
         vec3 col;
         float a;
         float r = length(uv);
-        float ringA = 0.0;
-        if (vKind > 2.5) {
-          // featured (overview): the sparkle in the middle of a slowly breathing golden halo
-          float br = 0.5 + 0.5 * sin(uTimeF * 1.7 + vPh);
-          float ringR = 0.74 + 0.16 * br;
-          ringA = exp(-pow((r - ringR) / 0.06, 2.0)) * (0.42 - 0.24 * br) + exp(-r * r * 3.0) * 0.18;
-          uv *= 1.6;
-          q *= 1.6;
-          r = length(uv);
-        }
         if (vKind < 0.5 || vKind > 2.5) {
-          // sparkle: astroid-like four-point star with a cream core and a soft halo
-          float s = pow(abs(q.x), 0.55) + pow(abs(q.y), 0.55);
-          float star = 1.0 - smoothstep(0.74, 0.8, s);
-          // a smaller diagonal star behind it: an eight-point twinkle
-          vec2 q2 = mat2(0.7071, -0.7071, 0.7071, 0.7071) * q;
-          float s2 = pow(abs(q2.x), 0.55) + pow(abs(q2.y), 0.55);
-          float star2 = (1.0 - smoothstep(0.44, 0.5, s2)) * (0.55 + 0.45 * vTw);
-          float edge = smoothstep(0.58, 0.72, s);
-          float core = 1.0 - smoothstep(0.0, 0.5, length(q) * 1.8);
-          col = mix(uGold, uEdge, edge * 0.55);
-          col = mix(col, uCore, core);
-          float halo = exp(-r * r * 4.0) * 0.55;
-          a = max(max(star, star2), halo);
-          col = mix(uGold * 1.2, col, max(star, star2 * 0.8));
-          col *= 1.35;
+          // ✦: a four-point star with concave sides (|x|^p + |y|^p = R^p, p < 1)
+          float featured = step(2.5, vKind);
+          float R = 0.5 + 0.06 * vHot;
+          vec2 s = abs(q) / R;
+          float sd = pow(s.x, 0.62) + pow(s.y, 0.62);
+          float aa = 0.1;
+          float star = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, sd);
+          // a thin dark keyline round the star: it holds on sunlit plaster and pale stone
+          float keyline = (1.0 - smoothstep(1.12, 1.45, sd)) * (1.0 - star) * 0.42 * (1.0 - uNight * 0.7);
+          float core = exp(-dot(q, q) * 26.0);
+          float glow = exp(-r * r * 5.0) * (0.34 + 0.12 * vTw + 0.08 * featured);
+          // the ring: always there (thin), brighter and fuller while hovered / focused
+          float rr = 0.74;
+          float ringW = 0.035 + 0.025 * vHot;
+          float ring = exp(-pow((length(uv0) - rr) / ringW, 2.0)) * (0.55 + 0.45 * vHot);
+          // the ping: a ring rolling out of the star, fading (vPing = seconds since this ping began)
+          float pt = clamp(vPing / 1.5, 0.0, 1.0);
+          float pr = mix(0.42, 0.98, 1.0 - (1.0 - pt) * (1.0 - pt));
+          float ping = exp(-pow((length(uv0) - pr) / 0.045, 2.0)) * (1.0 - pt) * (1.0 - pt) * step(vPing, 1.5) * 0.85;
+          vec3 starCol = mix(uCream, uCore * 1.15, clamp(core * 1.6, 0.0, 1.0));
+          vec3 glowCol = mix(uMint, uSilver, 0.3);
+          vec3 ringCol = mix(uCream, uMint, 0.72);
+          // by night: mint-white and as bright as the lamps (bloom picks the core up)
+          float lift = 1.25 + uNight * 1.3;
+          starCol = mix(starCol, mix(uSilver, uMint, 0.25), uNight * 0.6) * lift * (0.92 + 0.08 * vTw);
+          glowCol *= 1.0 + uNight * 0.7;
+          ringCol *= 1.05 + uNight * 0.65;
+          // (a light glow fill: a heavier one read as a milky grey disc inside the ring)
+          a = clamp(star + glow * 0.6 + ring + ping + keyline, 0.0, 1.0);
+          col = glowCol;
+          col = mix(col, ringCol, clamp((ring + ping) / max(a, 1e-3), 0.0, 1.0));
+          col = mix(col, uEdge, clamp(keyline / max(a, 1e-3), 0.0, 1.0));
+          col = mix(col, starCol, star);
         } else if (vKind < 1.5) {
           // leaf: a lens shape with a midrib
           vec2 l = q * vec2(1.6, 1.0);
@@ -998,7 +1173,7 @@ function makeMarkerMaterial() {
           float leaf = 1.0 - smoothstep(1.0, 1.08, d);
           float edge = smoothstep(0.86, 0.98, d);
           float rib = (1.0 - smoothstep(0.0, 0.06, abs(q.x))) * step(abs(q.y), 0.75);
-          col = mix(uLeaf, uLeafDark, max(edge, rib * 0.7));
+          col = mix(uLeaf, uLeafDark, max(edge, rib * 0.7)) * (1.0 + uNight * 0.5);
           float halo = exp(-r * r * 6.0) * 0.3;
           a = max(leaf, halo);
           col = mix(uCore, col, leaf);
@@ -1011,10 +1186,6 @@ function makeMarkerMaterial() {
           float sats = exp(-dot(s1, s1) * 140.0) + exp(-dot(s2, s2) * 160.0);
           a = clamp(thin * vTw + core + sats * vTw + exp(-r * r * 4.0) * 0.25, 0.0, 1.0);
           col = mix(uMint, uCore, core) * 1.3;
-        }
-        if (ringA > 0.0) {
-          col = mix(uGold * 1.25, col, clamp(a, 0.0, 1.0));
-          a = max(a, ringA);
         }
         a *= vAlpha;
         if (a < 0.01) discard;

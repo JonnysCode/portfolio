@@ -94,7 +94,11 @@ function carveDoorNiche(geo, frame, depth) {
   geo.computeVertexNormals();
 }
 
-export function buildRoots() {
+/**
+ * @param lod { radialK, segK } — the lower quality tiers build the roots with
+ *            fewer vertices around (×radialK) and longer segments (×segK)
+ */
+export function buildRoots({ radialK = 1, segK = 1 } = {}) {
   const bark = [];
   const moss = [];
   const roots = [];
@@ -103,8 +107,11 @@ export function buildRoots() {
     const info = rootCurve(root);
     const { curve, size } = info;
     const len = curve.getLength();
-    const segments = Math.max(12, Math.ceil(len / (root.thin ? 0.2 : 0.14)));
-    const radial = root.thin ? 9 : 18;
+    // (the mouse-door root is a close-up secret: it keeps most of its detail)
+    const rk = root.id === 'front-right' ? Math.max(radialK, 0.8) : radialK;
+    const sk = root.id === 'front-right' ? Math.min(segK, 1.2) : segK;
+    const segments = Math.max(10, Math.ceil(len / ((root.thin ? 0.2 : 0.14) * sk)));
+    const radial = Math.max(6, Math.round((root.thin ? 9 : 18) * rk));
     const tubeOpts = {
       curve,
       segments,
@@ -129,7 +136,7 @@ export function buildRoots() {
     const mossGeo = (
       organicTube({
         ...tubeOpts,
-        radial: root.thin ? 7 : 14,
+        radial: Math.max(5, Math.round((root.thin ? 7 : 14) * rk)),
         arc: [-1.45, 1.45],
         shell: (phi, s, t, x, y, z) => {
           size(t, sz, curve.getUtoTmapping(t));

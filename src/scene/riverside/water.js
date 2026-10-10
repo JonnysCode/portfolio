@@ -13,18 +13,26 @@
 // ripples, streaks and foam along the flow.
 //
 // A small RGBA mask texture (0.1 units per texel) baked from the real ground:
-//   R  water depth (WL − ground height) → depth tint, soft edges, shore foam
-//   G  wakes behind the rocks in the stream (elongated downstream)
+//   R  water depth (WL − ground height, blurred ~0.2 units) → bed & depth colour, soft edges, shore foam
+//   G  foam at the rocks in the stream (ring, bow wave, tongue, V of the wake)
 //   B  turbulence (the falls' plunge, rapids between rocks)
 //   A  calmness (the lily pond: isotropic ripples instead of flow streaks)
 //
-// Look: shallow turquoise → deep teal, painted flow streaks, foam streaks
-// behind rocks, a breathing foam lip along the banks, splash rings where the
-// falls land, sun sparkles (only where the sun actually reaches — shadow
-// aware) and, at night, a few drifting blue-green glints, the lanterns, the
-// workshop's lit doorway and the candle boats mirrored in the water (addLamp:
-// a tall streak towards the viewer broken by the ripples, in a soft halo) and
-// a faint cool glitter path under the moon.
+// Look: the BED seen through the water by depth — silt and round river
+// pebbles, clear in the shallows (warmed to olive-amber as the water drinks
+// the blue, refracted by the ripples, sunlit caustics dancing on it), fading
+// into scattered deep teal in the middle; soft broken bands of sheen drifting
+// with the flow; a frothy ring, bow wave and V-shaped wake at every rock; a
+// breathing foam lip along the banks; splash rings where the falls land;
+// reflections (Fresnel): the canopy overhead (dark leaf masses, misty gaps),
+// the bridge (its faces and arch traced analytically from bridge.js's profile)
+// and the Velowerkstatt (cap & drum as soft shapes), all broken up by the
+// ripples; sun glints gathered where the ripples mirror the sun (capped, so
+// they never bloom into blotches, gone at the shadows' edges) and, at night,
+// a few drifting blue-green glints, the lanterns, the workshop's lit doorway
+// and the candle boats mirrored in the water (addLamp: a tall streak towards
+// the viewer broken by the ripples, in a soft halo) and a faint cool glitter
+// path under the moon.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { STREAM } from '../../world/layout.js';
@@ -32,13 +40,14 @@ import { getHeight, streamPolyline } from '../../world/ground.js';
 import { sharedUniforms } from '../../core/materials.js';
 import { envUniforms } from '../../world/env/celestial.js';
 import { smoothstep, clamp } from '../../core/rng.js';
+import { BRIDGE_PROFILE } from './bridge.js';
 
 const WL = STREAM.waterLevel;
 let GRID = 0.25;
 const TEXEL = 0.1;
 const DEPTH_MIN = -0.25, DEPTH_RANGE = 1.75;
 /** Warm lights mirrored in the water at night (lanterns, the workshop door, candle boats). */
-export const MAX_LAMPS = 8;
+export const MAX_LAMPS = 10;
 
 /** The stream centre line, extended a little beyond both ends so the pool and the far end get straight flow. */
 function extendedLine() {
@@ -177,19 +186,22 @@ function buildGeometry(B) {
  * Bake the RGBA mask (depth, wakes, turbulence, calm).
  * rocks: [{ x, z, r }] boulders standing in the water; impact: { x, z, r } where the falls land.
  */
-function bakeMask(B, rocks, impacts) {
+function bakeMask(B, rocks, impacts, { solidAt = null, pool = null } = {}) {
   const w = Math.round((B.maxX - B.minX) / TEXEL);
   const h = Math.round((B.maxZ - B.minZ) / TEXEL);
   const data = new Uint8Array(w * h * 4);
   const wake = new Float32Array(w * h);
   const turb = new Float32Array(w * h);
   const f = { s: 0, u: 0, dx: 0, dz: 1 };
-  // rock wakes: an elongated, widening tongue downstream (+ a bow wave ring)
+  // rock wakes: a frothy ring hugging the rock, a bow wave in front, a short
+  // churned tongue right behind it and a V of two foam lines spreading
+  // downstream (the arms of the wake)
+  const V_SLOPE = Math.tan(0.36); // half-angle of the V
   for (const r of rocks) {
     flowAt(r.x, r.z, f);
     const dx = f.dx, dz = f.dz;
-    const len = 1.2 + r.r * 4.5;
-    const reach = len + r.r + 0.6;
+    const len = 1.0 + r.r * 4.0;
+    const reach = len + r.r + 0.8;
     const i0 = Math.max(0, Math.floor((r.x - reach - B.minX) / TEXEL)), i1 = Math.min(w - 1, Math.ceil((r.x + reach - B.minX) / TEXEL));
     const j0 = Math.max(0, Math.floor((r.z - reach - B.minZ) / TEXEL)), j1 = Math.min(h - 1, Math.ceil((r.z + reach - B.minZ) / TEXEL));
     for (let j = j0; j <= j1; j++) {
@@ -199,28 +211,100 @@ function bakeMask(B, rocks, impacts) {
         const across = -x * dz + z * dx;
         const d = Math.hypot(x, z);
         // ring hugging the rock
-        let v = Math.max(0, 1 - Math.abs(d - r.r * 1.02) / (0.12 + r.r * 0.25)) * 0.9;
+        // (a rock barely breaking the surface boils rather than rings)
+        let v = Math.max(0, 1 - Math.abs(d - r.r * 1.03) / (0.08 + r.r * 0.18)) * 0.8 * (0.3 + 0.7 * smoothstep(0.04, 0.2, r.h ?? 0.2));
+        let tb = v * 0.45;
         if (along > 0) {
           const k = along / len;
-          const halfW = r.r * (0.45 + k * 0.55);
-          const side = 1 - smoothstep(halfW * 0.5, halfW, Math.abs(across));
-          v = Math.max(v, side * (1 - smoothstep(0.15, 1, k)) * (along < r.r * 0.8 ? smoothstep(r.r * 0.6, r.r * 0.95, d) : 1));
+          // the churned tongue right behind the rock
+          const halfW = r.r * (0.5 + k * 0.4);
+          const tongue = (1 - smoothstep(halfW * 0.4, halfW, Math.abs(across))) * (1 - smoothstep(0.0, 0.45, k)) * (along < r.r * 0.8 ? smoothstep(r.r * 0.6, r.r * 0.95, d) : 1);
+          // the V: two lines leaving the rock's flanks, fading downstream
+          const arm = r.r * 0.9 + along * V_SLOPE;
+          const line = Math.max(0, 1 - Math.abs(Math.abs(across) - arm) / (0.05 + along * 0.05)) * (1 - smoothstep(0.25, 1.0, k)) * smoothstep(0.0, r.r * 0.6, along);
+          v = Math.max(v, tongue * 0.85, line * 0.75);
+          tb = Math.max(tb, tongue * 0.5);
         } else if (along > -r.r * 1.6) {
           // bow wave in front
-          const bw = Math.max(0, 1 - Math.abs(d - r.r * 1.25) / 0.18) * smoothstep(-r.r * 1.6, -r.r * 0.4, along) * 0.6;
+          const bw = Math.max(0, 1 - Math.abs(d - r.r * 1.22) / 0.16) * smoothstep(-r.r * 1.6, -r.r * 0.4, along) * 0.7;
           v = Math.max(v, bw);
         }
         const k2 = j * w + i;
         wake[k2] = Math.max(wake[k2], v * (r.strength ?? 1));
-        turb[k2] = Math.max(turb[k2], v * 0.45 * (r.strength ?? 1));
+        turb[k2] = Math.max(turb[k2], tb * (r.strength ?? 1));
       }
     }
+  }
+  // water depth, blurred over ~0.25 units (a separable box blur, twice) so the
+  // depth tint never draws the contour of a carved basin as a hard ring
+  const depth = new Float32Array(w * h);
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) depth[j * w + i] = depthAt(B.minX + (i + 0.5) * TEXEL, B.minZ + (j + 0.5) * TEXEL);
+  const raw = depth.slice();
+  {
+    const tmp = new Float32Array(w * h);
+    const R = 2;
+    for (let pass = 0; pass < 2; pass++) {
+      for (let j = 0; j < h; j++) {
+        for (let i = 0; i < w; i++) {
+          let sum = 0, n = 0;
+          for (let k = -R; k <= R; k++) {
+            const ii = i + k;
+            if (ii < 0 || ii >= w) continue;
+            sum += depth[j * w + ii];
+            n++;
+          }
+          tmp[j * w + i] = sum / n;
+        }
+      }
+      for (let j = 0; j < h; j++) {
+        for (let i = 0; i < w; i++) {
+          let sum = 0, n = 0;
+          for (let k = -R; k <= R; k++) {
+            const jj = j + k;
+            if (jj < 0 || jj >= h) continue;
+            sum += tmp[jj * w + i];
+            n++;
+          }
+          // (never deeper than the real depth at the shore: the soft edge stays put)
+          const real = raw[j * w + i];
+          const blurred = sum / n;
+          depth[j * w + i] = real < 0.12 ? Math.min(blurred, real) : blurred;
+        }
+      }
+    }
+  }
+  // rock standing in the plunge pool (the falls' outcrop, boulders & slabs):
+  // the water in front of it reads as deep — dark teal and opaque, so the
+  // submerged faces and cut undersides fade out instead of showing through
+  // as a hard skirt (a soft halo ≈ 0.7 units round the rock)
+  const boost = new Float32Array(w * h);
+  if (solidAt && pool) {
+    const reach = pool.radius * 1.8;
+    const i0 = Math.max(0, Math.floor((pool.x - reach - B.minX) / TEXEL)), i1 = Math.min(w - 1, Math.ceil((pool.x + reach - B.minX) / TEXEL));
+    const j0 = Math.max(0, Math.floor((pool.z - reach - B.minZ) / TEXEL)), j1 = Math.min(h - 1, Math.ceil((pool.z + reach - B.minZ) / TEXEL));
+    const sw = i1 - i0 + 1, sh = j1 - j0 + 1;
+    let a = new Float32Array(sw * sh), b = new Float32Array(sw * sh);
+    for (let j = 0; j < sh; j++) for (let i = 0; i < sw; i++) a[j * sw + i] = solidAt(B.minX + (i0 + i + 0.5) * TEXEL, B.minZ + (j0 + j + 0.5) * TEXEL);
+    const R = 6;
+    for (let pass = 0; pass < 2; pass++) {
+      for (let j = 0; j < sh; j++) for (let i = 0; i < sw; i++) {
+        let sum = 0;
+        for (let k = -R; k <= R; k++) sum += a[j * sw + Math.min(sw - 1, Math.max(0, i + k))];
+        b[j * sw + i] = sum / (2 * R + 1);
+      }
+      for (let j = 0; j < sh; j++) for (let i = 0; i < sw; i++) {
+        let sum = 0;
+        for (let k = -R; k <= R; k++) sum += b[Math.min(sh - 1, Math.max(0, j + k)) * sw + i];
+        a[j * sw + i] = sum / (2 * R + 1);
+      }
+    }
+    for (let j = 0; j < sh; j++) for (let i = 0; i < sw; i++) boost[(j0 + j) * w + (i0 + i)] = smoothstep(0.02, 0.3, a[j * sw + i]);
   }
   for (let j = 0; j < h; j++) {
     for (let i = 0; i < w; i++) {
       const x = B.minX + (i + 0.5) * TEXEL, z = B.minZ + (j + 0.5) * TEXEL;
       const k = j * w + i;
-      const d = depthAt(x, z);
+      const d = depth[k] + (raw[k] > -0.02 ? boost[k] * 1.4 : 0);
       let t = turb[k];
       for (const im of impacts) {
         const dd = Math.hypot(x - im.x, z - im.z);
@@ -252,24 +336,47 @@ vFlow = aFlow;
 vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
 `;
 
+const f3 = (v) => v.toFixed(4);
+/** The bridge's profile in GLSL (the reflected ray meets its faces, see wBridge). */
+const BRIDGE_GLSL = `
+#define BR_SPAN ${f3(BRIDGE_PROFILE.span)}
+#define BR_R ${f3(BRIDGE_PROFILE.r)}
+#define BR_Y0 ${f3(BRIDGE_PROFILE.y0)}
+#define BR_END ${f3(BRIDGE_PROFILE.end)}
+#define BR_CROWN ${f3(BRIDGE_PROFILE.crown)}
+#define BR_FLAT ${f3(BRIDGE_PROFILE.flat)}
+#define BR_TOP ${f3(BRIDGE_PROFILE.top)}
+#define BR_HW ${f3(BRIDGE_PROFILE.halfW)}
+`;
+
 const FRAG_PARS = /* glsl */ `
 uniform sampler2D wMask;
 uniform vec4 wRect;      // minX, minZ, 1/sizeX, 1/sizeZ
 uniform float wTime;
 uniform float wNight;
 uniform float wDetail;
-uniform vec3 wShallow;
-uniform vec3 wDeep;
+uniform vec3 wShallow;   // light scattered in shallow water (olive)
+uniform vec3 wDeep;      // … and in deep water (teal)
+uniform vec3 wAbsorb;    // per-channel absorption along the way down to the bed & up
 uniform vec3 wFoam;
 uniform vec3 wStreak;
 uniform vec3 wSoil;
+uniform vec3 wFog;       // the misty light between the canopy's leaf masses (reflected)
+uniform vec3 wKeyDir;    // towards the key light (the sun by day)
+uniform vec3 wSkyHor;    // the sky by the horizon & mid-sky (mirrored in the canopy's gaps)
+uniform vec3 wSkyMid;
+uniform vec3 wSunGlow;   // the warm haze round the sun (sunlit leaf edges)
 uniform vec4 wImpact[3];  // x, z, radius, strength
 uniform vec4 wLamp[${MAX_LAMPS}];    // warm lights mirrored in the water: x, y, z, radius (0 = off)
 uniform vec3 wLampCol[${MAX_LAMPS}]; // their colour × strength (linear)
 uniform vec3 wMoonDir;
+uniform vec4 wBridgeF;   // the bridge frame: centre x, z, axis X (x, z); x = 0 → no bridge
+uniform vec4 wProxP[3];  // mirrored shapes: centre x, y, z, kind (0 off, 1 ellipsoid, 2 upright cylinder)
+uniform vec4 wProxR[3];  // ellipsoid: rx, ry, rz, lowest y | cylinder: radius, y0, y1, –
+uniform vec3 wProxC[3];  // their albedo (linear)
 varying vec4 vFlow;
 varying vec3 vWPos;
-
+${BRIDGE_GLSL}
 float wHash(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
   p += dot(p, p + 45.32);
@@ -296,6 +403,109 @@ float wHeight(vec2 fq, vec2 wp, float calm, float turb) {
   h += turb * (wNoise(wp * 4.0 + vec2(0.0, wTime * 1.3)) - 0.5) * 0.9;
   return h;
 }
+// the stream bed: dark silt with round river pebbles of mixed sizes and a few
+// tones lying in it (never a paving); the pond's bed is darker and leafy
+vec3 wBedColor(vec2 p, float calm) {
+  float n = wNoise(p * 1.3) * 0.6 + wNoise(p * 4.1 + 7.0) * 0.4;
+  vec3 silt = mix(vec3(0.115, 0.095, 0.055), vec3(0.21, 0.17, 0.095), n);
+  silt = mix(silt, vec3(0.06, 0.075, 0.035), calm * 0.65);
+  if (wDetail < 0.5) return silt;
+  vec2 g = p * 7.5;
+  vec2 i = floor(g), f = fract(g);
+  vec3 col = silt;
+  float best = 0.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      vec2 o = vec2(float(x), float(y));
+      vec2 cid = i + o;
+      float h = wHash(cid);
+      float hc = wHash(cid + 3.7);
+      if (hc < 0.3) continue; // bare silt
+      vec2 c = o + 0.2 + vec2(h, wHash(cid + 17.31)) * 0.6 - f;
+      float rad = 0.2 + 0.26 * wHash(cid + 5.3);
+      float an = h * 6.2831;
+      vec2 cc = vec2(c.x * cos(an) - c.y * sin(an), (c.x * sin(an) + c.y * cos(an)) * 1.35);
+      float d = length(cc) / rad;
+      float m = smoothstep(1.0, 0.78, d);
+      if (m > best) {
+        best = m;
+        vec3 pc = hc < 0.5 ? vec3(0.26, 0.23, 0.17) : hc < 0.66 ? vec3(0.3, 0.22, 0.12) : hc < 0.84 ? vec3(0.19, 0.19, 0.17) : vec3(0.36, 0.32, 0.24);
+        pc *= 0.8 + 0.4 * wHash(cid + 9.1);
+        col = mix(silt, pc * (0.72 + 0.38 * (1.0 - d * d)), m);
+      }
+    }
+  }
+  return mix(silt, col, 1.0 - calm * 0.75);
+}
+float wDeckY(float x) {
+  float k = min(1.0, abs(x) / BR_FLAT);
+  return 0.05 + (BR_CROWN - 0.05) * pow(cos(k * 1.5707963), 1.1);
+}
+// the arch's intrados height at x along the span (solid abutments beyond it)
+float wIntr(float x) {
+  return abs(x) < BR_SPAN ? BR_Y0 + sqrt(max(BR_R * BR_R - x * x, 0.0)) : -1e3;
+}
+// does the reflected ray meet the bridge? → coverage (0..1); shade: the face
+// 1.0, the arch ring a little darker, the vault (seen from under or through
+// the arch) dark. A ray through the arch opening that rises into the vault
+// before it leaves under the far face meets the vault too, so the dark band
+// under the bridge runs on smoothly into the mirrored arch opening.
+float wBridge(vec3 P, vec3 Rd, out float shade) {
+  shade = 1.0;
+  vec2 X = wBridgeF.zw;
+  vec2 Z = vec2(-X.y, X.x);
+  vec2 d = P.xz - wBridgeF.xy;
+  float lx = dot(d, X), lz = dot(d, Z);
+  float rx = dot(Rd.xz, X), rz = dot(Rd.xz, Z);
+  float rzs = rz >= 0.0 ? max(rz, 1e-4) : min(rz, -1e-4);
+  if (abs(lz) < BR_HW) {
+    shade = 0.3;
+    if (Rd.y <= 0.0 || abs(lx) > BR_SPAN) return 0.0;
+    float te = ((rzs > 0.0 ? BR_HW : -BR_HW) - lz) / rzs;
+    float hxe = lx + rx * te, hye = P.y + Rd.y * te;
+    return smoothstep(-0.12, 0.12, hye - wIntr(hxe));
+  }
+  if (rz * lz >= -1e-4) return 0.0; // heading away from the bridge
+  float t = ((lz > 0.0 ? BR_HW : -BR_HW) - lz) / rzs;
+  if (t > 14.0) return 0.0;
+  float hx = lx + rx * t, hy = P.y + Rd.y * t;
+  float m = smoothstep(0.0, 0.05, wDeckY(hx) + BR_TOP - hy) * (1.0 - smoothstep(BR_END - 0.15, BR_END, abs(hx)));
+  if (abs(hx) < BR_SPAN) {
+    float intr = wIntr(hx);
+    float face = smoothstep(-0.04, 0.04, hy - intr);
+    float t2 = t + 2.0 * BR_HW / abs(rzs);
+    float vault = smoothstep(-0.12, 0.12, P.y + Rd.y * t2 - wIntr(lx + rx * t2));
+    shade = mix(0.3, mix(0.7, 1.0, smoothstep(0.0, 0.4, hy - intr)), face);
+    m *= max(face, vault);
+  }
+  return m;
+}
+// a mirrored shape: how much of the ripple-broken reflected ray it covers
+// (soft-edged, 0..1) and how far away it is (t)
+float wProxy(int i, vec3 P, vec3 Rd, out float t) {
+  vec4 c = wProxP[i];
+  vec4 r = wProxR[i];
+  t = -1.0;
+  if (c.w < 0.5) return 0.0;
+  if (c.w < 1.5) {
+    vec3 o = (P - c.xyz) / r.xyz, dd = Rd / r.xyz;
+    float a = dot(dd, dd), b = dot(o, dd);
+    t = -b / a; // closest approach to the centre
+    if (t <= 0.0) return 0.0;
+    float q = dot(o, o) - b * b / a; // squared distance of the ray from the centre (unit space)
+    if (P.y + Rd.y * t < r.w - 0.3) return 0.0;
+    return 1.0 - smoothstep(0.5, 1.0, q);
+  }
+  vec2 o = P.xz - c.xz, dd = Rd.xz;
+  float a = dot(dd, dd);
+  if (a < 1e-5) return 0.0;
+  float b = dot(o, dd);
+  t = -b / a;
+  if (t <= 0.0) return 0.0;
+  float q = (dot(o, o) - b * b / a) / (r.x * r.x);
+  float y = P.y + Rd.y * t;
+  return (1.0 - smoothstep(0.55, 1.0, q)) * smoothstep(r.y, r.y + 0.4, y) * (1.0 - smoothstep(r.z - 0.4, r.z, y));
+}
 `;
 
 const FRAG_COLOR = /* glsl */ `
@@ -317,31 +527,48 @@ float wH0 = wHeight(wFq, vWPos.xz, wCalm, wTurb);
 float wHu = wHeight(wFq + vec2(wE, 0.0), vWPos.xz + wPerp * wE, wCalm, wTurb);
 float wHs = wHeight(wFq + vec2(0.0, wE), vWPos.xz + wDir * wE, wCalm, wTurb);
 float wAmp = mix(0.08, 0.042, wCalm) * (1.0 + wTurb * 1.6);
+// the chop fades with distance and at grazing angles (an even ripple tiling
+// read like asphalt there), and slow glassy patches drift with the flow
+// between rippled ones, so the surface mirrors the canopy in broad sheets
+{
+  vec3 wToC = cameraPosition - vWPos;
+  float wDistC = length(wToC);
+  float wCosC = clamp(wToC.y / max(wDistC, 1e-3), 0.0, 1.0);
+  float wGlass = wNoise(vec2(vFlow.y * 0.42 + 5.0, (vFlow.x - wT * wSpeed * 0.6) * 0.28)) * 0.7 + wNoise(vWPos.xz * 0.21 + 9.0) * 0.3;
+  float wAk = mix(1.0, 0.42, smoothstep(5.0, 24.0, wDistC)) * mix(0.4, 1.0, smoothstep(0.06, 0.5, wCosC));
+  wAk *= mix(0.4, 1.25, smoothstep(0.3, 0.72, wGlass));
+  wAmp *= mix(wAk, 1.0, smoothstep(0.1, 0.6, wTurb)); // (the churn below the falls keeps its chop)
+}
 vec2 wG = ((wHu - wH0) * wPerp + (wHs - wH0) * wDir) / wE * wAmp;
 vec3 wN = normalize(vec3(-wG.x, 1.0, -wG.y));
 
-// ── body colour: shallow turquoise → deep teal ──
-float wDk = smoothstep(0.0, 1.05, wDepth);
-vec3 wCol = mix(wShallow, wDeep, wDk);
+// ── body colour: the bed seen through the water, by depth ──
+// clear in the shallows (the pebbles and silt show, tinted olive-green as the
+// water drinks the red), fading into a lively, scattered teal-green and the
+// clear deep teal of the middle (hues kept outside the grade's green band)
+float wDd = clamp(wDepth, 0.0, 1.8);
+vec2 wBp = vWPos.xz + wN.xz * min(wDd, 0.45) * 0.5; // refracted by the ripples
+vec3 wBed = wBedColor(wBp, wCalm);
+vec3 wTr = exp(-wAbsorb * wDd);
+float wScat = 1.0 - exp(-wDd * 2.3);
+vec3 wCol = mix(wBed * wTr * 1.1, mix(wShallow, wDeep, smoothstep(0.18, 1.15, wDd)), wScat);
 // painterly body: soft darker & lighter patches drifting with the flow
 float wPatch = wNoise(vec2(vFlow.y * 0.55 + 11.0, (vFlow.x - wT * wSpeed * 0.8) * 0.35)) * 0.6 + wNoise(vWPos.xz * 0.9 + 4.0) * 0.4;
-wCol *= 0.86 + 0.26 * wPatch;
-// painted flow streaks: short, broken lighter dashes that travel with the water
-float wSl = wNoise(vec2(vFlow.y * 2.1, (vFlow.x - wT * wSpeed * 1.15) * 0.45));
-float wStreakM = smoothstep(0.035, 0.0, abs(wSl - 0.5)) * (1.0 - wCalm) * smoothstep(0.15, 0.45, wDepth);
-wStreakM *= smoothstep(0.5, 0.78, wNoise(vec2(vFlow.y * 1.3 + 3.0, (vFlow.x - wT * wSpeed) * 1.6)));
-wCol = mix(wCol, wStreak, wStreakM * 0.28);
-// the shallows by the banks: the water thins over dark, wet soil (never a pale
-// lens laid on the grass)
-wCol = mix(wCol, wSoil, (1.0 - smoothstep(0.0, 0.28, wDepth)) * 0.6);
+wCol *= 0.9 + 0.2 * wPatch;
+// flow streaks: soft, broken bands of sheen travelling with the water (never thin lines)
+float wSl = wNoise(vec2(vFlow.y * 1.5, (vFlow.x - wT * wSpeed * 1.1) * 0.32));
+float wStreakM = smoothstep(0.17, 0.0, abs(wSl - 0.5)) * (1.0 - wCalm) * smoothstep(0.12, 0.45, wDepth);
+wStreakM *= smoothstep(0.42, 0.8, wNoise(vec2(vFlow.y * 1.1 + 3.0, (vFlow.x - wT * wSpeed) * 1.15)));
+wCol = mix(wCol, wStreak * 0.6, wStreakM * 0.3);
+// the wet edge: the water thins over dark, wet soil (lightly: never a grey band)
+wCol = mix(wCol, wSoil, (1.0 - smoothstep(0.0, 0.1, wDepth)) * 0.16);
 
 // ── foam ──
 float wFn = wNoise(vec2(vFlow.y * 4.2, (vFlow.x - wT * wSpeed * 1.3) * 1.6));
 float wFn2 = wNoise(vec2(vFlow.y * 9.0 + 3.1, (vFlow.x - wT * wSpeed * 1.5) * 3.4));
 float wFoamN = wFn * 0.65 + wFn2 * 0.35;
-// wakes behind the rocks: thin broken streaks trailing downstream
-float wWk = wNoise(vec2(vFlow.y * 16.0, (vFlow.x - wT * wSpeed * 1.4) * 1.3)) * 0.7 + wFn2 * 0.3;
-float wFoamA = pow(wWake, 1.6) * smoothstep(0.6, 0.8, wWk + wWake * 0.2) * 0.5;
+// at the rocks: a frothy ring, the bow wave, the churned tongue and the V of the wake, all broken up
+float wFoamA = smoothstep(0.5, 0.92, wWake + (wFoamN - 0.5) * 0.95) * 0.75;
 // churning foam where the falls land
 float wChurn = wNoise(vWPos.xz * 3.2 + vec2(wT * 0.6, -wT * 0.9)) * 0.6 + wNoise(vWPos.xz * 7.0 - vec2(wT * 1.4, 0.0)) * 0.4;
 float wFoamB = smoothstep(0.75, 0.25, wChurn + (1.0 - wTurb) * 0.65) * step(0.05, wTurb);
@@ -366,21 +593,25 @@ wFringe *= smoothstep(0.35, 0.7, wNoise(vWPos.xz * 7.0 + vec2(wT * 0.2, 0.0)));
 // broken into patches along the shore: long stretches without any froth
 float wShoreMask = smoothstep(0.42, 0.72, wNoise(vWPos.xz * 0.85 + 17.0) * 0.75 + wNoise(vWPos.xz * 2.3 - 5.0) * 0.25);
 wFringe *= wShoreMask;
-float wBand = smoothstep(0.03, 0.0, abs(wDepth + wWob - (0.12 + 0.03 * sin(wT * 1.3 + vFlow.x * 0.4))));
-wBand *= smoothstep(0.55, 0.8, wNoise(vWPos.xz * 5.0 - vec2(0.0, wT * 0.25))) * 0.4 * (1.0 - wCalm * 0.7) * wShoreMask;
-float wFoamT = clamp(max(max(wFoamA, wFoamB), max(wRing, max(wFringe * 0.55, wBand * wDetail))), 0.0, 1.0);
+float wBand = smoothstep(0.035, 0.0, abs(wDepth + wWob - (0.12 + 0.03 * sin(wT * 1.3 + vFlow.x * 0.4))));
+wBand *= smoothstep(0.55, 0.8, wNoise(vWPos.xz * 5.0 - vec2(0.0, wT * 0.25))) * 0.3 * (1.0 - wCalm * 0.7) * wShoreMask;
+float wFoamT = clamp(max(max(wFoamA, wFoamB), max(wRing, max(wFringe * 0.5, wBand * wDetail))), 0.0, 1.0);
 
-// shallow water is clear, deep water more opaque; the edge soaks into the bank
-// (alpha reaches 0 over the last ~0.13 of depth, along a ragged, lapping line)
-float wAlpha = mix(0.3, 0.9, smoothstep(0.06, 0.8, wDepth));
+// the bed is painted in, so the water is nearly opaque — a little clearer in
+// the shallows (stones and roots standing in it still show) and soaking into
+// the bank over the last ~0.11 of depth along a ragged, lapping line
+float wAlpha = mix(0.45, 0.93, smoothstep(0.06, 0.8, wDepth));
+// the plunge pool is churned & aerated: milky, not glass (the rock faces and
+// the falls' foot never show through it as hard shapes)
+wAlpha = max(wAlpha, smoothstep(0.02, 0.5, wTurb) * 0.93);
 wAlpha = max(wAlpha, wFoamT * 0.92);
-wAlpha *= smoothstep(0.0, 0.13, wDepth + wWob * 0.6);
+wAlpha *= smoothstep(0.0, 0.11, wDepth + wWob * 0.6);
 diffuseColor.rgb = mix(wCol, wFoam, wFoamT);
 diffuseColor.a = wAlpha;
 `;
 
 const FRAG_ROUGH = /* glsl */ `
-roughnessFactor = mix(0.07, 0.75, wFoamT);
+roughnessFactor = mix(0.08, 0.75, wFoamT);
 `;
 
 const FRAG_NORMAL = /* glsl */ `
@@ -392,19 +623,101 @@ const FRAG_LIGHT = /* glsl */ `
   // where the sun (or moon) really reaches: irradiance / albedo, shadow-aware
   float wAlb = max(dot(diffuseColor.rgb, vec3(0.333)), 0.02);
   float wLit = clamp(dot(reflectedLight.directDiffuse, vec3(0.333)) / wAlb * 0.45, 0.0, 1.6);
-  // sparkles: tiny cells twinkling on the ripples, drifting with the flow
+  float wAmb = dot(reflectedLight.indirectDiffuse, vec3(0.333)) / wAlb;
+  float wDay = 1.0 - wNight;
+  vec3 wV = normalize(vWPos - cameraPosition);
+  vec3 wR = reflect(wV, wN);
+  float wCos = clamp(-wV.y, 0.0, 1.0);
+  // the sun's own highlight: compressed (and quieter on the glassy pond), so a
+  // patch of aligned ripples never blooms into a white blotch
+  {
+    vec3 wDs = reflectedLight.directSpecular * mix(1.0, 0.6, wCalm);
+    reflectedLight.directSpecular = wDs * 1.05 / (1.0 + wDs);
+  }
+  // (the body's colour is light scattered IN the water: the sun brightens it
+  // only part-way, so a sunlit patch never reads as a flat painted shape)
+  // (deep or churned water scatters the sun through its volume: the shadows of
+  // the rocks standing in the pool fall softly into it, never as hard dark
+  // skirts below them with flat bright bands between)
+  reflectedLight.directDiffuse *= mix(0.72, 0.32, max(smoothstep(0.5, 1.2, wDepth), smoothstep(0.05, 0.4, wTurb)));
+
+  // caustics: nets of sunlight dancing on the bed of the sunny shallows
+  if (wDetail > 0.5) {
+    vec2 cp = vWPos.xz * 2.1 + wN.xz * 0.8;
+    float c1 = wNoise(cp + vec2(wT * 0.23, wT * 0.13));
+    float c2 = wNoise(cp * 1.37 - vec2(wT * 0.17, -wT * 0.11) + 5.3);
+    float wCau = pow(1.0 - abs(c1 - c2), 9.0);
+    float wCauM = smoothstep(0.03, 0.14, wDepth) * exp(-wDepth * 2.4) * (1.0 - wFoamT) * (1.0 - wCalm * 0.6);
+    totalEmissiveRadiance += vec3(1.0, 0.93, 0.72) * wCau * wCauM * smoothstep(0.35, 1.0, wLit) * 0.3 * wDay;
+  }
+
+  // sun glints: tiny cells twinkling on the ripples, drifting with the flow —
+  // gathered where the ripples mirror the sun, gone at the shadows' edges
   vec2 wc = vec2(vFlow.y, vFlow.x - wT * wSpeed) * vec2(7.0, 5.0);
   vec2 wci = floor(wc);
   float wh = wHash(wci);
   vec2 wcf = fract(wc) - 0.5 - (vec2(wHash(wci + 3.1), wHash(wci + 7.7)) - 0.5) * 0.6;
-  float wTw = step(0.9, wh) * pow(max(0.0, sin(wT * (2.0 + 4.0 * wh) + wh * 40.0)), 6.0);
-  float wSp = wTw * smoothstep(0.07, 0.0, length(wcf)) * (1.0 - wFoamT) * smoothstep(0.05, 0.3, wDepth);
-  totalEmissiveRadiance += vec3(1.0, 0.94, 0.8) * wSp * smoothstep(0.35, 1.0, wLit) * 0.7 * wDetail;
+  float wTw = step(0.88, wh) * pow(max(0.0, sin(wT * (2.0 + 4.0 * wh) + wh * 40.0)), 6.0);
+  float wAlign = pow(max(dot(wR, wKeyDir), 0.0), 5.0);
+  float wSp = wTw * smoothstep(0.08, 0.0, length(wcf)) * (1.0 - wFoamT) * smoothstep(0.05, 0.3, wDepth);
+  // (brightest in the sun; a few still wink in the shade, catching the sky)
+  totalEmissiveRadiance += vec3(1.0, 0.94, 0.8) * wSp * mix(0.22, 1.0, smoothstep(0.5, 1.05, wLit)) * (0.35 + 1.5 * wAlign) * wDetail * wDay;
   // night: a few drifting blue-green glints (the stream is a little enchanted)
-  float wGl = step(0.965, wHash(wci + 11.0)) * (0.5 + 0.5 * sin(wT * 1.7 + wh * 30.0));
+  float wGl = step(0.976, wHash(wci + 11.0)) * (0.5 + 0.5 * sin(wT * 1.7 + wh * 30.0));
   totalEmissiveRadiance += vec3(0.35, 0.95, 0.85) * wGl * smoothstep(0.16, 0.0, length(wcf)) * wNight * 1.6 * (1.0 - wFoamT);
   // foam stays readable in the shade and at night
   totalEmissiveRadiance += wFoam * wFoamT * (0.05 + 0.08 * wNight);
+
+  // reflections (Fresnel, with a floor so the water always mirrors something):
+  // the canopy overhead — leaf masses, their sunlit rims glowing gold, and
+  // gaps of bright misty sky (teal-gold by day, a faint moonlit blue by
+  // night) — plus the bridge and the Velowerkstatt, all broken by the ripples
+  {
+    float wFr = clamp(0.1 + 0.55 * pow(1.0 - wCos, 4.0), 0.0, 0.6);
+    // (sampled where the reflected ray would meet a high canopy; kept broad so
+    // grazing views never streak into dark bands)
+    float wUp = max(wR.y, 0.22);
+    vec2 wCp = (vWPos.xz + wR.xz / wUp * 4.0) * 0.12;
+    float wGn = wNoise(wCp) * 0.7 + wNoise(wCp * 2.3 + 3.1) * 0.3;
+    float wGap = smoothstep(0.42, 0.78, wGn);
+    float wRim = smoothstep(0.3, 0.46, wGn) * (1.0 - wGap);
+    vec3 wLeaf = mix(vec3(0.045, 0.095, 0.042), vec3(0.004, 0.008, 0.014), wNight);
+    // (the sky mirrored through green leaves: a clear teal, never a grey sheet)
+    vec3 wSkyR = mix(wSkyHor, wSkyMid, 0.4) * mix(vec3(0.4, 0.72, 0.6), vec3(1.5), wNight);
+    // night: the moonlit sky between the leaves, a deep silver-blue sheen (never flat black)
+    wSkyR += vec3(0.05, 0.09, 0.17) * wNight;
+    vec3 wScene = mix(wLeaf, wSkyR, wGap);
+    wScene += wSunGlow * wRim * 0.2 * wDay;
+    float wHit = 0.0; // the bridge: mirrored a little more strongly (painterly)
+    if (wDetail > 0.5) {
+      if (wBridgeF.z != 0.0 || wBridgeF.w != 0.0) {
+        float wShade;
+        float wBr = wBridge(vWPos, wR, wShade);
+        // (mirrored stone in green water: darkened and drawn into the water's teal)
+        wScene = mix(wScene, vec3(0.12, 0.175, 0.135) * wAmb * 1.25 * wShade, wBr);
+        wHit = max(wHit, wBr);
+      }
+      // (the strongest cover wins; colours a little desaturated and lifted, as a
+      // sunlit shape looks mirrored in moving water; fading with distance)
+      float wPm = 0.0;
+      vec3 wPc = vec3(0.0);
+      for (int i = 0; i < 3; i++) {
+        float t;
+        float m = wProxy(i, vWPos, wR, t) * (1.0 - smoothstep(7.0, 13.0, t));
+        if (m > wPm) {
+          wPm = m;
+          wPc = wProxC[i];
+        }
+      }
+      wPc = mix(wPc, vec3(dot(wPc, vec3(0.333))), 0.3);
+      wScene = mix(wScene, wPc * wAmb * 2.0, wPm * 0.8);
+    }
+    float wRk = (wFr + 0.14 * wHit) * (1.0 - wFoamT) * smoothstep(0.02, 0.12, wDepth);
+    reflectedLight.directDiffuse *= 1.0 - wRk;
+    reflectedLight.indirectDiffuse *= 1.0 - wRk;
+    reflectedLight.indirectSpecular *= 1.0 - wRk * 0.6;
+    totalEmissiveRadiance += wScene * wRk;
+  }
 
   // night: the lanterns mirrored in the water. Point-light speculars at these
   // grazing angles are a pixel at most, so each warm light gets a painted
@@ -413,10 +726,8 @@ const FRAG_LIGHT = /* glsl */ `
   // (wide) — a tall streak towards the viewer, broken up by the ripples, in a
   // soft halo. Plus a faint cool glitter path under the moon.
   if (wNight > 0.02) {
-    vec3 wV = normalize(vWPos - cameraPosition);
-    vec3 wR = reflect(wV, wN);
+    float wFres = 0.45 + 0.55 * pow(1.0 - wCos, 2.0);
     vec2 wRh = normalize(wR.xz + vec2(1e-5));
-    float wFres = 0.45 + 0.55 * pow(1.0 - clamp(-wV.y, 0.0, 1.0), 2.0);
     vec3 wRefl = vec3(0.0);
     for (int i = 0; i < ${MAX_LAMPS}; i++) {
       vec4 L = wLamp[i];
@@ -436,31 +747,39 @@ const FRAG_LIGHT = /* glsl */ `
     }
     // the moon: a column of glints in its azimuth, where ripple facets tilt the
     // reflected ray up towards it (a soft sheen along the path in between)
+    // (a broad, glittering path: stretched specular sparkles in the moon's
+    // azimuth, plus a soft silver sheen along it)
     vec2 wMh = normalize(wMoonDir.xz);
-    float wPath = exp(-2.0 * (1.0 - dot(normalize(wV.xz + vec2(1e-5)), wMh)) / 0.012);
+    float wAz = 1.0 - dot(normalize(wV.xz + vec2(1e-5)), wMh);
+    float wPath = exp(-2.0 * wAz / 0.012);
+    float wPathW = exp(-2.0 * wAz / 0.025);
     float wTilt = -(wR.y + wV.y) / (wAmp * 2.0 + 1e-3);
-    float wMoon = wPath * (smoothstep(0.7, 1.6, wTilt) * 0.9 + 0.1);
-    wRefl += vec3(0.5, 0.68, 1.0) * wMoon * 0.32;
+    vec2 wgc = vec2(vFlow.y * 9.0, (vFlow.x - wT * wSpeed) * 3.0);
+    float wGlit = step(0.9, wHash(floor(wgc) + 23.0)) * smoothstep(0.3, 0.0, length(fract(wgc) - 0.5)) * pow(0.5 + 0.5 * sin(wT * 2.3 + wHash(floor(wgc)) * 40.0), 3.0);
+    float wMoon = wPath * (smoothstep(0.7, 1.6, wTilt) * 0.9 + 0.1) + wPathW * (wGlit * 0.6 + 0.06);
+    wRefl += vec3(0.55, 0.72, 1.0) * wMoon * 0.36;
     totalEmissiveRadiance += wRefl * wFres * wNight * (1.0 - 0.8 * wFoamT) * smoothstep(0.0, 0.05, wDepth);
   }
 }
 `;
 
-const DAY = { shallow: '#6fb3a3', deep: '#1f5a63', foam: '#f4f1e6', streak: '#cfeee6' };
-const NIGHT = { shallow: '#3f7f8a', deep: '#123e52', foam: '#cad9ee', streak: '#8fbcd0' };
+// scattering colours by day and night (shallow teal-green → clear deep teal; the
+// pebbly bed seen through the shallows adds the olive), foam, streak sheen
+const DAY = { shallow: '#3f9a78', deep: '#13605f', foam: '#f4f1e6', streak: '#d6f2ea' };
+const NIGHT = { shallow: '#2e5560', deep: '#103a4c', foam: '#cad9ee', streak: '#8fbcd0' };
 
 /**
  * Build the water surface.
  * @param {object} ctx
  * @param {{ rocks: Array<{x:number,z:number,r:number}>, impacts: Array<{x:number,z:number,r:number,strength?:number}> }} opts
  */
-export function buildWater(ctx, { rocks = [], impacts = [] } = {}) {
+export function buildWater(ctx, { rocks = [], impacts = [], bridge = null, proxies = [], solidAt = null, pool = null } = {}) {
   // (the surface's detail is in the shader: a coarser grid on the lower tiers)
   const tierQ = ctx.quality?.tier ?? 'high';
   GRID = tierQ === 'low' ? 0.4 : tierQ === 'medium' ? 0.32 : 0.25;
   const B = bounds();
   const geo = buildGeometry(B);
-  const mask = bakeMask(B, rocks, impacts);
+  const mask = bakeMask(B, rocks, impacts, { solidAt, pool });
   const detail = (ctx.quality?.tier ?? 'high') === 'low' ? 0 : 1;
   const u = {
     wMask: { value: mask },
@@ -477,7 +796,28 @@ export function buildWater(ctx, { rocks = [], impacts = [] } = {}) {
     wLamp: { value: Array.from({ length: MAX_LAMPS }, () => new THREE.Vector4(0, 0, 0, 0)) },
     wLampCol: { value: Array.from({ length: MAX_LAMPS }, () => new THREE.Color(0, 0, 0)) },
     wMoonDir: envUniforms.uMoonDir,
+    // (the water drinks the red first: the bed shows olive-green, then teal)
+    wAbsorb: { value: new THREE.Vector3(0.95, 0.45, 0.6) },
+    wFog: envUniforms.uFogColor,
+    wKeyDir: envUniforms.uKeyDir,
+    wSkyHor: envUniforms.uSkyHorizon,
+    wSkyMid: envUniforms.uSkyMid,
+    wSunGlow: envUniforms.uSunGlow,
+    wBridgeF: { value: bridge ? new THREE.Vector4(bridge.x, bridge.z, bridge.dx, bridge.dz) : new THREE.Vector4(0, 0, 0, 0) },
+    wProxP: { value: [0, 1, 2].map(() => new THREE.Vector4(0, 0, 0, 0)) },
+    wProxR: { value: [0, 1, 2].map(() => new THREE.Vector4(1, 1, 1, 0)) },
+    wProxC: { value: [0, 1, 2].map(() => new THREE.Color(0, 0, 0)) },
   };
+  proxies.slice(0, 3).forEach((p, i) => {
+    if (p.kind === 'ellipsoid') {
+      u.wProxP.value[i].set(p.x, p.y, p.z, 1);
+      u.wProxR.value[i].set(p.rx, p.ry, p.rz, p.yMin ?? -100);
+    } else {
+      u.wProxP.value[i].set(p.x, 0, p.z, 2);
+      u.wProxR.value[i].set(p.r, p.y0, p.y1, 0);
+    }
+    u.wProxC.value[i].set(p.color);
+  });
   const material = new THREE.MeshStandardMaterial({
     color: '#ffffff',
     roughness: 0.08,
@@ -498,7 +838,7 @@ export function buildWater(ctx, { rocks = [], impacts = [] } = {}) {
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${FRAG_NORMAL}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${FRAG_LIGHT}`);
   };
-  material.customProgramCacheKey = () => 'riverside-water-v4';
+  material.customProgramCacheKey = () => 'riverside-water-v6';
 
   const mesh = new THREE.Mesh(geo, material);
   mesh.position.y = WL;
@@ -509,6 +849,26 @@ export function buildWater(ctx, { rocks = [], impacts = [] } = {}) {
   mesh.updateMatrix();
   mesh.matrixAutoUpdate = false;
   ctx.scene.add(mesh);
+  // the surface's DEPTH, written last of all: ambient occlusion and depth of
+  // field read the scene's depth buffer, and without it they saw the stream
+  // bed and the submerged rock faces under the surface (AO then painted dark
+  // columns below every rock in the plunge pool, through the water). Drawn
+  // after every transparent effect, so no halo, spray or light beam is ever
+  // clipped by the surface. (Only where those passes run.)
+  let depthMesh = null;
+  if ((ctx.quality?.post ?? 'full') === 'full') {
+    const dm = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, transparent: true });
+    dm.name = 'riverside-water-depth';
+    depthMesh = new THREE.Mesh(geo, dm);
+    depthMesh.name = 'riverside-water-depth';
+    depthMesh.position.y = WL;
+    depthMesh.renderOrder = 1000;
+    depthMesh.castShadow = false;
+    depthMesh.receiveShadow = false;
+    depthMesh.updateMatrix();
+    depthMesh.matrixAutoUpdate = false;
+    ctx.scene.add(depthMesh);
+  }
 
   const day = Object.fromEntries(Object.entries(DAY).map(([k, v]) => [k, new THREE.Color(v)]));
   const night = Object.fromEntries(Object.entries(NIGHT).map(([k, v]) => [k, new THREE.Color(v)]));
