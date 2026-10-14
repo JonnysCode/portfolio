@@ -45,7 +45,6 @@ const BUDGET = { high: 250000, medium: 170000, low: 150000 };
 export default async function build(ctx) {
   // per-tier geometry detail (kit.LOD): medium & low drop tessellation and the tiniest decor
   setDetail(ctx.quality?.tier ?? 'high');
-  if (ctx.engine?.params?.get?.('kitprof')) globalThis.__KITPROF__ = {}; // TEMP-PROFILE
   const mats = makeMats(ctx);
   const root = new THREE.Group();
   root.name = 'schreinerei';

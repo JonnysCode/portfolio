@@ -23,7 +23,10 @@
 //                                   the screen a panel / bottom sheet / HUD leaves free (px)
 // Phones: SPOTS[].portrait (layout.js) is the composed shot on a tall screen;
 //   SPOTS[].portraitMore adds further phone stops of the same place (a flick
-//   steps through them before travelling on): rig.stop, rig.stops(id?), rig.toStop(i).
+//   steps through them before travelling on): rig.stop, rig.stops(id?), rig.toStop(i),
+//   rig.onStopChange(fn(stop, stops, spotId)) → unsubscribe (fires on arrival at a
+//   spot, on every step between its stops and when the screen turns — the UI's
+//   stop dots and its one-time "swipe for more" nudge hang off it).
 //   rig.holdIntro()                 hover high above the canopy (behind the intro card)
 //   rig.playIntro() → Promise       cinematic flight: down from above the canopy to eye
 //                                   level on the path, a few steps among the giants, then
@@ -198,6 +201,16 @@ export function createCameraRig(ctx) {
   const viewH = () => canvas.clientHeight || innerHeight || 1;
   const spotListeners = new Set();
   const arriveListeners = new Set();
+  const stopListeners = new Set();
+  let lastStopKey = '';
+  /** Tell the stop listeners where we are (only when it changed). */
+  function emitStop() {
+    const n = spot ? rig.stops(spot) : 1;
+    const key = `${spot}|${stop}|${n}`;
+    if (key === lastStopKey) return;
+    lastStopKey = key;
+    for (const fn of stopListeners) fn(stop, n, spot);
+  }
   let dragging = false;
   let azPinned = 0;
   /** +1 / −1 while the orbit stands at its limit that way (the soft limit or something solid), else 0. */
@@ -498,6 +511,11 @@ export function createCameraRig(ctx) {
       arriveListeners.add(fn);
       return () => arriveListeners.delete(fn);
     },
+    /** fn(stop, stops, spotId): the phone stop shown changed (see the header). */
+    onStopChange(fn) {
+      stopListeners.add(fn);
+      return () => stopListeners.delete(fn);
+    },
     goTo(id, { instant = false, duration } = {}) {
       if (!SPOT_BY_ID[id]) return Promise.resolve(false);
       const prev = spot;
@@ -507,6 +525,7 @@ export function createCameraRig(ctx) {
       base = spotBase(id);
       introHover = false;
       if (prev !== id) for (const fn of spotListeners) fn(id, prev);
+      emitStop();
       if (instant) {
         applyPose(base);
         focusPoint.copy(base.focus);
@@ -532,6 +551,7 @@ export function createCameraRig(ctx) {
       focusBase = null;
       base = spotBase(spot);
       resetOffsets();
+      emitStop();
       if (instant) {
         applyPose(base);
         focusPoint.copy(base.focus);
@@ -592,6 +612,7 @@ export function createCameraRig(ctx) {
         stop = 0;
         base = spotBase(spot);
         for (const fn of spotListeners) fn(spot, prev);
+        emitStop();
       }
       const b = base ?? spotBase('glen');
       // look at the detail from the side its spot camera was composed from
@@ -719,6 +740,8 @@ export function createCameraRig(ctx) {
       introHover = false;
       resetOffsets();
       if (prev !== 'glen') for (const fn of spotListeners) fn('glen', prev);
+      stop = 0;
+      emitStop();
       if (reduced) return glideTo(glen, { kind: 'spot', arriveSpot: 'glen' });
       if (transition?.resolve) transition.resolve(false);
       const v3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
@@ -984,6 +1007,9 @@ export function createCameraRig(ctx) {
   // a rotated phone / resized window: re-fit the current composition
   engine.onResize?.(() => {
     if (!spot || introHover) return;
+    // (turned to landscape: there is only one stop — back to the first)
+    if (stop >= rig.stops(spot)) stop = 0;
+    emitStop();
     base = spotBase(spot);
     if (!transition && !focusBase) good.dAz = good.dPol = 0;
   });

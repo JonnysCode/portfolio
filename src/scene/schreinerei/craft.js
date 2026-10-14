@@ -47,6 +47,9 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { board, timber, xf, mat4, uvBox, tube, mossGeo, mossPadGeo, stoneGeo, noiseA, noiseB, addHandSaw, addFClamp, doubleFace, paintWear, SPECIES, LOD, segs, count } from './kit.js';
 import { barkMount } from './door.js';
+// (the Schreinerei's shared soft-decal atlas — sawdust blobs & specks; read
+// through the namespace so the yard still builds if that API ever moves)
+import * as annexDecals from './annex.js';
 import { shavingGeo } from './fx.js';
 
 const IRON = '#2f2b28';
@@ -581,9 +584,12 @@ export function addBesom(B, mats, rng, foot, top) {
 
 // ─── fallen leaf ─────────────────────────────────────────────────────────────
 let leafProto = null;
+let leafProtoLo = null;
 /** A fallen oak leaf (≈ 0.11 long), lobed, in the XY plane, stem at the origin. */
 export function leafGeo() {
-  if (!leafProto) {
+  // (low tier: one step per curve — 6 triangles instead of 10)
+  const lo = LOD.k < 0.5;
+  if (lo ? !leafProtoLo : !leafProto) {
     const sh = new THREE.Shape();
     sh.moveTo(0, 0);
     sh.quadraticCurveTo(-0.05, 0.02, -0.035, 0.05);
@@ -592,9 +598,10 @@ export function leafGeo() {
     sh.quadraticCurveTo(0.02, 0.11, 0.02, 0.085);
     sh.quadraticCurveTo(0.05, 0.075, 0.035, 0.05);
     sh.quadraticCurveTo(0.05, 0.02, 0, 0);
-    leafProto = new THREE.ShapeGeometry(sh, 2);
+    if (lo) leafProtoLo = new THREE.ShapeGeometry(sh, 1);
+    else leafProto = new THREE.ShapeGeometry(sh, 2);
   }
-  return leafProto.clone();
+  return (lo ? leafProtoLo : leafProto).clone();
 }
 
 // ─── sawhorse ────────────────────────────────────────────────────────────────
@@ -604,7 +611,7 @@ export function leafGeo() {
  * beam, four splayed legs let into its sides, a cross stretcher on each leg
  * pair and a long one between them. h = height of the beam's top.
  */
-export function addSawhorse(F, mats, rng, m, { h = 0.36, len = 0.56, wood = '#9a7a56', worn = true, kerfs = 3, glue = 0, marks = true } = {}) {
+export function addSawhorse(F, mats, rng, m, { h = 0.36, len = 0.56, wood = '#8b7455', worn = true, kerfs = 3, glue = 0, marks = true } = {}) {
   const w = mats.wood(wood);
   const base = hexOf(wood);
   const add = (g, opts) => F.add(w, g.applyMatrix4(m), opts);
@@ -612,14 +619,14 @@ export function addSawhorse(F, mats, rng, m, { h = 0.36, len = 0.56, wood = '#9a
   // board slid over them, the top scuffed paler and dusty, the end grain grimy
   // (an old horse: weathered grey-brown, the fresh board on it reads the brighter)
   const beam = board(0.085, 0.07, len, { along: 'z', rng, r: 0.008 });
-  const wearOpts = { dark: '#2e2218', light: '#8c8273' };
+  const wearOpts = { dark: '#2e2218', light: '#a39883' };
   if (worn) {
     const ph = rng.next() * 9;
     paintWear(beam, base, (x, y, z, nx, ny, nz) => {
-      if (Math.abs(nz) > 0.9) return 0.42;
-      if (ny > 0.95) return -0.38 - 0.18 * noiseA(z * 7 + ph, x * 9);
-      if (ny > 0.3) return 0.78;
-      return y > 0.02 ? 0.5 : 0.1;
+      if (Math.abs(nz) > 0.9) return 0.45;
+      if (ny > 0.95) return -0.42 - 0.2 * noiseA(z * 7 + ph, x * 9);
+      if (ny > 0.3) return 0.8;
+      return y > 0.02 ? 0.55 : 0.18;
     }, wearOpts);
   }
   add(beam.translate(0, h - 0.035, 0));
@@ -718,7 +725,7 @@ export function addRipVignette(F, mats, rng, { L = 1.34, W = 0.2, T = 0.034, h =
   }
   // sawdust: a soft heap under the kerf's end, a sprinkle on the near horse and the board
   // (a mound, not a sheet: peaked under the kerf, its fan thinning out)
-  addSawdust(F, mats, rng, () => 0, xk + 0.08, zc * 0.5, { r: 0.1, h: 0.055, sx: 1.3, chips: 4 });
+  addSawdust(F, mats, rng, () => 0, xk + 0.07, zc * 0.5, { r: 0.075, h: 0.038, sx: 1.35, chips: 4 });
   F.add(vc, xf(mossGeo(rng, { r: 0.06, h: 0.012, sx: 1.4 }), [hx, h + 0.001, 0.04]), { color: '#e8d3a8', cast: false });
   F.add(vc, xf(mossGeo(rng, { r: 0.05, h: 0.006, sx: 2.2 }), [xk + 0.06, y1 + 0.001, zc]), { color: '#e8d3a8', cast: false });
   // an F-clamp holding the board's left end down to its horse
@@ -831,11 +838,14 @@ export function addStickeredStack(F, mats, rng, { len = 0.9, layers = 4, width =
  * the end: shavings the wind carried off the Hobelbank. n on high.
  */
 export function addShavingTrail(B, mats, rng, gh, pts, { n = 26, spread = 0.22, scale = 1 } = {}) {
-  const curls = [doubleFace(shavingGeo(0.03, 0.02, 1.3)), doubleFace(shavingGeo(0.038, 0.024, 1.9)), doubleFace(shavingGeo(0.026, 0.018, 1.1))];
+  // (low tier: coarser curls — 5 steps a turn instead of 8 — so the trail
+  // keeps its count: the shavings read as a scatter, not as a few strays)
+  // (high: 13 steps — a 3 cm curl lying in the litter needs no more)
+  const cs = LOD.k < 0.5 ? 5 : Math.max(8, Math.round(13 * LOD.k));
+  const curls = [doubleFace(shavingGeo(0.03, 0.02, 1.3, cs)), doubleFace(shavingGeo(0.038, 0.024, 1.9, cs)), doubleFace(shavingGeo(0.026, 0.018, 1.1, cs))];
   const tones = ['#c99c63', '#bd8f58', '#d3aa74', '#e6d3a4', '#ddc690'];
   const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p.x, 0, p.z)));
-  // (low tier: about two in five — a scatter still, at a third of the cost)
-  const total = LOD.k < 0.5 ? Math.max(6, Math.round(n * LOD.k)) : count(n, 6);
+  const total = count(n, 6);
   const out = [];
   for (let i = 0; i < total; i++) {
     const u = Math.pow(rng.next(), 1.6); // dense at the start, thinning out
@@ -1040,23 +1050,96 @@ export function addSweptShavings(B, mats, rng, gh, from, to, { n = 24, heaps = 3
 // ─── sawdust ─────────────────────────────────────────────────────────────────
 /**
  * A soft drift of sawdust swept into a corner or fallen under the work (world
- * x, z; conformed to the ground by gh): one low lumpy mound, a thin fan round
- * it and (high) a few chips and a curl. opts: { r = 0.12, h = 0.025, sx = 1.4,
- * yaw, tone ('fresh' | 'old'), chips = 4 }.
+ * x, z; conformed to the ground by gh): ONE mesh — a low heap with a soft,
+ * slightly off-centre peak and a lobed outline, running out into a thin fan
+ * that dives under the litter; vertex-coloured fresh/old at the heap, fading
+ * into the soil's brown towards the fan's edge (it lies IN the litter, never
+ * on it like a sheet of paper). High: a few chips round it.
+ * opts: { r = 0.12 (heap radius), h = 0.025, sx = 1.4, yaw, tone ('fresh' |
+ * 'old'), chips = 4, fan = 2 (fan radius / r; 0 = none, e.g. on a beam),
+ * soil = '#3f2e20' (the litter the fan fades into) }.
  */
-export function addSawdust(B, mats, rng, gh, x, z, { r = 0.12, h = 0.025, sx = 1.4, yaw = null, tone = 'fresh', chips = 4 } = {}) {
-  const vc = mats.vc();
-  const tones = tone === 'old' ? ['#a8865a', '#9c7c53', '#b08e60'] : ['#d2b586', '#c9ab7c', '#d8bd90'];
+export function addSawdust(B, mats, rng, gh, x, z, { r = 0.12, h = 0.025, sx = 1.4, yaw = null, tone = 'fresh', chips = 4, fan = 2, soil = '#3f2e20' } = {}) {
+  const tones = tone === 'old' ? ['#9c7d57', '#917452', '#a58660'] : ['#c9ae82', '#c2a479', '#cfb48a'];
   const a = yaw ?? rng.next() * Math.PI;
-  const y = gh(x, z);
-  B.add(vc, xf(mossGeo(rng, { r, h, sx }), [x, y, z], [0, a, 0]), { color: rng.pick(tones), cast: false });
-  // the thin fan the broom (or the wind) left round it
-  B.add(vc, xf(mossGeo(rng, { r: r * 1.7, h: h * 0.18, sx: sx * 0.9 }), [x + rng.jitter(r * 0.3), y - 0.002, z + rng.jitter(r * 0.3)], [0, a + rng.jitter(0.6), 0]), { color: tones[1], cast: false });
+  const ca = Math.cos(a), sa = Math.sin(a);
+  const sec = segs(13, 7), rings = segs(4, 2), fr = fan > 1 ? (LOD.k >= 0.5 ? 2 : 1) : 0;
+  const ox = rng.next() * 40, oz = rng.next() * 40;
+  const ph = rng.next() * 6.28, nl = rng.int(2, 4);
+  // the peak sits a little off-centre (swept from one side)
+  const px = rng.jitter(0.25), pz = rng.jitter(0.25);
+  const cTop = new THREE.Color(rng.pick(tones)), cSoil = new THREE.Color(soil), c = new THREE.Color();
+  const pos = [], col = [], idx = [];
+  const put = (lx, ly, lz, k) => {
+    // local (heap) → world: stretch, turn, conform to the ground
+    const u = lx * r * sx, v = lz * r;
+    const wx = x + u * ca + v * sa, wz = z - u * sa + v * ca;
+    pos.push(wx, gh(wx, wz) + ly, wz);
+    // mottled: older, darker dust in patches, fresh specks
+    const n = 0.6 * noiseB(wx * 23 + ox, wz * 23 + oz) + 0.4 * noiseA(wx * 9 - oz, wz * 9 + ox);
+    c.copy(cTop).lerp(cSoil, Math.min(1, Math.max(0, k))).multiplyScalar(0.88 + 0.22 * n);
+    col.push(c.r, c.g, c.b);
+  };
+  put(px, h * 1.04, pz, 0);
+  const rim = [];
+  for (let i = 0; i < sec; i++) {
+    const t = (i / sec) * Math.PI * 2;
+    rim.push(Math.max(0.55, 1 + 0.18 * Math.sin(t * nl + ph) + 0.14 * noiseA(Math.cos(t) * 1.6 + ox, Math.sin(t) * 1.6 + oz)));
+  }
+  const total = rings + fr;
+  for (let j = 1; j <= total; j++) {
+    const heap = j <= rings;
+    const t = heap ? j / rings : 1 + ((fan - 1) * (j - rings)) / fr; // radius (1 = the heap's foot)
+    for (let i = 0; i < sec; i++) {
+      const th = (i / sec) * Math.PI * 2;
+      const rr = t * rim[i] * (heap ? 1 : 0.85 + 0.3 * noiseA(Math.cos(th) * 2.3 + oz, Math.sin(th) * 2.3 + ox));
+      // a cone with a rounded top (sawdust's angle of repose), lumpy; the peak pulls the inner rings
+      const w = heap ? 1 - j / rings : 0;
+      const lx = Math.cos(th) * rr + px * w, lz = Math.sin(th) * rr + pz * w;
+      // (a soft, convex mound — lumps kept gentle: sawdust settles smooth, it never folds like paper)
+      const lump = 0.9 + 0.14 * noiseA(lx * 2.1 + ox, lz * 2.1 + oz);
+      const y = heap ? (j === rings ? 0.0015 : h * Math.pow(1 - t * t, 0.8) * (1 - 0.35 * t) * lump) : j === total ? -0.005 : 0.0012;
+      put(lx, y, lz, heap ? 0.3 * t * t * t : 0.5 + (0.5 * (j - rings)) / fr);
+    }
+  }
+  for (let i = 0; i < sec; i++) idx.push(0, 1 + ((i + 1) % sec), 1 + i);
+  for (let j = 1; j < total; j++) {
+    const a0 = 1 + (j - 1) * sec, a1 = 1 + j * sec;
+    for (let i = 0; i < sec; i++) {
+      const i1 = (i + 1) % sec;
+      idx.push(a0 + i, a0 + i1, a1 + i, a0 + i1, a1 + i1, a1 + i);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  B.add(mats.vc(), g, { cast: false });
+  // the feathered edge: a soft blob of dust (and, high & medium, a scatter of
+  // specks) on the shared transparent decal atlas, draped on the ground —
+  // the drift fades into the litter instead of ending in a polygon
+  if (fan > 1 && annexDecals.decalGeo && annexDecals.decalMaterial && annexDecals.DECAL) {
+    const dm = annexDecals.decalMaterial();
+    const drape = (w, d, cell, color) => {
+      const q = annexDecals.decalGeo(w, d, cell, 2).rotateX(-Math.PI / 2).rotateY(a + rng.jitter(0.4));
+      const qp = q.attributes.position;
+      for (let i = 0; i < qp.count; i++) {
+        const wx = x + qp.getX(i), wz = z + qp.getZ(i);
+        qp.setXYZ(i, wx, gh(wx, wz) + 0.004, wz);
+      }
+      q.computeVertexNormals();
+      B.add(dm, q, { color, cast: false });
+    };
+    drape(r * sx * 2 * fan * 1.15, r * 2 * fan * 1.15, annexDecals.DECAL.blob, tones[1]);
+    if (LOD.k >= 0.5) drape(r * sx * 2 * fan * 1.6, r * 2 * fan * 1.6, annexDecals.DECAL.specks, tones[2]);
+  }
   if (!LOD.small) return;
   for (let i = 0; i < chips; i++) {
-    const ca = rng.next() * Math.PI * 2, cr = r * rng.range(0.6, 1.6);
-    const cx = x + Math.cos(ca) * cr, cz = z + Math.sin(ca) * cr;
-    B.add(mats.wood(rng.pick(['#d8bd92', '#c9a77a', '#e2c9a0'])), xf(new THREE.BoxGeometry(rng.range(0.018, 0.04), 0.005, rng.range(0.008, 0.016)), [cx, gh(cx, cz) + 0.004, cz], [rng.jitter(0.3), rng.next() * 6, 0]), { cast: false });
+    // (small, half sunk and tipped — chips, never flat paper scraps catching the sun)
+    const ca2 = rng.next() * Math.PI * 2, cr = r * rng.range(0.7, 1.5);
+    const cx = x + Math.cos(ca2) * cr, cz = z + Math.sin(ca2) * cr;
+    B.add(mats.wood(rng.pick(['#c4a77c', '#b8996e', '#ccb088'])), xf(new THREE.BoxGeometry(rng.range(0.012, 0.026), 0.004, rng.range(0.006, 0.011)), [cx, gh(cx, cz) + 0.0015, cz], [rng.jitter(0.6), rng.next() * 6, rng.jitter(0.6)]), { cast: false });
   }
 }
 
@@ -1070,7 +1153,7 @@ export function addSawdust(B, mats, rng, gh, x, z, { r = 0.12, h = 0.025, sx = 1
  */
 export function addGluePot(F, mats, rng) {
   const r = 0.036, h = 0.055;
-  const enamel = '#e7dcc4';
+  const enamel = '#d6caae';
   const pot = new THREE.CylinderGeometry(r, r * 1.04, h, segs(12, 7), 2, true);
   // a dent or two & the glue that ran down the side (painted amber, darker below)
   const ph = rng.next() * 6;

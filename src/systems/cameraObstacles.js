@@ -11,12 +11,15 @@
 //   obs.plan(p0, p3, { lift, t0, t3, fov, aspect })
 //                                 → { p1, p2 } Bézier handles of a clear glide: it
 //                                   keeps a wide berth round mushroom caps (capRadius
-//                                   + 2 while planning, 0.6 for penetration), and —
-//                                   given the look points t0 → t3 — rejects arcs on
-//                                   which a cap would fill the frame (5 rays from the
-//                                   lens, > half of them on a cap within 6 units);
-//                                   a glide leaving (or landing) among the caps may
-//                                   rise over their apexes first
+//                                   + 5.2 while planning — never more than either end
+//                                   has —, 0.6 for penetration), and — given the look
+//                                   points t0 → t3 — rejects arcs on which a cap would
+//                                   fill part of the frame (5 rays from the lens, more
+//                                   than one of them on a cap within 6 units); a glide
+//                                   leaving (or landing) among the caps may rise over
+//                                   their apexes first, or back out of / dolly into
+//                                   the composed shot along its own line of sight
+//                                   (the caps it is composed round stay off-frame)
 //   obs.decorAlong(a, b, skipEnd) → how many soft occluders (fairy-light bulbs,
 //                                   lanterns, lamp posts) sit on the segment a → b
 //   obs.rebuild()                 (lazily built on first use, after the world)
@@ -292,8 +295,12 @@ export function createCameraObstacles(ctx) {
   // ── glide planning ─────────────────────────────────────────────────────────
   /** QA: plan like round 4 did (no cap berth, no frame-occupancy test) — for before/after audits. */
   let legacy = false;
-  /** While planning, a cap keeps this much air round its rim (penetration keeps 0.6)… */
-  const PLAN_CAP_MARGIN = 2.0;
+  /**
+   * While planning, a cap keeps this much air round its rim (penetration keeps
+   * 0.6) — never more than either end of the glide already has: a shot composed
+   * close to a cottage must still be reachable…
+   */
+  const PLAN_CAP_MARGIN = 5.2;
   /** …and this much above its apex / below its rim. */
   const PLAN_CAP_ABOVE = 1.2;
   const PLAN_CAP_BELOW = 0.6;
@@ -303,7 +310,8 @@ export function createCameraObstacles(ctx) {
    * radius: 6 units away it still spans more than a 40° frame.)
    */
   let occReach = 6;
-  const OCC_MAX = 0.5;
+  /** QA bar (debug.checkGlides): no more than one of the five rays on a cap anywhere along a glide. */
+  const OCC_MAX = 0.2;
   /** Per plan: the caps near the glide, with the margin each keeps (never more than its endpoints have). */
   const planCaps = [];
 
@@ -456,10 +464,11 @@ export function createCameraObstacles(ctx) {
       look.occ0 = occupancy(p0, t0, tanV, aspect);
       look.occ3 = occupancy(p3, t3, tanV, aspect);
     }
-    // a gentle arc (the preferred lift), flatter, or higher; straight, or bent sideways —
-    // and, leaving or landing among the caps, first up over their apexes
+    // a gentle arc (the preferred lift), flatter, or higher; straight, or bent sideways
+    // (far round the front of the glen, if need be) — and, leaving or landing among
+    // the caps, first up over their apexes
     const lifts = [lift, lift * 0.45, 0, lift + 3, lift + 6.5, lift + 11];
-    const sides = [0, 0.16, -0.16, 0.32, -0.32, 0.55];
+    const sides = [0, 0.16, -0.16, 0.32, -0.32, 0.55, 0.8];
     const need1 = apex0 > -Infinity ? Math.max(0, apex0 - p0.y - 0.3 * dir.y) : null;
     const need2 = apex3 > -Infinity ? Math.max(0, apex3 - p0.y - 0.7 * dir.y) : null;
     const pairs = lifts.map((l) => [l, l]);
@@ -468,16 +477,39 @@ export function createCameraObstacles(ctx) {
       pairs.push([Math.max(n1, lift), Math.max(n2, lift * 0.45)], [Math.max(n1, lift), Math.max(n2, lift)], [Math.max(n1, lift + 3), Math.max(n2, lift + 3)]);
     }
     let best = null;
+    const tryHandles = (p1, p2, detour) => {
+      const c = cost(p0, p1, p2, p3, look);
+      // clear first (nothing run into, no cap shaved, no frame full of cap), then
+      // as close to the preferred arc and as straight as possible
+      const score = c.pen * 50 + (legacy ? 0 : c.shave * 6) + c.occ * 30 + detour;
+      if (!best || score < best.score) best = { p1, p2, score, pen: c.pen, shave: c.shave, occ: c.occ };
+    };
     for (const [l1, l2] of pairs) {
       for (const sd of sides) {
         const off = sd * len;
         const p1 = new THREE.Vector3().copy(p0).addScaledVector(dir, 0.3).addScaledVector(UP, l1).addScaledVector(side, off);
         const p2 = new THREE.Vector3().copy(p0).addScaledVector(dir, 0.7).addScaledVector(UP, l2).addScaledVector(side, off);
-        const c = cost(p0, p1, p2, p3, look);
-        // clear first (nothing run into, no cap shaved, no frame full of cap), then
-        // as close to the preferred arc and as straight as possible
-        const score = c.pen * 50 + (legacy ? 0 : c.shave * 6) + c.occ * 30 + (Math.abs(l1 - lift) + Math.abs(l2 - lift)) * 0.15 + Math.abs(off) * 0.22;
-        if (!best || score < best.score) best = { p1, p2, score, pen: c.pen, shave: c.shave, occ: c.occ };
+        tryHandles(p1, p2, (Math.abs(l1 - lift) + Math.abs(l2 - lift)) * 0.15 + Math.abs(off) * 0.22);
+      }
+    }
+    // backing out of the start's composed shot along its own line of sight and / or
+    // dollying into the end's along its own: the caps those shots are composed round
+    // stay beside or behind the lens (the Wohnatelier among its cottages)
+    if (look && !legacy && planCaps.length) {
+      const back0 = new THREE.Vector3().subVectors(p0, t0).setY(0);
+      const back3 = new THREE.Vector3().subVectors(p3, t3).setY(0);
+      if (back0.lengthSq() > 1e-6 && back3.lengthSq() > 1e-6) {
+        back0.normalize();
+        back3.normalize();
+        for (const k of [0.3, 0.55]) {
+          for (const l of [0, 2.5, 5.5]) {
+            for (const mode of [0, 1, 2]) {
+              const p1 = mode === 2 ? new THREE.Vector3().copy(p0).addScaledVector(dir, 0.3).addScaledVector(UP, l) : new THREE.Vector3().copy(p0).addScaledVector(back0, len * k).addScaledVector(UP, l);
+              const p2 = mode === 1 ? new THREE.Vector3().copy(p0).addScaledVector(dir, 0.7).addScaledVector(UP, l) : new THREE.Vector3().copy(p3).addScaledVector(back3, len * k).addScaledVector(UP, l);
+              tryHandles(p1, p2, 1.2 + l * 0.15 + k * 2);
+            }
+          }
+        }
       }
     }
     return best;

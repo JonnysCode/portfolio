@@ -60,13 +60,13 @@ export function buildDeck(ctx, B, mats) {
     }
   }
   const tBoard = 0.035, joistH = 0.09, bearerH = 0.08;
-  for (const z of [-hd + 0.2, hd - 0.2]) F.add(tim, xf(board(hw * 2 - 0.1, bearerH, 0.1, { along: 'x', rng }), [0, h - tBoard - joistH - bearerH / 2, z]), { cast: false });
+  for (const z of [-hd + 0.2, hd - 0.2]) F.add(tim, xf(board(hw * 2 - 0.1, bearerH, 0.1, { along: 'x', rng, straight: true }), [0, h - tBoard - joistH - bearerH / 2, z]), { cast: false });
   const nJ = 8;
   const joists = [];
   for (let k = 0; k <= nJ; k++) {
     const x = -hw + 0.045 + ((hw * 2 - 0.09) * k) / nJ;
     joists.push(x);
-    F.add(tim, xf(board(0.045, joistH, hd * 2 - 0.06, { along: 'z', rng }), [x, h - tBoard - joistH / 2, 0]), { cast: false });
+    F.add(tim, xf(board(0.045, joistH, hd * 2 - 0.06, { along: 'z', rng, straight: true }), [x, h - tBoard - joistH / 2, 0]), { cast: false });
   }
   // (larch oiled a few summers ago: silvering at the surface, still warm
   // underneath — a quieter, greyer honey than the furniture standing on it)
@@ -84,11 +84,12 @@ export function buildDeck(ctx, B, mats) {
     const g = LOD.lite ? new THREE.BoxGeometry(bLen, tBoard, bw) : deckBoardGeo(bLen, tBoard, bw, { cup });
     uvBox(g, 'x', 1 / 1.4, [rng.next() * 7, rng.next() * 7]);
     F.add(mats.wood(c), xf(g, [0, h - tBoard / 2 + rng.jitter(0.0006), z], [0, rng.jitter(0.002), rng.jitter(0.004)]));
-    // a pair of screws on every joist line (each pair a hair off square: driven by hand)
+    // a pair of screws on every joist line (each pair a hair off square: driven by hand;
+    // a 1 cm head is a dot at any distance: four facets)
     if (LOD.small) {
       for (const x of joists) {
         const jx = x + rng.jitter(0.004);
-        for (const sz of [-1, 1]) F.add(screw, xf(new THREE.CircleGeometry(0.0055, 6), [jx + rng.jitter(0.002), h + 0.0013, z + sz * (bw / 2 - 0.024)], [-Math.PI / 2, 0, rng.next() * 6]), { cast: false, receive: false });
+        for (const sz of [-1, 1]) F.add(screw, xf(new THREE.CircleGeometry(0.0055, 4), [jx + rng.jitter(0.002), h + 0.0013, z + sz * (bw / 2 - 0.024)], [-Math.PI / 2, 0, rng.next() * 6]), { cast: false, receive: false });
       }
     }
     // short drying checks along the grain, only in from the board ends
@@ -99,10 +100,11 @@ export function buildDeck(ctx, B, mats) {
     }
   }
   // rim boards (the same larch, chamfered top edge), front and both sides
+  // (bearers, joists, rims and rails are straight: one length segment each)
   const rimH = 0.14, rimT = 0.025;
   const rimY = h - tBoard - rimH / 2;
-  F.add(mats.wood(LARCH[1]), xf(board(hw * 2, rimH, rimT, { along: 'x', rng, r: 0.007 }), [0, rimY, hd - rimT / 2 - 0.004]));
-  for (const s of [-1, 1]) F.add(mats.wood(LARCH[3]), xf(board(rimT, rimH, hd * 2 - 0.008, { along: 'z', rng, r: 0.007 }), [s * (hw - rimT / 2), rimY, -0.004]));
+  F.add(mats.wood(LARCH[1]), xf(board(hw * 2, rimH, rimT, { along: 'x', rng, r: 0.007, straight: true }), [0, rimY, hd - rimT / 2 - 0.004]));
+  for (const s of [-1, 1]) F.add(mats.wood(LARCH[3]), xf(board(rimT, rimH, hd * 2 - 0.008, { along: 'z', rng, r: 0.007, straight: true }), [s * (hw - rimT / 2), rimY, -0.004]));
   // two steps down at the front-left (towards the door path): larch treads on
   // stringers, each worn pale and smooth where the feet land, a bit off-centre
   // (the side the path comes from)
@@ -129,14 +131,14 @@ export function buildDeck(ctx, B, mats) {
     }
     const ang = Math.atan2(b[0] - a[0], b[1] - a[1]) - Math.PI / 2;
     for (const y of [railH, 0.12]) {
-      F.add(oak, xf(board(len + 0.08, 0.055, 0.07, { along: 'x', rng }), [(a[0] + b[0]) / 2, h + y, (a[1] + b[1]) / 2], [0, ang, 0]));
+      F.add(oak, xf(board(len + 0.08, 0.055, 0.07, { along: 'x', rng, straight: true }), [(a[0] + b[0]) / 2, h + y, (a[1] + b[1]) / 2], [0, ang, 0]));
     }
     const nb = Math.round(len / 0.13);
     for (let i = 1; i < nb; i++) {
       const t = i / nb;
       const x = a[0] + (b[0] - a[0]) * t, z = a[1] + (b[1] - a[1]) * t;
       // turned profile (its ends hide in the rails; low tier: one belly, four facets)
-      const prof = LOD.lite ? [[0.018, 0], [0.025, 0.14], [0.015, 0.3], [0.018, 0.47]] : [[0.018, 0], [0.018, 0.04], [0.026, 0.12], [0.014, 0.22], [0.022, 0.3], [0.014, 0.38], [0.018, 0.47]];
+      const prof = LOD.lite ? [[0.018, 0], [0.025, 0.16], [0.016, 0.47]] : [[0.018, 0], [0.018, 0.04], [0.026, 0.12], [0.014, 0.22], [0.022, 0.3], [0.014, 0.38], [0.018, 0.47]];
       const bal = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), segs(6, 4));
       F.add(mats.wood('oak'), xf(uvBox(bal, 'y'), [x, h + 0.14, z]), { cast: false });
     }

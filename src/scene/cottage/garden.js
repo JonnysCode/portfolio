@@ -855,7 +855,7 @@ export function pot(F, rng, x, y, z, s = 0.18, plant = true) {
     const t = py / (s * 1.15);
     c.lerp(damp, (1 - smooth01(t / 0.35)) * 0.6);
     const n = noiseA(Math.atan2(px, pz) * 1.6 + ph, t * 3.1) * 0.6 + noiseA(Math.atan2(px, pz) * 4.2 - ph, t * 7.5) * 0.4;
-    c.lerp(salt, smooth01((n - 0.12) / 0.35) * (0.35 + 0.35 * smooth01((t - 0.75) / 0.2)));
+    c.lerp(salt, smooth01((n - 0.04) / 0.32) * (0.4 + 0.35 * smooth01((t - 0.72) / 0.2)));
   });
   F.add(M.clay, g.translate(x, y, z), { cast: false, color: null });
   F.add(M.soil, new THREE.CircleGeometry(s * 0.78, 10).rotateX(-Math.PI / 2).translate(x, y + s * 1.03, z), { cast: false });

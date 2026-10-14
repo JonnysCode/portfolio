@@ -83,7 +83,8 @@ export function makeGlowBeads(ctx, beads, opts = {}) {
     uPx: { value: 360 },
     uNight: sharedUniforms.uNight,
     uFade: { value: new THREE.Vector2(fade[0], fade[1]) },
-    uColor: { value: new THREE.Color(opts.color ?? '#8ff0dc').multiplyScalar(2.4) },
+    // (a cool blue-green, never so hot that the tone mapping bleaches it white)
+    uColor: { value: new THREE.Color(opts.color ?? '#62d8e6').multiplyScalar(1.75) },
   };
   const mat = new THREE.ShaderMaterial({
     name: opts.name ?? 'glow-beads',

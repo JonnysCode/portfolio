@@ -89,7 +89,7 @@ export function buildYard(ctx, B, mats) {
           const len = rng.range(3.7, 4.2);
           const z0 = 2.45 + rng.jitter(0.12);
           const sp = lv.sp[(k + layer) % lv.sp.length];
-          const b = board(len, t, w, { along: 'x', rng, r: 0.006 });
+          const b = board(len, t, w, { along: 'x', rng, r: 0.006, straight: true });
           F.add(mats.wood(sp), xf(b, [x - w / 2, y + t / 2, z0 - len / 2], [0, Math.PI / 2 + rng.jitter(0.008), 0]));
           // (the front ends, seen by the visitor, are the boards' own end grain: real Hirnholz from the box UVs)
           x -= w + 0.012;
@@ -113,9 +113,9 @@ export function buildYard(ctx, B, mats) {
     c[1] = groundY(c[0], c[2]);
     const R = 0.46, H = 1.1;
     const rings = Math.round(H / 0.1);
-    // (low tier: only the logs' outer end-grain faces, a little proud or sunk,
-    // in front of a dark bark core — what the stack shows from outside, at a
-    // third of the triangles)
+    // (low tier: only the billets' outer end-grain faces, a little proud or
+    // sunk, in front of a dark bark core — what the stack shows from outside,
+    // at a tenth of the triangles)
     const capsOnly = LOD.k < 0.5;
     if (capsOnly) {
       const core = new THREE.CylinderGeometry(R - 0.035, R - 0.02, H, 12, 1, true);
@@ -131,17 +131,27 @@ export function buildYard(ctx, B, mats) {
           const endC = rng.pick(['#c2a886', '#d0bc9a', '#b39776', '#c8b08e', '#b8a080']);
           rng.pick(['#4e3b2c', '#5a4434', '#463528']);
           const tx = rng.jitter(0.1), tz = rng.jitter(0.3);
-          const cap = new THREE.CircleGeometry(0.06, 5);
+          // (a split billet's end: an irregular four-cornered wedge face, 2 triangles)
+          const q = [];
+          for (let e = 0; e < 4; e++) {
+            const qa = ((e + 0.5) / 4) * Math.PI * 2 + rng.jitter(0.35), qr = rng.range(0.062, 0.08);
+            q.push(Math.cos(qa) * qr, Math.sin(qa) * qr, 0);
+          }
+          const cap = new THREE.BufferGeometry();
+          cap.setAttribute('position', new THREE.Float32BufferAttribute(q, 3));
+          cap.setIndex([0, 1, 2, 0, 2, 3]);
+          cap.computeVertexNormals();
           uvBox(cap, 'z', undefined, [(i * 3.71 + k * 1.37) % 9, (i * 1.93 + k * 2.89) % 9]);
           const rr = r - 0.004 + tz * 0.04;
           F.add(mats.wood(endC), xf(cap, [c[0] + Math.sin(a) * rr, c[1] + y, c[2] + Math.cos(a) * rr], [tx * 0.5, a, tz]), { cast: false });
           continue;
         }
         // logs: bark on the sides, pale end grain on the ends (the visible face)
-        // (medium: open-ended, only the outer end grain capped — the inner end is never seen)
-        const log = new THREE.CylinderGeometry(0.058, 0.062, 0.34, LOD.k < 0.5 ? 5 : 6, 1, LOD.k < 1);
-        if (LOD.k < 1) {
-          const cap = new THREE.CircleGeometry(0.058, LOD.k < 0.5 ? 5 : 6).rotateX(-Math.PI / 2).translate(0, 0.17, 0);
+        // (open-ended, only the outer end grain capped — the inner end, deep
+        // in the stack, is never seen)
+        const log = new THREE.CylinderGeometry(0.058, 0.062, 0.34, 6, 1, true);
+        {
+          const cap = new THREE.CircleGeometry(0.058, 6).rotateX(-Math.PI / 2).translate(0, 0.17, 0);
           log.deleteAttribute('uv');
           cap.deleteAttribute('uv');
           const merged = mergeGeometries([log.toNonIndexed(), cap.toNonIndexed()]);
@@ -494,7 +504,10 @@ export function buildYard(ctx, B, mats) {
     const top = annexToWorld(0.97, 1.18, hz + 1.6);
     addBesom(B, mats, rng, foot, top);
     keep.push({ x: foot.x, z: foot.z, r: 0.2 });
-    const heap = annexToWorld(0.5, 0, hz + 2.02);
+    // (beside the broom, clear of the stepping stones — a flag laid over it
+    // would hide it)
+    const clear = (p) => stones.every((st) => Math.hypot(p.x - st.x, p.z - st.z) > st.r + 0.2);
+    const heap = [[0.5, 2.02], [0.42, 1.78], [0.95, 2.25], [0.3, 2.3], [1.05, 2.0]].map(([x, z]) => annexToWorld(x, 0, hz + z)).find(clear) ?? annexToWorld(0.42, 0, hz + 1.78);
     addSawdust(B, mats, rng, getHeight, heap.x, heap.z, { r: 0.09, h: 0.03, chips: 5 });
     keep.push({ x: heap.x, z: heap.z, r: 0.16 });
   }
@@ -798,7 +811,7 @@ function buildChestVignette(ctx, B, mats, rng) {
   // two low sawhorses (lower than the Hobelbank: the work sits at bench height),
   // old ones: arrises worn dark, kerfs, pencil ticks, glue run off the chest
   const hy = 0.33;
-  for (const sx of [-0.2, 0.2]) addSawhorse(F, mats, rng, mat4([sx, 0, 0], [0, rng.jitter(0.04), 0]), { h: hy, len: 0.52, wood: '#8e7558', kerfs: 2, glue: 3 });
+  for (const sx of [-0.2, 0.2]) addSawhorse(F, mats, rng, mat4([sx, 0, 0], [0, rng.jitter(0.04), 0]), { h: hy, len: 0.52, wood: '#7b6852', kerfs: 2, glue: 3 });
   // the chest: oak, sides through-dovetailed, a raised bottom, no lid yet
   const L = 0.62, D = 0.34, H = 0.3, t = 0.022, y0 = hy;
   const oak = mats.wood('#b08e64');
@@ -887,14 +900,14 @@ function buildChestVignette(ctx, B, mats, rng) {
   }
   {
     const gp = [-0.06, 0, 0.36];
-    addGluePot(F.at(mat4(gp, [0, rng.next() * 6, 0])), mats, rng);
+    addGluePot(F.at(mat4(gp, [0, rng.next() * 6, 0], 1.3)), mats, rng);
     if (LOD.k >= 0.5) for (let i = 0; i < 3; i++) F.add(vc, xf(new THREE.CircleGeometry(rng.range(0.005, 0.011), 6), [gp[0] + rng.jitter(0.09), 0.003, gp[2] + rng.jitter(0.07)], [-Math.PI / 2, 0, 0], [1.3, 1, 1]), { color: '#9a6a28', cast: false, receive: false });
     addMarkingGauge(F.at(mat4([0.2, hy, 0.205], [0, 0.1, 0])), mats, rng);
   }
   // shavings & sawdust underneath: a drift under the joint where the saw and
   // chisel worked, a sprinkle round the horses' feet
-  for (let i = 0; i < 3; i++) F.add(vc, xf(mossGeo(rng, { r: rng.range(0.08, 0.16), h: 0.01 }), [rng.jitter(0.35), 0.002, rng.jitter(0.25)]), { color: '#e6cc98', cast: false });
-  addSawdust(F, mats, rng, () => 0, -0.3, 0.12, { r: 0.1, h: 0.022, chips: 5 });
+  for (let i = 0; i < 2; i++) addSawdust(F, mats, rng, () => 0, rng.jitter(0.3), rng.jitter(0.22), { r: rng.range(0.05, 0.08), h: 0.008, sx: 1.5, chips: 0, tone: 'old' });
+  addSawdust(F, mats, rng, () => 0, -0.3, 0.12, { r: 0.075, h: 0.026, chips: 4 });
   ctx.colliders?.addBox?.(cx, cz, 0.45, 0.32, yaw, 'chest');
   return { x: cx, z: cz, yaw };
 }

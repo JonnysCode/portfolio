@@ -351,7 +351,6 @@ const BRIDGE_GLSL = `
 
 const FRAG_PARS = /* glsl */ `
 uniform sampler2D wMask;
-uniform vec4 wDbg; // DEBUG-FX6
 uniform vec4 wRect;      // minX, minZ, 1/sizeX, 1/sizeZ
 uniform float wTime;
 uniform float wNight;
@@ -470,7 +469,8 @@ float wBridge(vec3 P, vec3 Rd, out float shade) {
   float t = ((lz > 0.0 ? BR_HW : -BR_HW) - lz) / rzs;
   if (t > 14.0) return 0.0;
   float hx = lx + rx * t, hy = P.y + Rd.y * t;
-  float m = smoothstep(0.0, 0.05, wDeckY(hx) + BR_TOP - hy) * (1.0 - smoothstep(BR_END - 0.15, BR_END, abs(hx)));
+  // (fading out with distance before the cut-off: never a hard edge in the water)
+  float m = smoothstep(0.0, 0.05, wDeckY(hx) + BR_TOP - hy) * (1.0 - smoothstep(BR_END - 0.15, BR_END, abs(hx))) * (1.0 - smoothstep(10.0, 14.0, t));
   if (abs(hx) < BR_SPAN) {
     float intr = wIntr(hx);
     float face = smoothstep(-0.04, 0.04, hy - intr);
@@ -494,8 +494,11 @@ float wProxy(int i, vec3 P, vec3 Rd, out float t) {
     t = -b / a; // closest approach to the centre
     if (t <= 0.0) return 0.0;
     float q = dot(o, o) - b * b / a; // squared distance of the ray from the centre (unit space)
-    if (P.y + Rd.y * t < r.w - 0.3) return 0.0;
-    return 1.0 - smoothstep(0.5, 1.0, q);
+    // (only the part above its lowest y — a cap above its drum — faded out over
+    // a broad band: a hard cut here drew the mirrored cap's lower edge as a
+    // straight line right across the pond)
+    float lowK = smoothstep(r.w - 1.8, r.w + 0.2, P.y + Rd.y * t);
+    return (1.0 - smoothstep(0.5, 1.0, q)) * lowK;
   }
   vec2 o = P.xz - c.xz, dd = Rd.xz;
   float a = dot(dd, dd);
@@ -616,10 +619,16 @@ float wAlpha = mix(0.45, 0.93, smoothstep(0.06, 0.8, wDepth));
 // the plunge pool is churned & aerated: milky, not glass (the rock faces and
 // the falls' foot never show through it as hard shapes)
 wAlpha = max(wAlpha, smoothstep(0.02, 0.5, wTurb) * 0.93);
+// …and where it is really deep (the plunge pool's basin, the middle of the
+// pond) it is opaque: the basin floor lies far below the mist's base height, so
+// the aerial-perspective mist turns it pale, and even 7 % of it showing through
+// drew a pale disc with the basin wall's crisp curve on the pool at night
+wAlpha = mix(wAlpha, 1.0, smoothstep(0.55, 1.05, wDepth));
+// (the still pond is dark, leafy and painted in: away from its lapping edge
+// the misty ground under it never shows through either)
+wAlpha = max(wAlpha, 0.985 * wCalm * smoothstep(0.12, 0.4, wDepth));
 wAlpha = max(wAlpha, wFoamT * 0.92);
 wAlpha *= smoothstep(0.0, 0.11, wDepth + wWob * 0.6);
-if (wDbg.x > 0.5) wAlpha = mix(0.45, 0.93, smoothstep(0.06, 0.8, wDepth)) * smoothstep(0.0, 0.11, wDepth + wWob * 0.6); // DEBUG-FX6
-if (wDbg.z > 0.5) wFoamT = 0.0; // DEBUG-FX6
 diffuseColor.rgb = mix(wCol, wFoam, wFoamT);
 diffuseColor.a = wAlpha;
 `;
@@ -634,8 +643,6 @@ normal = normalize((viewMatrix * vec4(wN, 0.0)).xyz);
 
 const FRAG_LIGHT = /* glsl */ `
 {
-  if (wDbg.x > 1.5) { reflectedLight.directDiffuse *= 0.0; reflectedLight.directSpecular *= 0.0; } // DEBUG-FX6
-  if (wDbg.y > 1.5) { reflectedLight.indirectDiffuse *= 0.0; reflectedLight.indirectSpecular *= 0.0; } // DEBUG-FX6
   // where the sun (or moon) really reaches: irradiance / albedo, shadow-aware
   float wAlb = max(dot(diffuseColor.rgb, vec3(0.333)), 0.02);
   float wLit = clamp(dot(reflectedLight.directDiffuse, vec3(0.333)) / wAlb * 0.45, 0.0, 1.6);
@@ -729,7 +736,6 @@ const FRAG_LIGHT = /* glsl */ `
       wScene = mix(wScene, wPc * wAmb * 2.0, wPm * 0.8);
     }
     float wRk = (wFr + 0.14 * wHit) * (1.0 - wFoamT) * smoothstep(0.02, 0.12, wDepth);
-    if (wDbg.y > 0.5) wRk = 0.0; // DEBUG-FX6
     reflectedLight.directDiffuse *= 1.0 - wRk;
     reflectedLight.indirectDiffuse *= 1.0 - wRk;
     reflectedLight.indirectSpecular *= 1.0 - wRk * 0.6;
@@ -742,7 +748,7 @@ const FRAG_LIGHT = /* glsl */ `
   // lamp, measured in azimuth (narrow, the lamp's angular size) and elevation
   // (wide) — a tall streak towards the viewer, broken up by the ripples, in a
   // soft halo. Plus a faint cool glitter path under the moon.
-  if (wNight > 0.02 && wDbg.w < 0.5) {
+  if (wNight > 0.02) {
     float wFres = 0.45 + 0.55 * pow(1.0 - wCos, 2.0);
     vec2 wRh = normalize(wR.xz + vec2(1e-5));
     vec3 wRefl = vec3(0.0);
@@ -800,7 +806,6 @@ export function buildWater(ctx, { rocks = [], impacts = [], bridge = null, proxi
   const detail = (ctx.quality?.tier ?? 'high') === 'low' ? 0 : 1;
   const u = {
     wMask: { value: mask },
-    wDbg: { value: new THREE.Vector4(0, 0, 0, 0) }, // DEBUG-FX6
     wRect: { value: new THREE.Vector4(B.minX, B.minZ, 1 / (B.maxX - B.minX), 1 / (B.maxZ - B.minZ)) },
     wTime: { value: 0 },
     wNight: sharedUniforms.uNight,
@@ -844,7 +849,8 @@ export function buildWater(ctx, { rocks = [], impacts = [], bridge = null, proxi
     depthWrite: false,
   });
   material.name = 'riverside-water';
-  material.userData.uniforms = u; // DEBUG-FX6
+  // (the live uniforms, for tuning from the console: mask, colours, impacts)
+  material.userData.uniforms = u;
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, u);
     shader.vertexShader = shader.vertexShader
@@ -857,7 +863,7 @@ export function buildWater(ctx, { rocks = [], impacts = [], bridge = null, proxi
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${FRAG_NORMAL}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${FRAG_LIGHT}`);
   };
-  material.customProgramCacheKey = () => 'riverside-water-v7';
+  material.customProgramCacheKey = () => 'riverside-water-v8';
 
   const mesh = new THREE.Mesh(geo, material);
   mesh.position.y = WL;
@@ -868,20 +874,27 @@ export function buildWater(ctx, { rocks = [], impacts = [], bridge = null, proxi
   mesh.updateMatrix();
   mesh.matrixAutoUpdate = false;
   ctx.scene.add(mesh);
-  // the surface's DEPTH, written last of all: ambient occlusion and depth of
-  // field read the scene's depth buffer, and without it they saw the stream
-  // bed and the submerged rock faces under the surface (AO then painted dark
-  // columns below every rock in the plunge pool, through the water). Drawn
-  // after every transparent effect, so no halo, spray or light beam is ever
-  // clipped by the surface. (Only where those passes run.)
+  // the surface's DEPTH, written right after the lamps' halos, the spray and
+  // the falls (render order ≤ 3) and BEFORE the air — god rays & moonbeams (5),
+  // sun motes (6), pixie dust (7): nothing of the air is ever drawn under the
+  // water. (A moonbeam whose foot lay on the plunge pool's or the pond's bed
+  // was drawn over the surface right down to the bed: a pale disc with the
+  // basin's crisp rim on the pool at night, and a straight line across the
+  // pond where the beam met the bed.) Ambient occlusion and depth of field read
+  // the scene's depth buffer too, and without it they saw the stream bed and
+  // the submerged rock faces under the surface (AO then painted dark columns
+  // below every rock in the plunge pool, through the water). The halos, the
+  // spray and the falls come first, so none of them is ever clipped by the
+  // surface (their own soft floors fade them out there). Every tier: it is one
+  // depth-only draw.
   let depthMesh = null;
-  if ((ctx.quality?.post ?? 'full') === 'full') {
+  {
     const dm = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, transparent: true });
     dm.name = 'riverside-water-depth';
     depthMesh = new THREE.Mesh(geo, dm);
     depthMesh.name = 'riverside-water-depth';
     depthMesh.position.y = WL;
-    depthMesh.renderOrder = 1000;
+    depthMesh.renderOrder = 4;
     depthMesh.castShadow = false;
     depthMesh.receiveShadow = false;
     depthMesh.updateMatrix();

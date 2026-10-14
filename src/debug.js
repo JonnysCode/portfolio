@@ -144,6 +144,24 @@ export function installDebug(ctx) {
         }
       return out;
     },
+    /**
+     * QA gate over auditGlides(): every glide between two spots must keep a cap
+     * out of the frame (worstOcc ≤ maxOcc: at most one of the five rays on a cap)
+     * and its rim at a distance (minGap ≥ minGap). A regression logs a
+     * console.error — scripts/shots.mjs and flow.mjs then exit 1:
+     *   npm run shots -- --eval "__woodland.debug.checkGlides()" --views overview
+     */
+    checkGlides({ maxOcc = 0.2, minGap = 5, ids } = {}) {
+      const res = api.auditGlides(ids);
+      const bad = res.filter((r) => r.worstOcc > maxOcc + 1e-6 || (Number.isFinite(r.minGap) && r.minGap < minGap));
+      let occ = 0, gap = Infinity;
+      for (const r of res) {
+        occ = Math.max(occ, r.worstOcc);
+        if (Number.isFinite(r.minGap)) gap = Math.min(gap, r.minGap);
+      }
+      if (bad.length) console.error(`[checkGlides] ${bad.length} glide(s) over the bar (worstOcc ≤ ${maxOcc}, minGap ≥ ${minGap}): ${JSON.stringify(bad)}`);
+      return { ok: !bad.length, glides: res.length, worstOcc: occ, minGap: gap, bad };
+    },
     /** Step the clock until no camera glide is running; returns the frames stepped. */
     settle(maxFrames = 600) {
       let i = 0;

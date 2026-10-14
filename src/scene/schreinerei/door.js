@@ -207,9 +207,12 @@ export function buildDoor(ctx, B, mats) {
     const bl0 = leafBottom + 0.22, bl1 = archY - 0.05;
     const braceY = (x) => (bl0 + bl1) / 2 + (x / (LW - 0.2)) * (bl1 - bl0);
     const nail = (x, y) => {
+      const jx = rng.jitter(0.004), jy = rng.jitter(0.004);
+      // (low tier: the nail heads are sub-pixel on a phone — left out)
+      if (LOD.tier === 'low') return;
       const head = new THREE.SphereGeometry(0.0085, 6, 3, 0, Math.PI * 2, 0, Math.PI / 2);
       head.rotateX(Math.PI / 2);
-      leaf.add(iron, xf(head, [x + rng.jitter(0.004), y + rng.jitter(0.004), LT + 0.009]), { cast: false });
+      leaf.add(iron, xf(head, [x + jx, y + jy, LT + 0.009]), { cast: false });
       // (the clinched tips on the back: only where a close-up could catch them)
       if (LOD.small) {
         const tip = new THREE.TorusGeometry(0.008, 0.0022, 3, 6, Math.PI);
@@ -305,7 +308,9 @@ export function buildDoor(ctx, B, mats) {
     s.lineTo(-inner, bottom);
     s.lineTo(-outer - 0.25, bottom);
     const depth = 1.05;
-    const g = new THREE.ExtrudeGeometry(s, { depth, bevelEnabled: true, bevelSize: 0.16, bevelThickness: 0.2, bevelSegments: 3, curveSegments: 22, steps: 3 });
+    // (low tier: a coarser collar — fewer arc and bevel segments)
+    const lo = LOD.tier === 'low';
+    const g = new THREE.ExtrudeGeometry(s, { depth, bevelEnabled: true, bevelSize: 0.16, bevelThickness: 0.2, bevelSegments: lo ? 2 : 3, curveSegments: lo ? 12 : 22, steps: lo ? 2 : 3 });
     g.translate(0, 0, -depth - 0.08);
     g.deleteAttribute('uv');
     const ox = rng.next() * 30;
@@ -347,7 +352,7 @@ export function buildDoor(ctx, B, mats) {
       const t = i / 8;
       pts.push([x0 + s * t * 0.75 + Math.sin(t * 5 + s) * 0.06, (1 - t) * 1.05 + Math.sin(t * Math.PI) * 0.1, -0.55 + t * 1.55]);
     }
-    const { geo, curve, radiusAt } = rootGeo(rng, pts, { r0: 0.34, r1: 0.1, flat: 0.75 });
+    const { geo, curve, radiusAt } = rootGeo(rng, pts, { r0: 0.34, r1: 0.1, flat: 0.75, radial: segs(14, 8), tubular: segs(28, 14) });
     D.add(rootMat, geo);
     const c = new THREE.Vector3(), T = new THREE.Vector3();
     const Y = new THREE.Vector3(0, 1, 0), S = new THREE.Vector3(), N = new THREE.Vector3();

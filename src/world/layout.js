@@ -181,15 +181,17 @@ export const SPOTS = [
     focus: [-1.4, 1.1, -0.8],
     // (trucked right and a step back: the deck's four pieces sit inside the right third, not on the edge)
     camera: { position: [1.6, 3.05, 12.3], target: [0.0, 2.2, -0.8], fov: 40 },
-    // phones: two stops (a flick steps from one to the other before travelling on).
-    // First, low and close in front of the porch: Jonny planing at the Hobelbank
-    // and the sawhorses with the board mid-cut on the left, the round door on the
-    // right, only the trunk's foot rising above them. Then the deck, from the
-    // stream side: the four finished pieces large in front, the door and the EFZ
-    // certificate behind them, the porch at the far left. (No tall frame holds the
-    // porch and the deck — 8 units apart — at a size where the craft reads.)
-    portrait: { position: [-4.0, 4.0, 8.9], target: [-2.0, 2.9, -1.5], fov: 62, focus: [-3.2, 1.1, 0] },
-    portraitMore: [{ position: [8.9, 3.6, 5.6], target: [0.5, 1.5, -1.0], fov: 64, focus: [3.4, 0.8, 0.9] }],
+    // phones: two stops (a flick steps from one to the other before travelling on;
+    // rig.onStopChange lets the UI show where we are). First the place that sells the Schreinerei:
+    // the deck from the stream side — the four finished pieces large in front, the
+    // round oak door and the EFZ certificate behind them, the porch at the far
+    // left (most of the place's ✦ in one frame, by day and by night; turned a
+    // touch right so the record cabinet stands inside the frame). Then low
+    // and close in front of the porch: Jonny planing at the Hobelbank and the
+    // sawhorses with the board mid-cut, the door on the right. (No tall frame holds
+    // the porch and the deck — 8 units apart — at a size where the craft reads.)
+    portrait: { position: [8.9, 3.6, 5.6], target: [0.78, 1.5, -1.32], fov: 64, focus: [3.4, 0.8, 0.9] },
+    portraitMore: [{ position: [-4.0, 4.0, 8.9], target: [-2.0, 2.9, -1.5], fov: 62, focus: [-3.2, 1.1, 0] }],
   },
   {
     id: 'code',

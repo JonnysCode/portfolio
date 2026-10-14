@@ -21,7 +21,7 @@ import { createRng, clamp } from '../../core/rng.js';
 import { SPOTS } from '../../world/layout.js';
 import {
   Batch, board, timber, xf, mat4, stoneGeo, mossPadGeo, ShingleField, layShingles, shingleGeo, uvBox, doubleFace,
-  addLantern, addIvy, paint, SPECIES, noiseA, addBowSaw, turned, pushHalo, count,
+  addLantern, addIvy, paint, SPECIES, noiseA, addBowSaw, turned, pushHalo, count, LOD,
 } from './kit.js';
 import { mossVCMaterial, paintMoss, mossTone } from './door.js';
 import { ANNEX, annexFrame, annexMatrix, crook, annexToWorld, decalMaterial, decalGeo, DECAL, frameMat, paintMember, shakeScale } from './annex.js';
@@ -722,21 +722,23 @@ function buildHobelbank(ctx, mats, rng) {
       Bb.add(vc, new THREE.BoxGeometry(0.042, 0.0015, 0.052).translate(x + rng.jitter(0.003), H + 0.0003, dogZ), { color: '#8e6440', cast: false });
     }
     // glue drips: dried beads on the top, two runs over the front edge
+    // (low tier: the finest marks — beads, kerfs, pencil — are sub-pixel: left out)
     const amber = '#c4882c';
-    for (const [x, z, r] of [[-0.12, 0.02, 0.012], [0.42, -0.03, 0.009], [-0.6, -0.04, 0.014], [0.7, 0.24, 0.008]]) {
+    const fine = LOD.tier !== 'low';
+    if (fine) for (const [x, z, r] of [[-0.12, 0.02, 0.012], [0.42, -0.03, 0.009], [-0.6, -0.04, 0.014], [0.7, 0.24, 0.008]]) {
       Bb.add(vc, new THREE.SphereGeometry(r, 7, 4).scale(1.3, 0.28, 1).translate(x, H + 0.001, z), { color: amber, cast: false });
     }
-    for (const [x, len] of [[0.28, 0.05], [-0.36, 0.035]]) {
+    if (fine) for (const [x, len] of [[0.28, 0.05], [-0.36, 0.035]]) {
       Bb.add(vc, new THREE.SphereGeometry(0.007, 6, 4).scale(1, len / 0.014, 0.5).translate(x, H - len / 2 - 0.004, D / 2 + 0.003), { color: amber, cast: false });
       Bb.add(vc, new THREE.SphereGeometry(0.009, 6, 4).translate(x, H - len - 0.004, D / 2 + 0.004), { color: amber, cast: false });
     }
     // saw kerfs across the top and nicks in the front arris by the tail vise
-    for (let k = 0; k < 3; k++) {
+    if (fine) for (let k = 0; k < 3; k++) {
       Bb.add(vc, new THREE.BoxGeometry(0.0025, 0.0015, 0.055 + k * 0.012).translate(0.36 + k * 0.045, H + 0.0006, -0.025 + rng.jitter(0.006)).rotateY(0), { color: '#4a3420', cast: false });
       Bb.add(vc, new THREE.BoxGeometry(0.003, 0.014, 0.004).translate(0.52 + k * 0.07, H - 0.007, D / 2 + 0.0015), { color: '#5a3e26', cast: false });
     }
     // faint pencil cross-hatching where a cut was laid out
-    for (let k = 0; k < 5; k++) {
+    if (fine) for (let k = 0; k < 5; k++) {
       for (const a of [0.7, -0.7]) {
         const g = new THREE.BoxGeometry(0.06, 0.0012, 0.0016).rotateY(a).translate(0.55 + k * 0.018, H + 0.0007, -0.03);
         Bb.add(vc, g, { color: '#6a6660', cast: false });

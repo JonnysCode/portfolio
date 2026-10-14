@@ -165,7 +165,7 @@ function bounceGills(base) {
  * bakeBulbGlow). The warm cream carries enough chroma that the night grade's moon
  * tint and Purkinje shift (which spare warm hues) leave it cream.
  */
-const WART_GLOW = { day: '#fff1d8', dayI: 0.06, cream: '#f6deb6', amber: '#ffae62', nightI: 0.3 };
+const WART_GLOW = { day: '#fff1d8', dayI: 0.06, cream: '#f4d3a2', amber: '#ffae62', nightI: 0.3 }; // (a warm cream: the night grade's moon tint turned a paler one grey)
 const wartMats = [];
 const wartUniforms = {
   uWartNight: { value: 0 },
@@ -259,8 +259,8 @@ export function setCottageKeyDir(v) {
  * lit in the lamplighter's cascade. Geometry without the attribute reads 0.
  * Cap UVs: U = around (× 2), V = 0 at the rim → 1 at the apex.
  */
-const CAP_GLOW = { color: '#ffb36b', k: 0.52 };
-const capUniforms = { uCapGlowK: { value: CAP_GLOW.k }, uCapGlowC: { value: new THREE.Color(CAP_GLOW.color) } };
+const CAP_GLOW = { color: '#ffb36b', k: 0.4, base: 0.045 };
+const capUniforms = { uCapGlowK: { value: CAP_GLOW.k }, uCapGlowC: { value: new THREE.Color(CAP_GLOW.color) }, uCapNightBase: { value: CAP_GLOW.base } };
 function velvetCap(base, { bulbs = false } = {}) {
   const c = base.clone();
   c.name = bulbs ? 'cottage-cap' : 'cottage-cap-shared';
@@ -273,7 +273,7 @@ function velvetCap(base, { bulbs = false } = {}) {
     Object.assign(shader.uniforms, capUniforms, lampUniforms, { uNight: sharedUniforms.uNight });
     if (bulbs) bulbVertex(shader);
     shader.fragmentShader = shader.fragmentShader
-      .replace('void main() {', `uniform float uCapGlowK, uNight;\nuniform vec3 uCapGlowC;\n#ifdef COTTAGE_BULBS\nvarying float vCapGlow;\nvarying vec3 vCapWP;\n#endif\n${LAMP_GLSL}\nvoid main() {`)
+      .replace('void main() {', `uniform float uCapGlowK, uNight, uCapNightBase;\nuniform vec3 uCapGlowC;\n#ifdef COTTAGE_BULBS\nvarying float vCapGlow;\nvarying vec3 vCapWP;\n#endif\n${LAMP_GLSL}\nvoid main() {`)
       // the texture's fine fibril streaks at half their contrast (with the shader's own
       // streaks below they read as brushed metal under a highlight)
       .replace('vec3 sfCol = mix(sfColA, sfColB, sfA.r) * (sfA.g * 2.0);', 'vec3 sfCol = mix(sfColA, sfColB, sfA.r) * (1.0 + (sfA.g * 2.0 - 1.0) * 0.45);')
@@ -306,11 +306,15 @@ function velvetCap(base, { bulbs = false } = {}) {
     diffuseColor.rgb = mix(diffuseColor.rgb, vec3(cL) * vec3(1.5, 1.25, 1.15) + diffuseColor.rgb * 0.25, cF * 0.22);
   }
 #endif
+  // night: a whisper of the cap's own red (the glen's warm air) so the velvet away from the
+  // lights reads deep red, never a maroon-black hole
+  totalEmissiveRadiance += diffuseColor.rgb * uCapNightBase * uNight;
 #ifdef COTTAGE_BULBS
   {
     // the fairy lights warm the velvet beside each bulb (night, in the lamplighter's cascade)
-    float cg = clamp(vCapGlow, 0.0, 1.4) * uNight * lampOn(vCapWP, 0.0);
-    totalEmissiveRadiance += cg * uCapGlowK * uCapGlowC * (diffuseColor.rgb * 1.5 + vec3(0.05, 0.025, 0.006));
+    // (soft saturation: where several bulbs overlap the patch glows a little more, never a hot band)
+    float cg = (1.0 - exp(-1.3 * max(vCapGlow, 0.0))) * uNight * lampOn(vCapWP, 0.0);
+    totalEmissiveRadiance += cg * uCapGlowK * uCapGlowC * (diffuseColor.rgb * 1.5 + vec3(0.07, 0.035, 0.009));
   }
 #endif`
       )

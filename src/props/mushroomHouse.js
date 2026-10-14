@@ -473,13 +473,14 @@ function buildHouse(F, o, rng) {
     const k = THREE.MathUtils.clamp((y - rimY) / capH, 0, 1); // 0 rim … 1 apex
     // rim → body → crown
     c.copy(capRim).lerp(capBase, smooth01(k / 0.42)).lerp(capCrown, smooth01((k - 0.42) / 0.5) * 0.85);
-    // low-frequency crimson-brown mottling: big, soft, weathered clouds (≈ 1 per 3 units)
-    const b0 = noiseB(x * 0.3 - ox, z * 0.3 + y * 0.22);
-    c.lerp(capBrown, smooth01((b0 - 0.0) / 0.55) * 0.5);
+    // low-frequency crimson-brown mottling: big, soft, weathered clouds (≈ 1 per 3 units) broken
+    // up by a second, smaller octave so they read as mottling on the cap, not as a gradient
+    const b0 = noiseB(x * 0.3 - ox, z * 0.3 + y * 0.22) * 0.62 + noiseA(x * 0.95 + oy, z * 0.95 - y * 0.5) * 0.38;
+    c.lerp(capBrown, smooth01((b0 + 0.04) / 0.5) * 0.6);
     // blotches: broad clouds (≈ 1 per 1.6 units) and smaller dabs
     const b1 = noiseA(x * 0.62 + ox, z * 0.62 + y * 0.45);
     const b2 = noiseB(x * 1.7 - oy, z * 1.7 + y * 0.9);
-    c.lerp(capBlot, smooth01((b1 - 0.05) / 0.5) * 0.7 * (0.6 + 0.4 * (1 - k)));
+    c.lerp(capBlot, smooth01((b1 - 0.05) / 0.5) * 0.78 * (0.6 + 0.4 * (1 - k)));
     c.lerp(capPale, smooth01((-b1 - 0.22) / 0.45) * 0.5 * (0.5 + 0.5 * k));
     c.lerp(cTmp.copy(c).multiplyScalar(b2 > 0 ? 0.86 : 1.1), Math.abs(b2) * 0.55);
     // brush streaks running down the cap (coarse, soft: half the old contrast — strong radial
@@ -1230,8 +1231,8 @@ const WART_FLAKE = [[0.0, 1.0], [0.5, 0.9], [0.82, 0.58], [1.0, 0]];
 const WART_FLAKE_LO = [[0.0, 1.0], [0.62, 0.8], [1.0, 0]]; // (lower tiers: one shoulder ring)
 const WART_DOT = [[0.0, 1.0], [0.66, 0.72], [1.0, 0]];
 /** contact shadow ring: [radius (× outline), darkening] from under the flake's foot outwards */
-const WART_AO = [[0.92, 0.62], [1.12, 0.28], [1.45, 0]];
-const WART_AO_LO = [[0.92, 0.55], [1.35, 0]];
+const WART_AO = [[0.92, 0.5], [1.12, 0.22], [1.45, 0]]; // (soft: a strong ring outlined every flake like a sticker on the paler caps)
+const WART_AO_LO = [[0.92, 0.45], [1.35, 0]];
 /**
  * The warts' vertex colour: the cream, a touch whitened. Under the glen's warm key and grade a
  * plain standard material renders darker and yellower than the cap's painterly skin around it

@@ -247,11 +247,6 @@ export class Batch {
    */
   add(material, geo, opts = {}) {
     this.added += (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
-    if (globalThis.__KITPROF__) {
-      const st = new Error().stack.split('\n').slice(2, 6).map((l) => (l.match(/at (\S+)/)?.[1] ?? '?') + ':' + (l.match(/:(\d+):\d+\)?$/)?.[1] ?? '')).join(' < ');
-      const P = globalThis.__KITPROF__;
-      P[st] = (P[st] ?? 0) + (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
-    }
     if (material.isProxy) {
       // a geometry painted beforehand (paintBy) keeps its own colours
       if (opts.color === undefined && !geo.attributes.color) opts = { ...opts, color: material.color };
@@ -545,12 +540,13 @@ export function beamBox(w, h, d, along = 'x', c = 0.012, segs = 1) {
 /**
  * A wooden part: rounded box with grain UVs. along = grain axis ('x' | 'y' | 'z').
  * rng (optional) gives the board its own UV offset so neighbours don't match.
+ * straight: nothing deforms it afterwards → one length segment on every tier.
  */
-export function board(w, h, d, { along = 'x', r = 0.01, rng = null, scale = 1 / TILE.wood, segs = 0 } = {}) {
+export function board(w, h, d, { along = 'x', r = 0.01, rng = null, scale = 1 / TILE.wood, segs = 0, straight = false } = {}) {
   const len = along === 'x' ? w : along === 'y' ? h : d;
   // (length segments only matter where a deform bends the board: fewer on the
-  // lower tiers; LOD.lite: a plain box)
-  const g = LOD.lite && !segs ? new THREE.BoxGeometry(w, h, d) : beamBox(w, h, d, along, r, segs || Math.max(1, Math.round((len / 0.7) * LOD.k)));
+  // lower tiers, one for a board nothing bends (`straight`); LOD.lite: a plain box)
+  const g = LOD.lite && !segs ? new THREE.BoxGeometry(w, h, d) : beamBox(w, h, d, along, r, segs || (straight ? 1 : Math.max(1, Math.round((len / 0.7) * LOD.k))));
   return uvBox(g, along, scale, rng ? [rng.next() * 7, rng.next() * 7] : [0, 0]);
 }
 
@@ -1025,7 +1021,8 @@ export function addFairyLights(F, mats, points, toWorld, { sag = 0.08, spacing =
       const p = curve.getPointAt((k + 0.5) / n);
       // (low tier: no socket, an 8-sided bead of a bulb — the halo carries it)
       if (LOD.k >= 0.5) F.add(wire, new THREE.CylinderGeometry(0.011, 0.011, 0.022, segs(5, 4), 1, !LOD.small).translate(p.x, p.y - 0.014, p.z), { cast: false });
-      const bulb = LOD.k < 0.5 ? new THREE.OctahedronGeometry(0.023, 0) : new THREE.SphereGeometry(0.022, segs(6, 4), segs(4, 3));
+      // (a 2 cm glowing bulb: its bloom hides any facet — six round, three high)
+      const bulb = LOD.k < 0.5 ? new THREE.OctahedronGeometry(0.023, 0) : new THREE.SphereGeometry(0.022, segs(6, 4), 3);
       bulb.scale(1, 1.3, 1);
       F.add(bulbMat, bulb.translate(p.x, p.y - 0.045, p.z), { cast: false, receive: false });
       tmp.set(p.x, p.y - 0.045, p.z);
@@ -1107,7 +1104,8 @@ export function addBowSaw(F, mats, rng, m, { scale = 1, wood = '#c8a27c' } = {})
       const a = u * Math.PI * 2 * 7 + ph;
       strand.push([-cx + 2 * cx * u, cy + Math.cos(a) * 0.006, Math.sin(a) * 0.006]);
     }
-    bake(F, M, mats.rope(), tube(strand, 0.0045, 4, 56));
+    // (medium & low: coarser — a 4.5 mm cord)
+    bake(F, M, mats.rope(), tube(strand, 0.0045, LOD.k < 1 ? 3 : 4, LOD.k < 1 ? Math.round(56 * LOD.k) : 56));
   }
   // the toggle stick, twisted into the cord, its lower end resting on the stretcher
   bake(F, M, mats.wood('#a8835e'), xf(board(0.016, (cy - ys) + 0.06, 0.01, { along: 'y', rng, r: 0.003 }), [0.02, (cy + ys) / 2 + 0.03, 0.012], [0, 0, -0.1]));

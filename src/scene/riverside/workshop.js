@@ -364,7 +364,8 @@ export function buildWorkshop(ctx, B, rng, halos) {
   {
     const floor = new THREE.CircleGeometry(rIn(0) + 0.02, 40).rotateX(-Math.PI / 2).translate(0, 0.05, 0);
     uvPlanar(floor, 'x', 'z', 1 / 1.6);
-    F.add(MM.planks, floor, { color: '#b08a60', cast: false });
+    // (a used shop floor, a shade darker than fresh planks: the clutter on it reads)
+    F.add(MM.planks, floor, { color: '#9c7a55', cast: false });
     const ceilY = WALL_TOP - 0.02;
     const ceil = new THREE.CircleGeometry(rIn(ceilY) + 0.05, 40).rotateX(Math.PI / 2).translate(0, ceilY, 0);
     uvPlanar(ceil, 'x', 'z', 1 / 1.4);
@@ -641,6 +642,39 @@ export function buildWorkshop(ctx, B, rng, halos) {
         const a = (i / 3) * TAU;
         T.add(MM.wood, rod([Math.sin(a) * 0.1, 0.48, Math.cos(a) * 0.1], [Math.sin(a) * 0.2, 0, Math.cos(a) * 0.2], 0.022, 0.02, 6), { color: WOOD.oakLight, cast: false });
       }
+    }
+    // what the open doors show of the floor is a working floor, not bare planks:
+    // a wheel off a customer's bike leaning on the stool, a galvanised bucket
+    // with an inner tube hung over its rim (the puncture test), and a drip tray
+    // with the oil can and a chain soaking in it
+    {
+      // the wheel, leaning back against the stool's seat
+      makeWheel({ style: 'gravel', batch: F, matrix: mat4([0.12, 0.05 + 0.2, -0.3], [-0.32, 0.35, 0]), scale: 0.6, seed: 'floor-wheel', lite: true });
+      // the bucket
+      const bp = [-0.48, 0.05, -0.22];
+      F.add(MM.metal, new THREE.CylinderGeometry(0.12, 0.095, 0.22, 14, 1, true).translate(bp[0], bp[1] + 0.11, bp[2]), { color: '#a9adaf', cast: false });
+      F.add(MM.metal, new THREE.CircleGeometry(0.095, 12).rotateX(-Math.PI / 2).translate(bp[0], bp[1] + 0.003, bp[2]), { color: '#8d9193', cast: false });
+      F.add(MM.metal, new THREE.TorusGeometry(0.12, 0.008, 3, 16).rotateX(Math.PI / 2).translate(bp[0], bp[1] + 0.22, bp[2]), { color: '#c9cdd0', cast: false });
+      F.add(MM.glossy, new THREE.CircleGeometry(0.112, 14).rotateX(-Math.PI / 2).translate(bp[0], bp[1] + 0.17, bp[2]), { color: '#3c5a5e', cast: false });
+      F.add(MM.metal, new THREE.TorusGeometry(0.12, 0.004, 3, 10, Math.PI).rotateY(0.6).translate(bp[0], bp[1] + 0.22, bp[2]), { color: '#6b6f72', cast: false });
+      // the tube: half in the water, looping out over the rim and down the side
+      F.add(MM.vc, tube([[bp[0] - 0.06, bp[1] + 0.16, bp[2] + 0.02], [bp[0] + 0.02, bp[1] + 0.2, bp[2] + 0.1], [bp[0] + 0.1, bp[1] + 0.24, bp[2] + 0.1], [bp[0] + 0.15, bp[1] + 0.15, bp[2] + 0.1], [bp[0] + 0.16, bp[1] + 0.03, bp[2] + 0.06], [bp[0] + 0.24, bp[1] + 0.01, bp[2] - 0.02]], 0.012, 4, 16), { color: '#1f1e1d', cast: false });
+      // the drip tray, a dark stain in it, the oil can and a chain soaking
+      const dp = [0.62, 0.05, -0.08];
+      const DT = F.at(mat4(dp, [0, 0.35, 0]));
+      DT.add(MM.metal, new THREE.BoxGeometry(0.36, 0.012, 0.26).translate(0, 0.006, 0), { color: '#4b4f52', cast: false });
+      for (const sz of [-1, 1]) DT.add(MM.metal, new THREE.BoxGeometry(0.36, 0.03, 0.008).translate(0, 0.015, sz * 0.13), { color: '#5d6164', cast: false });
+      for (const sx of [-1, 1]) DT.add(MM.metal, new THREE.BoxGeometry(0.008, 0.03, 0.26).translate(sx * 0.18, 0.015, 0), { color: '#5d6164', cast: false });
+      DT.add(MM.glossy, new THREE.CircleGeometry(0.09, 10).scale(1.3, 1, 1).rotateX(-Math.PI / 2).translate(0.03, 0.014, 0.02), { color: '#1d1a17', cast: false });
+      const chain = [];
+      for (let k = 0; k <= 10; k++) {
+        const a = (k / 10) * TAU * 0.9;
+        chain.push([-0.04 + Math.cos(a) * 0.08, 0.02, 0.01 + Math.sin(a) * 0.06]);
+      }
+      DT.add(MM.metal, tube(chain, 0.006, 3, 20), { color: '#5a5550', cast: false });
+      DT.add(MM.glossy, new THREE.CylinderGeometry(0.045, 0.05, 0.08, 10).translate(0.11, 0.052, -0.05), { color: '#c9a24a', cast: false });
+      DT.add(MM.glossy, new THREE.ConeGeometry(0.045, 0.04, 10).translate(0.11, 0.112, -0.05), { color: '#c9a24a', cast: false });
+      DT.add(MM.metal, rod([0.11, 0.13, -0.05], [0.17, 0.2, -0.08], 0.005, 0.003, 4), { color: '#b8935a', cast: false });
     }
     // an anglepoise work lamp clamped to the bench, its warm pool on the jig
     {
@@ -1246,7 +1280,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
       const g = stoneGeo(rng, { r, sx: rng.range(1.0, 1.4), sz: rng.range(0.8, 1.05), sy: 0.16, lump: 0.14, flatTop: 0.1, detail: 1 });
       // (sunk into the ground, the outer ones deeper)
       xf(g, [x, -0.004 - 0.012 * edge, z], [rng.jitter(0.04), rng.next() * TAU, rng.jitter(0.04)]);
-      F.add(MM.pebble, g, { color: rng.pick(['#6b6457', '#625c50', '#736a5a', '#5c5850', '#666052']) });
+      F.add(MM.pebble, g, { color: rng.pick(['#5a554b', '#524d44', '#605a4e', '#4e4b45', '#57524a']) });
       if (rng.chance(0.55)) {
         const m = mossGeo(rng, { r: rng.range(0.06, 0.12), h: 0.025 });
         xf(m, [x + r * rng.range(0.9, 1.2), 0, z + rng.jitter(0.12)], [0, rng.next() * TAU, 0]);
@@ -1369,7 +1403,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
     mechanic.group.traverse((o) => {
       if (o.isSkinnedMesh && o.name === 'person-body') o.material = ctx.materials.toon('#ffffff', { vertexColors: true, name: 'props-vc-skinned-fill', emissive: '#3a2618' });
     });
-    // what he looks at: the rear derailleur while he works, the visitor between spells
+    // what he looks at: the front brake he is working on, the visitor between spells
     workAt = toWorld(...fromBike(0.44, 0.42, 0.05).toArray());
     const cam = SPOT_BY_ID.bikes?.camera?.position;
     lookCam = cam ? new THREE.Vector3(cam[0], cam[1], cam[2]) : null;
@@ -1737,8 +1771,8 @@ export function buildWorkshop(ctx, B, rng, halos) {
     const spinning = phase > 0.55;
     hero.setSpin(spinning ? 6 : 0, spinning ? 2.2 : 0);
     hero.update(dt);
-    // he looks up and greets you for a while, then back down to the derailleur
-    // while the wheel turns
+    // he looks up and greets you for a while, then back down to the front
+    // brake while the cranks turn
     const want = phase < 0.5 && lookCam ? 'cam' : 'work';
     if (mechanic && want !== looking) {
       looking = want;
