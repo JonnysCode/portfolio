@@ -221,7 +221,7 @@ export function createInteractions(ctx) {
   // Sizes are worked out here (CSS px), not in the shader, so drawing, picking,
   // the lift above the piece and the merging of crowded markers all agree. By
   // day a ✦ is a soft wisp (≤ ~40 px at 720p, smaller on a phone); by night a
-  // thin ring round a ✦, about 60 % of that.
+  // thin ring round a ✦, about 80 % of that.
   const sizes = { frame: -1, ppu: 600, lo: 24, hi: 40, night: 0 };
   function markerSizes() {
     if (sizes.frame === engine.frame) return sizes;
@@ -233,8 +233,9 @@ export function createInteractions(ctx) {
     const n = ctx.env?.night ?? (isNight() ? 1 : 0);
     sizes.night = n;
     const hiDay = THREE.MathUtils.clamp(Math.min(W, H) * 0.056, 30, 40);
-    sizes.hi = hiDay + (Math.max(22, hiDay * 0.62) - hiDay) * n;
-    sizes.lo = 24 + (15 - 24) * n;
+    // (by night ~80 %: a ring ~24 px across at 720p — the old filled discs were ~45)
+    sizes.hi = hiDay + (Math.max(24, hiDay * 0.8) - hiDay) * n;
+    sizes.lo = 26 + (21 - 26) * n;
     return sizes;
   }
   /** A marker sprite's size (CSS px) at `dist` from the lens (sizeK: 1 = a ✦, smaller for leaves). */
@@ -1343,7 +1344,7 @@ function makeMarkerMaterial() {
           float H = vHot;
           float featured = step(2.5, vKind);
           // ✦: a four-point star with concave sides (|x|^p + |y|^p = R^p, p < 1)
-          float R = mix(0.36, 0.46, N) + 0.05 * H;
+          float R = mix(0.4, 0.46, N) + 0.05 * H;
           vec2 s = abs(q) / R;
           float sd = pow(s.x, 0.62) + pow(s.y, 0.62);
           float body = 1.0 - smoothstep(0.88, 1.08, sd);
@@ -1352,7 +1353,7 @@ function makeMarkerMaterial() {
           float core = exp(-dot(q, q) * 34.0);
           // by day a soft wisp of light round it and thin glint rays that twinkle;
           // by night next to no glow at all (no disc over the pieces)
-          float wisp = exp(-r * r * 6.5) * (0.5 + 0.1 * vTw) + exp(-r * r * 2.0) * 0.14;
+          float wisp = exp(-r * r * 5.0) * (0.62 + 0.1 * vTw) + exp(-r * r * 1.8) * 0.18;
           float glow = mix(wisp * (1.0 + 0.25 * featured), exp(-r * r * 9.0) * 0.1, N) * (1.0 + 0.5 * H);
           float rays = (exp(-abs(q.x) * 46.0) * (1.0 - smoothstep(0.1, 0.92, abs(q.y)))
                       + exp(-abs(q.y) * 46.0) * (1.0 - smoothstep(0.1, 0.92, abs(q.x)))) * (0.3 + 0.3 * vTw) * (1.0 - N * 0.75) * (1.0 - body);
@@ -1382,7 +1383,7 @@ function makeMarkerMaterial() {
           vec3 dayStar = mix(uCream, hotCore, clamp(core * 1.4, 0.0, 1.0)) * (1.3 + 0.15 * H) * (0.94 + 0.06 * vTw);
           vec3 nightStar = mix(uCream, hotCore, 0.3) * mix(0.95, 1.8, H);
           vec3 starCol = mix(dayStar, nightStar, N);
-          vec3 glowCol = mix(mix(uMint, uCream, 0.5), uMint * 0.8, N);
+          vec3 glowCol = mix(mix(uMint, uCream, 0.38), uMint * 0.8, N);
           vec3 ringCol = mix(uCream, uMint, 0.5) * mix(1.05, mix(0.85, 1.7, H), N);
           float starA = body * mix(1.0, mix(0.5, 0.95, H), N);
           starA = max(starA, edge * N * 0.95);

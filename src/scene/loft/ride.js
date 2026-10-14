@@ -10,11 +10,17 @@
 // cranes up over the rim into the Code Loft as it arrives on the deck (riding
 // down: settles into the Schreinerei as it lands on the roots). ~4.6 s of
 // ride after an approach of 1.6–3.4 s; a bell as it sets off, a pop on arrival.
+// From the first frame the lens meets the snail where it is on the trunk
+// (level with it — never staring up at the deck's underside) and comes down
+// with it to the station. A paper chip says "Riding the snail lift…" while it
+// runs; Esc (or the chip's "hop off") hands the lens straight to the place's
+// glide (the snail rides on).
 //
 //   const ride = createLiftRide(ctx, { elevator, deck })
 //   ride.start('up' | 'down')    'up': roots → Code Loft, 'down': deck → Schreinerei
 //   ride.update(dt)              (loft.js, every frame)
 //   ride.active                  true while the camera rides along
+//   ride.hopOff()                leave the ride (Esc does the same)
 //
 // The camera is flown through the rig's override (cameraRig.setOverride, as a
 // cut-scene): the spot switches right at the start (rig.goTo — the UI names the
@@ -61,6 +67,7 @@ export function createLiftRide(ctx, { elevator, deck }) {
   const L = new THREE.Vector3();
   const tmp = new THREE.Vector3();
   const dir = new THREE.Vector3();
+  const LP = new THREE.Vector3();
 
   /**
    * How high the lens rides: a little above the subject at the roots, nearly
@@ -93,10 +100,14 @@ export function createLiftRide(ctx, { elevator, deck }) {
    * far out — is the first of these (in order of preference) with a clear
    * view of the whole ride, else the clearest. One of the nine samples may be
    * hidden: from under the planks the snail arriving on the deck always is.
-   * The front side looks the way the Code Loft and Schreinerei cameras do.
-   * Chosen once, on the first ride (both ways ride the same line).
+   * The front side looks the way the Code Loft and Schreinerei cameras do —
+   * and it is the side the snail turns its shell's spiral to (elevator.js).
+   * Well out from the bark first (outside the stair's spiral: its stringers,
+   * the landing and the ivy stay small beside the snail, and the deck's
+   * underside a thin ceiling over it). Chosen once, on the first ride (both
+   * ways ride the same line).
    */
-  const VANTAGES = [[-1, 0.7, 10.6], [-1, 0.56, 10.6], [-1, 0.42, 9.6], [-1, 0.7, 9.6], [1, 0.56, 10.6], [1, 0.42, 9.6], [1, 0.7, 10.6]];
+  const VANTAGES = [[-1, 0.7, 12.1], [-1, 0.56, 12.1], [-1, 0.7, 10.6], [-1, 0.56, 10.6], [-1, 0.42, 9.6], [1, 0.56, 12.1], [1, 0.42, 9.6], [1, 0.7, 10.6]];
   let vantage = null;
   function scoreVantage(v) {
     const it = ctx.interactions;
@@ -165,13 +176,51 @@ export function createLiftRide(ctx, { elevator, deck }) {
     }
     const approach = THREE.MathUtils.clamp(1.25 + hop * 0.045, 1.6, 3.4);
     const state = elevator.ride(d, { call: approach });
-    active = { d, dest, v, state, t: 0, approach, p0, p1, p2, p3, t0, bez: rig.obstacles?.bezier, departed: false, released: false, aborted: false };
+    active = { d, dest, v, state, t: 0, approach, p0, p1, p2, p3, t0, bez: rig.obstacles?.bezier, departed: false, released: false, aborted: false, chip: null };
     // the place changes now (the UI names it, history, markers wait for the landing);
     // its glide only starts once the ride lets go of the lens. (An open page
     // closes: riding to the place it is at, the UI would keep it open.)
     if (ctx.ui?.isPanelOpen) ctx.ui.closePanel?.();
     rig.goTo(dest);
     place(0);
+    active.chip = showChip(state.duration);
+  }
+
+  // ── "you're riding": a paper chip while the lens rides along, and a way off ─
+  const coarse = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+  /** The UI's toast as the ride's chip (with a "hop off" button); returns its element, if any. */
+  function showChip(seconds) {
+    const ui = ctx.ui;
+    if (!ui?.toast || typeof document === 'undefined') return null;
+    const text = coarse ? 'Riding the snail lift…' : 'Riding the snail lift…  Esc to hop off';
+    ui.toast(text, Math.max(2500, seconds * 1000 - 400), { icon: 'leaf', cls: 'is-ride', action: { label: 'hop off', onClick: () => hopOff(false) } });
+    const el = document.querySelector('.toasts')?.lastElementChild;
+    return el?.textContent?.includes('snail lift') ? el : null;
+  }
+  function hideChip(A) {
+    const el = A?.chip;
+    if (!el) return;
+    A.chip = null;
+    el.classList.remove('is-visible');
+    setTimeout(() => el.remove(), 500);
+  }
+  /** Hop off: the lens leaves the snail and glides straight on to the place (the snail rides on). */
+  function hopOff(fromKey = true) {
+    const A = active;
+    if (!A || A.released) return false;
+    const rig = ctx.cameraRig;
+    rig?.clearOverride();
+    rig?.goTo(A.dest);
+    A.released = A.aborted = true;
+    if (fromKey) hideChip(A);
+    else A.chip = null; // (the toast's own button takes it away)
+    return true;
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || !active || active.released || ctx.ui?.isModalOpen) return;
+      if (hopOff(true)) e.preventDefault();
+    });
   }
 
   function place(dt) {
@@ -180,20 +229,24 @@ export function createLiftRide(ctx, { elevator, deck }) {
     A.t += dt;
     const st = A.state;
     const live = elevator.hookY;
+    const calling = st.phase === 'call';
+    // From the first frame the lens rides along with the snail wherever it is
+    // on the trunk — beside it, level with it — as it hurries to the station,
+    // and comes down (or up) with it: it never looks up from the roots at a
+    // snail far above under the deck. While the snail is still up in the slot
+    // above the planks the eye waits level under the deck for it to come down
+    // through (it never stares up at the deck's underside).
+    follow(A.v, A.d, live, calling ? 0 : st.progress, LP, L);
+    if (calling) L.y = Math.min(L.y, UNDER + 0.35);
     if (A.t < A.approach) {
       const k = easeInOut(A.t / A.approach);
       if (A.bez) A.bez(A.p0, A.p1, A.p2, A.p3, k, P);
       else P.lerpVectors(A.p0, A.p3, k);
-      // the eye turns towards the snail as it comes (it may still be hurrying to the station)
-      follow(A.v, A.d, live, 0, tmp, L);
+      // the planned glide ends beside the station: it meets the snail where it is now
+      P.addScaledVector(dir.subVectors(LP, A.p3), k);
+      // the eye turns towards the snail as it comes
       L.lerpVectors(A.t0, L, Math.min(1, k * 1.15));
-    } else if (st.phase === 'call') {
-      // at the station: watch it arrive and turn round
-      P.copy(A.p3);
-      follow(A.v, A.d, live, 0, tmp, L);
-    } else {
-      follow(A.v, A.d, live, st.progress, P, L);
-    }
+    } else P.copy(LP);
     rig.setOverride(P, L, elevator.subjectAt(live, tmp));
   }
 
@@ -227,6 +280,7 @@ export function createLiftRide(ctx, { elevator, deck }) {
     // the lift was reset under us (debug setTime / setPhase): let go
     if (elevator.riding !== A.state && !A.state.done) {
       if (!A.released) rig?.clearOverride();
+      hideChip(A);
       active = null;
       return;
     }
@@ -234,6 +288,7 @@ export function createLiftRide(ctx, { elevator, deck }) {
     if (!A.released && (!rig || rig.spot !== A.dest || rig.focused)) {
       rig?.clearOverride();
       A.released = A.aborted = true;
+      hideChip(A);
     }
     if (!A.departed && A.state.phase === 'ride') {
       A.departed = true;
@@ -244,8 +299,10 @@ export function createLiftRide(ctx, { elevator, deck }) {
       rig.clearOverride();
       rig.goTo(A.dest);
       A.released = true;
+      hideChip(A);
     }
     if (A.state.done) {
+      hideChip(A);
       if (!A.aborted) ctx.audio?.play?.('pop'); // arrived
       active = null;
       return;
@@ -260,7 +317,9 @@ export function createLiftRide(ctx, { elevator, deck }) {
     get active() {
       return !!active && !active.released;
     },
-    /** debug: the chosen vantage ({ side, phi, r, score }) */
-    vantage: () => chooseVantage(),
+    /** debug: the chosen vantage ({ side, phi, r, score }); vantage({ side, phi, r }) sets one */
+    vantage: (v) => (v ? (vantage = { score: 0, ...v }) : chooseVantage()),
+    /** hop off a running ride (the lens glides on to the place; Esc does the same) */
+    hopOff: () => hopOff(true),
   };
 }

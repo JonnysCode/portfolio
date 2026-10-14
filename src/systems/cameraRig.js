@@ -128,9 +128,9 @@ const FRAMING = {
   'coffee-table': { radius: 0.62, lift: 0.08, polar: 1.1 },
   'dining-table': { radius: 1.05, polar: 1.12 },
   'about-me': { offset: [0.45, 0.15, -0.55], radius: 1.4, polar: 1.2, distance: 4.4 },
-  // the hero bike, swung round towards the stream, away from the mechanic at its
-  // rear wheel (from the spot's side his head filled the left of the frame)
-  'bike-build': { azimuth: -0.4 },
+  // the hero bike: from the spot camera's own side (the Velowerkstatt shot now looks
+  // three-quarters on at the drive side, the way the close-up always did: −58°)
+  'bike-build': { azimuth: 0 },
   // This Woodland: the lens sits in the big window's opening, so the casement
   // frames and the transom (within a hand's width) dissolve in the near fade
   'this-portfolio': { distance: 1.75 },
@@ -304,6 +304,8 @@ export function createCameraRig(ctx) {
   // ── glides ────────────────────────────────────────────────────────────────
   const camPos = new THREE.Vector3();
   const lookAt = new THREE.Vector3();
+  const arcA = new THREE.Vector3();
+  const arcB = new THREE.Vector3();
 
   /**
    * Glide from wherever the camera is now to an orbit pose along a planned arc.
@@ -345,7 +347,15 @@ export function createCameraRig(ctx) {
       p1 = plan.p1;
       p2 = plan.p2;
     }
-    const dur = duration ?? clamp(1.25 + hop * 0.045, kind === 'spot' ? 1.8 : 1.1, 3.6);
+    // (timed by the arc actually flown: a glide that swings out round the cottages
+    // takes a little longer instead of rushing)
+    let path = 0;
+    for (let i = 1, prev = p0; i <= 12; i++) {
+      const pt = obstacles.bezier(p0, p1, p2, p3, i / 12, i % 2 ? arcA : arcB);
+      path += pt.distanceTo(prev);
+      prev = pt;
+    }
+    const dur = duration ?? clamp(1.25 + Math.max(hop, path * 0.8) * 0.045, kind === 'spot' ? 1.8 : 1.1, 3.6);
     return new Promise((resolve) => {
       transition = {
         kind,

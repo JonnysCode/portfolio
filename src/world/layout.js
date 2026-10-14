@@ -222,7 +222,8 @@ export const SPOTS = [
     icon: '🛋️',
     areas: ['interior'],
     focus: [-21.5, 1.8, 2.5],
-    camera: { position: [-24.6, 3.8, 12.6], target: [-21.4, 2.0, 2.8], fov: 40 },
+    // (half a step back and left of the garden shed's cap: every glide in and out keeps 5 clear of it)
+    camera: { position: [-25.0, 3.9, 12.95], target: [-21.4, 2.0, 2.8], fov: 40 },
     // phones: the open front with the moodboard easel on the left and the model table on the right
     // (from a little higher: the lens looks into the room, and the moss in front is in focus, not a blur)
     portrait: { position: [-24.6, 7.8, 17.2], target: [-22.0, 2.0, 3.4], fov: 52 },
@@ -233,13 +234,19 @@ export const SPOTS = [
     subtitle: 'Bike building · by the bridge',
     icon: '🚲',
     areas: ['bikes'],
-    focus: [16, 1.6, 6.6],
-    camera: { position: [8.5, 4.6, 16.5], target: [15.2, 1.8, 6.2], fov: 40 },
-    // phones: at eye level beside the bridge — the hero bike, the mechanic and the
-    // open door fill the frame, the bell cap crops off at the top (from above, the
-    // cap filled the screen and the bikes were a few pixels tall)
-    portrait: { position: [12.6, 2.5, 13.4], target: [15.6, 1.25, 7.4], fov: 55, focus: [15.0, 0.9, 7.6] },
-    close: { position: [11.0, 6.6, 13.4], target: [16.2, 1.6, 6.8] },
+    // the point of interest is the hero bike (Jonny's own gravel build on its stand)
+    focus: [14.65, 0.6, 8.4],
+    // "the build": low over the stream, three-quarters on the drive side — the hero
+    // bike a third of the frame wide, the open doors and the lit workshop (tool
+    // wall, red cabinet) behind it, the restored bike at the bridge's end on the
+    // left, the hanging sign and the stone arch above (from across the stream the
+    // bike was a speck under a cap that filled the frame)
+    camera: { position: [11.31, 1.45, 10.35], target: [14.99, 0.92, 8.58], fov: 30 },
+    // phones: the same side, closer: the bike across the lower middle (above the spot
+    // bar, the moss under it in focus), the door and the lit room beside it, the
+    // sign and the cap's gills and fairy lights at the top
+    portrait: { position: [11.8, 1.3, 10.26], target: [14.58, 1.45, 8.31], fov: 58, focus: [14.62, 0.55, 8.35] },
+    close: { position: [12.67, 1.1, 9.92], target: [14.62, 0.55, 8.35] },
   },
 ];
 export const SPOT_BY_ID = Object.fromEntries(SPOTS.map((s) => [s.id, s]));

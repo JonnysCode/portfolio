@@ -281,6 +281,19 @@ export function createCameraObstacles(ctx) {
   const side = new THREE.Vector3();
   const UP = new THREE.Vector3(0, 1, 0);
   const SAMPLES = 36;
+  /**
+   * Where a candidate path is sampled: finely (the winners' check — denser right
+   * by both ends, where a glide swings out of / into a shot composed among the
+   * caps) or coarsely (the first sort of every candidate). Each sample weighs the
+   * stretch of path it stands for, so both sums are on one scale.
+   */
+  const FINE_K = [0.008, 0.025, 0.975, 0.992];
+  for (let i = 1; i < 60; i++) FINE_K.push(i / 60);
+  FINE_K.sort((a, b) => a - b);
+  const COARSE_K = [0.02, 0.05, 0.09, 0.16, 0.26, 0.38, 0.5, 0.62, 0.74, 0.84, 0.91, 0.95, 0.98];
+  const sampleWeights = (ks) => ks.map((k, i) => ((ks[i + 1] ?? 1) - (ks[i - 1] ?? 0)) * 0.5 * SAMPLES);
+  const FINE_W = sampleWeights(FINE_K);
+  const COARSE_W = sampleWeights(COARSE_K);
 
   function bezier(p0, p1, p2, p3, t, out) {
     const u = 1 - t;
@@ -301,6 +314,8 @@ export function createCameraObstacles(ctx) {
    * close to a cottage must still be reachable…
    */
   const PLAN_CAP_MARGIN = 5.2;
+  /** How much shaving that berth costs (against running into things: 50, a cap filling the frame: 30). */
+  const SHAVE_W = 12;
   /** …and this much above its apex / below its rim. */
   const PLAN_CAP_ABOVE = 1.2;
   const PLAN_CAP_BELOW = 0.6;
@@ -310,8 +325,16 @@ export function createCameraObstacles(ctx) {
    * radius: 6 units away it still spans more than a 40° frame.)
    */
   let occReach = 6;
+  /**
+   * …but the planner looks a little further: a cap 6–8 units off still fills a
+   * good part of a 40° frame (flying out of the Wohnatelier past Jonny's cottage),
+   * so a glide is planned as if any cap within this reach filled the frame.
+   */
+  let planOccReach = 8;
   /** QA bar (debug.checkGlides): no more than one of the five rays on a cap anywhere along a glide. */
   const OCC_MAX = 0.2;
+  /** QA: the last plan's candidates, best first (coarse scores). */
+  let lastCands = null;
   /** Per plan: the caps near the glide, with the margin each keeps (never more than its endpoints have). */
   const planCaps = [];
 
@@ -331,9 +354,9 @@ export function createCameraObstacles(ctx) {
    * drum from just below the rim to the apex)? Analytic: the span of t inside
    * each drum's circle, clipped to the span inside its height.
    */
-  function rayHitsCap(e, d, tMin, tMax) {
+  function rayHitsCap(e, d, tMin, tMax, list = planCaps) {
     const a = d.x * d.x + d.z * d.z;
-    for (const c of planCaps) {
+    for (const c of list) {
       // height slab
       let lo = tMin, hi = tMax;
       if (Math.abs(d.y) < 1e-6) {
@@ -372,8 +395,16 @@ export function createCameraObstacles(ctx) {
    * Share (0..1) of five rays from the lens (the centre and halfway to each edge of
    * the frame) that run into a cap within occReach: how much of the frame a cap fills.
    */
-  function occupancy(eye, look, tanV, aspect) {
+  const nearCaps = [];
+  function occupancy(eye, look, tanV, aspect, reach = occReach) {
     if (!planCaps.length) return 0;
+    // (only the caps within reach of the lens: most of the glen is far away)
+    nearCaps.length = 0;
+    for (const c of planCaps) {
+      const ex = eye.x - c.x, ez = eye.z - c.z, rr = reach + c.R + 0.15;
+      if (ex * ex + ez * ez <= rr * rr) nearCaps.push(c);
+    }
+    if (!nearCaps.length) return 0;
     of.subVectors(look, eye);
     if (of.lengthSq() < 1e-6) return 0;
     of.normalize();
@@ -384,7 +415,7 @@ export function createCameraObstacles(ctx) {
     let hits = 0;
     for (const [a, b] of OCC_DIRS) {
       oD.copy(of).addScaledVector(oR, a * tanV * aspect).addScaledVector(oU, b * tanV).normalize();
-      if (rayHitsCap(eye, oD, 0.3, occReach)) hits++;
+      if (rayHitsCap(eye, oD, 0.3, reach, nearCaps)) hits++;
     }
     return hits / OCC_DIRS.length;
   }
@@ -400,20 +431,25 @@ export function createCameraObstacles(ctx) {
    * runs into things, how close it shaves the caps, and how often a cap would
    * fill the frame on the way.
    */
-  function cost(p0, p1, p2, p3, look) {
+  function cost(p0, p1, p2, p3, look, ks = FINE_K) {
+    const W = ks === FINE_K ? FINE_W : COARSE_W;
     let pen = 0;
     let shave = 0;
     let occ = 0;
-    for (let i = 3; i < SAMPLES - 2; i++) {
-      const k = i / SAMPLES;
+    for (let j = 0; j < ks.length; j++) {
+      const k = ks[j], w = W[j];
       bezier(p0, p1, p2, p3, k, q);
-      pen += penetration(q);
-      shave += capPlanPenetration(q);
-      if (look && i % 2 === 0) {
-        const o = occupancy(q, lookAtK(look.t0, look.t3, k, lk), look.tanV, look.aspect);
+      // (right by the ends the path is the composed shots' own business; but a cap's
+      // berth is never more than those shots keep anyway, so it counts all along)
+      if (k > 0.08 && k < 0.92) pen += penetration(q) * w;
+      shave += capPlanPenetration(q) * w;
+      // (the frame right after leaving / just before landing counts too: that is
+      // where a glide out of a shot composed among the caps swings past them)
+      if (look) {
+        const o = occupancy(q, lookAtK(look.t0, look.t3, k, lk), look.tanV, look.aspect, planOccReach);
         // (an endpoint that already looks past a cap close by — a close-up by a cottage — sets the bar near it)
         const bar = Math.max(OCC_MAX, look.occ0 + (look.occ3 - look.occ0) * k + 0.01);
-        if (o > bar) occ += o - OCC_MAX;
+        if (o > bar) occ += (o - OCC_MAX) * w;
       }
     }
     return { pen, shave, occ };
@@ -450,8 +486,8 @@ export function createCameraObstacles(ctx) {
       const in0 = p0.y > c.y0 - PLAN_CAP_BELOW - 1 && p0.y < c.y1 + PLAN_CAP_ABOVE + 1;
       const in3 = p3.y > c.y0 - PLAN_CAP_BELOW - 1 && p3.y < c.y1 + PLAN_CAP_ABOVE + 1;
       let m = PLAN_CAP_MARGIN;
-      if (in0) m = Math.min(m, d0 - 0.15);
-      if (in3) m = Math.min(m, d3 - 0.15);
+      if (in0) m = Math.min(m, d0);
+      if (in3) m = Math.min(m, d3);
       planCaps.push({ x: c.x, z: c.z, R, y0: c.y0, y1: c.y1, m: Math.max(0.6, m), above: PLAN_CAP_ABOVE });
       // leaving / landing among the caps (within 4 of a rim, below its apex + 1.5)
       if (d0 < 4 && p0.y < c.y1 + 1.5) apex0 = Math.max(apex0, c.y1 + 1.5);
@@ -461,8 +497,8 @@ export function createCameraObstacles(ctx) {
     if (t0 && t3 && !legacy) {
       const tanV = Math.tan(THREE.MathUtils.degToRad(fov) / 2);
       look = { t0, t3, tanV, aspect, occ0: 0, occ3: 0 };
-      look.occ0 = occupancy(p0, t0, tanV, aspect);
-      look.occ3 = occupancy(p3, t3, tanV, aspect);
+      look.occ0 = occupancy(p0, t0, tanV, aspect, planOccReach);
+      look.occ3 = occupancy(p3, t3, tanV, aspect, planOccReach);
     }
     // a gentle arc (the preferred lift), flatter, or higher; straight, or bent sideways
     // (far round the front of the glen, if need be) — and, leaving or landing among
@@ -476,41 +512,57 @@ export function createCameraObstacles(ctx) {
       const n1 = need1 ?? lift, n2 = need2 ?? lift;
       pairs.push([Math.max(n1, lift), Math.max(n2, lift * 0.45)], [Math.max(n1, lift), Math.max(n2, lift)], [Math.max(n1, lift + 3), Math.max(n2, lift + 3)]);
     }
-    let best = null;
-    const tryHandles = (p1, p2, detour) => {
-      const c = cost(p0, p1, p2, p3, look);
-      // clear first (nothing run into, no cap shaved, no frame full of cap), then
-      // as close to the preferred arc and as straight as possible
-      const score = c.pen * 50 + (legacy ? 0 : c.shave * 6) + c.occ * 30 + detour;
-      if (!best || score < best.score) best = { p1, p2, score, pen: c.pen, shave: c.shave, occ: c.occ };
+    // every candidate is scored on a coarse sampling first; the most promising few
+    // are then scored on the full one (planning stays a few ms per glide)
+    const cands = [];
+    const add = (p1, p2, detour) => {
+      const c = cost(p0, p1, p2, p3, look, COARSE_K);
+      cands.push({ p1, p2, detour, score: c.pen * 50 + (legacy ? 0 : c.shave * SHAVE_W) + c.occ * 30 + detour });
     };
     for (const [l1, l2] of pairs) {
       for (const sd of sides) {
         const off = sd * len;
         const p1 = new THREE.Vector3().copy(p0).addScaledVector(dir, 0.3).addScaledVector(UP, l1).addScaledVector(side, off);
         const p2 = new THREE.Vector3().copy(p0).addScaledVector(dir, 0.7).addScaledVector(UP, l2).addScaledVector(side, off);
-        tryHandles(p1, p2, (Math.abs(l1 - lift) + Math.abs(l2 - lift)) * 0.15 + Math.abs(off) * 0.22);
+        add(p1, p2, (Math.abs(l1 - lift) + Math.abs(l2 - lift)) * 0.15 + Math.abs(off) * 0.22);
       }
     }
-    // backing out of the start's composed shot along its own line of sight and / or
-    // dollying into the end's along its own: the caps those shots are composed round
-    // stay beside or behind the lens (the Wohnatelier among its cottages)
+    // leaving / landing among the caps: back out of the start's composed shot along
+    // its own line of sight, or rise straight up out of it first (and land the same
+    // way round: dolly in, or sink in from above) — the caps the shot is composed
+    // round stay beside, behind or below the lens (the Wohnatelier among its cottages)
     if (look && !legacy && planCaps.length) {
       const back0 = new THREE.Vector3().subVectors(p0, t0).setY(0);
       const back3 = new THREE.Vector3().subVectors(p3, t3).setY(0);
       if (back0.lengthSq() > 1e-6 && back3.lengthSq() > 1e-6) {
         back0.normalize();
         back3.normalize();
-        for (const k of [0.3, 0.55]) {
-          for (const l of [0, 2.5, 5.5]) {
-            for (const mode of [0, 1, 2]) {
-              const p1 = mode === 2 ? new THREE.Vector3().copy(p0).addScaledVector(dir, 0.3).addScaledVector(UP, l) : new THREE.Vector3().copy(p0).addScaledVector(back0, len * k).addScaledVector(UP, l);
-              const p2 = mode === 1 ? new THREE.Vector3().copy(p0).addScaledVector(dir, 0.7).addScaledVector(UP, l) : new THREE.Vector3().copy(p3).addScaledVector(back3, len * k).addScaledVector(UP, l);
-              tryHandles(p1, p2, 1.2 + l * 0.15 + k * 2);
-            }
-          }
+        const specials = (P, back, out) => {
+          for (const k of [0.15, 0.3]) for (const l of [2, 5]) out.push({ p: new THREE.Vector3().copy(P).addScaledVector(back, len * k).addScaledVector(UP, l), d: 1 + l * 0.15 + k * 2 });
+          for (const h of [4, 7, 10]) out.push({ p: new THREE.Vector3().copy(P).addScaledVector(back, 2).addScaledVector(UP, h), d: 1 + h * 0.12 });
+          return out;
+        };
+        const S1 = specials(p0, back0, []), S2 = specials(p3, back3, []);
+        const T1 = [], T2 = [];
+        for (const l of [lift, lift + 3, lift + 6.5]) {
+          T1.push({ p: new THREE.Vector3().copy(p0).addScaledVector(dir, 0.3).addScaledVector(UP, l), d: Math.abs(l - lift) * 0.15 });
+          T2.push({ p: new THREE.Vector3().copy(p0).addScaledVector(dir, 0.7).addScaledVector(UP, l), d: Math.abs(l - lift) * 0.15 });
         }
+        for (const a of S1) for (const b of S2) add(a.p, b.p, a.d + b.d);
+        for (const a of S1) for (const b of T2) add(a.p, b.p, a.d + b.d);
+        for (const a of T1) for (const b of S2) add(a.p, b.p, a.d + b.d);
       }
+    }
+    cands.sort((a, b) => a.score - b.score);
+    lastCands = cands;
+    let best = null;
+    for (let i = 0; i < Math.min(8, cands.length); i++) {
+      const { p1, p2, detour } = cands[i];
+      const c = cost(p0, p1, p2, p3, look);
+      // clear first (nothing run into, no cap shaved, no frame full of cap), then
+      // as close to the preferred arc and as straight as possible
+      const score = c.pen * 50 + (legacy ? 0 : c.shave * SHAVE_W) + c.occ * 30 + detour;
+      if (!best || score < best.score) best = { p1, p2, score, pen: c.pen, shave: c.shave, occ: c.occ };
     }
     return best;
   }
@@ -525,24 +577,41 @@ export function createCameraObstacles(ctx) {
     for (const c of capList) planCaps.push({ x: c.x, z: c.z, R: c.R ?? c.r - 0.6, y0: c.y0, y1: c.y1, m: 0.6, above: 0 });
     const tanV = Math.tan(THREE.MathUtils.degToRad(fov) / 2);
     let worstOcc = 0, worstK = 0, minGap = Infinity;
+    // (farOcc: the worst share of the frame a cap up to planOccReach off fills, beyond what the shots at either end already show)
+    let farOcc = 0;
+    const occ0 = occupancy(p0, t0, tanV, aspect, planOccReach), occ3 = occupancy(p3, t3, tanV, aspect, planOccReach);
+    // how close the composed shots at either end already stand to a cap rim (a
+    // glide can never keep more air than its own ends; the planner's test of
+    // "among the caps": within a unit of the band the gap is measured in)
+    let endGap = Infinity;
+    for (const E of [p0, p3]) {
+      for (const c of capList) {
+        if (E.y < c.y0 - PLAN_CAP_BELOW - 1 || E.y > c.y1 + PLAN_CAP_ABOVE + 1) continue;
+        endGap = Math.min(endGap, Math.hypot(E.x - c.x, E.z - c.z) - (c.R ?? c.r - 0.6));
+      }
+    }
     const P = new THREE.Vector3();
     for (let i = 1; i < 60; i++) {
       const k = i / 60;
       bezier(p0, p1, p2, p3, k, P);
       const o = occupancy(P, lookAtK(t0, t3, k, lk), tanV, aspect);
       if (o > worstOcc) (worstOcc = o), (worstK = k);
+      farOcc = Math.max(farOcc, occupancy(P, lookAtK(t0, t3, k, lk), tanV, aspect, planOccReach) - Math.max(occ0, occ3));
       for (const c of capList) {
         if (P.y < c.y0 - 0.6 || P.y > c.y1 + 1.2) continue;
         minGap = Math.min(minGap, Math.hypot(P.x - c.x, P.z - c.z) - (c.R ?? c.r - 0.6));
       }
     }
-    return { worstOcc, worstK: +worstK.toFixed(2), minGap: +minGap.toFixed(2) };
+    return { worstOcc, worstK: +worstK.toFixed(2), minGap: +minGap.toFixed(2), endGap: +endGap.toFixed(2), farOcc: +Math.max(0, farOcc).toFixed(2) };
   }
 
   return {
     penetration,
     plan,
     auditGlide,
+    get lastCandidates() {
+      return lastCands;
+    },
     set legacyPlan(on) {
       legacy = !!on;
     },
@@ -550,9 +619,38 @@ export function createCameraObstacles(ctx) {
     set occReach(v) {
       occReach = v;
     },
+    /** QA: how far the planner counts a cap as filling the frame (default 8). */
+    set planOccReach(v) {
+      planOccReach = v;
+    },
     bezier,
     decorAlong,
     rebuild: build,
+    /** QA: the shapes as plain JSON (scripts can plan glides offline with loadShapes). */
+    dumpShapes() {
+      ensure();
+      const v3 = (p) => [+p.x.toFixed(3), +p.y.toFixed(3), +p.z.toFixed(3)];
+      return {
+        cyl: cyl.map((c) => ({ ...c })),
+        caps: caps.map((c) => ({ a: v3(c.a), b: v3(c.b), r: c.r })),
+        crown,
+        decor: decor.map((d) => (d.kind === 's' ? { ...d } : { kind: d.kind, a: v3(d.a), b: v3(d.b), r: d.r })),
+      };
+    },
+    /** QA: plan against dumped shapes instead of the scene (offline planner checks). */
+    loadShapes(data) {
+      cyl.length = 0;
+      caps.length = 0;
+      for (const c of data.cyl) cyl.push({ ...c });
+      for (const c of data.caps) caps.push({ a: new THREE.Vector3(...c.a), b: new THREE.Vector3(...c.b), r: c.r });
+      crown = data.crown;
+      capList.length = 0;
+      for (const c of cyl) if (c.cap) capList.push(c);
+      decor.length = 0;
+      decorGrid.clear();
+      for (const d of data.decor) addDecor(d.kind === 's' ? { ...d } : { kind: d.kind, a: new THREE.Vector3(...d.a), b: new THREE.Vector3(...d.b), r: d.r });
+      builtAt = ctx.colliders?.version ?? 0;
+    },
     /** Debug: the shapes the camera avoids. */
     get shapes() {
       ensure();

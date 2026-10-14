@@ -499,17 +499,13 @@ export function buildYard(ctx, B, mats) {
   }
   {
     // a twig besom leaning on the outside of the porch's left post — and the
-    // little heap it swept together beside it
+    // workshop floor it swept out of the door: a heap of sawdust & chips on
+    // the door apron's flags, pushed aside right of the threshold
     const foot = annexToWorld(0.72, 0.02, hz + 1.86);
     const top = annexToWorld(0.97, 1.18, hz + 1.6);
     addBesom(B, mats, rng, foot, top);
     keep.push({ x: foot.x, z: foot.z, r: 0.2 });
-    // (beside the broom, clear of the stepping stones — a flag laid over it
-    // would hide it)
-    const clear = (p) => stones.every((st) => Math.hypot(p.x - st.x, p.z - st.z) > st.r + 0.2);
-    const heap = [[0.5, 2.02], [0.42, 1.78], [0.95, 2.25], [0.3, 2.3], [1.05, 2.0]].map(([x, z]) => annexToWorld(x, 0, hz + z)).find(clear) ?? annexToWorld(0.42, 0, hz + 1.78);
-    addSawdust(B, mats, rng, getHeight, heap.x, heap.z, { r: 0.09, h: 0.03, chips: 5 });
-    keep.push({ x: heap.x, z: heap.z, r: 0.16 });
+    addSawdust(F, mats, rng, () => 0.031, 0.36, hz + 0.36, { r: 0.085, h: 0.032, chips: 5, yaw: 0.3 });
   }
   {
     // sawdust swept into the corners: against the plinth beside the workshop
@@ -517,7 +513,7 @@ export function buildYard(ctx, B, mats) {
     // (old, darkened by rain), a fresher drift on top of one
     const D0 = ctx.layout.OAK.door;
     const corners = [
-      { p: annexToWorld(-1.34, 0, hz + 0.17), r: 0.11, tone: 'old' },
+      { p: annexToWorld(-1.45, 0, hz + 0.32), r: 0.1, tone: 'old' },
       { p: new THREE.Vector3(D0.x - 0.98, 0, D0.z + 1.42), r: 0.1, tone: 'old' },
       { p: new THREE.Vector3(D0.x + 1.02, 0, D0.z + 1.38), r: 0.12, tone: 'old' },
       { p: new THREE.Vector3(D0.x + 0.94, 0, D0.z + 1.5), r: 0.07, tone: 'fresh' },

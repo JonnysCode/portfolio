@@ -17,6 +17,9 @@
 //                     lanterns and fairy lights along its rope handrail
 //   loft/elevator.js  the snail lift crawling up and down the bark between a
 //                     stilted boarding platform on the roots and the deck
+//   loft/ride.js      the camera riding along on the snail lift
+//   loft/foliage.js   leafy boughs out of the trunk beside the treehouse,
+//                     sprouts on the lower limbs, vines hanging from them
 //   loft/kit.js       geometry helpers, materials and per-material batching,
 //                     the per-tier level of detail (setDetail)
 //
@@ -53,6 +56,7 @@ import { createBoards } from './loft/boards.js';
 import { buildProps } from './loft/props.js';
 import { buildStairs } from './loft/stairs.js';
 import { buildElevator } from './loft/elevator.js';
+import { buildFoliage } from './loft/foliage.js';
 import { createLiftRide } from './loft/ride.js';
 import { makeSmoke } from './cottage/smoke.js';
 import { sharedUniforms } from '../core/materials.js';
@@ -102,6 +106,9 @@ export default async function build(ctx) {
   const stairs = buildStairs(ctx, B, mats, env, { deck });
   await tick();
   const elevator = buildElevator(ctx, B, mats, env, { deck, updates });
+  // leafy boughs and vines round the deck (its own random stream: nothing above
+  // shifts; debug: ?loftfoliage=0 leaves them out)
+  const foliage = ctx.engine?.params?.get?.('loftfoliage') === '0' ? { cards: 0 } : buildFoliage(ctx, B, mats, env, { deck });
 
   // ── merge the static geometry ─────────────────────────────────────────────
   B.build(root, 'loft', { mergeShadow: true, splitShadow: shadows, remap: smallBitsRemap(mats) });
@@ -262,7 +269,7 @@ export default async function build(ctx) {
     },
     screens: scr,
   };
-  root.userData.stats = { tris: B.tris };
+  root.userData.stats = { tris: B.tris, leafCards: foliage.cards };
   // screenshot harness probe: draw calls / triangles of this module (eval window.__loftStats())
   if (ctx.engine?.params?.has?.('shots')) {
     window.__loftStats = () => {

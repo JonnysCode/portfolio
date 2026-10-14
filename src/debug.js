@@ -16,7 +16,8 @@ export function buildViews() {
   };
   for (const s of SPOTS) {
     const p = s.camera.position, t = s.camera.target;
-    views[s.id] = { position: p, target: t, focus: s.focus };
+    // (with the spot's own lens: the Velowerkstatt is composed at 30°)
+    views[s.id] = { position: p, target: t, focus: s.focus, fov: s.camera.fov ?? 40 };
     const lerpTo = (k) => [t[0] + (p[0] - t[0]) * k, t[1] + (p[1] - t[1]) * k, t[2] + (p[2] - t[2]) * k];
     views[`${s.id}-wide`] = { position: lerpTo(1.8), target: t };
     views[`${s.id}-close`] = s.close ?? { position: lerpTo(0.55), target: s.focus ?? t };
@@ -147,13 +148,14 @@ export function installDebug(ctx) {
     /**
      * QA gate over auditGlides(): every glide between two spots must keep a cap
      * out of the frame (worstOcc ≤ maxOcc: at most one of the five rays on a cap)
-     * and its rim at a distance (minGap ≥ minGap). A regression logs a
-     * console.error — scripts/shots.mjs and flow.mjs then exit 1:
+     * and its rim at a distance (minGap ≥ minGap — or, where a composed shot at
+     * one end already stands closer to a cap, no closer than that end: endGap).
+     * A regression logs a console.error — scripts/shots.mjs and flow.mjs then exit 1:
      *   npm run shots -- --eval "__woodland.debug.checkGlides()" --views overview
      */
     checkGlides({ maxOcc = 0.2, minGap = 5, ids } = {}) {
       const res = api.auditGlides(ids);
-      const bad = res.filter((r) => r.worstOcc > maxOcc + 1e-6 || (Number.isFinite(r.minGap) && r.minGap < minGap));
+      const bad = res.filter((r) => r.worstOcc > maxOcc + 1e-6 || (Number.isFinite(r.minGap) && r.minGap < Math.min(minGap, (r.endGap ?? Infinity) - 0.15)));
       let occ = 0, gap = Infinity;
       for (const r of res) {
         occ = Math.max(occ, r.worstOcc);

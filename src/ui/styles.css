@@ -107,14 +107,21 @@ button { font: inherit; color: inherit; }
 }
 .hud > * { pointer-events: auto; }
 .plate {
-  position: relative; padding: 9px 26px 10px; border-radius: 12px 14px 11px 13px; transform: rotate(-1.2deg);
-  color: #2e1b0e;
+  position: relative; display: block; margin: 0; border: 0; padding: 9px 26px 10px; border-radius: 12px 14px 11px 13px; transform: rotate(-1.2deg);
+  font: inherit; text-align: left; cursor: pointer; color: #2e1b0e;
+  transition: transform 0.25s cubic-bezier(.3, 1.6, .5, 1);
   background:
     repeating-linear-gradient(92deg, rgba(60, 30, 10, 0) 0 9px, rgba(60, 30, 10, 0.08) 9px 10px, rgba(60, 30, 10, 0) 10px 23px),
     repeating-radial-gradient(ellipse at 18% 140%, rgba(70, 38, 14, 0.14) 0 3px, rgba(70, 38, 14, 0) 3px 9px),
     linear-gradient(176deg, #b9834e, #9a6638 45%, #8a5a30);
   box-shadow: inset 0 2px 0 rgba(255, 214, 160, 0.35), inset 0 -3px 0 rgba(40, 20, 6, 0.35), inset 0 0 0 1.5px rgba(40, 20, 6, 0.5), var(--shadow);
 }
+/* the name plate is a button ("who is this?" → About): a little lift under the pointer */
+.plate:hover { transform: rotate(-1.2deg) translateY(-3px) scale(1.03); }
+.plate:active { transform: rotate(-1.2deg) scale(0.98); }
+.plate.is-hinting { animation: plateHint 1.6s ease-in-out 2; }
+@keyframes plateHint { 0%, 100% { transform: rotate(-1.2deg); } 30% { transform: rotate(-3.2deg) translateY(-3px) scale(1.04); } 62% { transform: rotate(0.8deg) translateY(-1px); } }
+.plate__name, .plate__tag { display: block; }
 .plate__name { font-family: var(--font-display); font-weight: 600; font-size: 21px; letter-spacing: 0.01em; line-height: 1.1; text-shadow: 0 1px 0 rgba(255, 220, 170, 0.45), 0 -1px 0 rgba(30, 12, 2, 0.55); }
 .plate__tag { font-family: var(--font-hand); font-size: 15px; color: #3d250f; opacity: 0.85; text-shadow: 0 1px 0 rgba(255, 220, 170, 0.35); }
 .plate__nail { position: absolute; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #d6d0c4, #6f6a60 60%, #3e3a33); box-shadow: 0 1px 1px rgba(0, 0, 0, 0.4); }
@@ -151,7 +158,15 @@ button { font: inherit; color: inherit; }
   box-shadow: inset 0 0 0 1px rgba(246, 215, 138, 0.22), 0 10px 30px rgba(0, 0, 0, 0.3);
   transition: opacity 0.8s ease, visibility 0.8s, transform 0.45s cubic-bezier(.2, .8, .2, 1);
 }
-.spotbar__list { position: relative; list-style: none; display: flex; gap: 4px; margin: 0; padding: 0; overflow-x: auto; scrollbar-width: none; }
+.spotbar__list {
+  position: relative; list-style: none; display: flex; gap: 4px; margin: 0; padding: 0; overflow-x: auto; scrollbar-width: none;
+  /* a pill cut off by the edge fades out (only on the side where something is hidden: index.js) */
+  --fl: 0px; --fr: 0px;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--fl), #000 calc(100% - var(--fr)), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 var(--fl), #000 calc(100% - var(--fr)), transparent 100%);
+}
+.spotbar__list.is-clip-l { --fl: 28px; }
+.spotbar__list.is-clip-r { --fr: 28px; }
 .spotbar__list::-webkit-scrollbar { display: none; }
 .spotbar__arrow { flex: none; width: 38px; height: 38px; padding: 8px; border: 0; border-radius: 50%; cursor: pointer; color: #f4e9cf; background: rgba(255, 240, 210, 0.1); transition: background 0.2s; }
 .spotbar__arrow:hover { background: rgba(255, 240, 210, 0.22); }
@@ -435,6 +450,21 @@ button { font: inherit; color: inherit; }
 .cutlist thead th { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); border-bottom: 1.5px solid rgba(90, 60, 25, 0.45); }
 .cutlist tbody th { font-weight: 600; color: var(--ink); width: 34%; }
 .cutlist__pos { width: 2.6em; font-family: var(--font-hand); font-size: 17px; color: var(--berry); }
+/* "In this miniature — look closer": what the little model in the glen shows (styled like the Stückliste) */
+.mini { margin: 18px 0 8px; padding: 12px 14px 10px; background: rgba(250, 244, 228, 0.82); border-radius: 2px; box-shadow: 0 1px 0 rgba(90, 60, 25, 0.25), 0 4px 10px rgba(60, 40, 15, 0.12); transform: rotate(0.35deg); }
+.mini__title { margin: 0; font-family: var(--font-hand); font-weight: 400; font-size: 21px; line-height: 1.15; }
+.mini__title span { font-size: 16px; color: var(--ink-soft); }
+.mini__note { margin: 1px 0 6px; font-size: 12px; letter-spacing: 0.02em; color: var(--ink-soft); }
+.mini__list { list-style: none; margin: 0; padding: 0; counter-reset: none; }
+.mini__list li { display: grid; grid-template-columns: 2.1em 1fr; align-items: baseline; padding: 5px 2px 5px 0; border-top: 1px solid rgba(90, 60, 25, 0.22); font-size: 14px; line-height: 1.4; color: #33251a; }
+.mini__list li:first-child { border-top-width: 1.5px; border-top-color: rgba(90, 60, 25, 0.45); }
+.mini__pos { font-family: var(--font-hand); font-size: 16px; line-height: 1; color: var(--berry); }
+/* only a sentence to say (no story yet): the polaroid large, under the words — a photo page */
+.journal__body.is-short > .journal__figure.is-large { float: none; width: min(86%, 318px); margin: 10px auto 26px; }
+.journal__body.is-short > .journal__figure.is-large .polaroid.is-photo { --tilt: -1.6deg; padding: 8px 8px 4px; }
+.journal__body.is-short > .journal__figure.is-large .polaroid.is-photo figcaption { font-size: 15px; padding-top: 4px; }
+.journal__body.is-short > .journal__figure.is-large .polaroid.is-tucked { right: -22px; bottom: -16px; width: 38%; }
+.journal__body.is-short > p:last-of-type { margin-bottom: 4px; }
 .journal__tags, .guide__more .journal__tags { list-style: none; display: flex; flex-wrap: wrap; gap: 8px 10px; margin: 16px 0 6px; padding: 0; }
 .paper-tag {
   position: relative; padding: 4px 11px 4px 20px; font-family: var(--font-hand); font-size: 16px; color: var(--ink);
@@ -528,6 +558,13 @@ button { font: inherit; color: inherit; }
 .guide__meta { margin: 3px 0 0; font-size: 13px; color: var(--ink-soft); }
 .guide__summary { margin: 6px 0 0; font-size: 14.5px; line-height: 1.45; }
 .guide__more { margin-top: 6px; font-size: 14.5px; line-height: 1.5; }
+.guide__mini { margin: 5px 0 0; font-size: 13.5px; line-height: 1.4; color: var(--ink-soft); }
+.guide__minik { font-family: var(--font-hand); font-size: 15.5px; color: var(--berry); }
+.guide__minilist { margin: 6px 0 4px; }
+.guide__minilist .guide__minik { margin: 0; }
+.guide__minilist ol { margin: 2px 0 0; padding-left: 1.4em; font-size: 13.5px; line-height: 1.45; }
+.guide__minilist li { margin: 2px 0; }
+.guide__minilist li::marker { font-family: var(--font-hand); color: var(--berry); }
 .guide__more summary { cursor: pointer; font-family: var(--font-hand); font-size: 16px; color: var(--berry); }
 .guide__facts { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 8px 0; font-size: 13.5px; }
 .guide__facts dt { font-weight: 600; }
@@ -645,7 +682,7 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px 4px; text-align: 
   /* for a moment after each arrival every place shows its name (then icons again) */
   .spotbar.is-named .spot-pill:not(.is-current) .spot-pill__name { display: inline; }
   .spot-pill.is-current { padding: 0 12px 0 8px; }
-  .spotbar__list { padding: 0 6px; mask-image: linear-gradient(90deg, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%); -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 8px, #000 calc(100% - 8px), transparent 100%); }
+  .spotbar__list { padding: 0 6px; }
   .spot-label__text small { display: none; }
   .spot-label__text b { font-size: 16px; }
   .spot-label__icon { width: 26px; height: 26px; padding: 4px; }
@@ -725,6 +762,7 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px 4px; text-align: 
   .journal__navbtn { padding: 3px 4px; font-size: 16px; }
   .polaroid { width: min(100%, calc(30vh * 1.5 + 20px)); margin: 10px auto 6px; }
   .journal__body > .journal__figure { width: min(44%, 164px); margin: 4px -2px 16px 14px; }
+  .journal__body.is-short > .journal__figure.is-large { width: min(74%, 250px); margin: 8px auto 22px; }
   .journal__figure .polaroid.is-photo { width: 100%; margin: 0; }
   .ccard { margin: 12px 2px 10px; padding: 10px 14px 11px 16px; }
   .ccard__name { font-size: 30px; }

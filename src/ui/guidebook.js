@@ -9,12 +9,16 @@
 // running, a live polaroid of the piece (taken once a card scrolls into view,
 // the pencil sketch until then). "Read the whole page" only folds away real
 // words: a card whose page holds nothing beyond its summary shows its tags inline.
+// A piece with a model in the glen says in a line what its miniature shows ("In the
+// miniature: breadboard ends with draw-bore pegs · …"), the full list folded away
+// ("Look closer at the miniature") — the model only (src/content/miniatures.js).
 // ─────────────────────────────────────────────────────────────────────────────
 import { SPOTS } from '../world/layout.js';
 import { h } from './dom.js';
 import { icon, spotIcon } from './icons.js';
 import { sketchFor } from './sketches.js';
 import { presentEntry, reachOut, showDrafts, withoutMailPromise } from './draft.js';
+import { miniatureFor } from '../content/miniatures.js';
 
 const LINK_ICON = { github: 'github', linkedin: 'linkedin' };
 
@@ -84,8 +88,13 @@ export function renderGuidebook(ctx, { show3d = true, onShow, onVisit, linkFor, 
       e.kind === 'contact' && contact.cloneNode(true),
       e.links?.length && h('div', { class: 'journal__links' }, e.links.map((l) => h('a', { class: 'stamp-btn', href: l.href, target: '_blank', rel: 'noopener' }, h('span', { html: icon('link') }), l.label))),
     ].filter(Boolean);
-    // only real words are folded away: tags and buttons alone show inline
-    const more = words.length ? [...words, tags, ...extras].filter(Boolean) : [];
+    // what the piece's little model in the glen shows: a line at a glance, the full list folded away
+    // (the no-WebGL fallback has no glen to look at: no miniature lines there)
+    const mini = show3d ? miniatureFor(e.id) : null;
+    const glance = mini?.glance.length ? h('p', { class: 'guide__mini' }, h('span', { class: 'guide__minik' }, 'In the miniature: '), mini.glance.join(' · ')) : null;
+    const miniList = mini ? h('div', { class: 'guide__minilist' }, h('p', { class: 'guide__minik' }, 'Built into the little model in the glen'), h('ol', {}, mini.lines.map((t) => h('li', {}, t)))) : null;
+    // only real words (and the miniature's list) are folded away: tags and buttons alone show inline
+    const more = words.length ? [...words, miniList, tags, ...extras].filter(Boolean) : miniList ? [miniList] : [];
     const inline = words.length ? [] : [tags, ...extras].filter(Boolean);
     const thumb = h('div', { class: 'guide__thumb', html: e.images?.length ? '' : sketchFor(e) }, e.images?.length ? h('img', { src: e.images[0].src, alt: e.images[0].alt ?? '', loading: 'lazy' }) : null);
     if (!e.images?.length && polaroids?.available(e.id)) livePhoto(thumb, e);
@@ -99,8 +108,9 @@ export function renderGuidebook(ctx, { show3d = true, onShow, onVisit, linkFor, 
         h('h4', { id: `guide-e-${e.id}` }, e.title, visited && h('span', { class: 'guide__leaf', title: 'In your journal', html: icon('leaf') })),
         meta && h('p', { class: 'guide__meta' }, meta, shown.yearDraft && showDrafts ? h('span', { class: 'guide__draft' }, 'year: draft') : null),
         e.summary && h('p', { class: 'guide__summary' }, e.summary),
+        glance,
         inline,
-        more.length > 0 && h('details', { class: 'guide__more' }, h('summary', {}, 'Read the whole page'), more),
+        more.length > 0 && h('details', { class: 'guide__more' }, h('summary', {}, words.length ? 'Read the whole page' : 'Look closer at the miniature'), more),
         show3d &&
           h(
             'div',

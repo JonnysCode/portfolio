@@ -25,9 +25,14 @@
 //
 // Carrier frame: +Y out of the bark, +Z up the trunk (snail heading up).
 // The snail turns about the axis through its shell (so the hook stays put).
+// It is a caramel garden snail with a banded russet shell and a dark spiral,
+// the shell tipped over sideways the way a snail's hangs on a wall — its
+// spiral turned out to the side the glen sees the track from — and a little
+// brass davit reaching from the saddle over to the hook.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { OAK } from '../../world/layout.js';
+import { OAK, SPOT_BY_ID } from '../../world/layout.js';
+import { palette } from '../../core/palette.js';
 import { getHeight } from '../../world/ground.js';
 import { DEG, TAU, IRON, BRASS, OLD_OAK, OLD_POLE, BOUGH_BARK, DARK_OAK, LICHEN, lodRadial, addFlowerTuft, addToadstool, Batch, smallBitsRemap, polar, radial, board, timber, branch, tubeAlong, xf, stoneGeo, mossGeo, ivyCard, lashing, weatherPaint, lichenGeo, crookedPath, sagCurve } from './kit.js';
 import { ELEVATOR_AZ, LIFT } from './deck.js';
@@ -38,6 +43,19 @@ const ARM = LIFT.arm; // hook arm length out of the saddle
 const HANG = 0.46; // hook → basket rim
 const BASKET_H = 0.32;
 const SPEED = 0.36; // units per second
+/**
+ * The lift snail's look: a caramel body (a pale one read as a seal holding a
+ * lifebuoy from the Code Loft), a russet shell with a dark chocolate spiral
+ * line and banded whorls, the blue saddle blanket.
+ */
+const LOOK = { bodyColor: '#d39a5c', shellColor: '#c2602e', stripe: '#3a1b0f', blanket: '#3f6f8f' };
+/**
+ * Snails on a wall carry their shell tipped over sideways: the shell rolls
+ * this far (rad) about the body's long axis so its spiral turns out from the
+ * bark towards the side the glen looks from (the Code Loft, the Schreinerei
+ * and the ride all see the track from the same side) — whichever way it heads.
+ */
+const SHELL_ROLL = 0.42;
 
 export function buildElevator(ctx, B, mats, env, { updates }) {
   if (!ctx.props?.makeSnail) return null;
@@ -48,7 +66,8 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
   const up = new THREE.Vector3(0, 1, 0);
 
   // ── the snail on its carrier ──────────────────────────────────────────────
-  const snail = ctx.props.makeSnail({ seed: 'loft-lift', shellColor: '#d9673b', stripe: '#fff3d6', blanket: '#3f6f8f', scale: SCALE });
+  const snail = ctx.props.makeSnail({ seed: 'loft-lift', ...LOOK, scale: SCALE });
+  bandShell(snail);
   const carrier = new THREE.Group();
   carrier.name = 'loft-snail-lift';
   const pivot = new THREE.Group(); // at the shell, rotates about the bark normal (local Y)
@@ -63,15 +82,57 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
   pivot.position.set(0, 0, shellZ);
   snail.group.position.set(0, 0, -shellZ);
   pivot.add(snail.group);
-  // the brass hook arm out of the saddle, along the pivot axis (stays put when turning)
+  const hookLocal = new THREE.Vector3(seat.x, seat.y + ARM, 0); // in the pivot frame (pivot sits at z = shellZ)
+  // The shell rolls on its own bone (props/snail.js: the seat rides on it)
+  // about the coil's centre line; the hook stays on the pivot axis — it holds
+  // the basket in the track's slots — and a little brass davit reaches over to
+  // it from the saddle.
+  const shellBone = snail.seat.parent;
+  const boneRest = shellBone.position.clone();
+  const seatG = snail.seat.position.clone(); // the seat in the snail's own (unscaled) frame
+  const coilY = seatG.y - 0.74; // the coil's centre line, under the saddle's crown
+  let rod = null;
   {
     const HB = new Batch();
-    HB.add(mats.metal(BRASS), xf(new THREE.CylinderGeometry(0.018, 0.022, ARM, 6), [seat.x, seat.y + ARM / 2, 0]), { cast: false });
     HB.add(mats.metal(BRASS), xf(new THREE.TorusGeometry(0.04, 0.01, 4, 10, Math.PI * 1.3), [seat.x, seat.y + ARM + 0.01, 0.0], [0, Math.PI / 2, -0.3]), { cast: false });
-    HB.add(mats.metal(BRASS), xf(new THREE.SphereGeometry(0.035, 8, 6), [seat.x, seat.y, 0]), { cast: false });
+    HB.add(mats.metal(BRASS), xf(new THREE.SphereGeometry(0.026, 8, 6), [hookLocal.x, hookLocal.y - 0.012, 0]), { cast: false });
     HB.build(pivot, 'lift-hook', { mergeShadow: true, remap: smallBitsRemap(mats) });
+    // the davit: a unit rod along +Y, stretched from the saddle to the hook every frame
+    const RB = new Batch();
+    RB.add(mats.metal(BRASS), new THREE.CylinderGeometry(0.018, 0.022, 1, 6).translate(0, 0.5, 0), { cast: false });
+    [rod] = RB.build(pivot, 'lift-hook-arm', { remap: smallBitsRemap(mats) });
+    // its knob sits on the saddle (it rolls and sways with the shell)
+    const KB = new Batch();
+    KB.add(mats.metal(BRASS), new THREE.SphereGeometry(0.035 / SCALE, 8, 6), { cast: false });
+    const [knob] = KB.build(snail.seat, 'lift-hook-knob', { remap: smallBitsRemap(mats) });
+    if (knob) knob.raycast = () => {};
   }
-  const hookLocal = new THREE.Vector3(seat.x, seat.y + ARM, 0); // in the pivot frame (pivot sits at z = shellZ)
+  const _rollA = new THREE.Vector3();
+  const _rollD = new THREE.Vector3();
+  const _rollQ = new THREE.Quaternion();
+  const _rollS = new THREE.Vector3();
+  const Y1 = new THREE.Vector3(0, 1, 0);
+  /** Roll the shell by th (rad) about the coil's centre line; the davit follows. */
+  function rollShell(th) {
+    const s = Math.sin(th), c = Math.cos(th);
+    shellBone.rotation.z = th;
+    shellBone.position.set(boneRest.x + coilY * s, boneRest.y + coilY * (1 - c), boneRest.z);
+    if (!rod) return;
+    // the rolled seat in the pivot frame (the snail's group: scaled, at z = -shellZ)
+    _rollA.set(-(seatG.y - coilY) * s * SCALE, (coilY + (seatG.y - coilY) * c) * SCALE, 0);
+    _rollD.subVectors(hookLocal, _rollA);
+    const len = _rollD.length();
+    rod.matrix.compose(_rollA, _rollQ.setFromUnitVectors(Y1, _rollD.divideScalar(len || 1)), _rollS.set(1, len, 1));
+    rod.matrixWorldNeedsUpdate = true;
+  }
+  // which way the shell turns its spiral: towards the side the glen sees the track from
+  const viewSide = (() => {
+    const cam = SPOT_BY_ID?.code?.camera?.position;
+    if (!cam) return 1;
+    const tp = polar(a, bark(a, OAK.loft.y), OAK.loft.y);
+    const d = new THREE.Vector3(cam[0], cam[1], cam[2]).sub(tp);
+    return d.dot(lat) > 0 ? -1 : 1; // carrier +X (the snail's +X heading up) is −lat
+  })();
   root.add(carrier);
 
   // ── the basket: wicker tub, rim, cushion, ropes to a hoop, a tiny lantern ─
@@ -523,6 +584,7 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     carrier.matrix.copy(M);
     carrier.matrixWorldNeedsUpdate = true;
     pivot.rotation.y = heading;
+    rollShell(SHELL_ROLL * viewSide * Math.cos(heading));
     snail.setMoving(moving);
     // the basket hangs from the hook, level, with a little pendulum swing
     hookW.set(hookLocal.x, hookLocal.y, shellZ).applyMatrix4(M);
@@ -702,6 +764,70 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
       place(time);
     },
   };
+}
+
+/**
+ * Band the lift snail's shell like a garden snail's: two chestnut bands
+ * running round the whorl, the spiral's eye darker on the sides (the props
+ * painter draws the spiral line itself in the stripe colour) — and the saddle
+ * blanket's pale trim in old gold (a cream ring round a red disc read as a
+ * lifebuoy). Works on a copy of the shared snail geometry. props/snail.js lays
+ * the shell out as bone 1: the coil surface first — 14 rows × 28 columns
+ * between two poles that sit on the coil's centre line at ±0.8 of its half
+ * width — then the two spiral ridges (45 × 4 each), then the blanket (13 × 8,
+ * blanket or trim coloured); the copy is only painted where that layout checks
+ * out.
+ */
+function bandShell(snail, trimTo = '#c8913c') {
+  const mesh = snail.group.children.find((o) => o.isSkinnedMesh);
+  const g = mesh?.geometry;
+  const si = g?.attributes.skinIndex, col = g?.attributes.color, pos = g?.attributes.position;
+  if (!si || !col || !pos) return;
+  let i0 = -1;
+  for (let i = 0; i < si.count; i++) {
+    if (si.getX(i) === 1) {
+      i0 = i;
+      break;
+    }
+  }
+  const N = 2 + 13 * 28;
+  if (i0 < 0 || i0 + N > si.count || si.getX(i0 + N - 1) !== 1) return;
+  // the poles: (∓0.8 W, cy, cz)
+  const xa = pos.getX(i0), xb = pos.getX(i0 + N - 1);
+  const cy = pos.getY(i0), cz = pos.getZ(i0);
+  if (!(xa < 0 && Math.abs(xa + xb) < 1e-3 && Math.abs(pos.getY(i0 + N - 1) - cy) < 1e-3 && Math.abs(pos.getZ(i0 + N - 1) - cz) < 1e-3)) return;
+  const W = -xa / 0.8;
+  const copy = g.clone();
+  const c = copy.attributes.color;
+  const k = new THREE.Color();
+  const band = (v, at, w) => Math.max(0, 1 - Math.abs(v - at) / w);
+  for (let i = i0; i < i0 + N; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const v = Math.abs(x) / W;
+    k.setRGB(c.getX(i), c.getY(i), c.getZ(i));
+    if (v < 0.76) {
+      // bands round the whorl (on the crown and the coil's outer face)
+      const dark = Math.max(band(v, 0.3, 0.07), 0.85 * band(v, 0.58, 0.06));
+      k.multiplyScalar(1 - 0.42 * Math.min(1, dark * 1.6));
+    } else {
+      // the spiral's eye: darker towards the centre of the coil
+      const rr = Math.hypot(y - cy, z - cz);
+      k.multiplyScalar(0.62 + 0.38 * THREE.MathUtils.smoothstep(rr, 0.06, 0.36));
+    }
+    c.setXYZ(i, k.r, k.g, k.b);
+  }
+  // the blanket's trim (the blanket follows the two ridges)
+  const b0 = i0 + N + 2 * 45 * 4, bn = 13 * 8;
+  if (b0 + bn <= si.count && si.getX(b0 + bn - 1) === 1) {
+    const trim = new THREE.Color(palette.paper), gold = new THREE.Color(trimTo);
+    const near = (i, t) => Math.abs(c.getX(i) - t.r) + Math.abs(c.getY(i) - t.g) + Math.abs(c.getZ(i) - t.b) < 0.02;
+    let hits = 0;
+    for (let i = b0; i < b0 + bn; i++) if (near(i, trim)) hits++;
+    // (the trim rings the blanket: about a third of its vertices)
+    if (hits > 20 && hits < 70) for (let i = b0; i < b0 + bn; i++) if (near(i, trim)) c.setXYZ(i, gold.r, gold.g, gold.b);
+  }
+  c.needsUpdate = true;
+  mesh.geometry = copy;
 }
 
 function flip(geo) {

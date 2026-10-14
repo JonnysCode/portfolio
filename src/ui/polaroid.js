@@ -3,10 +3,15 @@
 // real piece as it stands in the glen: the hotspot's object is rendered ONCE,
 // on its own, by a small offscreen camera from a 3/4 angle (across its long
 // side, a little from above; flat things — a certificate, a portrait — almost
-// head-on), lit by the glen's own sun / moon and lamps, then tone-mapped and
-// graded like the scene over a soft out-of-focus "woodland bokeh" backdrop
-// with a contact shadow. The result is cached (per entry, day / night) as a
-// JPEG data URL, so a page opens instantly the second time.
+// head-on; per piece a tweak: the hero bike side-on from its drive side),
+// fitted to the piece's own silhouette (its vertices, not its bounding box) so
+// it fills the print. It is always a DAYLIGHT studio photo, whatever the hour
+// in the glen: by night the glen's own lights are turned to their daytime
+// state for the exposure (same lights, so no shader recompiles) and put back
+// at once. Tone-mapped and graded (the subject's own colours kept — a cobalt
+// frame stays cobalt) over a soft out-of-focus backdrop of shaded woodland with
+// golden bokeh and a contact shadow. The result is cached per entry as a JPEG
+// data URL, so a page opens instantly the second time (day or night).
 //
 //   const pol = createPolaroids(ctx)
 //   pol.available(entryId) → bool        (a 3D object to photograph, post chain on)
@@ -25,7 +30,8 @@
 // box stands for it) is photographed in place instead: the whole glen, from
 // where the camera rig has just framed it for its open page (the rig's clear
 // sight line), with a tighter lens and the background softly out of focus;
-// without such a view (the guidebook) it keeps its sketch until then. No WebGL /
+// without such a view (the guidebook) it keeps its sketch until then (such a
+// photo shows the glen as it is: by day or by night, cached per light). No WebGL /
 // post chain off / no hotspot / an empty frame → null (the sketch stays).
 // The cast (villagers, snails: userData.person / .snail) never shows its back: one
 // turned away from the lens, or standing between it and the piece, steps out of
@@ -35,16 +41,26 @@
 import * as THREE from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { SPOT_BY_ID } from '../world/layout.js';
+import { SUN_LIGHT_DIR, envUniforms } from '../world/env/celestial.js';
+import { materials, sharedUniforms } from '../core/materials.js';
 
 const LAYER = 29;
 const W = 630, H = 420; // 3:2 like the polaroid window (≈ 300 css px at DPR 2)
 const FOV = 24; // a gentle telephoto: product-shot perspective, nothing too close to the lens
 
-/** Per entry: which of several hotspots to photograph, and framing nudges. */
+/**
+ * Per entry: which of several hotspots to photograph, and framing nudges —
+ * yaw (the 3/4 turn, rad), elev (look down, rad), face (+1 / −1: photograph
+ * the object's own ±Z side, not the visitor's).
+ */
 const TWEAKS = {
   // the door leaf and Jonny's portrait in the window both open "About me": the portrait is the photo
   'about-me': { pick: 'last', flat: true, yaw: 0.16 },
+  // the hero bike: side-on from the drive side (chain, cassette, derailleur), barely from above
+  'bike-build': { face: 1, yaw: 0.2, elev: 0.12 },
 };
+/** How many surface points the fit looks at (a strided sample of the piece's vertices). */
+const FIT_POINTS = 12000;
 
 const VERT = /* glsl */ `
   varying vec2 vUv;
@@ -138,10 +154,12 @@ const FRAG = /* glsl */ `
     float chroma = smoothstep(0.06, 0.22, (cmx - cmn) / max(cmx, 1e-4));
     float warm = hueBand(hue, 22.0, 24.0, 40.0) * chroma;
     float green = hueBand(hue, 105.0, 38.0, 55.0) * chroma;
-    float sat = mix(uSat, uWarmSat, warm) * mix(1.0, 0.8, green);
+    // blues and violets (a cobalt frame, an ink cushion) keep their hue: no warm cast on them
+    float blue = hueBand(hue, 225.0, 40.0, 62.0) * chroma;
+    float sat = mix(uSat, uWarmSat, max(warm, blue)) * mix(1.0, 0.8, green);
     if (sat > 1.0 && cmn < l) sat = min(sat, (l - 0.5 * cmn) / max(l - cmn, 1e-5));
     col = mix(vec3(l), col, sat);
-    col *= mix(vec3(1.0), vec3(1.0 + uWarmth, 1.0 + uWarmth * 0.35, 1.0 - uWarmth * 0.6), smoothstep(0.25, 0.9, l));
+    col *= mix(vec3(1.0), vec3(1.0 + uWarmth, 1.0 + uWarmth * 0.35, 1.0 - uWarmth * 0.6), smoothstep(0.25, 0.9, l) * (1.0 - blue));
     float sh = (1.0 - l) * (1.0 - l);
     col = mix(col, col * mix(vec3(0.96, 1.0, 1.05), vec3(0.9, 0.98, 1.1), uNight), sh * (1.0 - warm * 0.7));
     // film: lifted, slightly warm blacks; a soft vignette; fine grain
@@ -166,7 +184,14 @@ export function createPolaroids(ctx) {
   const renderer = engine?.renderer;
 
   const nightKey = () => (ctx.env?.isNight ? 'n' : 'd');
-  const key = (id) => `${id}|${nightKey()}`;
+  // (a studio photo is the same at any hour; one taken in place shows the glen's light)
+  const key = (id) => `${id}|${inPlace(id) ? nightKey() : 's'}`;
+  /** The renderer's daytime exposure (lighting.js lifts it a little by night). */
+  let dayTm = null;
+  const noteDayExposure = () => {
+    if (renderer && (ctx.env?.night ?? 0) < 1e-3) dayTm = renderer.toneMappingExposure;
+  };
+  noteDayExposure();
 
   /** The hotspot to photograph for an entry (null when the glen has none). */
   function hotspotFor(id) {
@@ -237,6 +262,124 @@ export function createPolaroids(ctx) {
       gpu.mat.dispose();
       gpu = null;
     }, 4000);
+  }
+
+  // ── the piece's silhouette: a strided sample of its drawn vertices (world space) ──
+  const fitPts = new Float32Array(FIT_POINTS * 3 + 24);
+  let fitN = 0;
+  const pv = new THREE.Vector3(), im = new THREE.Matrix4(), bbc = new THREE.Box3();
+  function samplePoints(obj) {
+    const meshes = [];
+    let total = 0;
+    obj.traverseVisible((o) => {
+      if (!o.isMesh || !o.geometry?.attributes?.position) return;
+      if (!(Array.isArray(o.material) ? o.material.some(drawn) : drawn(o.material))) return;
+      meshes.push(o);
+      total += o.isInstancedMesh ? o.count * 8 : o.geometry.attributes.position.count;
+    });
+    fitN = 0;
+    if (!total) return 0;
+    const stride = Math.max(1, Math.ceil(total / FIT_POINTS));
+    let k = 0;
+    const put = (v) => {
+      if (k++ % stride || fitN >= FIT_POINTS) return;
+      fitPts[fitN * 3] = v.x;
+      fitPts[fitN * 3 + 1] = v.y;
+      fitPts[fitN * 3 + 2] = v.z;
+      fitN++;
+    };
+    for (const o of meshes) {
+      o.updateWorldMatrix(true, false);
+      if (o.isInstancedMesh) {
+        // (repeats: the corners of each copy's box)
+        if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+        bbc.copy(o.geometry.boundingBox);
+        for (let i = 0; i < o.count; i++) {
+          o.getMatrixAt(i, im);
+          im.premultiply(o.matrixWorld);
+          for (let c = 0; c < 8; c++) put(pv.set(c & 1 ? bbc.max.x : bbc.min.x, c & 2 ? bbc.max.y : bbc.min.y, c & 4 ? bbc.max.z : bbc.min.z).applyMatrix4(im));
+        }
+      } else {
+        const pos = o.geometry.attributes.position;
+        for (let i = 0; i < pos.count; i++) put(pv.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld));
+      }
+    }
+    return fitN;
+  }
+
+  // ── a daylight exposure at any hour: the glen's own lights in their daytime state ──
+  // (the same lights — nothing recompiles — set to lighting.js's day rig for the
+  // photo and put back at once; the eased night value drives the glows and the sky)
+  function studioLights() {
+    const L = ctx.lights;
+    const D = L?.rigs?.day;
+    const scene = ctx.scene;
+    if (!L?.sun || !D) return null;
+    const sun = L.sun;
+    const saved = {
+      sunC: sun.color.clone(), sunI: sun.intensity, sunP: sun.position.clone(),
+      hemiC: L.hemi?.color.clone(), hemiG: L.hemi?.groundColor.clone(), hemiI: L.hemi?.intensity,
+      rimC: L.rim?.color.clone(), rimI: L.rim?.intensity,
+      beamI: L.beam?.intensity,
+      points: (L.points ?? []).map((l) => l.intensity),
+      env: scene.environment, envI: scene.environmentIntensity,
+      keyDir: envUniforms.uKeyDir.value.clone(), keyCol: envUniforms.uKeyColor.value.clone(),
+      canopy: L.canopy ? [L.canopy.b[0], L.canopy.b[1], L.canopy.c[3]] : null,
+      night: sharedUniforms.uNight.value,
+    };
+    const shade = ctx.quality?.shadows === false ? 0.7 : 1;
+    sun.color.copy(D.key);
+    sun.intensity = D.keyI * shade;
+    sun.target.updateMatrixWorld();
+    tmp.setFromMatrixPosition(sun.target.matrixWorld);
+    sun.position.copy(tmp).addScaledVector(SUN_LIGHT_DIR, Math.max(1, sun.position.distanceTo(tmp)));
+    sun.updateMatrixWorld();
+    if (L.hemi) {
+      L.hemi.color.copy(D.hemiSky);
+      L.hemi.groundColor.copy(D.hemiGround);
+      L.hemi.intensity = D.hemiI;
+    }
+    if (L.rim) {
+      L.rim.color.copy(D.rim);
+      L.rim.intensity = D.rimI;
+    }
+    if (L.beam) L.beam.intensity = 0;
+    for (const l of L.points ?? []) if (l.userData?.intensity) l.intensity = l.userData.intensity.day;
+    if (L.envMaps?.day) {
+      scene.environment = L.envMaps.day;
+      scene.environmentIntensity = D.envI;
+    }
+    envUniforms.uKeyDir.value.copy(SUN_LIGHT_DIR);
+    envUniforms.uKeyColor.value.copy(D.key);
+    if (L.canopy) {
+      L.canopy.b[0] = D.canopyShade;
+      L.canopy.b[1] = D.canopyFleck;
+      L.canopy.c[3] = D.clearing ?? 0;
+    }
+    materials.update(0, sharedUniforms.uTime.value, 0);
+    return () => {
+      sun.color.copy(saved.sunC);
+      sun.intensity = saved.sunI;
+      sun.position.copy(saved.sunP);
+      sun.updateMatrixWorld();
+      if (L.hemi) {
+        L.hemi.color.copy(saved.hemiC);
+        L.hemi.groundColor.copy(saved.hemiG);
+        L.hemi.intensity = saved.hemiI;
+      }
+      if (L.rim) {
+        L.rim.color.copy(saved.rimC);
+        L.rim.intensity = saved.rimI;
+      }
+      if (L.beam) L.beam.intensity = saved.beamI;
+      (L.points ?? []).forEach((l, i) => (l.intensity = saved.points[i] ?? l.intensity));
+      scene.environment = saved.env;
+      scene.environmentIntensity = saved.envI;
+      envUniforms.uKeyDir.value.copy(saved.keyDir);
+      envUniforms.uKeyColor.value.copy(saved.keyCol);
+      if (L.canopy && saved.canopy) [L.canopy.b[0], L.canopy.b[1], L.canopy.c[3]] = saved.canopy;
+      materials.update(0, sharedUniforms.uTime.value, saved.night);
+    };
   }
 
   // ── framing ──────────────────────────────────────────────────────────────
@@ -405,22 +548,28 @@ export function createPolaroids(ctx) {
     // the face to photograph: across the long side (a table, a bench, a bike from the side);
     // a square footprint: whichever face looks at the visitor
     const sq = Math.min(ex, ez) / Math.max(ex, ez, 1e-6) > 0.8;
-    if (sq) f.copy(Math.abs(axX.dot(dir)) > Math.abs(axZ.dot(dir)) ? axX : axZ);
-    else f.copy(ex < ez ? axX : axZ);
-    if (f.dot(dir) < 0) f.negate();
+    if (tweak?.face) f.copy(axZ).multiplyScalar(Math.sign(tweak.face));
+    else {
+      if (sq) f.copy(Math.abs(axX.dot(dir)) > Math.abs(axZ.dot(dir)) ? axX : axZ);
+      else f.copy(ex < ez ? axX : axZ);
+      if (f.dot(dir) < 0) f.negate();
+    }
     // a 3/4 turn (flat things: a little), towards the visitor's side — or the lit side when that is clear
     const yaw = tweak?.yaw ?? (flat ? 0.4 : 0.56);
     const side = tmp.crossVectors(UP, f).dot(dir) >= 0 ? 1 : -1;
     let sgn = side;
-    const sun = keyLightDir(tmp2);
+    // (a studio photo is lit by the day's sun, whatever the hour)
+    const sun = context ? keyLightDir(tmp2) : tmp2.copy(SUN_LIGHT_DIR);
     if (sun && !flat) {
       const lit = (s) => Math.cos(yaw) * f.dot(sun) + s * Math.sin(yaw) * tmp.crossVectors(UP, f).dot(sun);
       if (lit(-side) > lit(side) + 0.25) sgn = -side;
     }
-    const elev = tweak?.elev ?? (flat ? 0.07 : 0.4);
+    const elev = tweak?.elev ?? (flat ? 0.07 : 0.32);
     const tanV = Math.tan(THREE.MathUtils.degToRad(FOV / 2));
     const tanH = tanV * (W / H);
-    const mH = 0.86, mV = flat ? 0.84 : 0.8;
+    // (fitted to the piece's own vertices: it may fill the print — a hair of air round it)
+    const nFit = context ? 0 : samplePoints(obj);
+    const mH = nFit ? 0.9 : 0.86, mV = nFit ? (flat ? 0.88 : 0.86) : flat ? 0.84 : 0.8;
     // in place: the first of these turns with a clear view wins (else the closest)
     if (context && eye) return frameFrom(eye, cam);
     // (several turns, and a higher look over things, each scored by what stands in front)
@@ -433,8 +582,10 @@ export function createPolaroids(ctx) {
       u.crossVectors(UP, w).normalize();
       vv.crossVectors(w, u);
       let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, zMax = -Infinity;
-      for (const c of corners) {
-        tmp.subVectors(c, centre);
+      const nP = nFit || 8;
+      const at = (i) => (nFit ? tmp.set(fitPts[i * 3], fitPts[i * 3 + 1], fitPts[i * 3 + 2]) : tmp.copy(corners[i])).sub(centre);
+      for (let i = 0; i < nP; i++) {
+        at(i);
         const x = tmp.dot(u), y = tmp.dot(vv), z = tmp.dot(w);
         x0 = Math.min(x0, x);
         x1 = Math.max(x1, x);
@@ -443,10 +594,10 @@ export function createPolaroids(ctx) {
         zMax = Math.max(zMax, z);
       }
       const ox = (x0 + x1) / 2;
-      const oy = (y0 + y1) / 2 - (y1 - y0) * (flat ? 0 : 0.04);
+      const oy = (y0 + y1) / 2 - (y1 - y0) * (flat ? 0 : 0.03);
       let D = 0;
-      for (const c of corners) {
-        tmp.subVectors(c, centre);
+      for (let i = 0; i < nP; i++) {
+        at(i);
         const x = tmp.dot(u) - ox, y = tmp.dot(vv) - oy, z = tmp.dot(w);
         D = Math.max(D, z + Math.abs(x) / (tanH * mH), z + Math.abs(y) / (tanV * mV));
       }
@@ -532,6 +683,9 @@ export function createPolaroids(ctx) {
     if (!shot) return null;
     const scene = ctx.scene;
     const n = ctx.env?.night ?? (ctx.env?.isNight ? 1 : 0);
+    // isolated: a daylight studio photo at any hour; in place: the glen as it is now
+    const studio = !shot.context;
+    noteDayExposure();
     // (in place, the whole glen is in the picture; isolated, only the piece's own group)
     const cast = [];
     try {
@@ -564,7 +718,9 @@ export function createPolaroids(ctx) {
     const prevShadowUpdate = sm.needsUpdate;
     let url = null;
     let coverage = 0;
+    let restoreLights = null;
     try {
+      if (studio && n > 1e-3) restoreLights = studioLights();
       if (!shot.context) scene.background = null;
       renderer.autoClear = true;
       renderer.setClearColor(0x000000, 0);
@@ -577,13 +733,14 @@ export function createPolaroids(ctx) {
       // finishing: tone curve + grade over the bokeh backdrop
       const U = G.mat.uniforms;
       const S = ctx.post?.settings ?? {};
-      const night = n > 0.5;
+      const night = !studio && n > 0.5;
       U.uExposure.value = (night ? S.exposure ?? 1 : S.exposureDay ?? 1) * (night ? 1.35 : 1.04);
-      U.uTmExposure.value = renderer.toneMappingExposure;
-      U.uNight.value = n;
-      U.uSat.value = night ? 0.95 : 0.98;
+      // (by night the renderer's exposure carries lighting.js's small night lift: the day value for a studio photo)
+      U.uTmExposure.value = studio ? dayTm ?? renderer.toneMappingExposure / (1 + 0.07 * n) : renderer.toneMappingExposure;
+      U.uNight.value = studio ? 0 : n;
+      U.uSat.value = night ? 0.95 : studio ? 1.03 : 0.98;
       U.uWarmSat.value = night ? 1.05 : 1.12;
-      U.uWarmth.value = night ? 0.0 : 0.1;
+      U.uWarmth.value = night ? 0.0 : studio ? 0.07 : 0.1;
       U.uSeed.value = (hashStr(id) % 997) / 997;
       U.uShadow.value = shot.flat || shot.context ? 0 : night ? 0.5 : 0.36;
       U.uDof.value = shot.context ? 1 : 0;
@@ -592,7 +749,14 @@ export function createPolaroids(ctx) {
       U.uFocus.value = shot.focus * 1.08;
       U.uShadowBox.value.set(shot.shadow.x, shot.shadow.y, shot.shadow.w, shot.shadow.h);
       // display-referred linear colours
-      if (night) {
+      if (studio) {
+        // shaded woodland far out of focus, a warm sunlit floor and golden bokeh:
+        // a lit piece (honey oak, a cobalt frame) stands out against it
+        U.uBgTop.value.set('#3f4c39').convertSRGBToLinear();
+        U.uBgMid.value.set('#6a6548').convertSRGBToLinear();
+        U.uBgFloor.value.set('#c2aa80').convertSRGBToLinear();
+        U.uBokeh.value.set('#ffe1a0').convertSRGBToLinear().multiplyScalar(0.13);
+      } else if (night) {
         U.uBgTop.value.set('#0e1c33').convertSRGBToLinear();
         U.uBgMid.value.set('#1d2d40').convertSRGBToLinear();
         U.uBgFloor.value.set('#2b2a2e').convertSRGBToLinear();
@@ -629,6 +793,7 @@ export function createPolaroids(ctx) {
       console.warn('[polaroid] could not develop', id, err);
       url = null;
     } finally {
+      restoreLights?.();
       for (const o of tagged) o.layers.disable(LAYER);
       for (const o of cast) o.visible = true;
       scene.background = prevBg;

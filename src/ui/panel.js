@@ -8,6 +8,11 @@
 // paper tags and prev/next within the area (with a "more ↓" cue in that footer
 // row while the page scrolls on). Desktop: a page on the right. Phones: a
 // bottom sheet you can pull down to close.
+// A piece with a model in the glen also gets "In this miniature — look closer":
+// what is built into the little model (src/content/miniatures.js — the model
+// only, never claims about the real piece), styled like the Stückliste. A page
+// whose words are just a sentence (no story written yet) shows its polaroid
+// large under them instead of a small print beside a blank column.
 // About & contact show who this is on a little card — the profile's name and
 // roles, the page's facts (a Steckbrief) or where to find him (a Visitenkarte) —
 // from content.js only. Without a mail address they never promise a letter: the
@@ -22,6 +27,7 @@ import { h, svg } from './dom.js';
 import { icon, spotIcon } from './icons.js';
 import { sketchFor } from './sketches.js';
 import { presentEntry, reachOut, showDrafts, isDraft, linkAddress } from './draft.js';
+import { miniatureFor } from '../content/miniatures.js';
 
 const FLOURISH = `<svg class="journal__flourish" viewBox="0 0 220 14" aria-hidden="true"><path d="M2 8 C 40 2, 70 12, 110 7 S 180 3, 218 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M104 7 c 3 -5 9 -5 9 0 c 0 4 -6 5 -8 2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>`;
 
@@ -241,12 +247,39 @@ export function createJournal(ctx, { onClose, onNavigate, polaroids } = {}) {
   }
 
   const paragraphs = (shown) => shown.body.map((p) => h('p', { class: p.draft ? 'is-draft' : null }, p.text));
-  /** The words, with the polaroid (or the pencil sketch) pinned beside them. */
+  /** Only a sentence or two to say (the summary standing in, no story yet)? */
+  const isShort = (shown) => shown.bodyFallback || shown.body.reduce((n, p) => n + p.text.length, 0) < 200;
+  /**
+   * The words, with the polaroid (or the pencil sketch) pinned beside them — or,
+   * when the words are just a sentence, the polaroid large below them (a short
+   * page is a photo page, not a sentence beside a blank column).
+   */
   function words(entry, shown) {
     const paras = paragraphs(shown);
     const fig = figure(entry);
     if (!paras.length && !fig) return null;
+    if (fig && fig.classList.contains('journal__figure') && isShort(shown)) {
+      fig.classList.add('is-large');
+      return h('div', { class: 'journal__body is-short' }, paras, fig);
+    }
     return h('div', { class: 'journal__body' }, fig, paras);
+  }
+
+  /**
+   * "In this miniature — look closer": what is built into the piece's little
+   * model here in the glen (the model only: src/content/miniatures.js).
+   */
+  function miniature(entry) {
+    const m = miniatureFor(entry.id);
+    if (!m) return null;
+    const id = `mini-${entry.id}`;
+    return h(
+      'section',
+      { class: 'mini', 'aria-labelledby': id },
+      h('h3', { class: 'mini__title', id }, 'In this miniature ', h('span', {}, '· look closer')),
+      h('p', { class: 'mini__note' }, 'What is built into the little model here in the glen'),
+      h('ol', { class: 'mini__list' }, m.lines.map((t, i) => h('li', {}, h('span', { class: 'mini__pos', 'aria-hidden': 'true' }, String(i + 1).padStart(2, '0')), h('span', { class: 'mini__text' }, t)))),
+    );
   }
 
   function render(entry, siblings) {
@@ -274,11 +307,13 @@ export function createJournal(ctx, { onClose, onNavigate, polaroids } = {}) {
       // about: who (the card) → how to reach him → his words; contact: the invitation → the button → the card
       return entry.kind === 'about' ? [head, card, cta, text, photos(entry), foot] : [head, text, cta, card, photos(entry), foot];
     }
-    // the links right under the title (above the fold); the photo pinned beside the words, then the facts
+    // the links right under the title (above the fold); the photo pinned beside the words,
+    // what the miniature shows, then the facts
     return [
       head,
       cta,
       words(entry, shown),
+      miniature(entry),
       cutList(shown.facts),
       photos(entry),
       entry.tags?.length && h('ul', { class: 'journal__tags', 'aria-label': 'Tags' }, entry.tags.map((t) => h('li', { class: 'paper-tag' }, t))),

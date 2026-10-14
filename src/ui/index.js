@@ -28,7 +28,11 @@
 // open page / book or glides back to the previous place. A link on load skips
 // the intro and goes straight there.
 // Places with things beyond the edge of the frame (phones!) get little edge
-// chips ("‹ 2 more") that swing the camera round to them.
+// chips ("‹ 2 more") that swing the camera round to them; in the overview a
+// place beyond the frame keeps its label, pinned to that edge ("Velowerkstatt ›").
+// The carved name plate is a button: "who is this?" → the About page.
+// Keyboard: a place chosen from the overview (a label), the map or the guidebook
+// lands focus on its first ✦ (Tab steps on through the things there).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { SPOTS, SPOT_BY_ID, SPOT_FOR_AREA } from '../world/layout.js';
@@ -50,6 +54,16 @@ const HINT_KEY = 'woodland:hinted';
 const FOCUS_TWEAKS = {
   // the Hobelbank: a 3/4 front view slightly above the top — vises, board, shavings and Jonny planing
   'workbench-wip': { radius: 0.9, lift: 0.35, distance: 2.4, polar: 1.22 },
+  // About Me (desktop): the rig's framing (cameraRig FRAMING) looks over from the door to
+  // the cat's bench; lifted, the framed portrait in the window above sits in the
+  // upper third of the free view (clear of the name plate), door and bench below it.
+  // (Phones keep the rig's own framing: the bottom sheet leaves the top free already.)
+  'about-me': ({ narrow }) => (narrow ? null : { lift: 0.7 }),
+};
+/** An entry's framing tweak (some depend on the screen). */
+const focusTweak = (id, info) => {
+  const t = FOCUS_TWEAKS[id];
+  return (typeof t === 'function' ? t(info) : t) ?? {};
 };
 const GLEN_CAM = new THREE.Vector3(...SPOT_BY_ID.glen.camera.position);
 /** How high above each spot's focus its floating overview label hangs (clear of caps & roofs). */
@@ -70,14 +84,30 @@ export function createUI(ctx) {
   const loader = createLoader(root, { title: `${P.name}’s Woodland`, tagline: P.tagline });
 
   // ── HUD: carved name plate + round buttons + secrets tag ──────────────────
+  // the carved name plate: "who is this?" — a button to the About page (the guidebook without one)
+  const aboutId = Object.keys(content.entries ?? {}).find((id) => content.entries[id]?.kind === 'about') ?? null;
   const plate = h(
-    'div',
-    { class: 'plate' },
+    'button',
+    { class: 'plate', type: 'button', 'aria-label': aboutId ? `About ${P.name}` : `${P.name}’s Woodland — the guidebook`, title: aboutId ? `About ${P.name}` : 'The guidebook', onclick: () => openAbout() },
     h('i', { class: 'plate__nail is-l', 'aria-hidden': 'true' }),
     h('i', { class: 'plate__nail is-r', 'aria-hidden': 'true' }),
-    h('div', { class: 'plate__name' }, `${P.name}’s Woodland`),
-    h('div', { class: 'plate__tag' }, P.tagline),
+    h('span', { class: 'plate__name' }, `${P.name}’s Woodland`),
+    h('span', { class: 'plate__tag' }, P.tagline),
   );
+  function openAbout() {
+    ctx.audio?.play?.('click');
+    if (!aboutId || !ctx.cameraRig) return ui.showGuidebook();
+    if (intro) skipIntro();
+    if (ui.isModalOpen) closeModal('nav');
+    if (journal.isOpen && currentEntry?.id === aboutId) return;
+    ui.openEntry(aboutId);
+  }
+
+  // ── how the visitor last reached for the UI (keyboard or pointer) ─────────
+  // (a place chosen with the keyboard hands focus on to its first ✦ on arrival)
+  let viaKeys = false;
+  window.addEventListener('keydown', () => (viaKeys = true), true);
+  window.addEventListener('pointerdown', () => (viaKeys = false), true);
   const btn = (name, label, onclick, extra = {}) =>
     h('button', { class: 'hud-btn', type: 'button', 'aria-label': label, title: label, onclick, html: icon(name), ...extra });
   const nightBtn = btn('moon', 'Night falls (N)', () => {
@@ -161,11 +191,25 @@ export function createUI(ctx) {
    */
   function centerPill(id, smooth = false) {
     const pill = pills.get(id);
-    if (!pill || spotList.scrollWidth <= spotList.clientWidth + 1) return;
+    if (!pill || spotList.scrollWidth <= spotList.clientWidth + 1) return syncBarClip();
     const left = pill.offsetLeft + pill.offsetWidth / 2 - spotList.clientWidth / 2; // (the list is the pills' offsetParent)
     if (smooth && !reduced) spotList.scrollTo({ left, behavior: 'smooth' });
     else spotList.scrollLeft = left;
+    // (the fades for where the bar is going: a smooth scroll reports its steps a frame late)
+    syncBarClip(left);
   }
+  /**
+   * Pills cut off by the bar's edge fade out (a soft edge says "there is more this
+   * way") — only on a side where something is hidden.
+   */
+  function syncBarClip(at) {
+    const max = spotList.scrollWidth - spotList.clientWidth;
+    const x = Math.min(max, Math.max(0, typeof at === 'number' ? at : spotList.scrollLeft));
+    spotList.classList.toggle('is-clip-l', max > 1 && x > 1);
+    spotList.classList.toggle('is-clip-r', max > 1 && x < max - 1);
+  }
+  spotList.addEventListener('scroll', () => syncBarClip(), { passive: true });
+  window.addEventListener('resize', () => requestAnimationFrame(() => syncBarClip()));
   function setCurrentSpot(id) {
     for (const [sid, pill] of pills) {
       const on = sid === id;
@@ -193,7 +237,7 @@ export function createUI(ctx) {
   const labels = SPOTS.filter((s) => s.id !== 'glen').map((s) => {
     const el = h(
       'button',
-      { class: 'spot-label', type: 'button', 'aria-label': `Visit ${s.title} — ${s.subtitle}`, onclick: () => go(s.id) },
+      { class: 'spot-label', type: 'button', 'aria-label': `Visit ${s.title} — ${s.subtitle}`, onclick: () => goFocused(s.id) },
       h(
         'span',
         { class: 'spot-label__flag' },
@@ -220,10 +264,43 @@ export function createUI(ctx) {
       l.measured = -99;
     }
   }
-  const hsLayer = h('div', { class: 'hs-layer', role: 'group', 'aria-label': 'Things to explore here' });
+  const hsLayer = h('div', { class: 'hs-layer', role: 'group', 'aria-label': 'Things to explore here', tabindex: '-1' });
   // first in the tab order (before the HUD and the spot bar): Tab steps through
-  // the things at this place straight away, as the help card promises
-  root.prepend(hsLayer, labelLayer);
+  // the things at this place straight away, as the help card promises — the
+  // overview's labels just before them, so Tab from a label (were it ever left
+  // holding focus) goes on to the ✦ of the place, not to the HUD
+  root.prepend(labelLayer, hsLayer);
+  /**
+   * A place chosen with the keyboard (a label, a map pin, the guidebook's "Go
+   * there"): on arrival focus moves on to its first ✦ — the label it came from
+   * hides, the book / map closed — so Tab carries on through the things there.
+   */
+  let focusOnArrive = null;
+  function goFocused(id) {
+    focusOnArrive = viaKeys ? id : null;
+    go(id);
+  }
+  /** Is focus lost (the page, the canvas) or on something that can no longer take it? */
+  function focusStranded() {
+    const a = document.activeElement;
+    if (!a || a === document.body || a === document.documentElement || a === ctx.engine?.renderer?.domElement) return true;
+    if (!a.isConnected || labelLayer.contains(a) || modal.contains(a)) return true;
+    return a.tabIndex < 0 && !a.closest('.journal');
+  }
+  function landFocus(rig, moving) {
+    if (!focusOnArrive) return;
+    if (rig.spot !== focusOnArrive) {
+      if (!moving) focusOnArrive = null; // (gone somewhere else meanwhile)
+      return;
+    }
+    if (moving) return;
+    const id = focusOnArrive;
+    focusOnArrive = null;
+    if (journal.isOpen || ui.isModalOpen || intro || !focusStranded()) return;
+    // (the overview: its first label; a place: its first ✦ in view — else the group itself)
+    const first = id === 'glen' ? labels.find((l) => l.shown)?.el : hsButtons.find((x) => x.tab === 0)?.b;
+    (first ?? hsLayer).focus({ preventScroll: true });
+  }
   let hsButtons = [];
   function rebuildHotspotButtons(spotId) {
     const list = ctx.interactions?.forSpot?.(spotId) ?? [];
@@ -365,7 +442,7 @@ export function createUI(ctx) {
   const map = createMap(ctx, {
     onPick: (id) => {
       closeModal('nav');
-      go(id);
+      goFocused(id);
     },
   });
 
@@ -624,6 +701,17 @@ export function createUI(ctx) {
       /* ignore */
     }
     ui.toast(isTouch ? 'Drag to look around · pinch to zoom · tap the ✦ sparkles · the bar below takes you places' : 'Drag to look around · scroll to zoom · click the ✦ sparkles · ← → to travel', seen ? 4200 : 7000, { icon: 'sparkle' });
+    // a first visit: who made all this? — the name plate is the way to say hello
+    if (!seen && aboutId) {
+      setTimeout(() => {
+        if (journal.isOpen || ui.isModalOpen || intro) return;
+        ui.toast(`${isTouch ? 'Tap' : 'Click'} my name up there to say hello`, 5200, { icon: 'leaf' });
+        plate.classList.remove('is-hinting');
+        void plate.offsetWidth;
+        plate.classList.add('is-hinting');
+        setTimeout(() => plate.classList.remove('is-hinting'), 3400);
+      }, 7400);
+    }
   }
 
   // ── keyboard ──────────────────────────────────────────────────────────────
@@ -670,6 +758,7 @@ export function createUI(ctx) {
 
   // ── per-frame screen-space things (labels, hotspot buttons, speech, inset) ─
   const v = new THREE.Vector3();
+  const cv = new THREE.Vector3();
   const sp = {};
   const bubbles = new Set();
   /** The canvas box every projection uses (it is sized to the visible viewport, not 100vh). */
@@ -716,7 +805,14 @@ export function createUI(ctx) {
       let edge = 0;
       if (on) {
         toScreen(l.pos, sp);
-        on = sp.z < 1 && Math.abs(v.x) < 2.6 && v.y < 0.8 && v.y > -0.82;
+        // a place beyond the left / right edge (phones: the Velowerkstatt) is never
+        // simply dropped: its label is pinned to that edge at its height ("Velowerkstatt ›");
+        // one in frame shows while its anchor is within the frame's height
+        cv.copy(l.pos).applyMatrix4(cam.matrixWorldInverse);
+        const ahead = cv.z < -0.05;
+        const ax0 = sp.x - view.x;
+        const offX = !ahead || ax0 < 14 || ax0 > W - 14;
+        if (!offX) on = v.y < 0.8 && v.y > -0.82;
         if (on) {
           // the flag's size, measured now and then (not every frame: no layout thrash)
           if (!l.fw || ctx.engine.frame - (l.measured ?? -99) > 45) {
@@ -725,8 +821,14 @@ export function createUI(ctx) {
             l.fh = f.offsetHeight || 40;
             l.measured = ctx.engine.frame;
           }
-          const ax = sp.x - view.x;
-          const y = sp.y - view.y;
+          let ax = ax0;
+          let y = sp.y - view.y;
+          if (!ahead) {
+            // (behind the lens: the projection flips — the side it lies on, mid-height)
+            ax = cv.x < 0 ? -1 : W + 1;
+            y = H * 0.5;
+          }
+          if (offX) y = Math.min(H * 0.74, Math.max((narrow() ? 104 : 84) + (l.fh ?? 40) + 34, y));
           let x = ax;
           let nudge = 0;
           // a place beyond the frame (phones!) gets a little signpost pinned to the edge;
@@ -803,6 +905,8 @@ export function createUI(ctx) {
     }
     syncChip(chips.l, yl, H);
     syncChip(chips.r, yr, H);
+    // a place chosen with the keyboard: focus lands on its first ✦ once the glide is over
+    if (focusOnArrive) landFocus(rig, moving);
     // the arrival tag never stays over a detail being framed (a secret, a page)
     if (rig.focused && banner.classList.contains('is-visible')) banner.classList.remove('is-visible');
     // speech bubbles
@@ -1162,7 +1266,7 @@ export function createUI(ctx) {
       try {
         if (hs) {
           ctx.interactions?.setOpen?.(hs);
-          rig.focus(hs.object, { ...(hs.focus ?? {}), ...(FOCUS_TWEAKS[id] ?? {}), spot: SPOT_BY_ID[hs.area] ? hs.area : undefined });
+          rig.focus(hs.object, { ...(hs.focus ?? {}), ...focusTweak(id, { narrow: narrow() }), spot: SPOT_BY_ID[hs.area] ? hs.area : undefined });
         } else {
           const spotId = SPOT_FOR_AREA[entry.area];
           if (spotId && spotId !== rig.spot) rig.goTo(spotId);
@@ -1194,7 +1298,7 @@ export function createUI(ctx) {
           },
           onVisit: (id) => {
             closeModal('nav');
-            go(id);
+            goFocused(id);
           },
         }),
         { wide: true },
