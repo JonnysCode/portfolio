@@ -3,6 +3,8 @@
 // Halos are deliberately small, soft and warm: a gaussian falloff without a
 // hot core, warm colours pulled to amber, and a soft brightness cap that keeps
 // a halo itself under the night bloom threshold (the bulb blooms, not the halo).
+// Close to the camera (≲ 5 units) a halo softens to 40 % — close-ups of a lamp
+// stay crisp instead of hazed.
 //
 //   makeGlowSprite(color, size, opts)  → a single camera-facing halo (Mesh)
 //   glowQuads([{ x, y, z, size }], color, opts) → MANY halos in ONE draw call
@@ -68,7 +70,9 @@ const VERT = /* glsl */ `
     mv.xy += aCorner * s;
     gl_Position = projectionMatrix * mv;
     float d = -mv.z;
-    vFade = 1.0 - smoothstep(70.0, 140.0, d);
+    // far halos fade into the mist; near ones (a close-up of a lamp or window,
+    // Jonny at the Hobelbank) soften to 40 % so the lamp never hazes the shot
+    vFade = (1.0 - smoothstep(70.0, 140.0, d)) * mix(0.4, 1.0, smoothstep(1.5, 5.0, d));
   }
 `;
 
@@ -377,8 +381,10 @@ const SEGS = 22;
  *   rings = 6, segs = 22   tessellation (small pools — fairy strands — need less)
  * }]. opts.height(x, z) drapes the pool over the ground (else flat at y).
  * opts.lift: height above the surface (default 0.04; ~0.1 clears flagstones & threshold stones).
+ * opts.fade(x, z) → 0..1 scales the light per vertex (e.g. 0 on the water, so a
+ * pool on a bank fades out before the waterline instead of ending in an edge).
  */
-export function lightPoolGeometry(pools, { height = null, lift = 0.04 } = {}) {
+export function lightPoolGeometry(pools, { height = null, lift = 0.04, fade = null } = {}) {
   const lods = pools.map((p) => ({ rings: Math.max(2, p.rings ?? RINGS), segs: Math.max(6, p.segs ?? SEGS) }));
   const total = lods.reduce((n, l) => n + 1 + l.rings * l.segs, 0);
   const pos = new Float32Array(total * 3);
@@ -406,7 +412,8 @@ export function lightPoolGeometry(pools, { height = null, lift = 0.04 } = {}) {
       pos.set([x, y, z], (base + i) * 3);
       uv.set([nu, nv], (base + i) * 2);
       cen.set([p.x, p.y, p.z], (base + i) * 3);
-      tint.set([c.r, c.g, c.b], (base + i) * 3);
+      const f = fade ? Math.max(0, Math.min(1, fade(x, z))) : 1;
+      tint.set([c.r * f, c.g * f, c.b * f], (base + i) * 3);
       lamp[base + i] = isLamp ? Math.max(0, p.delay ?? 0) : -1;
     };
     put(0, 0, 0, 0, 0);
@@ -453,8 +460,8 @@ export function lightPools(pools, opts = {}) {
   return noRaycast(m);
 }
 
-/** A single pool at `position` (opts as one entry of lightPools: size, color, strength, dir, stretch, back, delay, height). */
+/** A single pool at `position` (opts as one entry of lightPools: size, color, strength, dir, stretch, back, delay, height, fade). */
 export function lightPool(position, opts = {}) {
-  const { height, lift, ...p } = opts;
-  return lightPools([{ x: position.x, y: position.y, z: position.z, ...p }], { height, lift });
+  const { height, lift, fade, ...p } = opts;
+  return lightPools([{ x: position.x, y: position.y, z: position.z, ...p }], { height, lift, fade });
 }

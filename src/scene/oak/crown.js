@@ -1,25 +1,30 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The Great Oak's crown: painterly leaf MASSES made of alpha-tested leaf cards.
 //
-// Each clump the skeleton chose is a broad, layered PAD (≈ 1.3× wider than
-// its size, ≈ 0.7× as tall) built from a heart and 4–6 lobes ringed round it,
-// whose hem DROOPS (cards further out sit lower) — every pad with a sunlit,
-// golden yellow-green top and a deep, cool blue-green belly, so the masses
-// stack into lush layers with dark creases between them, not round pom-poms
-// or one broccoli dome. Cards on the outer skin are bigger, so single sprigs
-// break the silhouette even from the overview. The skirts and boughs trail
-// short CURTAINS of hanging sprigs (8 % of the cards, not on the low tier).
-// A few windows along the limbs and the odd knocked-out high clump (≈ 25–35 %
-// of the cards) let the dark, kinked limbs and the sky show through; the
-// treehouse and the hero moon stay in sight from the glen (shape.js).
-// Everything is ONE vertex-coloured mesh. At night it becomes a dark
-// blue-green silhouette: near-black bellies, a thin silver rim where the
-// leaves face the moon, a warm bounce under the masses near the Code Loft and
-// the lanterns (shader, follows the shared night uniform).
+// Every main limb carries ONE cloud mass (the long low limb two): its pads are
+// drawn in towards the mass's heart and a ragged dark gap (MASS_GAP) opens
+// between neighbouring masses, the inner stretch of every limb stays bare and
+// the leaves in front of the inner limbs, seen from the glen cameras, are left
+// out — so the crown reads as tiered cloud masses with the dark, kinked limbs
+// (and the lanterns hung from them) between them, not one broccoli hedge and
+// not a crown of pom-poms. Each mass is lit as ONE cloud: a golden, sun-kissed
+// crown and a cool, shadowed blue-green belly (its own top-to-belly gradient
+// weighs most; the pads and their lobes only model it). Each pad is a broad,
+// layered cushion (≈ 1.3× wider than its size, ≈ 0.7× as tall) with a
+// drooping hem; the outer skin of a mass wears the biggest sprigs, so single
+// sprigs break its silhouette, and the hems trail short CURTAINS of hanging
+// sprigs (8 % of the cards, not on the low tier). The low skirt rides ON the
+// low limb (limbs.js), clear of the cottage chimneys. The treehouse, the hero
+// moon and every spot camera stay clear (shape.js crownBlocked).
+// Everything is ONE vertex-coloured mesh. At night it turns deep blue-green
+// but keeps its masses' value structure: a silver rim on every mass's
+// moon-side edge, a faint cool sky rim along the tops, and a warm bounce under
+// the masses near the Code Loft, the cottages, the annex and the lanterns
+// (shader, follows the shared night uniform).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { SUN_LIGHT_DIR, MOON_LIGHT_DIR } from '../../world/env/celestial.js';
-import { OAK } from '../../world/layout.js';
+import { OAK, COTTAGE, SCHREINEREI } from '../../world/layout.js';
 import { sharedUniforms } from '../../core/materials.js';
 import { crownBlocked } from './shape.js';
 
@@ -193,14 +198,14 @@ export function clumpTemplate(rng, cards, { flat = 0.78, size = [0.2, 0.32], bot
 function crownGaps(rng, clumps, limbs, branches) {
   const gaps = [];
   for (const L of limbs) {
-    // two windows along every main limb: its dark, kinked bark shows against
-    // the lit masses beyond (the long low limb keeps ONE, near the trunk — its
-    // outer two thirds carry a full skirt that frames the glen)
-    for (const [u0, u1] of L.id === 'front-left-low' ? [[0.3, 0.42]] : [[0.36, 0.5], [0.62, 0.8]]) {
+    // a window further out along every main limb: its dark, kinked bark shows
+    // against the lit masses beyond (the inner stretch is bare anyway — see
+    // LIMB_BARE)
+    for (const [u0, u1] of L.id === 'front-left-low' ? [] : [[0.62, 0.8]]) {
       const u = rng.range(u0, u1);
       const p = L.curve.getPointAt(u);
       p.y += rng.range(0.3, 1.3);
-      gaps.push({ c: p, r: 1.6 + L.radiusAt(u) * 1.15 + rng.range(0, 0.6) });
+      gaps.push({ c: p, r: 1.4 + L.radiusAt(u) * 1.15 + rng.range(0, 0.5) });
     }
   }
   for (const b of branches) {
@@ -217,10 +222,43 @@ function crownGaps(rng, clumps, limbs, branches) {
   return gaps;
 }
 
-/** Warm glows the crown's bellies pick up at night: the Code Loft and the lanterns on the low limb. */
+/**
+ * The crown's MASSES: every main limb carries its own cloud of foliage, and
+ * the long low limb two (split at this arc fraction: an inner and an outer
+ * pad with the kinked limb showing between them). A dark gap of MASS_GAP
+ * opens between neighbouring masses, so from any view the crown reads as
+ * 5–8 tiered cloud masses with limbs and sky between them, not one hedge.
+ */
+export const MASS_SPLIT = { 'front-left-low': 0.66 };
+/** Width of the gap between neighbouring masses (world units, ≈ 1.5–3 with the ragged rims). */
+const MASS_GAP = 3.0;
+/** How far each mass draws its pads towards its heart ([horizontal, vertical] scale about the mass centre). */
+const MASS_PULL = [0.8, 0.92];
+/**
+ * The inner stretch of every main limb (arc fraction from the fork) carries no
+ * leaves within LIMB_BARE.r of its bark: the dark, kinked limbs run out of the
+ * fork through the gaps between the masses.
+ */
+const LIMB_BARE = { u: 0.42, r: 1.7 };
+/**
+ * Sight lines from the overview cameras (the glen shot, its wide variant and
+ * the high overview) to the inner limbs: the leaves in front of a limb along
+ * them are left out, so from the glen the dark, kinked limbs show between the
+ * masses — dark gaps with the bark in them, not one green hedge.
+ */
+const LIMB_SIGHT = { eyes: [[4, 17, 40], [7.2, 25.4, 73.6], [0, 34, 52]], u: [0.12, 0.55], r: 0.7 };
+
+/**
+ * Warm glows the crown's bellies pick up at night: the Code Loft, Jonny's
+ * cottage cluster and the Schreinerei annex under the low skirt (plus the
+ * lanterns on the low limb, passed in by oak.js).
+ */
 const WARM_BOUNCE = [
   [OAK.loft.x, OAK.loft.y + 3.2, OAK.loft.z, 6.5, 1],
+  [COTTAGE.home.x + 1, 12.5, COTTAGE.home.z, 8.5, 0.85],
+  [SCHREINEREI.annex.x, 11, SCHREINEREI.annex.z + 0.6, 7.5, 0.8],
 ];
+const BOUNCE_SLOTS = 6;
 
 /**
  * 'oak' foliage clone (never mutates the cached material) that turns into a
@@ -235,8 +273,8 @@ function moonlitCrownMaterial(base, bounce = []) {
   m.name = `${base.name}-oak-crown`;
   const prev = m.onBeforeCompile;
   const moon = MOON_LIGHT_DIR.clone().normalize();
-  const src = [...WARM_BOUNCE, ...bounce].slice(0, 4);
-  while (src.length < 4) src.push([0, -999, 0, 1, 0]);
+  const src = [...WARM_BOUNCE, ...bounce].slice(0, BOUNCE_SLOTS);
+  while (src.length < BOUNCE_SLOTS) src.push([0, -999, 0, 1, 0]);
   const v3 = (v) => `vec3(${v.map((x) => x.toFixed(3)).join(', ')})`;
   const bounceGlsl = src.map(([x, y, z, r, k]) => `oakWarm += ${k.toFixed(3)} * exp(-dot(oW - ${v3([x, y, z])}, oW - ${v3([x, y, z])}) / ${(r * r).toFixed(2)});`).join('\n    ');
   m.onBeforeCompile = (shader, renderer) => {
@@ -255,21 +293,24 @@ function moonlitCrownMaterial(base, bounce = []) {
         '#include <color_fragment>',
         `#include <color_fragment>
   {
-    // night: a dark blue-green silhouette (not lit felt): 35 % towards a deep
-    // blue-green of the same value, down to 40 %; the bellies near-black green
+    // night: a deep blue-green crown that keeps its masses' value structure
+    // (golden crowns → dim sage, bellies → deep teal), never a black void:
+    // 35 % towards a deep blue-green of the same value, down to ≈ 50 %
     float oakL = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
-    // (the day's sun-kissed sprig tips are near white: at night the value
-    //  range is squeezed, or every lit tip turns into pale frost)
-    diffuseColor.rgb *= mix(1.0, min(1.0, (0.05 + 0.5 * oakL) / max(oakL, 0.02)), uOakNight);
+    // (the day's sun-kissed sprig tips are near white: at night the top of
+    //  the value range is squeezed, or every lit tip turns into pale frost)
+    diffuseColor.rgb *= mix(1.0, min(1.0, min(0.12 + 0.42 * oakL, 0.24) / max(oakL, 0.02)), uOakNight);
     oakL = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
     vec3 oakDeep = oakL * vec3(0.52, 1.0, 0.96);
+    // (the day's golden crowns turn sage-teal under the moon, never grey frost)
+    float oakTopK = 0.35 + 0.3 * smoothstep(0.18, 0.4, oakL);
     vec3 oakUpV = (viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz;
     oakUnder = smoothstep(0.1, -0.5, dot(normalize(vNormal), oakUpV));
-    // (the tops that face the moon are held back too: a silhouette with a
-    //  silver edge, not a frosted, moon-lit felt)
+    // (the tops that face the moon are held back a little: the silver lives
+    //  in the rim below, not in a frosted, moon-lit felt)
     vec3 oakMoonV = normalize((viewMatrix * vec4(MOON_DIR, 0.0)).xyz);
     float oakMoonLit = clamp(dot(normalize(vNormal), oakMoonV), 0.0, 1.0);
-    diffuseColor.rgb = mix(diffuseColor.rgb, oakDeep, 0.35 * uOakNight) * mix(1.0, 0.4 * (1.0 - 0.62 * oakUnder) * (1.0 - 0.7 * oakMoonLit), uOakNight);
+    diffuseColor.rgb = mix(diffuseColor.rgb, oakDeep, oakTopK * uOakNight) * mix(1.0, 0.5 * (1.0 - 0.5 * oakUnder) * (1.0 - 0.45 * oakMoonLit), uOakNight);
     // (green, not neutral grey, under the blue moonlight)
     diffuseColor.rgb *= mix(vec3(1.0), vec3(0.86, 1.0, 0.9), uOakNight);
   }`
@@ -281,23 +322,31 @@ function moonlitCrownMaterial(base, bounce = []) {
     vec3 oN = normalize(vNormal);
     vec3 oV = normalize(vViewPosition);
     vec3 oM = normalize((viewMatrix * vec4(MOON_DIR, 0.0)).xyz);
-    // a thin silver rim on the edges of the masses that face the moon
+    // a silver rim on the moon-side edge of every mass and pad (wide enough
+    // to read from the glen), and a faint cool sky rim along the tops of the
+    // silhouette
     float oFres = 1.0 - clamp(abs(dot(oN, oV)), 0.0, 1.0);
     float oF2 = oFres * oFres;
     float oF4 = oF2 * oF2;
-    float oRim = smoothstep(0.15, 0.8, dot(oN, oM)) * oF4 * oF4;
+    float oRim = smoothstep(0.05, 0.75, dot(oN, oM)) * oF4 * oF2;
+    float oSky = smoothstep(0.15, 0.85, dot(oN, normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz))) * oF2 * oFres;
     float oLeaf = 0.55 + 2.2 * dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
-    totalEmissiveRadiance += vec3(0.46, 0.6, 0.74) * oRim * 0.1 * oLeaf * uOakNight;
-    // warm bounce under the masses near the loft & the lanterns
+    // (the rims draw the masses' outlines from afar; a sprig right in front
+    //  of the lens keeps its own dark value, no paper-white cut-out)
+    float oFar = smoothstep(7.0, 20.0, length(vViewPosition));
+    totalEmissiveRadiance += (vec3(0.46, 0.6, 0.74) * oRim * 0.2 + vec3(0.3, 0.46, 0.62) * oSky * 0.06) * oLeaf * oFar * uOakNight;
+    // warm bounce under the masses near the loft, the cottages, the annex &
+    // the lanterns
     vec3 oW = (vec4(-vViewPosition, 0.0) * viewMatrix).xyz + cameraPosition;
     float oakWarm = 0.0;
     ${bounceGlsl}
-    totalEmissiveRadiance += vec3(1.0, 0.55, 0.22) * min(oakWarm, 1.0) * (0.25 + 0.75 * oakUnder) * 0.075 * oLeaf * uOakNight;
+    // (lamp-gold, not autumn orange; mostly on the bellies that face the lamps)
+    totalEmissiveRadiance += vec3(1.0, 0.68, 0.34) * min(oakWarm, 1.0) * (0.12 + 0.88 * oakUnder) * 0.12 * oLeaf * uOakNight;
   }`
       );
   };
   const key = m.customProgramCacheKey();
-  m.customProgramCacheKey = () => `${key}|oak-crown-night8`;
+  m.customProgramCacheKey = () => `${key}|oak-crown-night10`;
   return m;
 }
 
@@ -329,7 +378,7 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
   const budget = budgetAll * (1 - curtainShare);
   // (the clumps a touch smaller than the skeleton asked for: the wide pads
   //  overlap into one lush mass, with dark creases between them)
-  let clumps = clumpsIn.map((c) => ({ ...c, s: c.s * 0.87 }));
+  let clumps = clumpsIn.map((c) => ({ ...c, s: c.s * 0.85 }));
   // on lower tiers keep the cards per clump sensible and drop the least
   // important clumps instead (hanging skirt first, then twig tips)
   const MIN_CARDS = 44;
@@ -341,6 +390,32 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
       .sort((a, b) => a.k - b.k)
       .slice(0, keep)
       .map((e) => e.c);
+  }
+
+  // masses: one per main limb, two on the long low one (MASS_SPLIT); each
+  // mass draws its pads in a little towards its own heart (MASS_PULL) so the
+  // masses stand apart as separate clouds with the limbs between them
+  const massOf = clumps.map((c) => {
+    const split = MASS_SPLIT[limbs[c.limb]?.id];
+    return c.limb * 2 + (split !== undefined && (c.u ?? 1) >= split ? 1 : 0);
+  });
+  {
+    const acc = new Map();
+    clumps.forEach((c, i) => {
+      const e = acc.get(massOf[i]) ?? { p: new THREE.Vector3(), w: 0 };
+      e.p.addScaledVector(c.p, c.s);
+      e.w += c.s;
+      acc.set(massOf[i], e);
+    });
+    clumps = clumps.map((c, i) => {
+      const e = acc.get(massOf[i]);
+      const h = e.p.clone().multiplyScalar(1 / e.w);
+      const p = c.p.clone().sub(h);
+      p.x *= MASS_PULL[0];
+      p.y *= MASS_PULL[1];
+      p.z *= MASS_PULL[0];
+      return { ...c, p: p.add(h) };
+    });
   }
 
   // per-clump placement (fixed before the card count is settled):
@@ -405,6 +480,49 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
     return Math.min(1, occ);
   };
   const gaps = crownGaps(rng.fork('gaps'), clumps, limbs, branches);
+  // the bare inner stretch of every main limb (LIMB_BARE): capsule samples
+  const bare = [];
+  for (const L of limbs) {
+    const n = Math.max(4, Math.ceil((L.length * LIMB_BARE.u) / 0.7));
+    for (let i = 0; i <= n; i++) {
+      const u = 0.04 + ((LIMB_BARE.u - 0.04) * i) / n;
+      bare.push({ c: L.curve.getPointAt(u), r: L.radiusAt(u) + LIMB_BARE.r });
+    }
+  }
+  // sight lines onto the inner limbs (LIMB_SIGHT): eye → limb point segments
+  const sight = [];
+  for (const L of limbs) {
+    if (L.id === 'front-left-low') continue; // (its skirt rides above it: it shows anyway)
+    const n = Math.max(3, Math.ceil((L.length * (LIMB_SIGHT.u[1] - LIMB_SIGHT.u[0])) / 1.2));
+    for (let i = 0; i <= n; i++) {
+      const u = LIMB_SIGHT.u[0] + ((LIMB_SIGHT.u[1] - LIMB_SIGHT.u[0]) * i) / n;
+      const P = L.curve.getPointAt(u);
+      for (const e of LIMB_SIGHT.eyes) {
+        const E = new THREE.Vector3(...e);
+        const d = P.clone().sub(E);
+        const len = d.length();
+        const r = LIMB_SIGHT.r + L.radiusAt(u) * 0.6;
+        // (only the last 16 units before the limb can cross the crown; a
+        //  bounding sphere around that stretch rejects most cards cheaply)
+        const t0 = Math.max(0.2, 1 - 16 / len);
+        const mid = E.clone().addScaledVector(d, (t0 + 0.985) / 2);
+        const br = ((0.985 - t0) * len) / 2 + r * 1.25;
+        sight.push({ E, d, len2: len * len, r, t0, mid, br2: br * br });
+      }
+    }
+  }
+  const _sq = new THREE.Vector3();
+  const inSight = (p, ci, k) => {
+    for (const S of sight) {
+      if (p.distanceToSquared(S.mid) > S.br2) continue;
+      const t = _sq.copy(p).sub(S.E).dot(S.d) / S.len2;
+      if (t <= S.t0 || t >= 0.985) continue;
+      _sq.copy(S.E).addScaledVector(S.d, t);
+      const r = S.r * (0.75 + 0.5 * hash2(ci + 0.29, k));
+      if (_sq.distanceToSquared(p) < r * r) return true;
+    }
+    return false;
+  };
   const tv = new THREE.Vector3();
   const inGap = (p, ci, k) => {
     // (a card of a wide pad that would reach into a spot camera's view or the
@@ -416,8 +534,38 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
       const dx = p.x - g.c.x, dy = (p.y - g.c.y) * 0.55, dz = p.z - g.c.z;
       if (dx * dx + dy * dy + dz * dz < r * r) return true;
     }
+    for (const b of bare) {
+      const r = b.r * (0.82 + 0.36 * hash2(ci + 0.71, k));
+      if (p.distanceToSquared(b.c) < r * r) return true;
+    }
     return false;
   };
+  /**
+   * Mass separation: a card is kept only where its own mass is nearer (in the
+   * pads' normalised distance) than any other mass by a margin worth half of
+   * MASS_GAP — a ragged, dark gap opens between neighbouring masses.
+   */
+  const _m = new THREE.Vector3();
+  const massGap = (p, ci, k) => {
+    const m = massOf[ci];
+    let own = Infinity, other = Infinity;
+    const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL), cz = Math.floor(p.z / CELL);
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dz = -1; dz <= 1; dz++) {
+          const list = grid.get(`${cx + dx},${cy + dy},${cz + dz}`);
+          if (!list) continue;
+          for (const j of list) {
+            const d = _m.copy(p).applyMatrix4(invM[j]).length();
+            if (massOf[j] === m) own = Math.min(own, d);
+            else other = Math.min(other, d);
+          }
+        }
+    if (other === Infinity) return false;
+    const margin = ((MASS_GAP * 0.5) / (place[ci].size * 1.15)) * (0.55 + 0.9 * hash2(ci + 0.13, k));
+    return other < Math.min(own, 1.6) + margin;
+  };
+  const culled = (p, ci, k) => inGap(p, ci, k) || massGap(p, ci, k) || inSight(p, ci, k);
   const makeGeos = (per) => {
     const grow = Math.sqrt(380 / per);
     return templates.map((t, i) =>
@@ -428,7 +576,7 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
     let kept = 0;
     place.forEach((pl, ci) => {
       const mid = geos[pl.t].userData.mid;
-      for (let k = 0; k < per; k++) if (!inGap(cardCentre(pl, mid, k, tv), ci, k)) kept++;
+      for (let k = 0; k < per; k++) if (!culled(cardCentre(pl, mid, k, tv), ci, k)) kept++;
     });
     return kept;
   };
@@ -443,29 +591,36 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
     geos = makeGeos(perClump);
   }
 
-  // mass centres: the centroid of each limb's clumps (a little low, so the
+  // mass centres: the centroid of each mass's clumps (a little low, so the
   // tops of the masses catch the light)
   const centres = new Map();
-  for (const c of clumps) {
-    const e = centres.get(c.limb) ?? { p: new THREE.Vector3(), w: 0 };
+  clumps.forEach((c, i) => {
+    const e = centres.get(massOf[i]) ?? { p: new THREE.Vector3(), w: 0 };
     e.p.addScaledVector(c.p, c.s);
     e.w += c.s;
-    centres.set(c.limb, e);
-  }
+    centres.set(massOf[i], e);
+  });
   for (const e of centres.values()) {
     e.p.multiplyScalar(1 / e.w);
     e.p.y -= 2.5;
   }
-  // each limb's mass spans this height range: its top is sunlit, its belly
-  // dark — one big gradient across the mass, so the clumps merge into
-  // painterly masses instead of reading as a stack of separate lit puffs
+  // each mass spans this height range: its top is sunlit, its belly dark —
+  // ONE big gradient across the mass (it weighs most), so every mass reads
+  // as one tiered cloud with a golden crown and a cool shadowed belly, not a
+  // hedge of equal lit lumps
   const massY = new Map();
-  for (const c of clumps) {
-    const e = massY.get(c.limb) ?? { lo: Infinity, hi: -Infinity };
+  clumps.forEach((c, i) => {
+    const e = massY.get(massOf[i]) ?? { lo: Infinity, hi: -Infinity };
     e.lo = Math.min(e.lo, c.p.y - c.s * 0.55);
     e.hi = Math.max(e.hi, c.p.y + c.s * 0.75);
-    massY.set(c.limb, e);
-  }
+    massY.set(massOf[i], e);
+  });
+  // each mass's horizontal reach about its centre (for the rim sprigs)
+  const massR = new Map();
+  clumps.forEach((c, i) => {
+    const e = centres.get(massOf[i]).p;
+    massR.set(massOf[i], Math.max(massR.get(massOf[i]) ?? 1, Math.hypot(c.p.x - e.x, c.p.z - e.z) + c.s * 1.2));
+  });
   let yMin = Infinity, yMax = -Infinity;
   for (const c of clumps) {
     yMin = Math.min(yMin, c.p.y);
@@ -490,8 +645,8 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
   const MID = new THREE.Color('#667b4f'); // olive green
   const SAGE = new THREE.Color('#5f7a5e');
   const OLIVE = new THREE.Color('#7a7d48');
-  const TOP = new THREE.Color('#b6b257'); // warm yellow-green crowns
-  const SUNLIT = new THREE.Color('#d2b553'); // sun-kissed, GOLDEN sprig tips (gold, not cream)
+  const TOP = new THREE.Color('#bdaf4c'); // warm golden-green crowns
+  const SUNLIT = new THREE.Color('#cf9d38'); // sun-kissed, GOLDEN sprig tips (deep gold: never cream)
   const sunDir = SUN_LIGHT_DIR.clone().normalize();
   // (the low tier renders without the full post: its sun-kissed tips are held
   //  back so the crown's top never bleaches to cream)
@@ -505,8 +660,8 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
     const pl = place[ci];
     const g = geos[pl.t];
     NM.getNormalMatrix(pl.M);
-    const centre = centres.get(c.limb).p;
-    const my = massY.get(c.limb);
+    const centre = centres.get(massOf[ci]).p;
+    const my = massY.get(massOf[ci]);
     // per-clump hue: olive ↔ sage drift; height in the crown makes it warmer
     const h = THREE.MathUtils.clamp((c.p.y - yMin) / Math.max(1, yMax - yMin) + pl.drift * 0.15, 0, 1);
     hue.copy(MID).lerp(pl.drift > 0 ? OLIVE : SAGE, Math.abs(pl.drift) * 0.7);
@@ -519,18 +674,21 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
     const mid = g.userData.mid;
     for (let k = 0; k < perClump; k++) {
       cardCentre(pl, mid, k, cc);
-      if (inGap(cc, ci, k)) continue;
+      if (culled(cc, ci, k)) continue;
       const occ = buried(cc, ci);
       mc.fromArray(mid, k * 3);
+      // the outer skin of a mass (round its rim and over its crown) wears the
+      // biggest sprigs: single sprigs break the silhouette, no smooth hedge
+      const rimK = aux[k * 12 + 1] > 0 || occ > 0.2 ? 1 : 1 + 0.38 * THREE.MathUtils.smoothstep(Math.hypot(cc.x - centre.x, cc.z - centre.z) / massR.get(massOf[ci]) + Math.max(0, cc.y - my.hi + 1.5) * 0.25, 0.62, 1.0);
       for (let qi = 0; qi < 4; qi++) {
         const sv = k * 4 + qi;
         // the card keeps its shape: its corners around the (moved) centre
-        v.set(gp[sv * 3] - mc.x, gp[sv * 3 + 1] - mc.y, gp[sv * 3 + 2] - mc.z).applyMatrix4(pl.L).add(cc);
+        v.set(gp[sv * 3] - mc.x, gp[sv * 3 + 1] - mc.y, gp[sv * 3 + 2] - mc.z).applyMatrix4(pl.L).multiplyScalar(rimK).add(cc);
         n.set(gn[sv * 3], gn[sv * 3 + 1], gn[sv * 3 + 2]).applyMatrix3(NM).normalize();
         m.copy(v).sub(centre);
         m.y += 0.3 * m.length();
         m.normalize();
-        n.multiplyScalar(0.62).addScaledVector(m, 0.38).normalize();
+        n.multiplyScalar(0.52).addScaledVector(m, 0.48).normalize();
         const o = (cards * 4 + qi) * 3;
         pos[o] = v.x;
         pos[o + 1] = v.y;
@@ -545,17 +703,19 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
         const inner = aux[sv * 3 + 1];
         const clumpLight = 0.5 + 0.5 * aux[sv * 3 + 2];
         const massLight = THREE.MathUtils.clamp((v.y - my.lo) / Math.max(1, my.hi - my.lo), 0, 1);
-        // (each pad's own top-to-belly gradient weighs most: the layered masses
-        //  read as pads stacked with dark creases, not one blob)
-        let light = THREE.MathUtils.clamp(0.2 * massLight + 0.46 * clumpLight + 0.16 * lobeLight + 0.18 * (0.5 + 0.5 * n.y), 0, 1);
+        // (the MASS's top-to-belly gradient weighs most — every mass one cloud
+        //  with a golden crown and a cool belly; the pads and their lobes
+        //  only model it)
+        let light = THREE.MathUtils.clamp(0.44 * massLight + 0.26 * clumpLight + 0.12 * lobeLight + 0.18 * (0.5 + 0.5 * n.y), 0, 1);
         if (pl.under) light *= 0.8;
         light = light * light * (3 - 2 * light);
-        tmpC.copy(UNDER).lerp(hue, THREE.MathUtils.smoothstep(light, 0.12, 0.62));
-        tmpC.lerp(TOP, THREE.MathUtils.smoothstep(light, 0.56, 1) * (0.45 + 0.45 * h) * (pl.under ? 0.5 : 1));
-        tmpC.multiplyScalar((0.56 + 0.44 * light) * (1 - 0.22 * inner) * (1 - 0.5 * occ) * pl.shade);
+        tmpC.copy(UNDER).lerp(hue, THREE.MathUtils.smoothstep(light, 0.14, 0.62));
+        tmpC.lerp(TOP, THREE.MathUtils.smoothstep(light, 0.5, 1) * (0.62 + 0.38 * h) * (pl.under ? 0.6 : 1));
+        // (bellies ≈ 20 % darker, sunlit crowns ≈ 30 % brighter than round 5)
+        tmpC.multiplyScalar((0.45 + 0.55 * light) * (1 + 0.3 * THREE.MathUtils.smoothstep(light, 0.58, 1) * (1 - inner) * (1 - occ)) * (1 - 0.22 * inner) * (1 - 0.5 * occ) * pl.shade);
         // …and warm, golden sprig tips where the top of a mass faces the sun
         const sf = Math.max(0, n.dot(sunDir) * 0.6 + n.y * 0.62);
-        tmpC.lerp(SUNLIT, Math.min(0.62, sf * sf * topK * (1 - inner) * (1 - occ)) * sunK);
+        tmpC.lerp(SUNLIT, Math.min(0.6, sf * sf * topK * (1 - inner) * (1 - occ)) * sunK);
         col[o] = tmpC.r;
         col[o + 1] = tmpC.g;
         col[o + 2] = tmpC.b;
@@ -595,7 +755,7 @@ export function buildCrown(ctx, rng, clumpsIn, { density = 1, limbs = [], branch
     for (const ci of hosts) {
       const c = clumps[ci];
       const pl = place[ci];
-      const centre = centres.get(c.limb).p;
+      const centre = centres.get(massOf[ci]).p;
       hue.copy(MID).lerp(pl.drift > 0 ? OLIVE : SAGE, Math.abs(pl.drift) * 0.7);
       let left = perHost;
       while (left > 0 && cards < maxCards) {

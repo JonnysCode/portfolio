@@ -28,7 +28,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makePerson } from '../../props/index.js';
 import {
   Batch, mats, mat4, xf, board, boardBetween, rod, stoneGeo, mossGeo, tube, taperTube, leafGeo, Cards, deform, uvBox, paramSurface,
-  arcSegment, noiseA, lightSpillGeo, lightSpillMaterial, KIT,
+  arcSegment, noiseA, lightSpillGeo, lightSpillMaterial, lampPoolMaterial, KIT,
   paintFn, addFlower, addFern, addGrass, addIvy, TAU, WOOD,
 } from './kit.js';
 import { local, hitProxy, pot, stringLights, flagstones } from './garden.js';
@@ -243,9 +243,10 @@ function buildInterior(F, rng, I, halos, frame, sofaB, extras) {
     halos.push({ x: v.x, y: v.y, z: v.z, size });
   };
 
-  // rug: a rectangular cream Berber with ink lozenges, centred on the seating group — the
-  // sofa's front legs and the lounge chair's whole base stand on it
-  berberRug(F, rng4, at(-0.3, -0.47), 2.9, 1.56);
+  // rug: a rectangular cream Berber with ink lozenges, centred on the seating group — it runs
+  // well in under the sofa, so the sofa's front legs and the lounge chair's whole base stand on
+  // it (its back edge between the sofa's front and back legs; the front edge where it was)
+  berberRug(F, rng4, at(-0.3, -0.62), 2.9, 1.86);
   // sofa against the back wall (into its own batch, local to the sofa group's origin)
   sofa(sofaB, rng, new THREE.Matrix4(), { len: 1.95, color: PALETTE.sofaSage });
   // coffee table, a comfortable reach in front of the seat
@@ -289,6 +290,85 @@ function buildInterior(F, rng, I, halos, frame, sofaB, extras) {
   }
   // a basket of throws by the sofa
   basket(F, rng, at(1.22, -1.15, 0.4));
+  // night: the lamps pool their light where it falls (reading chair, coffee table, sideboard wall)
+  lampPools(I, extras);
+}
+
+/**
+ * Night layering (the lamps carry the room after dark): soft additive pools of lamplight where
+ * each lamp's light lands — a warm cone under the tripod floor lamp across the rug and onto the
+ * lounge chair, the rice-paper pendant's pool on the coffee table (and faintly on the rug round
+ * it), and a wash up the limewash behind the mushroom lamp on the sideboard. One mesh, gone by
+ * day (kit.js lampPoolMaterial follows the night).
+ */
+function lampPools(I, extras) {
+  const y0 = I.floorY;
+  const geos = [];
+  const flat = (w, h, x, y, z, rot, opts) => {
+    const g = lightSpillGeo(w, h, opts);
+    g.rotateX(-Math.PI / 2);
+    g.rotateY(rot);
+    g.translate(x, y, z);
+    geos.push(g);
+  };
+  // the floor lamp (tripod at (−1.72, −1.05), shade ≈ 1.3–1.6 up): a cone pool on the rug and
+  // the boards round the reading chair, brightest towards the lamp
+  flat(1.95, 1.65, -1.48, y0 + 0.034, -0.78, 0.55, { color: '#ffbb70', peak: 0.42, tilt: 0.5 });
+  // … and on the lounge chair's seat and the ottoman
+  flat(0.66, 0.6, -1.3, y0 + 0.47, -0.36, 1.05, { color: '#ffc27c', peak: 0.24 });
+  flat(0.56, 0.48, -0.82, y0 + 0.33, 0.12, 1.1, { color: '#ffc27c', peak: 0.16 });
+  // the pendant over the coffee table: a pool on the table top, a faint one on the rug round it
+  flat(0.86, 0.86, 0.02, y0 + 0.406, -0.36, 0, { color: '#ffd291', peak: 0.3 });
+  flat(2.1, 1.75, 0.0, y0 + 0.031, -0.45, 0, { color: '#ffc47e', peak: 0.11 });
+  // the mushroom lamp on the sideboard: a soft wash up the wall behind it
+  {
+    const phi = Math.PI - 0.95; // the sideboard's wall (see buildInterior)
+    const r0 = I.radiusAt(phi, 0.5) - 0.26;
+    // the lamp sits 0.42 to the sideboard's left (its frame faces into the room: φ + π)
+    const a = phi + Math.PI;
+    const lx = Math.sin(phi) * r0 + Math.cos(a) * -0.42, lz = Math.cos(phi) * r0 - Math.sin(a) * -0.42;
+    const phiL = Math.atan2(lx, lz);
+    const rW = I.radiusAt(phiL, y0 + 1.2);
+    const halfW = 0.62, yA = y0 + 0.82, yB = y0 + 2.15, yPeak = y0 + 1.12;
+    const c = new THREE.Color('#ffc480');
+    const nu = 10, nv = 8;
+    const pos = [], col = [], idx = [];
+    for (let j = 0; j <= nv; j++) {
+      for (let i = 0; i <= nu; i++) {
+        const u = (i / nu) * 2 - 1;
+        const y = yA + (j / nv) * (yB - yA);
+        const da = (u * halfW) / rW;
+        const r = I.radiusAt(phiL + da, y) - 0.008;
+        pos.push(Math.sin(phiL + da) * r, y, Math.cos(phiL + da) * r);
+        const dy = y < yPeak ? (yPeak - y) / (yPeak - yA) : (y - yPeak) / (yB - yPeak);
+        const d = Math.min(1, Math.hypot(u, dy));
+        const k = 0.24 * (1 - d * d * (3 - 2 * d));
+        col.push(c.r, c.g, c.b, k);
+      }
+    }
+    for (let j = 0; j < nv; j++) {
+      for (let i = 0; i < nu; i++) {
+        const q = j * (nu + 1) + i;
+        idx.push(q, q + 1, q + nu + 2, q, q + nu + 2, q + nu + 1);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
+    g.setIndex(idx);
+    geos.push(g);
+  }
+  for (const g of geos) {
+    for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'color') g.deleteAttribute(name);
+    if (!g.index) g.setIndex([...Array(g.attributes.position.count).keys()]);
+  }
+  const mesh = new THREE.Mesh(mergeGeometries(geos, false), lampPoolMaterial());
+  mesh.name = 'atelier-lamp-pools';
+  mesh.renderOrder = 3;
+  mesh.castShadow = mesh.receiveShadow = false;
+  mesh.raycast = () => {};
+  mesh.frustumCulled = true;
+  extras.push(mesh);
 }
 
 /**
@@ -424,7 +504,8 @@ function berberRug(F, rng, m, W, D) {
     v.z += 0.01 * Math.sin(v.x * 5.3);
   });
   // (a warm wool cream, not paper white: under the lamps a near-white pile clipped to white)
-  L.add(M.textile, base.translate(0, th / 2 + 0.002, 0), { color: '#d3c7ae', cast: false });
+  // (a little darker again: in the sun fleck through the loggia the pile still clipped)
+  L.add(M.textile, base.translate(0, th / 2 + 0.002, 0), { color: '#bfb298', cast: false });
   const top = th + 0.0035;
   // a woven ink border just inside the edge frames the field
   {
@@ -769,7 +850,8 @@ function tripodLamp(F, rng, m) {
   }
   L.add(M.metal, new THREE.CylinderGeometry(0.02, 0.02, 0.3, 6).translate(0, 1.3, 0), { color: PALETTE.black, cast: false });
   const shade = new THREE.CylinderGeometry(0.25, 0.27, 0.32, 20, 1, false);
-  L.add(M.lamp, shade.translate(0, 1.47, 0), { cast: false });
+  // (the linen drum: a soft glow by day — a lamp's day glow clipped it to white — bright at night)
+  L.add(M.shade, shade.translate(0, 1.47, 0), { cast: false });
   L.add(M.metal, new THREE.TorusGeometry(0.25, 0.008, 4, 20).rotateX(Math.PI / 2).translate(0, 1.63, 0), { color: PALETTE.black, cast: false });
 }
 
@@ -826,11 +908,11 @@ function bookcase(F, rng, m) {
         const kind = rng.int(0, 2);
         if (kind === 0) vase(L, [x + 0.08, y + 0.012, 0.02], 0.05, 0.18, rng.pick(['#e9e2d4', '#c46a43', '#6e8a6a']));
         else if (kind === 1) {
-          L.add(M.clay, new THREE.CylinderGeometry(0.05, 0.04, 0.07, 10).translate(x + 0.08, y + 0.05, 0.02), { color: '#e9e2d4', cast: false });
+          L.add(M.vc, new THREE.CylinderGeometry(0.05, 0.04, 0.07, 10).translate(x + 0.08, y + 0.05, 0.02), { color: '#e9e2d4', cast: false });
           addFern(L, rng, x + 0.08, y + 0.09, 0.02, { size: 0.16, fronds: 5 });
         } else {
           const bowl = new THREE.SphereGeometry(0.07, 10, 4, 0, TAU, Math.PI / 2, Math.PI / 2);
-          L.add(M.glossy, bowl.translate(x + 0.08, y + 0.08, 0.02), { color: '#2f3e5c', cast: false });
+          L.add(M.vc, bowl.translate(x + 0.08, y + 0.08, 0.02), { color: '#2f3e5c', cast: false });
         }
         x += 0.18;
         continue;
@@ -868,9 +950,7 @@ function sideboard(F, rng, m, halo) {
   // mushroom lamp (glowing dome on a slim stem)
   L.add(M.vc, new THREE.CylinderGeometry(0.02, 0.07, 0.3, 12).translate(-0.42, top + 0.15, 0), { color: PALETTE.ink, cast: false });
   const dome = new THREE.SphereGeometry(0.19, 18, 8, 0, TAU, 0, Math.PI / 2).scale(1, 0.7, 1);
-  L.add(M.lamp, dome.translate(-0.42, top + 0.29, 0), { cast: false });
-  const hp = new THREE.Vector3(-0.42, top + 0.3, 0).applyMatrix4(m);
-  void hp;
+  L.add(M.shade, dome.translate(-0.42, top + 0.29, 0), { cast: false });
   // vases, art books, a small plant
   vase(L, [0.05, top, -0.04], 0.08, 0.3, PALETTE.ink);
   vase(L, [0.22, top, 0.02], 0.06, 0.2, '#e9e2d4');

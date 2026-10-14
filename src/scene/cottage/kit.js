@@ -20,10 +20,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { materials, END_GRAIN_V } from '../../core/materials.js';
+import { materials, END_GRAIN_V, sharedUniforms } from '../../core/materials.js';
 import { createNoise2D } from '../../core/noise.js';
 import { requestBake } from '../../core/textures/bakery.js';
 import { mushroomGlowMaterials } from '../../world/vegetation/mushrooms.js';
+// (a leaf module: it imports only core/ and world/layout.js — no cycle through props/index.js)
+import { LAMP_GLSL, lampUniforms } from '../../props/lamplighter.js';
 
 export const TAU = Math.PI * 2;
 
@@ -66,9 +68,14 @@ export function mats() {
   const m = materials;
   M = {
     cap: velvetCap(m.surface('mushroomCap', { color: '#ffffff', vertexColors: true, roughness: 2.1 })),
-    // the cream warts on the caps: torn veil flakes with a warm lift by day and only a
-    // faint mint glint on their rims at night — see creamWarts()
+    // the cream warts on the caps: domed, torn veil flakes with a warm lift by day, shaded
+    // cream cushions at night — see creamWarts()
     warts: creamWarts(mushroomGlowMaterials({ materials: m }).warts),
+    // the cottage's own caps & warts after bakeBulbGlow: the same, plus the fairy lights'
+    // night warmth from their baked 'capGlow' attribute (other builders keep cap / warts,
+    // whose shaders never read it)
+    capLit: null,
+    wartsLit: null,
     // window panes: lamp-lit glass with a warm gradient in the vertex colours (see paneGlow)
     pane: paneGlow(),
     // the Wohnatelier's window seen from inside: daylight by day, dark blue at night
@@ -88,7 +95,7 @@ export function mats() {
     // a NEUTRAL weave for the Wohnatelier's textiles: the plain vertex-coloured fabric keeps the
     // kind's default beige in its normalised texture (an orange cast: a sage sofa rendered olive,
     // ink turned slate) — with a white base the vertex colour alone sets the hue
-    textile: m.surface('fabric', { vertexColors: true, color: '#ffffff' }),
+    textile: warmTextile(m.surface('fabric', { vertexColors: true, color: '#ffffff' })),
     clay: m.surface('clay', { vertexColors: true }),
     paper: null, // → vc (books & prints: the paper texture is invisible at this size)
     moss: m.surface('moss'),
@@ -99,11 +106,16 @@ export function mats() {
     glossy: null, // → clay (glazed ceramics)
     glow: m.glow('#ffc477', { day: 0.5, night: 1.35 }),
     lamp: m.glow('#ffd9a0', { day: 0.9, night: 1.6 }),
+    // the Wohnatelier's lamp shades (linen drum, mushroom-lamp dome): soft by day — the lamp
+    // glass's day glow clipped them to white — bright at night
+    shade: m.glow('#ffd6a0', { day: 0.22, night: 1.6 }),
     bulb: null, // → glow
     ivy: m.foliage({ variant: 'ivy', wind: { strength: 0.006, base: 0, speed: 1.3 } }),
     fern: m.foliage({ variant: 'fern', wind: { strength: 0.03, base: 0, speed: 1.5 } }),
     grass: m.foliage({ variant: 'grass', wind: { strength: 0.04, base: 0, speed: 1.7 } }),
   };
+  M.capLit = velvetCap(m.surface('mushroomCap', { color: '#ffffff', vertexColors: true, roughness: 2.1 }), { bulbs: true });
+  M.wartsLit = creamWarts(mushroomGlowMaterials({ materials: m }).warts, { bulbs: true });
   // aliases keep the material count (= draw calls) down
   M.paper = M.vc;
   M.glossy = M.clay;
@@ -144,72 +156,132 @@ function bounceGills(base) {
  * The caps' warts: torn cream veil flakes. In the cap's shade a plain standard
  * material would read khaki-grey, so this clone (never the cached original) is
  * white with the true cream (and a per-flake tone) in the vertex colours, plus
- * a faint warm-white "subsurface" lift by day. At night they read as the soft
- * MILKY dots of a fly agaric under the moon — never grey-blue gravel and never
- * LEDs: the albedo keeps its full value (the moonlight alone turns cream into a
- * cold grey), and a warm-milk emissive covers the whole face of each flake,
- * scaled by the flake's own vertex tone, a little brighter towards its rounded
- * edges (fresnel) where the light scatters through the thin veil. The warm milk
- * carries enough chroma that the night grade's moon tint and Purkinje shift
- * (which spare warm hues) leave it cream.
+ * a faint warm-white "subsurface" lift by day. At night each flake reads as a
+ * soft cream cushion under the moon — never a flat chalk chip, never an LED:
+ * a cream emissive (≈ half value) SHADED by the flake's own facing to the key
+ * light (the moon side of the dome lighter, the underside darker; ctx.lights.keyDir
+ * via setCottageKeyDir), scaled by the flake's vertex tone, and warming to amber
+ * where a fairy-light bulb hangs close (the baked 'capGlow' attribute, see
+ * bakeBulbGlow). The warm cream carries enough chroma that the night grade's moon
+ * tint and Purkinje shift (which spare warm hues) leave it cream.
  */
-const WART_GLOW = { day: '#fff1d8', night: '#ffdfb4', dayI: 0.06, nightI: 0.34 };
-let wartMat = null;
-const wartUniforms = { uWartNight: { value: 0 } };
-function creamWarts(base) {
+const WART_GLOW = { day: '#fff1d8', dayI: 0.06, cream: '#f6deb6', amber: '#ffae62', nightI: 0.3 };
+const wartMats = [];
+const wartUniforms = {
+  uWartNight: { value: 0 },
+  uWartNightI: { value: WART_GLOW.nightI },
+  uWartCream: { value: new THREE.Color(WART_GLOW.cream) },
+  uWartAmber: { value: new THREE.Color(WART_GLOW.amber) },
+  /** world direction towards the key light (sun by day, moon by night) */
+  uWartKey: { value: new THREE.Vector3(-0.4, 0.75, 0.5).normalize() },
+};
+/** Vertex part of the fairy-light warmth (caps & warts): the baked bulb proximity and the world position. */
+function bulbVertex(shader) {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nattribute float capGlow;\nvarying float vCapGlow;\nvarying vec3 vCapWP;')
+    .replace(
+      '#include <project_vertex>',
+      `#include <project_vertex>
+  vCapGlow = capGlow;
+  vCapWP = (modelMatrix * vec4(transformed, 1.0)).xyz;`
+    );
+}
+function creamWarts(base, { bulbs = false } = {}) {
   const w = base.clone();
-  w.name = 'cottage-warts';
+  w.name = bulbs ? 'cottage-warts' : 'cottage-warts-shared';
   w.color.set('#ffffff');
   w.emissive = new THREE.Color(WART_GLOW.day);
   w.emissiveIntensity = WART_GLOW.dayI;
+  if (bulbs) w.defines = { ...(w.defines ?? {}), COTTAGE_BULBS: '' };
   const patch = w.onBeforeCompile;
   w.onBeforeCompile = (shader, renderer) => {
     patch?.(shader, renderer);
-    Object.assign(shader.uniforms, wartUniforms);
+    Object.assign(shader.uniforms, wartUniforms, lampUniforms, { uNight: sharedUniforms.uNight });
+    if (bulbs) bulbVertex(shader);
     shader.fragmentShader = shader.fragmentShader
-      .replace('void main() {', 'uniform float uWartNight;\nvoid main() {')
+      .replace(
+        'void main() {',
+        `uniform float uWartNight, uWartNightI, uNight;
+uniform vec3 uWartCream, uWartAmber, uWartKey;
+#ifdef COTTAGE_BULBS
+varying float vCapGlow;
+varying vec3 vCapWP;
+#endif
+${LAMP_GLSL}
+void main() {`
+      )
       .replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
   {
-    // by day a soft even lift; at night a warm milky glow over the whole flake (a touch
-    // brighter at its rounded rim), each flake its own tone
-    float wFres = pow(1.0 - saturate(abs(dot(normal, normalize(vViewPosition)))), 2.0);
+    // by day a soft even lift; at night a cream cushion shaded by its facing to the moon
+    // (lighter on the moon side, darker underneath), warming to amber by the fairy lights
     float wTone = dot(vColor.rgb, vec3(0.3, 0.5, 0.2));
-    totalEmissiveRadiance *= mix(vec3(1.0), vec3(wTone * (0.6 + 1.0 * wFres)), uWartNight);
+    vec3 wKey = normalize((viewMatrix * vec4(uWartKey, 0.0)).xyz);
+    vec3 wUp = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+    float wNL = dot(normal, wKey);
+    float wSh = 0.3 + 0.55 * smoothstep(-0.4, 0.85, wNL) + 0.15 * smoothstep(-0.2, 0.9, dot(normal, wUp));
+#ifdef COTTAGE_BULBS
+    float wB = clamp(vCapGlow, 0.0, 1.0) * uNight * lampOn(vCapWP, 0.0);
+#else
+    float wB = 0.0;
+#endif
+    vec3 wE = mix(uWartCream * wSh, uWartAmber * (0.6 + 0.7 * wSh), min(1.0, wB * 1.2)) * wTone * uWartNightI;
+    wE += uWartAmber * wB * wTone * 0.3;
+    totalEmissiveRadiance = mix(totalEmissiveRadiance, wE, uWartNight);
   }`
       );
   };
   const key = w.customProgramCacheKey();
-  w.customProgramCacheKey = () => key + '|cottage-warts';
-  wartMat = w;
+  w.customProgramCacheKey = () => key + (bulbs ? '|cottage-warts2-lit' : '|cottage-warts2');
+  wartMats.push(w);
   return w;
 }
-const _wDay = new THREE.Color(WART_GLOW.day);
-const _wNight = new THREE.Color(WART_GLOW.night);
+/** The warts' night shading follows the live key-light direction (ctx.lights.keyDir: pass the Vector3 itself). */
+export function setCottageKeyDir(v) {
+  if (v?.isVector3) wartUniforms.uWartKey.value = v;
+}
 
 /**
- * The caps' skin: velvety and painterly rather than plastic. The texture's
- * roughness is raised (opts.roughness above: a broad, dim highlight), this
- * clone (never the cached original) gets a stronger soft rim sheen, and its
- * shader adds what vertex colours cannot carry: fine radial fibril streaks
- * running from the rim towards the crown (two octaves, faded out where they
- * would get sub-pixel), and a chalky, desaturated velvet bloom at grazing
+ * The caps' skin: matte, velvety and painterly — like the painted references,
+ * never a lacquered lampshade. The texture's roughness is raised and floored
+ * at 0.88 (no highlight band), the sun's sheen and the sky reflection are
+ * nearly gone, the soft velvet rim brightening is kept faint, and the shader
+ * adds what vertex colours cannot carry: fine radial fibrils running from the
+ * rim towards the crown (two octaves, low in contrast, faded out where they
+ * would get sub-pixel) and a chalky, desaturated velvet bloom at grazing
  * angles, like the bloom on a fresh fly agaric. The mottled hue (crimson rim →
- * orange crown, blotches) is painted into the vertex colours by the builder.
+ * orange crown, blotches, crimson-brown clouds) is painted into the vertex
+ * colours by the builder.
+ * At night the fairy-light strands warm the skin next to each bulb: a baked
+ * per-vertex bulb proximity ('capGlow', bakeBulbGlow) drives a soft warm
+ * emissive patch — the light the bulb throws on the velvet, tinted by it —
+ * lit in the lamplighter's cascade. Geometry without the attribute reads 0.
  * Cap UVs: U = around (× 2), V = 0 at the rim → 1 at the apex.
  */
-function velvetCap(base) {
+const CAP_GLOW = { color: '#ffb36b', k: 0.52 };
+const capUniforms = { uCapGlowK: { value: CAP_GLOW.k }, uCapGlowC: { value: new THREE.Color(CAP_GLOW.color) } };
+function velvetCap(base, { bulbs = false } = {}) {
   const c = base.clone();
-  c.name = 'cottage-cap';
+  c.name = bulbs ? 'cottage-cap' : 'cottage-cap-shared';
   const u = materials.surfaceUniforms(c);
-  if (u?.sfQ) u.sfQ.value.z = 0.5; // velvet rim sheen (the kind's default is 0.35)
+  if (u?.sfQ) u.sfQ.value.z = 0.16; // a faint velvet rim (the kind's default is 0.35): matte, not a sheen
+  if (bulbs) c.defines = { ...(c.defines ?? {}), COTTAGE_BULBS: '' };
   const patch = c.onBeforeCompile;
   c.onBeforeCompile = (shader, renderer) => {
     patch?.(shader, renderer);
-    shader.fragmentShader = shader.fragmentShader.replace(
-      '#include <emissivemap_fragment>',
-      `#include <emissivemap_fragment>
+    Object.assign(shader.uniforms, capUniforms, lampUniforms, { uNight: sharedUniforms.uNight });
+    if (bulbs) bulbVertex(shader);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('void main() {', `uniform float uCapGlowK, uNight;\nuniform vec3 uCapGlowC;\n#ifdef COTTAGE_BULBS\nvarying float vCapGlow;\nvarying vec3 vCapWP;\n#endif\n${LAMP_GLSL}\nvoid main() {`)
+      // the texture's fine fibril streaks at half their contrast (with the shader's own
+      // streaks below they read as brushed metal under a highlight)
+      .replace('vec3 sfCol = mix(sfColA, sfColB, sfA.r) * (sfA.g * 2.0);', 'vec3 sfCol = mix(sfColA, sfColB, sfA.r) * (1.0 + (sfA.g * 2.0 - 1.0) * 0.45);')
+      .replace(
+        '#include <emissivemap_fragment>',
+        `#include <emissivemap_fragment>
+  // matte suede: never a glossy highlight band
+  roughnessFactor = max(roughnessFactor, 0.88);
 #if defined(USE_UV) && !defined(SF_TRIPLANAR)
   {
     float cA = vUv.x * 3.14159265;                         // around (seam-free on a circle)
@@ -224,29 +296,107 @@ function velvetCap(base) {
     float f2 = 1.0 - smoothstep(0.6, 1.6, w2);
     float s1 = sfNoise3(q1 + vec3(0.0, 0.0, 1.7 * sfNoise3(q2 * 0.5)));
     float s2 = sfNoise3(q2);
-    // (soft and low in contrast: strong long streaks under a highlight read as brushed metal)
-    float streak = (smoothstep(0.55, 0.88, s1) * 0.1 - smoothstep(0.4, 0.1, s1) * 0.04) * f1
-                 + (smoothstep(0.5, 0.9, s2) * 0.1 - smoothstep(0.45, 0.12, s2) * 0.05) * f2;
+    // (soft and low in contrast: strong long streaks read as a lacquered lampshade)
+    float streak = (smoothstep(0.55, 0.88, s1) * 0.05 - smoothstep(0.4, 0.1, s1) * 0.02) * f1
+                 + (smoothstep(0.5, 0.9, s2) * 0.05 - smoothstep(0.45, 0.12, s2) * 0.025) * f2;
     diffuseColor.rgb *= 1.0 - streak;
     // velvet bloom: chalky and a little desaturated where the skin turns away
     float cF = pow(1.0 - saturate(abs(dot(normal, normalize(vViewPosition)))), 3.0);
     float cL = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
-    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(cL) * vec3(1.5, 1.25, 1.15) + diffuseColor.rgb * 0.25, cF * 0.3);
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(cL) * vec3(1.5, 1.25, 1.15) + diffuseColor.rgb * 0.25, cF * 0.22);
+  }
+#endif
+#ifdef COTTAGE_BULBS
+  {
+    // the fairy lights warm the velvet beside each bulb (night, in the lamplighter's cascade)
+    float cg = clamp(vCapGlow, 0.0, 1.4) * uNight * lampOn(vCapWP, 0.0);
+    totalEmissiveRadiance += cg * uCapGlowK * uCapGlowC * (diffuseColor.rgb * 1.5 + vec3(0.05, 0.025, 0.006));
   }
 #endif`
       )
-      // velvet, not satin: a cap's skin is matte, fibrous suede — its gloss is mostly
-      // gone (the broad sky reflection and the sun's sheen), the velvet rim term stays
+      // matte, not satin: a cap's skin is fibrous suede — the broad sky reflection and the
+      // sun's sheen are all but gone
       .replace(
         '#include <lights_fragment_end>',
         `#include <lights_fragment_end>
-  reflectedLight.directSpecular *= 0.35;
-  reflectedLight.indirectSpecular *= 0.4;`
+  reflectedLight.directSpecular *= 0.12;
+  reflectedLight.indirectSpecular *= 0.2;`
       );
   };
   const key = c.customProgramCacheKey();
-  c.customProgramCacheKey = () => key + '|cottage-cap2';
+  c.customProgramCacheKey = () => key + (bulbs ? '|cottage-cap3-lit' : '|cottage-cap3');
   return c;
+}
+
+/** Fairy-light bulbs (world / batch space) collected by stringLights (garden.js) for bakeBulbGlow. */
+export const FAIRY_BULBS = [];
+
+/** A spatial hash of bulb positions ({x, y, z}) with cell size `reach`. */
+function bulbGrid(bulbs, reach) {
+  const grid = new Map();
+  for (const b of bulbs) {
+    const k = `${Math.floor(b.x / reach)},${Math.floor(b.y / reach)},${Math.floor(b.z / reach)}`;
+    if (!grid.has(k)) grid.set(k, []);
+    grid.get(k).push(b);
+  }
+  return grid;
+}
+
+/**
+ * Give `geo` (positions in the same space as the bulbs) the float 'capGlow' attribute the
+ * cap & wart materials turn into the fairy lights' night warmth: Σ (1 − d / reach)² over the
+ * bulbs within `reach`, capped. (Other builders that want it — e.g. the Velowerkstatt — call it on
+ * their cap geometry with their own bulb positions and draw that with mats().capLit / wartsLit.)
+ * Returns the number of lit vertices.
+ */
+export function bulbGlowAttribute(geo, bulbs, { reach = 0.62, grid = null } = {}) {
+  const P = geo.attributes.position;
+  const a = new Float32Array(P.count);
+  let lit = 0;
+  if (bulbs.length) {
+    const g = grid ?? bulbGrid(bulbs, reach);
+    for (let i = 0; i < P.count; i++) {
+      const x = P.getX(i), y = P.getY(i), z = P.getZ(i);
+      const ix = Math.floor(x / reach), iy = Math.floor(y / reach), iz = Math.floor(z / reach);
+      let sum = 0;
+      for (let dx = -1; dx <= 1; dx++)
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dz = -1; dz <= 1; dz++) {
+            const list = g.get(`${ix + dx},${iy + dy},${iz + dz}`);
+            if (!list) continue;
+            for (const b of list) {
+              const d = Math.hypot(x - b.x, y - b.y, z - b.z);
+              if (d < reach) sum += (1 - d / reach) ** 2;
+            }
+          }
+      a[i] = Math.min(1.4, sum);
+      if (sum > 0) lit++;
+    }
+  }
+  geo.setAttribute('capGlow', new THREE.BufferAttribute(a, 1));
+  return lit;
+}
+
+/**
+ * Bake the fairy lights' warmth into the caps (and their warts): every cap & wart geometry in
+ * batch B gets the 'capGlow' attribute (bulbGlowAttribute) — all of them, so they still merge —
+ * and moves to the lit material variants (capLit / wartsLit) whose shaders read it. Call after
+ * everything is added, before B.build(). (Other batches keep the shared cap / warts materials,
+ * which never read the attribute.)
+ */
+export function bakeBulbGlow(B, bulbs, { reach = 0.62 } = {}) {
+  const M2 = mats();
+  // cap → capLit, warts → wartsLit: the batch's caps & warts move to the variants that read the attribute
+  const swap = new Map([[M2.cap, M2.capLit], [M2.warts, M2.wartsLit], [M2.capLit, M2.capLit], [M2.wartsLit, M2.wartsLit]]);
+  const grid = bulbGrid(bulbs, reach);
+  let lit = 0;
+  for (const e of B.lists.values()) {
+    const to = swap.get(e.material);
+    if (!to) continue;
+    e.material = to;
+    for (const g of e.geos) lit += bulbGlowAttribute(g, bulbs, { reach, grid });
+  }
+  return lit;
 }
 
 /**
@@ -349,7 +499,7 @@ function limewash(base) {
   limeMat = c;
   return c;
 }
-const LIME_BOUNCE = { color: '#ffcf9a', day: 0.2, night: 0.24 };
+const LIME_BOUNCE = { color: '#ffcf9a', day: 0.2, night: 0.32 };
 let limeMat = null;
 
 /**
@@ -378,20 +528,69 @@ function paperLantern() {
   return m;
 }
 
+/**
+ * The Wohnatelier's textiles (sofa, rug, cushions, curtain, throws): at night the room's lamps
+ * bounce a little warm light about — a small albedo-tinted warm term keeps the sage sofa
+ * reading sage (not a moonlit teal-grey) and the cognac warm. Gone by day.
+ */
+const TEXTILE_BOUNCE = { color: '#ffc890', day: 0.0, night: 0.34 };
+let textileMat = null;
+function warmTextile(base) {
+  const c = base.clone();
+  c.name = 'cottage-textile';
+  c.emissive = new THREE.Color(TEXTILE_BOUNCE.color);
+  c.emissiveIntensity = TEXTILE_BOUNCE.day;
+  const patch = c.onBeforeCompile;
+  c.onBeforeCompile = (shader, renderer) => {
+    patch(shader, renderer);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      '#include <emissivemap_fragment>\n  totalEmissiveRadiance *= diffuseColor.rgb; // warm lamp bounce, tinted by the albedo'
+    );
+  };
+  const key = c.customProgramCacheKey();
+  c.customProgramCacheKey = () => key + '|textile-bounce';
+  textileMat = c;
+  return c;
+}
+
+/**
+ * Pools of lamplight at night (the Wohnatelier's lamps on the chair, table and wall): the
+ * additive, unlit feathered patches of lightSpillGeo, but the other way round — gone by day,
+ * full at night (follows setCottageNight).
+ */
+const LAMP_POOL = { day: 0.0, night: 1.0 };
+let lampPoolMat = null;
+export function lampPoolMaterial() {
+  if (lampPoolMat) return lampPoolMat;
+  lampPoolMat = new THREE.MeshBasicMaterial({
+    color: '#ffffff',
+    vertexColors: true,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: true,
+    fog: false,
+    opacity: LAMP_POOL.day,
+  });
+  lampPoolMat.name = 'cottage-lamp-pool';
+  return lampPoolMat;
+}
+
 /** Ease the cottage's own day/night-dependent material terms (call every frame; cheap). */
 export function setCottageNight(night) {
+  if (textileMat) textileMat.emissiveIntensity = TEXTILE_BOUNCE.day + (TEXTILE_BOUNCE.night - TEXTILE_BOUNCE.day) * night;
+  if (lampPoolMat) {
+    lampPoolMat.opacity = LAMP_POOL.day + (LAMP_POOL.night - LAMP_POOL.day) * night;
+    lampPoolMat.visible = lampPoolMat.opacity > 0.003;
+  }
   if (gillMat) gillMat.emissiveIntensity = GILL_BOUNCE.day + (GILL_BOUNCE.night - GILL_BOUNCE.day) * night;
   if (paperMat) paperMat.emissiveIntensity = PAPER_LAMP.day + (PAPER_LAMP.night - PAPER_LAMP.day) * night;
   if (limeMat) limeMat.emissiveIntensity = LIME_BOUNCE.day + (LIME_BOUNCE.night - LIME_BOUNCE.day) * night;
   if (paneMat) paneMat.emissiveIntensity = PANE_GLOW.day + (PANE_GLOW.night - PANE_GLOW.day) * night;
   if (daylightMat) daylightMat.color.setScalar(DAYLIGHT.day + (DAYLIGHT.night - DAYLIGHT.day) * night);
   if (lightSpillMat) lightSpillMat.opacity = LIGHT_SPILL.day + (LIGHT_SPILL.night - LIGHT_SPILL.day) * night;
-  if (wartMat) {
-    const k = THREE.MathUtils.smoothstep(night, 0.1, 0.85);
-    wartMat.emissive.lerpColors(_wDay, _wNight, k);
-    wartMat.emissiveIntensity = WART_GLOW.dayI + (WART_GLOW.nightI - WART_GLOW.dayI) * k;
-    wartUniforms.uWartNight.value = k;
-  }
+  if (wartMats.length) wartUniforms.uWartNight.value = THREE.MathUtils.smoothstep(night, 0.1, 0.85);
 }
 
 /**
@@ -587,6 +786,21 @@ export class Batch {
 
 /** The identity frame — handy default for Batch.at(). */
 export const IDENTITY = new THREE.Matrix4();
+
+/**
+ * A frame that discards what is added to it. Tier thinning routes the dropped items here, so
+ * they still make their random draws and everything placed after them stays where it is on
+ * every quality tier.
+ */
+export const SINK = {
+  matrix: IDENTITY,
+  add(material, geo) {
+    return geo;
+  },
+  at() {
+    return SINK;
+  },
+};
 
 // ─── transforms ──────────────────────────────────────────────────────────────
 const _m = new THREE.Matrix4();
@@ -1087,14 +1301,20 @@ export function taperTube(points, r0, r1, radial = 5, tubular = null) {
  * square, growing towards +V) into one geometry.
  */
 export class Cards {
-  constructor() {
+  /** opts.keep (0..1): keep only that share of the cards added, evenly spread (lower tiers thin
+   *  out the leaves without touching the caller's random draws, so the layout stays the same) */
+  constructor({ keep = 1 } = {}) {
     this.pos = [];
     this.nor = [];
     this.uv = [];
     this.idx = [];
+    this.keep = Math.min(1, Math.max(0, keep));
+    this.seen = 0;
   }
   /** A card with its stem at `base`, growing along `up`, facing `normal`, height s (width s·aspect). */
   add(base, up, normal, s, { aspect = 1, flip = false, bend = 0 } = {}) {
+    const i = this.seen++;
+    if (this.keep < 1 && Math.floor((i + 1) * this.keep) === Math.floor(i * this.keep)) return;
     const across = _x.crossVectors(up, normal).normalize();
     const n0 = this.pos.length / 3;
     const rows = bend ? (KIT.detail < 0.6 ? 2 : 3) : 1;

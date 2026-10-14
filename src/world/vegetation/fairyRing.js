@@ -17,18 +17,33 @@
 // Glowing moss: one instanced draw (a squashed dome), a moss-green standard
 // material whose mint emissive follows the night (updateGlowMoss); the
 // ground light: one lightPools() draw (props/glow.js, night only).
+//
+// Round 6: the ring is its own light, not a blob. From the glen's and the
+// overview's cameras its 16 bonnets, the moss band, the pools and the halos
+// added up into one white-mint blob with a pale veil. Now the ring's caps &
+// gills are one mesh of their own (ringGlowMesh) whose saturated mint-cyan
+// emissive (#56dca4) falls to ≈ 50 % from 25 units away, its pools are a
+// draw of their own that fades the same way (ringPoolMesh), the halos are
+// half the size and the pools ≈ 30 % smaller — up close (the 'ring' view) it
+// is as bright as before.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../../core/rng.js';
 import { getHeight, getPathDistance, pathPolylines } from '../ground.js';
 import { GLEN_RADIUS } from '../layout.js';
-import { TAU, instanced } from './common.js';
+import { TAU, instanced, staticMesh, GeoBuilder } from './common.js';
 import { canGrow, inNearField, isClearOfSubjects, cameraClearance, inShot } from './zones.js';
+import { lightPools } from '../../props/glow.js';
 
 const RING_CANDIDATES = [[-4.5, 11.2], [-5.2, 12.4], [-3.6, 12.2], [4.6, 13.2]];
 const MOSS_COL = '#4c8a4a';
 const MOSS_GLOW = '#56dca4';
 const POOL_COL = '#62e8bc';
+/** The ring's own light: a saturated mint-cyan (never near-white from afar). */
+const RING_GLOW = '#56dca4';
+const RING_POOL = '#4cd8a2';
+/** GLSL: the ring's glow by view distance — full up close, ≈ 50 % from 25 units, ≈ 40 % from the overview. */
+const RING_FADE = /* glsl */ `float ringFade(float d) { return mix(1.0, 0.5, smoothstep(10.0, 25.0, d)) * mix(1.0, 0.8, smoothstep(32.0, 60.0, d)); }`;
 
 /** A low moss cushion (unit radius, 0.4 tall): a squashed dome, 7 sides × 2 rings. */
 function mossDome() {
@@ -51,10 +66,69 @@ function glowMossMaterial() {
 }
 /** Follow the night (cheap; call every frame). */
 export function updateGlowMoss(night) {
-  if (!mossMat) return;
   const k = THREE.MathUtils.smoothstep(night, 0.15, 0.85);
   // (a soft foxfire green, never a white disc: the caps carry the brightest light)
-  mossMat.emissiveIntensity = 0.02 + 0.42 * k;
+  if (mossMat) mossMat.emissiveIntensity = 0.02 + 0.42 * k;
+  // (the ring's bonnets: pale mint by day, their own mint-cyan light at night)
+  if (ringMat) ringMat.emissiveIntensity = 0.1 + 1.25 * THREE.MathUtils.smoothstep(night, 0.1, 0.85);
+}
+
+let ringMat = null;
+/**
+ * The ring's caps & gills material: pale mint by day; at night a saturated
+ * mint-cyan glow (the vertex colour grades caps vs gills) that dims with the
+ * view distance (RING_FADE) — so from the glen each cap reads as its own
+ * light instead of the ring blooming into one blob.
+ */
+function ringGlowMaterial() {
+  if (ringMat) return ringMat;
+  ringMat = new THREE.MeshStandardMaterial({ name: 'fairy-ring-glow', color: '#cfeee0', emissive: RING_GLOW, emissiveIntensity: 0.1, roughness: 0.85, vertexColors: true });
+  ringMat.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\n' + RING_FADE)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+  totalEmissiveRadiance *= vColor.rgb * ringFade(length(vViewPosition));`);
+  };
+  ringMat.customProgramCacheKey = () => 'fairy-ring-glow-v1';
+  return ringMat;
+}
+
+/**
+ * One mesh for the ring's glowing caps & gills (a MushroomKit of its own:
+ * kit.glow — the bell caps, white vertex colour — and kit.glowGills, mint).
+ * The kit's stems go to `stemsInto` (a GeoBuilder: the small mushrooms' stems).
+ */
+export function ringGlowMesh(kit, stemsInto = null) {
+  const B = new GeoBuilder();
+  if (kit.glow.count) B.addGeometry(kit.glow.build());
+  if (kit.glowGills.count) B.addGeometry(kit.glowGills.build());
+  if (stemsInto && kit.stems.count) stemsInto.addGeometry(kit.stems.build());
+  if (!B.count) return null;
+  const m = staticMesh('fairy-ring-glow', B.build(), ringGlowMaterial(), { cast: false, receive: true });
+  m.raycast = () => {};
+  return m;
+}
+
+/**
+ * The ring's cool light pools: their own lightPools() draw, the shared pool
+ * shader with the ring's distance fade appended (its uniforms stay linked to
+ * the shared material's, so the night and the strength still drive it).
+ */
+export function ringPoolMesh(pools) {
+  if (!pools.length) return null;
+  const mesh = lightPools(pools, { height: getHeight, lift: 0.05 });
+  const base = mesh.material;
+  if (base?.isShaderMaterial && /vTint\s*=/.test(base.vertexShader)) {
+    const m = base.clone();
+    for (const k in base.uniforms) m.uniforms[k] = base.uniforms[k];
+    const vs = base.vertexShader;
+    const end = vs.lastIndexOf('}');
+    m.vertexShader = RING_FADE + '\n' + vs.slice(0, end) + '  vTint *= ringFade(gl_Position.w);\n' + vs.slice(end);
+    m.name = 'fairy-ring-pool';
+    mesh.material = m;
+  }
+  mesh.name = 'fairy-ring-pools';
+  return mesh;
 }
 
 /** Where the fairy ring goes ({ x, z, r }; null if no candidate is free) — picked before the scatter, which then keeps the circle clear. */
@@ -91,7 +165,8 @@ export function buildFairyRing(ctx, { kit, site, clover = [] }) {
       const grade = 0.5 + 0.5 * Math.cos(a - back);
       const h = (0.17 + 0.26 * grade) * rng.range(0.88, 1.1);
       // (they lean outwards a touch, as if dancing round)
-      kit.glowcap(x, y, z, { height: h, capR: h * rng.range(0.36, 0.44), lean: rng.range(0.05, 0.2), leanAz: a + rng.jitter(0.5), halo: 2.2 });
+      // (round 6: halos 1.2 × the cap — 2.2 merged into one blob from the glen)
+      kit.glowcap(x, y, z, { height: h, capR: h * rng.range(0.36, 0.44), lean: rng.range(0.05, 0.2), leanAz: a + rng.jitter(0.5), halo: 1.2 });
       // a baby at the foot of every other one
       if (i % 2 === 0) {
         const b = a + rng.jitter(0.12) + 0.09, br = rr + rng.jitter(0.08);
@@ -111,11 +186,13 @@ export function buildFairyRing(ctx, { kit, site, clover = [] }) {
     }
     // cool light pooling under the ring at night: a soft glow on the moss
     // inside and a ring of small pools along the circle
-    pools.push({ x: cx, y: cy, z: cz, size: R * 1.25, color: POOL_COL, strength: 0.42, lamp: false });
+    // (round 6: ≈ 30 % smaller, a little weaker and saturated mint-cyan — it
+    //  was the ring's pale veil from the glen; ringPoolMesh fades it with distance)
+    pools.push({ x: cx, y: cy, z: cz, size: R * 0.88, color: RING_POOL, strength: 0.36, lamp: false });
     for (let i = 0; i < 10; i++) {
       const a = (i / 10) * TAU;
       const x = cx + Math.sin(a) * R, z = cz + Math.cos(a) * R;
-      pools.push({ x, y: getHeight(x, z), z, size: 0.62, color: POOL_COL, strength: 0.55, lamp: false });
+      pools.push({ x, y: getHeight(x, z), z, size: 0.44, color: RING_POOL, strength: 0.5, lamp: false });
     }
     glowSpots.push({ x: cx, y: cy + 0.3, z: cz });
     // a quiet clover bed in the ring's heart
@@ -234,6 +311,69 @@ export function buildGlowTrails(ctx, { kit, roots = [], density = 1, avoid = [] 
     lay(pts);
   }
   return { moss, pools, glowSpots, trails };
+}
+
+/**
+ * (round 6) Glowing moss & bonnet tufts along the waterfall escarpment's
+ * LEDGES — at night the cliff faces beside the falls were one dull grey-green
+ * wall. ridgeHeight(u, w, g): the escarpment's heightfield (scene/riverside/
+ * ridge.js) in its falls frame F = { x, z, u: [ux, uz], w: [wx, wz] }. A
+ * ledge is a near-level spot on the cliff (≥ 0.8 above the floor) with a drop
+ * just in front of it; the moss lines its lip, a tuft of glowing bonnets now
+ * and then. The falling water (u ≈ uLip) is left alone. kit: a MushroomKit
+ * (the shared glow builders). Returns { moss, glowSpots }.
+ */
+export function buildLedgeGlow(ctx, { kit, ridgeHeight, frame: F, density = 1, uLip = 0 }) {
+  const rng = createRng('vegetation:ledge-glow');
+  const moss = [], glowSpots = [];
+  if (typeof ridgeHeight !== 'function') return { moss, glowSpots };
+  const toX = (u, w) => F.x + u * F.u[0] + w * F.w[0];
+  const toZ = (u, w) => F.z + u * F.u[1] + w * F.w[1];
+  const hAt = (u, w) => {
+    const x = toX(u, w), z = toZ(u, w);
+    return ridgeHeight(u, w, getHeight(x, z));
+  };
+  const dens = Math.min(1, density);
+  const ledges = [];
+  for (let u = -9; u <= 9; u += 0.3) {
+    if (Math.abs(u - uLip) < 1.7) continue;
+    for (let w = -4; w <= 7; w += 0.2) {
+      const x = toX(u, w), z = toZ(u, w);
+      const g = getHeight(x, z);
+      const h = ridgeHeight(u, w, g);
+      if (h - g < 0.8) continue;
+      // near-level here, a drop just ahead (towards the pool, +w): a ledge's lip
+      const flat = Math.abs(hAt(u, w + 0.12) - hAt(u, w - 0.12)) / 0.24 + Math.abs(hAt(u + 0.12, w) - hAt(u - 0.12, w)) / 0.24;
+      if (flat > 0.7) continue;
+      const drop = h - hAt(u, w + 0.45);
+      if (drop < 0.35) continue;
+      ledges.push({ u, w, x, y: h, z });
+    }
+  }
+  // thin to a lip line with gaps (trails, not a uniform fringe)
+  const kept = [];
+  for (const l of ledges) {
+    if (!rng.chance(0.55 * dens + 0.15)) continue;
+    if (kept.some((k) => Math.hypot(k.x - l.x, k.z - l.z, (k.y - l.y) * 0.5) < 0.42)) continue;
+    // (never in front of a lens)
+    if (inNearField(l.x, l.y + 0.1, l.z, 0.45, 0.6)) continue;
+    kept.push(l);
+  }
+  let nextTuft = rng.int(2, 4);
+  for (const l of kept) {
+    moss.push({ x: l.x, y: l.y + 0.01, z: l.z, ry: rng.range(0, TAU), s: rng.range(0.08, 0.14), sy: rng.range(0.7, 1.2), color: new THREE.Color(1, 1, 1).offsetHSL(0, 0, rng.jitter(0.08)) });
+    // a second cushion hugging the first
+    if (rng.chance(0.5)) {
+      const a = rng.range(0, TAU);
+      moss.push({ x: l.x + Math.sin(a) * 0.12, y: l.y + 0.005, z: l.z + Math.cos(a) * 0.12, ry: rng.range(0, TAU), s: rng.range(0.06, 0.1), sy: rng.range(0.7, 1.1), color: new THREE.Color(1, 1, 1).offsetHSL(0, 0, rng.jitter(0.08)) });
+    }
+    if (--nextTuft <= 0) {
+      nextTuft = rng.int(3, 6);
+      kit.bonnets(l.x, l.y, l.z, { height: rng.range(0.1, 0.16), count: rng.int(2, 4), glow: true, spread: 1.3, halo: false });
+      glowSpots.push({ x: l.x, y: l.y + 0.12, z: l.z });
+    }
+  }
+  return { moss, glowSpots };
 }
 
 /** The glowing-moss InstancedMesh for a list of placements (null if empty). */

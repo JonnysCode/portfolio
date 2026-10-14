@@ -186,7 +186,9 @@ export default async function build(ctx) {
     // (the open front band — seen only by the wide views, over the vignettes —
     //  keeps softer, fewer patches: no camouflage blotches)
     const front = smoothstep(16, 30, z);
-    litter = Math.max(litter, smoothstep(23, 34, r) * (0.28 + 0.5 * smoothstep(0.35, 0.75, fieldMid(x, z))) * (1 - 0.45 * front));
+    // (round 6: fewer still — sunlit, the front band's soil read as sand; the
+    //  moss carpet and the scattered leaves dress it instead)
+    litter = Math.max(litter, smoothstep(23, 34, r) * (0.28 + 0.5 * smoothstep(0.35, 0.75, fieldMid(x, z))) * (1 - 0.62 * front));
     for (const t of trees) {
       const d = Math.hypot(x - t.x, z - t.z);
       if (d < t.radius * 4) litter = Math.max(litter, (1 - smoothstep(t.radius * 1.3, t.radius * 4, d)) * 0.95);
@@ -196,7 +198,8 @@ export default async function build(ctx) {
     for (const p of PADS) {
       if (p.id === 'oak') continue;
       const d = Math.hypot(x - p.x, z - p.z);
-      tramp = Math.max(tramp, (1 - smoothstep(p.r * 0.6, p.r + 1.2, d)) * (p.id.startsWith('bridge') ? 0.4 : 0.55));
+      // (round 6: 0.55 → 0.45 — the cottages' yards keep more moss & clover)
+      tramp = Math.max(tramp, (1 - smoothstep(p.r * 0.6, p.r + 1.2, d)) * (p.id.startsWith('bridge') ? 0.4 : 0.45));
     }
     splat.set([path, damp, litter, tramp], i * 4);
     if (r < 50) {

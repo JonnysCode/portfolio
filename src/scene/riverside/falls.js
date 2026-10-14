@@ -217,19 +217,25 @@ void main() {
     float b = vInfo.z;
     float churn = vInfo.w;
     float fall = step(0.0, b);
-    vec2 q = vec2(across * 11.0 + layer * 17.0, vTau * 2.4 - t * 2.6);
-    float s1 = fNoise(q);
-    float s2 = fNoise(vec2(across * 23.0 + 5.0 + layer * 31.0, vTau * 4.0 - t * 3.8));
+    // every strand of water runs a little out of step with its neighbours (a
+    // per-column phase), and the streaks are long — stretched ~2.5× along the
+    // fall — so no band ever lines up across the sheet like a venetian blind
+    float colPh = fNoise(vec2(across * 7.0 + layer * 3.0, 2.3)) * 2.6 + fNoise(vec2(across * 17.0 + 9.0, 5.1 + layer)) * 1.3;
+    float run = vTau - t * 1.08;
+    vec2 q = vec2(across * 11.0 + layer * 17.0, run * 0.95 + colPh);
+    float s1 = fNoise(q) * 0.7 + fNoise(q * vec2(1.9, 2.3) + 3.7) * 0.3;
+    float s2 = fNoise(vec2(across * 23.0 + 5.0 + layer * 31.0, run * 1.55 + colPh * 1.7));
     float streak = smoothstep(0.42, 0.9, s1 * 0.6 + s2 * 0.5);
-    float pulse = smoothstep(0.58, 0.92, fNoise(vec2(across * 3.0 + layer * 5.0, vTau * 4.5 - t * 4.2)));
+    float pulse = smoothstep(0.62, 0.95, fNoise(vec2(across * 6.0 + layer * 5.0, run * 1.7 + colPh * 0.8)) * 0.7 + fNoise(vec2(across * 13.0, run * 3.1 + colPh)) * 0.3);
     float mid = min(across, 1.0 - across);
     float rag = fNoise(vec2(across * 4.0 + 9.0, vTau * 5.0 - t * 2.2));
     float edge = smoothstep(0.0, 0.06 + 0.24 * rag, mid);
     // ropes: gaps open between strands in the lower part of each fall
     float rope = fNoise(vec2(across * 6.5 + layer * 13.0, vTau * 0.7 - t * 0.7));
     float part = mix(1.0, 0.25 + 0.75 * smoothstep(0.28, 0.55, rope), fall * smoothstep(0.2, 0.75, b) * (1.0 - churn));
-    col = mix(deep * 1.1, white, clamp(streak + pulse * 0.45, 0.0, 1.0));
-    a = (0.14 + streak * 0.72 + pulse * 0.22) * edge * part;
+    // (between the strands a thin milky veil, never the dark rock behind as stripes)
+    col = mix(mix(deep * 1.1, white, 0.18), white, clamp(streak + pulse * 0.45, 0.0, 1.0));
+    a = (0.22 + streak * 0.66 + pulse * 0.2) * edge * part;
     // foam where it lands and across the ledges (bubbly, never a flat white sheet)
     float bub = fNoise(vWPos.xz * 9.0 + vec2(t * 0.8, -t * 1.1)) * 0.6 + fNoise(vec2(across * 9.0, vTau * 6.0 - t * 3.0)) * 0.4;
     float foam = churn * smoothstep(0.25, 0.7, bub + churn * 0.35);
@@ -257,10 +263,12 @@ void main() {
     vec2 q = vWPos.xz * 4.0;
     float c = fNoise(q + vec2(t * 0.9, -t * 1.3)) * 0.6 + fNoise(q * 2.4 - vec2(t * 1.7, 0.0)) * 0.4;
     float foam = smoothstep(0.38, 0.78, c + (1.0 - rr) * 0.25);
+    // swells spreading from the landing: broad, broken bands of froth, never a drawn ring
     float ring = 0.0;
     for (int k = 0; k < 2; k++) {
-      float ph = fract(t * 0.5 + float(k) * 0.5);
-      ring += smoothstep(0.09, 0.0, abs(rr - (0.25 + ph * 0.75))) * (1.0 - ph);
+      float ph = fract(t * 0.4 + float(k) * 0.5);
+      float nb = fNoise(q * 1.3 + float(k) * 5.0 - vec2(t * 0.6, t * 0.4));
+      ring += smoothstep(0.24, 0.05, abs(rr - (0.25 + ph * 0.7) + (nb - 0.5) * 0.2)) * smoothstep(0.3, 0.7, nb) * (1.0 - ph);
     }
     float edge = smoothstep(0.0, 0.35, 1.0 - rr) * (0.75 + 0.25 * fNoise(q * 1.7 + 5.0));
     col = mix(deep, white, 0.35 + foam * 0.65);
@@ -687,11 +695,10 @@ export function buildFalls(ctx, B, rng) {
       halos.push({ x: wp.x, y: wp.y, z: wp.z, size: 0.35 });
     }
   }
-  // the glow-worm curtains on the escarpment: a soft teal haze round each
-  for (const [u, y, w] of ridge.curtains ?? []) {
-    const wp = toWorld(u, y, w);
-    halos.push({ x: wp.x, y: wp.y, z: wp.z, size: 0.55 });
-  }
+  // the glow-worm curtains on the escarpment: their droplets are soft glints of
+  // their own (night only) — no teal halo quad round each curtain (that read as
+  // a glowing block, an LED sign on the cliff)
+  if (ridge.glowworms) ctx.scene.add(ridge.glowworms.points);
 
   // ── water: ONE ribbon from the lip to the pool, the spring channel, ledge foam ──
   // The fall is a single continuous strip — no seams between the tiers: it
@@ -827,6 +834,7 @@ export function buildFalls(ctx, B, rng) {
     update(dt, t) {
       wu.uTime.value = animate ? t : t * 0.2;
       spray.update(t);
+      ridge.glowworms?.update(t);
     },
   };
 }

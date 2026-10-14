@@ -25,8 +25,19 @@
 //   understorey dark leafy shrub cards at the feet of the giants and in a band
 //               (r ≈ 36–64), ragged top AND bottom and sunk into the ground, so
 //               no bright open meadow reads through and no card shows a
-//               straight edge (a clean alpha cut where MSAA is thin, no stipple)
+//               straight edge (a clean alpha cut where MSAA is thin, no stipple);
+//               the middle distance between the giants (r ≈ 39–66): small
+//               understorey trees in loose groves (broad, low, hazy crowns on
+//               short stems), fern banks on the floor, pale moss trailing from
+//               the leaf sprays of the nearer giants' limbs and three far
+//               clusters of mushrooms that glow mint or amber by night — all
+//               cards of the same mesh, their silhouettes drawn in its shader
 //   mist        soft curtains between the rows (thinning around the moon)
+//
+// However deep in the haze, a giant's trunk above its misty feet stays about
+// 30 % darker than the air around it (a column with local contrast, never a
+// flat pale-teal cut-out). Beyond the last row the sky dome (sky.js) paints
+// the endless forest: layered far foliage, the hanging canopy and hazy air.
 //
 // 4 draw calls. Only the arc the camera can ever look at is filled (the camera
 // always looks roughly north: view azimuths within ±105° of −Z); the front
@@ -519,6 +530,15 @@ const FOREST_FRAG = /* glsl */ `
     // haze at reduced contrast (the haze keeps the value, not the flatness)
     float formK = mix(0.72, 1.22, key);
     gl_FragColor.rgb *= mix(1.0, clamp(barkDetail * formK, 0.4, 1.6), isBark * 0.55 * hazeV.a);
+    // however deep in the haze, a trunk above its misty feet stays ≈ 30 %
+    // darker than the air around it: a column with local contrast, never a
+    // flat pale-teal cut-out (its bark detail rides along at that value)
+    float lNow = dot(gl_FragColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float lAir = dot(hazeV.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float holdK = isBark * hazeV.a * smoothstep(3.0, 14.0, hA);
+    // (against the low sun a trunk is a darker contre-jour column in the golden haze)
+    float contre = smoothstep(0.35, 0.85, dot(v, uKeyDir)) * (1.0 - uNight);
+    gl_FragColor.rgb *= mix(1.0, min(1.0, lAir * mix(mix(0.7, 0.52, contre), 0.66, uNight) / max(lNow, 1e-4)), holdK);
     // night: a silver line where the edge faces the moon — scattered right at
     // the silhouette, so it survives the mist a little (the trunks stand out
     // against the moonlit haze like the backlit trees of the references)
@@ -659,7 +679,7 @@ function buildMist(tier) {
 }
 
 const UNDER_VERT = /* glsl */ `
-  attribute vec2 aSeed; // seed, kind (0 shrub, 1 low wide bush)
+  attribute vec2 aSeed; // seed, kind (0 shrub, 1 low wide bush, 2 small tree, 3 hanging moss, 4 glowing mushrooms, 5 fern bank)
   varying vec2 vUv;
   varying vec2 vSeed;
   varying vec3 vW;
@@ -676,7 +696,7 @@ const UNDER_VERT = /* glsl */ `
 `;
 
 const UNDER_FRAG = /* glsl */ `
-  uniform vec3 uKeyColor, uShadeCol, uMoonDir, uMoonRim;
+  uniform vec3 uKeyColor, uShadeCol, uMoonDir, uMoonRim, uGlow;
   uniform float uNight, uDepthK, uCut;
   varying vec2 vUv;
   varying vec2 vSeed;
@@ -687,29 +707,116 @@ const UNDER_FRAG = /* glsl */ `
     float x = vUv.x * 2.0 - 1.0;
     // (the per-card seed, snapped: an interpolated 'constant' varying wobbles
     //  in its last bits, and the hashes below would blow that up into a
-    //  different shrub outline per pixel — a stippled edge)
+    //  different outline per pixel — a stippled edge)
     float sd = floor(vSeed.x * 211.0 + 0.5) * 0.173;
-    // a shrub: a few overlapping round leaf masses (kind 1: a lower, wider
-    // bush) with a ragged leafy outline — no single dome, no spikes
-    float h = 0.0;
-    for (int i = 0; i < 4; i++) {
-      float fi = float(i);
-      float cx = (envHash(vec2(sd, fi * 7.1)) * 2.0 - 1.0) * 0.45;
-      float r = mix(0.3, 0.5, envHash(vec2(fi * 3.3, sd + 1.7)));
-      float cy = mix(0.25, 0.5, envHash(vec2(sd + fi, 5.3))) * (1.0 - 0.45 * vSeed.y);
-      float dx = (x - cx) / r;
-      // (each mass rounds off to nothing at its sides: no flat-topped block
-      //  running out to the card's straight side edges)
-      float k = max(1.0 - dx * dx, 0.0);
-      h = max(h, (cy * pow(k, 0.3) + r * sqrt(k)) * (1.0 - 0.3 * vSeed.y));
+    float kind = floor(vSeed.y + 0.5);
+    float alpha = 0.0;
+    float top = vUv.y;     // 0 … 1: how high up in the silhouette (shading)
+    float caps = 0.0;      // glowing mushroom caps (night)
+    float moss = 0.0;      // pale hanging moss
+    float hazeX = 0.0;     // extra air in front (the middle-distance trees)
+    float clumpShade = 1.0; // lit top / shaded belly of a leaf clump
+    float rimK = 1.0;      // how much moonlight catches the top
+    if (kind < 1.5) {
+      // a shrub: a few overlapping round leaf masses (kind 1: a lower, wider
+      // bush) with a ragged leafy outline — no single dome, no spikes
+      float h = 0.0;
+      for (int i = 0; i < 4; i++) {
+        float fi = float(i);
+        float cx = (envHash(vec2(sd, fi * 7.1)) * 2.0 - 1.0) * 0.45;
+        float r = mix(0.3, 0.5, envHash(vec2(fi * 3.3, sd + 1.7)));
+        float cy = mix(0.25, 0.5, envHash(vec2(sd + fi, 5.3))) * (1.0 - 0.45 * kind);
+        float dx = (x - cx) / r;
+        // (each mass rounds off to nothing at its sides: no flat-topped block
+        //  running out to the card's straight side edges)
+        float k = max(1.0 - dx * dx, 0.0);
+        h = max(h, (cy * pow(k, 0.3) + r * sqrt(k)) * (1.0 - 0.3 * kind));
+      }
+      h *= 1.0 - smoothstep(0.8, 1.0, abs(x));
+      // (leafy notches a few pixels wide even far away: no stipple)
+      h -= 0.08 * envNoise(vUv * vec2(9.0, 6.0) + sd) + 0.05 * envNoise(vUv * vec2(19.0, 13.0) - sd) + 0.06 * envNoise(vUv * vec2(33.0, 25.0) + sd * 1.7);
+      // the foot is just as ragged (the card is sunk into the ground; never a straight bottom)
+      float foot = 0.05 + 0.11 * envNoise(vec2(vUv.x * 7.0 + sd, sd * 0.37)) + 0.05 * envNoise(vec2(vUv.x * 17.0 - sd, 3.1));
+      // soft leafy edges where alpha to coverage has enough samples (high), a clean cut elsewhere
+      alpha = smoothstep(h, h - 0.07, vUv.y) * smoothstep(foot, foot + 0.07, vUv.y);
+      top = vUv.y / max(h, 0.05);
+    } else if (kind < 2.5) {
+      // a small understorey tree: a short leaning stem under a broad, low,
+      // lumpy crown of several leaf masses (wider than tall, the lower ones
+      // drooping) with a ragged leafy rim and a few holes — a hazy bush of a
+      // tree, never a lollipop (card aspect 1: p is in units of its height)
+      vec2 p = vec2(x * 0.5, vUv.y);
+      float lean = (envHash(vec2(sd, 2.2)) - 0.5) * 0.14;
+      float tx = p.x - lean * p.y * p.y;
+      float stemW = 0.014 + 0.012 * (1.0 - p.y);
+      float stem = smoothstep(stemW, stemW * 0.55, abs(tx)) * (1.0 - smoothstep(0.4, 0.55, p.y));
+      float c = -1.0;
+      vec2 rel = vec2(0.0);
+      for (int i = 0; i < 7; i++) {
+        float fi = float(i);
+        float hx = envHash(vec2(sd, fi * 5.1)) * 2.0 - 1.0;
+        vec2 cc = vec2(hx * 0.3 + lean * 0.6, mix(0.4, 0.74, envHash(vec2(fi * 2.7, sd + 0.9))) - 0.08 * abs(hx));
+        float r = mix(0.12, 0.2, envHash(vec2(sd + fi, 7.7)));
+        vec2 dd = (p - cc) / vec2(r * 1.3, r);
+        float ci = (1.0 - length(dd)) * r;
+        if (ci > c) { c = ci; rel = dd; }
+      }
+      // each clump: a lit top towards the light, a shaded belly — leaf masses, not a cut-out
+      clumpShade = mix(0.62, 1.12, smoothstep(-0.7, 0.75, rel.y - 0.35 * rel.x));
+      c -= 0.02 * envNoise(p * 28.0 + sd) + 0.013 * envNoise(p * 60.0 - sd);
+      // a few holes the light comes through
+      c -= 0.05 * smoothstep(0.72, 0.9, envNoise(p * 12.0 + sd * 3.0));
+      float crown = smoothstep(-0.004, 0.012, c);
+      alpha = max(stem, crown) * smoothstep(0.0, 0.03, vUv.y);
+      top = mix(0.3 * vUv.y, clamp((p.y - 0.3) / 0.55, 0.0, 1.0), crown);
+      hazeX = mix(0.16, 0.06, uNight);
+      rimK = 0.25;
+    } else if (kind < 3.5) {
+      // hanging moss: pale sage-grey strands of different lengths swaying
+      // down from a limb, thinning to wisps at their ends
+      float sway = sin(vUv.y * 5.0 + sd) * 0.04;
+      float u = vUv.x + sway * (1.0 - vUv.y);
+      float lane = envNoise(vec2(u * 18.0 + sd, 0.5));
+      float len = mix(0.25, 1.0, envNoise(vec2(u * 9.0 - sd, 1.7))) * smoothstep(0.3, 0.55, lane);
+      float hang = smoothstep(1.0 - len - 0.02, 1.0 - len + 0.18, vUv.y);
+      float strands = smoothstep(0.42, 0.62, envNoise(vec2(u * 70.0, vUv.y * 2.5 + sd)));
+      alpha = hang * mix(strands, 1.0, 0.25 * smoothstep(0.8, 1.0, vUv.y)) * (1.0 - smoothstep(0.75, 1.0, abs(x)));
+      top = vUv.y;
+      moss = 1.0;
+    } else if (kind < 4.5) {
+      // a little cluster of mushrooms on the forest floor far away: stems and
+      // round caps (by night their caps glow mint and amber)
+      vec2 p = vec2(x * 0.75, vUv.y);
+      for (int i = 0; i < 5; i++) {
+        float fi = float(i);
+        float cx = (envHash(vec2(sd, fi * 3.9)) * 2.0 - 1.0) * 0.55;
+        float hgt = mix(0.25, 0.7, envHash(vec2(fi * 1.7, sd + 2.3)));
+        float cr = hgt * mix(0.32, 0.45, envHash(vec2(sd - fi, 4.4)));
+        float stemM = smoothstep(0.035, 0.02, abs(p.x - cx)) * step(p.y, hgt);
+        vec2 dc = (p - vec2(cx, hgt)) / vec2(cr, cr * 0.6);
+        float cap = (1.0 - smoothstep(0.85, 1.0, length(dc))) * step(hgt - cr * 0.12, p.y);
+        alpha = max(alpha, max(stemM, cap));
+        caps = max(caps, cap);
+      }
+      top = vUv.y;
+    } else {
+      // a fern bank: arching fronds fanning out of the ground, each a pointed
+      // leafy arch — a lacy, serrated top edge
+      float h = 0.0;
+      for (int i = 0; i < 6; i++) {
+        float fi = float(i);
+        float cx = (envHash(vec2(sd, fi * 4.3)) * 2.0 - 1.0) * 0.75;
+        float hw = mix(0.18, 0.32, envHash(vec2(fi * 2.1, sd)));
+        float d = (x - cx) / hw;
+        float arch = max(1.0 - d * d, 0.0);
+        h = max(h, mix(0.45, 0.95, envHash(vec2(sd + fi, 1.9))) * pow(arch, 0.6));
+      }
+      // pinnae: fine saw teeth along the fronds
+      h -= 0.07 * pow(abs(sin(vUv.x * 120.0 + sd)), 0.5) + 0.05 * envNoise(vUv * vec2(25.0, 9.0) + sd);
+      float foot = 0.04 + 0.08 * envNoise(vec2(vUv.x * 9.0 + sd, 0.3));
+      alpha = smoothstep(h, h - 0.05, vUv.y) * smoothstep(foot, foot + 0.06, vUv.y);
+      top = vUv.y / max(h, 0.05);
     }
-    h *= 1.0 - smoothstep(0.8, 1.0, abs(x));
-    // (leafy notches a few pixels wide even far away: no stipple)
-    h -= 0.08 * envNoise(vUv * vec2(9.0, 6.0) + sd) + 0.05 * envNoise(vUv * vec2(19.0, 13.0) - sd) + 0.06 * envNoise(vUv * vec2(33.0, 25.0) + sd * 1.7);
-    // the foot is just as ragged (the card is sunk into the ground; never a straight bottom)
-    float foot = 0.05 + 0.11 * envNoise(vec2(vUv.x * 7.0 + sd, sd * 0.37)) + 0.05 * envNoise(vec2(vUv.x * 17.0 - sd, 3.1));
-    // soft leafy edges where alpha to coverage has enough samples (high), a clean cut elsewhere
-    float alpha = smoothstep(h, h - 0.07, vUv.y) * smoothstep(foot, foot + 0.07, vUv.y);
     if (alpha < uCut) discard;
     // never loom in front of the lens (dissolves only well before the camera gets close)
     float camD = length(vW - cameraPosition);
@@ -720,8 +827,10 @@ const UNDER_FRAG = /* glsl */ `
     // deep shaded leafy greens like the glen's own undergrowth (not a pale
     // teal cut-out): clumps of lighter and darker leaves, darker towards the ground
     vec3 base = mix(vec3(0.075, 0.13, 0.035), vec3(0.12, 0.17, 0.04), envNoise(vW.xz * 0.4 + sd));
-    float top = vUv.y / max(h, 0.05);
-    base *= (0.5 + 0.6 * top) * (0.7 + 0.6 * envNoise(vUv * vec2(9.0, 6.0) + sd * 3.0));
+    base *= (0.5 + 0.6 * top) * (0.7 + 0.6 * envNoise(vUv * vec2(9.0, 6.0) + sd * 3.0)) * clumpShade;
+    // pale sage-grey moss; cream-grey mushroom caps on dark stems
+    base = mix(base, vec3(0.3, 0.34, 0.24) * (0.75 + 0.35 * envNoise(vUv * vec2(40.0, 3.0) + sd)), moss);
+    if (kind > 3.5 && kind < 4.5) base = mix(vec3(0.18, 0.16, 0.12), vec3(0.42, 0.38, 0.3), caps);
     // warm-neutral leaf-filtered ambient by day (the backdrop's moonlit shade by night)
     vec3 amb = mix(vec3(0.3, 0.33, 0.22), uShadeCol * 0.8, uNight);
     float sunPatch = smoothstep(0.35, 0.75, envNoise(vW.xz * 0.21 + 5.0));
@@ -729,28 +838,64 @@ const UNDER_FRAG = /* glsl */ `
     // the band sinks only a little into the haze of its own (the fog chunk does
     // the distance): the shrubs stay dark leafy silhouettes in the mist
     vec4 hazeV = woodlandFog(vW);
-    col = mix(col, hazeV.rgb, 0.08 * uDepthK + 0.15 * (1.0 - smoothstep(0.0, 0.4, top)));
+    col = mix(col, hazeV.rgb, 0.08 * uDepthK + 0.15 * (1.0 - smoothstep(0.0, 0.4, top)) * (1.0 - moss) + hazeX);
     gl_FragColor = vec4(col, alpha);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #include <fog_fragment>
     // (the fog chunk's mist reads near-white over a dark card at this range: pull it back a little)
     gl_FragColor.rgb = mix(gl_FragColor.rgb, col, 0.18 * (1.0 - hazeV.a));
-    // night: the top of each shrub catches a thread of moonlight when seen against it
+    // night: the top of each shrub catches a thread of moonlight when seen
+    // against it; the hanging moss glows silver in it
     vec3 v = normalize(vW - cameraPosition);
     float back = pow(max(dot(v, uMoonDir), 0.0), 4.0);
-    gl_FragColor.rgb += uMoonRim * smoothstep(0.78, 1.0, top) * (0.04 + 0.25 * back) * uNight * (1.0 - 0.6 * hazeV.a);
+    gl_FragColor.rgb += uMoonRim * (smoothstep(0.78, 1.0, top) * (1.0 - moss) * rimK + moss * 0.35) * (0.04 + 0.25 * back) * uNight * (1.0 - 0.6 * hazeV.a);
+    // the far mushrooms glow by night (through the haze, a little dimmed):
+    // mint or amber, a cluster each
+    vec3 glowCol = mix(uGlow, vec3(1.0, 0.62, 0.26) * 2.6, step(0.62, envHash(vec2(sd, 3.3))));
+    gl_FragColor.rgb += glowCol * caps * uNight * (1.0 - 0.55 * hazeV.a) * (0.75 + 0.5 * envHash(vec2(sd, 8.8)));
   }
 `;
 
-/** Shrub cards of the understorey band (crossed vertical quads). */
-function understoreyGeometry(rng, tier, feet = []) {
-  const clumps = tier === 'low' ? 80 : tier === 'medium' ? 130 : 210;
+/** Card kinds of the understorey mesh (aSeed.y). */
+const CARD = { shrub: 0, bush: 1, tree: 2, moss: 3, glow: 4, fern: 5 };
+
+/**
+ * The understorey mesh: vertical cards (crossed pairs, or single ones turned
+ * to the glen) — leafy shrubs in a band and at the giants' feet, small
+ * understorey trees in clusters between the giants (the middle distance),
+ * fern banks on the forest floor, pale moss hanging from the limbs and a few
+ * far clusters of glowing mushrooms. One draw call; the silhouettes are
+ * drawn in the shader.
+ */
+function understoreyGeometry(rng, tier, feet = [], hangs = []) {
+  // (the shrubs draw from the backdrop's own sequence exactly as before; the
+  //  middle-distance layer has its own, so adding it moved nothing)
+  const mid = createRng('backdrop-middle');
   const pos = [];
   const uv = [];
   const seed = [];
   const idx = [];
   let v = 0;
+  /** A card standing on (x, y0, z): w × h, turned by rot; crossed = a second card at ~90°. */
+  const card = (x, y0, z, w, h, rot, kind, crossed = true, sd = mid.next(), r = mid) => {
+    for (let q = 0; q < (crossed ? 2 : 1); q++) {
+      const a = rot + q * (Math.PI / 2 + r.range(-0.3, 0.3));
+      const dx = Math.cos(a) * w * 0.5, dz = Math.sin(a) * w * 0.5;
+      pos.push(x - dx, y0, z - dz, x + dx, y0, z + dz, x + dx, y0 + h, z + dz, x - dx, y0 + h, z - dz);
+      uv.push(0, 0, 1, 0, 1, 1, 0, 1);
+      for (let c = 0; c < 4; c++) seed.push(sd, kind);
+      idx.push(v, v + 1, v + 2, v, v + 2, v + 3);
+      v += 4;
+    }
+  };
+  /** Lowest far-ground height under a card of width w (so its foot is sunk everywhere). */
+  const lowY = (x, z, w, rot) => Math.min(farHeight(x, z), farHeight(x + Math.cos(rot) * w * 0.5, z + Math.sin(rot) * w * 0.5), farHeight(x - Math.cos(rot) * w * 0.5, z - Math.sin(rot) * w * 0.5));
+  /** Rotation that turns a single card to face the glen. */
+  const facing = (x, z) => Math.atan2(-x, z) + Math.PI / 2;
+
+  // ── shrubs: a band (r ≈ 36–64) and at the feet of the giants ──
+  const clumps = tier === 'low' ? 80 : tier === 'medium' ? 130 : 210;
   for (let k = 0; k < clumps + feet.length; k++) {
     let x, z, big = 1;
     if (k < clumps) {
@@ -771,19 +916,60 @@ function understoreyGeometry(rng, tier, feet = []) {
     const rot = rng.range(0, Math.PI);
     // sunk 0.6–1.0 below the lowest ground under the card (its ragged foot does the rest)
     const sink = rng.range(0.6, 1.0);
-    const y0 = Math.min(farHeight(x, z), farHeight(x + Math.cos(rot) * w * 0.5, z + Math.sin(rot) * w * 0.5), farHeight(x - Math.cos(rot) * w * 0.5, z - Math.sin(rot) * w * 0.5)) - sink;
+    const y0 = lowY(x, z, w, rot) - sink;
     if (inMoonWindow(x, y0 + h * 0.5, z, w * 0.5)) continue;
-    const hh = h + sink;
-    for (let q = 0; q < 2; q++) {
-      const a = rot + q * (Math.PI / 2 + rng.range(-0.3, 0.3));
-      const dx = Math.cos(a) * w * 0.5, dz = Math.sin(a) * w * 0.5;
-      pos.push(x - dx, y0, z - dz, x + dx, y0, z + dz, x + dx, y0 + hh, z + dz, x - dx, y0 + hh, z - dz);
-      uv.push(0, 0, 1, 0, 1, 1, 0, 1);
-      for (let c = 0; c < 4; c++) seed.push(sd, low ? 1 : 0);
-      idx.push(v, v + 1, v + 2, v, v + 2, v + 3);
-      v += 4;
+    card(x, y0, z, w, h + sink, rot, low ? CARD.bush : CARD.shrub, true, sd, rng);
+  }
+
+  // ── the middle distance: small understorey trees in loose clusters between
+  //    the giants (r ≈ 39–66), their crowns 6–15 high — layered, hazy leaf
+  //    masses filling the gaps between the colossal trunks ──
+  const groves = tier === 'low' ? 9 : tier === 'medium' ? 15 : 22;
+  for (let g = 0; g < groves; g++) {
+    const az0 = -ARC + ((g + mid.range(0.1, 0.9)) / groves) * 2 * ARC;
+    const r0 = mid.range(39, 66);
+    const n = mid.int(2, tier === 'low' ? 2 : 3);
+    for (let t = 0; t < n; t++) {
+      const az = az0 + mid.range(-0.05, 0.05);
+      const { x, z } = polar(r0 + mid.range(-4, 4), az);
+      const h = mid.range(6, 9.5) + (r0 - 39) * 0.12 + (t === 0 ? 1.5 : 0);
+      const w = h;
+      const rot = mid.range(0, Math.PI);
+      const y0 = lowY(x, z, w * 0.3, rot) - 0.6;
+      if (inMoonWindow(x, y0 + h * 0.6, z, w * 0.5)) continue;
+      card(x, y0, z, w, h + 0.6, rot, CARD.tree);
     }
   }
+
+  // ── fern banks on the forest floor between the shrubs ──
+  const ferns = tier === 'low' ? 0 : tier === 'medium' ? 40 : 70;
+  for (let k = 0; k < ferns; k++) {
+    const az = -ARC + ((k + mid.range(0, 1)) / ferns) * 2 * ARC;
+    const { x, z } = polar(mid.range(36, 52), az);
+    const w = mid.range(2.8, 5.5), h = mid.range(1.0, 1.7);
+    const rot = mid.range(0, Math.PI);
+    const y0 = lowY(x, z, w, rot) - 0.35;
+    if (inMoonWindow(x, y0 + h * 0.5, z, w * 0.5)) continue;
+    card(x, y0, z, w, h + 0.35, rot, CARD.fern);
+  }
+
+  // ── pale moss hanging from the limbs of the nearer giants ──
+  for (const m of hangs) {
+    if (inMoonWindow(m.x, m.y - m.h * 0.5, m.z, m.w * 0.5)) continue;
+    card(m.x, m.y - m.h, m.z, m.w, m.h, facing(m.x, m.z) + mid.range(-0.4, 0.4), CARD.moss, false);
+  }
+
+  // ── a few far clusters of glowing mushrooms (seen from the glen, the
+  //    overview and the bikes: tiny lights deep in the night forest) ──
+  if (tier !== 'low') {
+    for (const [azDeg, r] of [[-40, 42], [34, 44], [62, 41]]) {
+      const { x, z } = polar(r, THREE.MathUtils.degToRad(azDeg));
+      const rot = mid.range(0, Math.PI);
+      const w = 2.4, h = 1.3;
+      card(x, lowY(x, z, w, rot) - 0.15, z, w, h, rot, CARD.glow);
+    }
+  }
+
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
@@ -802,6 +988,10 @@ export function buildBackdrop(ctx) {
   const LEAF = [[0.17, 0.25, 0.12], [0.13, 0.22, 0.14], [0.2, 0.27, 0.13], [0.11, 0.19, 0.13]];
   /** Feet of the trees, where the understorey mesh adds shrub cards. */
   const feet = [];
+  /** Where pale moss hangs from a limb's leaf spray: { x, y (top), z, w, h }. */
+  const hangs = [];
+  const mossK = tier === 'low' ? 0 : tier === 'medium' ? 0.35 : 0.6;
+  const mossRng = createRng('backdrop-moss'); // (its own sequence: the giants stay where they were)
   const leaf = () => LEAF[rng.int(0, LEAF.length - 1)];
 
   // receding rows of colossal trees, the farthest a ghostly wall in the haze;
@@ -901,6 +1091,8 @@ export function buildBackdrop(ctx) {
           const sx = from.x + (to.x - from.x) * t, sy = from.y + (to.y - from.y) * t + (low ? 0.6 : 0.3) * radius, sz = from.z + (to.z - from.z) * t;
           const ss = radius * rng.range(0.9, 1.5) * (low ? 1.4 : 1) * (s === 0 ? 1.2 : 0.8);
           addGeo(acc, blobGeometry(rng, sx, sy, sz, ss * 1.3, ss * 0.85, ss * 1.3, row.r[0] < coarseFrom ? blobCoarse : blobTiny), leaf());
+          // pale moss trailing from the spray's belly (the nearer rows)
+          if (row.r[0] < 70 && mossRng.next() < mossK) hangs.push({ x: sx + mossRng.range(-0.3, 0.3) * ss, y: sy - ss * 0.55, z: sz, w: ss * mossRng.range(1.1, 1.6), h: mossRng.range(3.5, 8) });
         }
         if (low) crownMass(acc, rng, to.x, to.y + cs * 0.4, to.z, cs, leaf(), { lobes });
       }
@@ -1074,6 +1266,7 @@ export function buildBackdrop(ctx) {
       uShadeCol: forestMat.uniforms.uShadeCol,
       uDepthK: { value: depthK },
       uCut: { value: a2c ? 0.02 : 0.5 },
+      uGlow: { value: new THREE.Color('#63f0c2').multiplyScalar(2.4) },
     },
     vertexShader: UNDER_VERT,
     fragmentShader: UNDER_FRAG,
@@ -1081,7 +1274,7 @@ export function buildBackdrop(ctx) {
     alphaToCoverage: a2c,
     fog: true,
   });
-  const under = new THREE.Mesh(understoreyGeometry(rng, tier, feet), underMat);
+  const under = new THREE.Mesh(understoreyGeometry(rng, tier, feet, hangs), underMat);
   under.name = 'backdrop-understorey';
   under.matrixAutoUpdate = false;
   under.castShadow = false;

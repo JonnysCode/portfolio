@@ -351,6 +351,7 @@ const BRIDGE_GLSL = `
 
 const FRAG_PARS = /* glsl */ `
 uniform sampler2D wMask;
+uniform vec4 wDbg; // DEBUG-FX6
 uniform vec4 wRect;      // minX, minZ, 1/sizeX, 1/sizeZ
 uniform float wTime;
 uniform float wNight;
@@ -571,21 +572,32 @@ float wFoamN = wFn * 0.65 + wFn2 * 0.35;
 float wFoamA = smoothstep(0.5, 0.92, wWake + (wFoamN - 0.5) * 0.95) * 0.75;
 // churning foam where the falls land
 float wChurn = wNoise(vWPos.xz * 3.2 + vec2(wT * 0.6, -wT * 0.9)) * 0.6 + wNoise(vWPos.xz * 7.0 - vec2(wT * 1.4, 0.0)) * 0.4;
-float wFoamB = smoothstep(0.75, 0.25, wChurn + (1.0 - wTurb) * 0.65) * step(0.05, wTurb);
-// splash rings spreading from each impact
+// (fading out with the churn itself: a hard cut-off here drew a pale disc with a
+// crisp rim round the landing — at night it read as a sheet of mist on the pool)
+float wFoamB = smoothstep(0.75, 0.25, wChurn + (1.0 - wTurb) * 0.65) * smoothstep(0.04, 0.4, wTurb);
+// splash swells spreading from each impact: broad, broken bands of froth
+// (0.3–0.6 wide, torn by two octaves of noise drifting outwards) that thin out
+// as they travel — never a thin white line lassoed round the landing
 float wRing = 0.0;
 for (int k = 0; k < 3; k++) {
   vec4 im = wImpact[k];
   if (im.w <= 0.0) continue;
-  float dd = length(vWPos.xz - im.xy);
+  vec2 rel = vWPos.xz - im.xy;
+  float dd = length(rel);
+  vec2 dir = rel / max(dd, 1e-3);
+  float rk = 0.0;
   for (int r = 0; r < 3; r++) {
-    float ph = fract(wT * 0.45 + float(r) / 3.0 + float(k) * 0.37);
-    float rr = im.z * (0.4 + ph * 2.4);
-    float wob = (wNoise(vWPos.xz * 5.0 + float(r)) - 0.5) * 0.12;
-    wRing += smoothstep(0.07, 0.0, abs(dd - rr + wob)) * (1.0 - ph) * im.w;
+    float ph = fract(wT * 0.32 + float(r) / 3.0 + float(k) * 0.37);
+    float rr = im.z * (0.45 + ph * 1.9);
+    vec2 q = vWPos.xz * 2.4 - dir * wT * 0.5 + float(r) * 7.3;
+    float n = wNoise(q) * 0.62 + wNoise(q * 2.3 + 4.1) * 0.38;
+    float hw = 0.15 + 0.15 * ph;
+    float band = smoothstep(hw, hw * 0.25, abs(dd - rr + (n - 0.5) * 0.35));
+    rk += band * smoothstep(0.38, 0.72, n) * pow(1.0 - ph, 1.6) * im.w;
   }
+  wRing += rk * (1.0 - smoothstep(im.z * 1.2, im.z * 2.5, dd));
 }
-wRing *= 0.8 * wDetail;
+wRing *= 0.65 * wDetail;
 // the shore: a broken, frothy fringe (never an outline) that laps in and out
 float wWob = (wNoise(vWPos.xz * 3.0 + wT * 0.35) - 0.5) * 0.05;
 float wFringe = 1.0 - smoothstep(0.0, 0.06, wDepth + wWob + 0.012 * sin(wT * 1.1 + vFlow.x * 0.7));
@@ -606,6 +618,8 @@ float wAlpha = mix(0.45, 0.93, smoothstep(0.06, 0.8, wDepth));
 wAlpha = max(wAlpha, smoothstep(0.02, 0.5, wTurb) * 0.93);
 wAlpha = max(wAlpha, wFoamT * 0.92);
 wAlpha *= smoothstep(0.0, 0.11, wDepth + wWob * 0.6);
+if (wDbg.x > 0.5) wAlpha = mix(0.45, 0.93, smoothstep(0.06, 0.8, wDepth)) * smoothstep(0.0, 0.11, wDepth + wWob * 0.6); // DEBUG-FX6
+if (wDbg.z > 0.5) wFoamT = 0.0; // DEBUG-FX6
 diffuseColor.rgb = mix(wCol, wFoam, wFoamT);
 diffuseColor.a = wAlpha;
 `;
@@ -620,6 +634,8 @@ normal = normalize((viewMatrix * vec4(wN, 0.0)).xyz);
 
 const FRAG_LIGHT = /* glsl */ `
 {
+  if (wDbg.x > 1.5) { reflectedLight.directDiffuse *= 0.0; reflectedLight.directSpecular *= 0.0; } // DEBUG-FX6
+  if (wDbg.y > 1.5) { reflectedLight.indirectDiffuse *= 0.0; reflectedLight.indirectSpecular *= 0.0; } // DEBUG-FX6
   // where the sun (or moon) really reaches: irradiance / albedo, shadow-aware
   float wAlb = max(dot(diffuseColor.rgb, vec3(0.333)), 0.02);
   float wLit = clamp(dot(reflectedLight.directDiffuse, vec3(0.333)) / wAlb * 0.45, 0.0, 1.6);
@@ -713,6 +729,7 @@ const FRAG_LIGHT = /* glsl */ `
       wScene = mix(wScene, wPc * wAmb * 2.0, wPm * 0.8);
     }
     float wRk = (wFr + 0.14 * wHit) * (1.0 - wFoamT) * smoothstep(0.02, 0.12, wDepth);
+    if (wDbg.y > 0.5) wRk = 0.0; // DEBUG-FX6
     reflectedLight.directDiffuse *= 1.0 - wRk;
     reflectedLight.indirectDiffuse *= 1.0 - wRk;
     reflectedLight.indirectSpecular *= 1.0 - wRk * 0.6;
@@ -725,7 +742,7 @@ const FRAG_LIGHT = /* glsl */ `
   // lamp, measured in azimuth (narrow, the lamp's angular size) and elevation
   // (wide) — a tall streak towards the viewer, broken up by the ripples, in a
   // soft halo. Plus a faint cool glitter path under the moon.
-  if (wNight > 0.02) {
+  if (wNight > 0.02 && wDbg.w < 0.5) {
     float wFres = 0.45 + 0.55 * pow(1.0 - wCos, 2.0);
     vec2 wRh = normalize(wR.xz + vec2(1e-5));
     vec3 wRefl = vec3(0.0);
@@ -783,6 +800,7 @@ export function buildWater(ctx, { rocks = [], impacts = [], bridge = null, proxi
   const detail = (ctx.quality?.tier ?? 'high') === 'low' ? 0 : 1;
   const u = {
     wMask: { value: mask },
+    wDbg: { value: new THREE.Vector4(0, 0, 0, 0) }, // DEBUG-FX6
     wRect: { value: new THREE.Vector4(B.minX, B.minZ, 1 / (B.maxX - B.minX), 1 / (B.maxZ - B.minZ)) },
     wTime: { value: 0 },
     wNight: sharedUniforms.uNight,
@@ -826,6 +844,7 @@ export function buildWater(ctx, { rocks = [], impacts = [], bridge = null, proxi
     depthWrite: false,
   });
   material.name = 'riverside-water';
+  material.userData.uniforms = u; // DEBUG-FX6
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, u);
     shader.vertexShader = shader.vertexShader
@@ -838,7 +857,7 @@ export function buildWater(ctx, { rocks = [], impacts = [], bridge = null, proxi
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${FRAG_NORMAL}`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${FRAG_LIGHT}`);
   };
-  material.customProgramCacheKey = () => 'riverside-water-v6';
+  material.customProgramCacheKey = () => 'riverside-water-v7';
 
   const mesh = new THREE.Mesh(geo, material);
   mesh.position.y = WL;

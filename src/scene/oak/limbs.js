@@ -32,13 +32,15 @@ const CROWN_GAPS = {
 };
 /**
  * The long low limb over the cottage path carries the lanterns, the ivy and
- * the moss curtains. Its skirt hangs a little HIGHER than the others' (lifted
- * by LOW_LIMB_LIFT, nothing below LOW_LIMB_MIN_Y) so it frames the top of the
- * glen like a lush green awning instead of a low hedge over the cottages.
+ * the moss curtains. Its foliage rides ON the limb (lifted by LOW_LIMB_LIFT,
+ * nothing below LOW_LIMB_MIN_Y): the dark, kinked limb with its festoon of
+ * lanterns and glow-worm curtains hangs below the leaves, the skirt clears the
+ * cottage chimneys and the giants behind it show from the glen — a lush
+ * awning, not a low hedge over the cottages.
  */
 const LOW_LIMB = 'front-left-low';
-const LOW_LIMB_MIN_Y = 13.8;
-const LOW_LIMB_LIFT = 0.9;
+const LOW_LIMB_MIN_Y = 16.6;
+const LOW_LIMB_LIFT = 3.0;
 /**
  * The high crown: the limbs that climb past the top of the wide frames carry
  * extra crowning masses above their outer halves, so the old oak tops out
@@ -98,21 +100,24 @@ export function buildLimbs(rng, { detail = 1, segK = 1 } = {}) {
 
   let currentLimb = 0;
   let lowLimb = false;
-  function addClump(p, s, tier) {
+  /** `u`: where along its main limb (arc fraction) the clump's branch grows — crown.js splits the long limbs' foliage into separate masses by it. */
+  function addClump(p, s, tier, u = 1) {
     if (p.y < 12.2) return;
     if (lowLimb) {
-      // the low limb's masses sit a little higher (see LOW_LIMB_LIFT)
+      // the low limb's masses ride ON the limb (see LOW_LIMB_LIFT)
       p = p.clone();
-      p.y += tier === 3 ? LOW_LIMB_LIFT : LOW_LIMB_LIFT * 0.5;
+      p.y += tier === 3 ? LOW_LIMB_LIFT + 0.9 : LOW_LIMB_LIFT;
       if (p.y < LOW_LIMB_MIN_Y) return;
     }
     if (crownBlocked(p, s * 0.85)) return;
-    clumps.push({ p: p.clone(), s, tier, limb: currentLimb });
+    clumps.push({ p: p.clone(), s, tier, limb: currentLimb, u });
   }
 
   /** Grow `count` children from a parent branch. depth 1 = secondary, 2 = twig. */
   function grow(parent, count, depth) {
     const { curve, radiusAt } = parent;
+    // (arc fraction along the MAIN limb where this family of branches grows)
+    const limbU = (u) => (depth === 1 ? u : parent.limbU);
     for (let k = 0; k < count; k++) {
       const u = THREE.MathUtils.lerp(depth === 1 ? 0.34 : 0.3, 0.94, (k + rng.range(0.15, 0.85)) / count);
       const P = curve.getPointAt(u);
@@ -179,7 +184,7 @@ export function buildLimbs(rng, { detail = 1, segK = 1 } = {}) {
           capEnd: true,
         })
       );
-      const child = { curve: bcurve, radiusAt: radiusAtB, depth, length: blen };
+      const child = { curve: bcurve, radiusAt: radiusAtB, depth, length: blen, limbU: limbU(u), limb: currentLimb };
       branches.push(child);
       const tip = bcurve.getPointAt(1);
       if (depth === 1) {
@@ -187,12 +192,12 @@ export function buildLimbs(rng, { detail = 1, segK = 1 } = {}) {
         // every bough carries a hanging skirt: the underside of the crown is
         // what most cameras look at (the gaps in crown.js open the windows)
         skirt(child, 0.35, 0.3, 0.85);
-        addClump(tip.clone().add(new THREE.Vector3(0, 0.7, 0)), rng.range(2.3, 3.0), 1);
+        addClump(tip.clone().add(new THREE.Vector3(0, 0.7, 0)), rng.range(2.3, 3.0), 1, child.limbU);
         // a fuller clump half-way out so the crown has body, not just a rim
         const mid = bcurve.getPointAt(0.62);
-        addClump(mid.add(new THREE.Vector3(0, 1.3, 0)), rng.range(2.0, 2.6), 1);
+        addClump(mid.add(new THREE.Vector3(0, 1.3, 0)), rng.range(2.0, 2.6), 1, child.limbU);
       } else {
-        addClump(tip.add(new THREE.Vector3(0, 0.55, 0)), rng.range(1.7, 2.5), 2);
+        addClump(tip.add(new THREE.Vector3(0, 0.55, 0)), rng.range(1.7, 2.5), 2, child.limbU);
       }
     }
   }
@@ -214,7 +219,7 @@ export function buildLimbs(rng, { detail = 1, segK = 1 } = {}) {
       side.normalize();
       P.addScaledVector(side, rng.range(-1, 1) * 0.9 * scale);
       P.y += rng.range(-1.0, 0.25) * scale;
-      addClump(P, rng.range(1.7, 2.4) * scale, 3);
+      addClump(P, rng.range(1.7, 2.4) * scale, 3, b.depth === 0 ? u : b.limbU);
     }
   }
 
@@ -241,7 +246,7 @@ export function buildLimbs(rng, { detail = 1, segK = 1 } = {}) {
         capEnd: true,
       })
     );
-    const limb = { id: L.id, curve, radiusAt, length: len, depth: 0 };
+    const limb = { id: L.id, curve, radiusAt, length: len, depth: 0, limbU: 0 };
     limbs.push(limb);
     grow(limb, L.branches, 1);
     // the main limbs' skirts hang from their outer two thirds: the inner
@@ -255,7 +260,7 @@ export function buildLimbs(rng, { detail = 1, segK = 1 } = {}) {
       const out = new THREE.Vector3(P.x - CX, 0, P.z - CZ).normalize();
       P.addScaledVector(out, rng.range(0.3, 1.4));
       P.y += rng.range(1.7, 3.0);
-      addClump(P, rng.range(2.6, 3.3), 0);
+      addClump(P, rng.range(2.6, 3.3), 0, u);
     }
   });
 

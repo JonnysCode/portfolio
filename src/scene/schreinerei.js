@@ -26,7 +26,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { SCHREINEREI, SPOTS, OAK } from '../world/layout.js';
-import { Batch, makeMats, takeHalos, setDetail } from './schreinerei/kit.js';
+import { Batch, makeMats, takeHalos, setDetail, withLite, LOD } from './schreinerei/kit.js';
 import { buildDoor, DOOR } from './schreinerei/door.js';
 import { buildAnnex, ANNEX, annexToWorld } from './schreinerei/annex.js';
 import { makeMotes } from './schreinerei/fx.js';
@@ -45,6 +45,7 @@ const BUDGET = { high: 250000, medium: 170000, low: 150000 };
 export default async function build(ctx) {
   // per-tier geometry detail (kit.LOD): medium & low drop tessellation and the tiniest decor
   setDetail(ctx.quality?.tier ?? 'high');
+  if (ctx.engine?.params?.get?.('kitprof')) globalThis.__KITPROF__ = {}; // TEMP-PROFILE
   const mats = makeMats(ctx);
   const root = new THREE.Group();
   root.name = 'schreinerei';
@@ -63,8 +64,11 @@ export default async function build(ctx) {
   const door = timed('door', () => buildDoor(ctx, B, mats));
   const annex = timed('annex', () => buildAnnex(ctx, B, mats));
   const porch = timed('porch', () => buildPorch(ctx, B, mats, annex.shingles));
-  const deck = timed('deck', () => buildDeck(ctx, B, mats));
-  const yard = timed('yard', () => buildYard(ctx, B, mats));
+  // (low tier: the deck's structure and the yard clutter build their boards
+  // and timbers as plain boxes — kit LOD.lite; the hotspot pieces keep theirs)
+  const lite = LOD.k < 0.5;
+  const deck = timed('deck', () => withLite(lite, () => buildDeck(ctx, B, mats)));
+  const yard = timed('yard', () => withLite(lite, () => buildYard(ctx, B, mats)));
 
   // ── hotspots (every one frames its piece when its entry opens) ────────────
   // the certificate is framed straight on (the rig looks from the spot

@@ -50,7 +50,7 @@ const WASH = {
 const LEAF_TONES = ['#c8862e', '#b5652a', '#d49a3c', '#a4502a', '#c27430', '#8e4a24', '#dcae4c', '#b8402a', '#cf8a34'];
 const FORK = { x: 0, z: 9.3 };
 
-export function buildDrifts(ctx, { occ, density = 1, tier = 'high', flowerMat, leafMat, ringAt = null }) {
+export function buildDrifts(ctx, { occ, density = 1, tier = 'high', flowerMat, leafMat, headMat = null, ringAt = null }) {
   const t0 = performance.now();
   const rng = createRng('vegetation:drifts');
   const lite = tier !== 'high';
@@ -167,6 +167,9 @@ export function buildDrifts(ctx, { occ, density = 1, tier = 'high', flowerMat, l
   // ── 3. accent shrubs: hydrangeas by the cottages and in the wedge between
   //       the Schreinerei and the bridge path ──
   const shrubB = new GeoBuilder();
+  // (round 6: the mopheads in a builder of their own — smooth domes under
+  //  four-petal florets, on a plain soft material, not the paper surface)
+  const headB = new GeoBuilder();
   {
     const srng = createRng('vegetation:hydrangeas');
     const want = [
@@ -207,7 +210,7 @@ export function buildDrifts(ctx, { occ, density = 1, tier = 'high', flowerMat, l
         const y = getHeight(x, z);
         const clear = low ? isClearOfSubjects(x, y, z, 1.05 * s, R, ['glen']) : isClearOfViews(x, y, z, 1.05 * s, R);
         if (!clear || !inShot(x, y + 0.5, z, 0.6)) continue;
-        hydrangea(shrubB, srng, x, y - 0.02, z, s, w.hues[made % w.hues.length], { lite });
+        hydrangea(shrubB, srng, x, y - 0.02, z, s, w.hues[made % w.hues.length], { lite, heads: headB });
         shrubs.push({ x, z });
         (stats.shrubs ??= []).push([+x.toFixed(1), +z.toFixed(1)]);
         occ.add(x, z, R, 'shrub');
@@ -371,6 +374,7 @@ export function buildDrifts(ctx, { occ, density = 1, tier = 'high', flowerMat, l
     meshes.push(instanced(`blooms-${kind}`, bloomTemplate(kind, bRng, { lite: lite || kind === 'bluebell' }), flowerMat, items[kind], { cast: false }));
   }
   if (shrubB.count) meshes.push(staticMesh('hydrangeas', shrubB.build(), leafMat, { cast: false, receive: true }));
+  if (headB.count) meshes.push(staticMesh('hydrangea-heads', headB.build(), headMat ?? leafMat, { cast: false, receive: true }));
   stats.ms = Math.round(performance.now() - t0);
   stats.list = sites.map((q) => `${q.kind}@${q.x.toFixed(1)},${q.z.toFixed(1)}×${q.n}`);
   return { meshes: meshes.filter(Boolean), objects, cover, flowerPatches, leaves, zones, stats };

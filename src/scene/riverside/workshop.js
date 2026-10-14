@@ -17,8 +17,9 @@
 //     crown skin with blotches and streaks, torn cream veil flakes)
 //   • round & square windows glowing, ivy, moss, ferns & toadstools at the foot
 //   • out front: the hero gravel bike on a repair stand (cranks & wheels
-//     turning; a C-jaw clamp on the seatpost), the mechanic behind it with a
-//     wrench, looking up at you between spells of work, a truing stand with a slowly
+//     turning; a C-jaw clamp on the seatpost), the mechanic on a crate by the
+//     door beyond the front wheel, his wrench at the brake, looking up at you
+//     between spells of work (never behind the frame), a truing stand with a slowly
 //     spinning wheel on a stump bench, wheels on wall pegs over a bench,
 //     flower pots under a hanging lantern, a split-rail fence with a road
 //     bike and a kid's bike, a chalkboard, tyres, a pump, an oil can, a crate
@@ -501,7 +502,13 @@ export function buildWorkshop(ctx, B, rng, halos) {
       const x = PX + 0.62, y = P0 + 0.22;
       for (const a of [0, 2.09, 4.19]) part(MM.metal, x + Math.sin(a) * 0.045, y + Math.cos(a) * 0.045, 0.02, 0.09, '#d9a441', { a: -a });
     }
-    part(MM.wood, PX + 0.38, P0 + 0.2, 0.03, 0.2, '#2b2b2b', { a: 0.5 });
+    // the chain whip: a steel handle with a short loop of chain hanging from its head
+    part(MM.metal, PX + 0.38, P0 + 0.2, 0.026, 0.22, '#9ea2a5', { a: 0.5 });
+    part(MM.glossy, PX + 0.33, P0 + 0.12, 0.03, 0.08, '#2b2b2b', { a: 0.5, outline: false });
+    F.add(MM.metal, new THREE.TorusGeometry(0.045, 0.006, 3, 12, Math.PI * 1.3).rotateZ(-2.2).translate(PX + 0.44, P0 + 0.27, SZ + 0.01), { color: '#4a4744', cast: false });
+    // the cassette lockring tool on its peg (a splined nut and a little handle)
+    F.add(MM.metal, new THREE.CylinderGeometry(0.022, 0.022, 0.03, 8).rotateX(Math.PI / 2).translate(PX + 0.2, P0 + 0.36, SZ + 0.018), { color: '#c9cdd0', cast: false });
+    part(MM.glossy, PX + 0.2, P0 + 0.29, 0.016, 0.1, '#3f5f73');
     F.add(MM.metal, new THREE.TorusGeometry(0.07, 0.008, 3, 14, Math.PI * 1.4).rotateZ(-0.2).translate(PX + 0.27, P0 + 0.13, SZ + 0.012), { color: '#4a4744', cast: false });
     F.add(MM.vc, new THREE.TorusGeometry(0.1, 0.012, 4, 18).translate(PX - 0.55, P0 + 0.18, SZ + 0.015), { color: '#2a2622', cast: false });
     F.add(MM.vc, new THREE.TorusGeometry(0.085, 0.01, 4, 18).translate(PX - 0.53, P0 + 0.17, SZ + 0.022), { color: '#2a2622', cast: false });
@@ -649,26 +656,100 @@ export function buildWorkshop(ctx, B, rng, halos) {
       F.add(MM.bulb, new THREE.SphereGeometry(0.04, 8, 6).translate(head[0] - 0.06, head[1] - 0.1, head[2]), { cast: false });
       halos.push({ ...toWorld(head[0] - 0.07, head[1] - 0.12, head[2] + 0.02), size: 0.9 });
     }
-    // plank wainscot around the lower interior wall (a workshop, not a parlour)
+    // plank wainscot round the lower interior wall (a workshop, not a parlour):
+    // tongue-and-groove boards standing on the floor, each one bent to the
+    // drum's bulge (its back follows the plaster, so no board end ever clips
+    // into the wall and no plaster shows below), a skirting board at the foot
+    // and the walnut cap rail on top
     {
+      const T = 0.022; // board thickness
+      const Y0 = 0.05, Y1 = 0.975;
+      /** Wrap a board built round x ∈ [−w/2, w/2], y ∈ [0, h], z ∈ [−d/2, d/2] onto the wall at angle phi (back face on the plaster, + `off` into the room). */
+      const onWall = (g, phi, y0, off = 0, d = T) =>
+        deform(g, (v) => {
+          const y = y0 + v.y;
+          const R = rIn(y) - 0.004 - off - (v.z + d / 2);
+          const a = phi - v.x / Math.max(R, 0.5);
+          v.set(Math.sin(a) * R, y, Math.cos(a) * R);
+        });
+      const doorGap = (phi, r) => Math.cos(phi) * r > 0 && Math.abs(Math.sin(phi) * r) < OPEN_HALF + 0.1;
       const n = 56;
       for (let i = 0; i < n; i++) {
         const phi = (i / n) * TAU;
-        const r = rIn(0.5) - 0.025;
-        const x = Math.sin(phi) * r, z = Math.cos(phi) * r;
-        if (z > 0 && Math.abs(x) < OPEN_HALF + 0.12) continue;
-        const h = 0.92 + rng.jitter(0.02);
-        const g = board((TAU * r) / n - 0.012, h, 0.025, { along: 'y', rng, segs: 1 });
-        xf(g, [x, h / 2 + 0.05, z], [0, phi + Math.PI, 0]);
-        F.add(MM.wood, g, { color: rng.pick(['#9a7350', '#8f6a48', '#a47a55']), cast: false });
+        const r = rIn(0.5);
+        if (doorGap(phi, r)) continue;
+        const h = Y1 - Y0 + rng.jitter(0.012);
+        const w = (TAU * rIn(Y0)) / n - 0.01;
+        const g = board(w, h, T, { along: 'y', rng, segs: 4 }).translate(0, h / 2, 0);
+        F.add(MM.wood, onWall(g, phi, Y0), { color: rng.pick(['#9a7350', '#8f6a48', '#a47a55', '#94704c']), cast: false });
       }
+      // skirting board: a darker plank at the foot, in short lengths (scarfed round the drum)
+      for (let i = 0; i < 18; i++) {
+        const phi = ((i + 0.5) / 18) * TAU;
+        const r = rIn(0.1);
+        if (doorGap(phi, r)) continue;
+        const w = (TAU * r) / 18 + 0.004;
+        const g = board(w, 0.11, 0.018, { rng, segs: 3 });
+        g.translate(0, 0.055, 0);
+        F.add(MM.wood, onWall(g, phi, 0.045, T, 0.018), { color: WOOD.walnut, cast: false });
+      }
+      // the cap rail on top
       for (let i = 0; i < 32; i++) {
         const phi = (i / 32) * TAU;
-        const r = rIn(1.0) - 0.04;
+        const r = rIn(1.0) - 0.036;
         const x = Math.sin(phi) * r, z = Math.cos(phi) * r;
-        if (z > 0 && Math.abs(x) < OPEN_HALF + 0.12) continue;
+        if (doorGap(phi, r)) continue;
         F.add(MM.wood, xf(board((TAU * r) / 32 + 0.01, 0.05, 0.05, { rng }), [x, 1.0, z], [0, phi + Math.PI, 0]), { color: WOOD.walnut, cast: false });
       }
+    }
+    // a track pump by the door (wooden T-handle, chrome barrel, a gauge at its foot)
+    {
+      const P = F.at(mat4([0.66, 0.05, 0.86], [0, 2.4, 0]));
+      for (const sx of [-1, 1]) P.add(MM.glossy, new THREE.BoxGeometry(0.1, 0.018, 0.05).translate(sx * 0.07, 0.009, 0), { color: '#2b2b2b', cast: false });
+      P.add(MM.glossy, new THREE.CylinderGeometry(0.03, 0.036, 0.05, 10).translate(0, 0.035, 0), { color: '#b03a2e', cast: false });
+      P.add(MM.metal, new THREE.CylinderGeometry(0.022, 0.022, 0.5, 10).translate(0, 0.31, 0), { color: '#c9cdd0', cast: false });
+      P.add(MM.metal, rod([0, 0.56, 0], [0, 0.62, 0], 0.006, 0.006, 5), { color: '#9ea2a5', cast: false });
+      P.add(MM.wood, rod([-0.11, 0.63, 0], [0.11, 0.63, 0], 0.016, 0.016, 8), { color: WOOD.oak, cast: false });
+      // the gauge: a cream dial with a red needle, facing the room
+      P.add(MM.glossy, new THREE.CylinderGeometry(0.032, 0.032, 0.014, 12).rotateX(Math.PI / 2).translate(0, 0.1, 0.03), { color: '#3a3a3a', cast: false });
+      P.add(MM.vc, new THREE.CircleGeometry(0.026, 12).translate(0, 0.1, 0.038), { color: '#f1ece2', cast: false });
+      P.add(MM.vc, new THREE.PlaneGeometry(0.003, 0.02).rotateZ(-0.8).translate(0.005, 0.104, 0.039), { color: '#b03a2e', cast: false });
+      // the hose looping up to its clip under the handle
+      P.add(MM.vc, tube([[0.02, 0.06, 0.0], [0.09, 0.08, 0.05], [0.08, 0.3, 0.06], [0.03, 0.52, 0.03]], 0.006, 4, 12), { color: '#1f1e1d', cast: false });
+    }
+    // inner tubes on a peg by the door (left wall) and a chain hung on a nail
+    {
+      const phi = -1.25, y = 1.42;
+      const r = rIn(y);
+      const p = [Math.sin(phi) * r, y, Math.cos(phi) * r];
+      const n = [-Math.sin(phi), 0, -Math.cos(phi)];
+      F.add(MM.wood, rod(p, [p[0] + n[0] * 0.14, y + 0.02, p[2] + n[2] * 0.14], 0.012, 0.011, 5), { color: WOOD.walnut, cast: false });
+      for (let k = 0; k < 2; k++) {
+        const t = new THREE.TorusGeometry(0.17 - k * 0.015, 0.012, 4, 18).scale(0.8, 1.15, 1);
+        F.add(MM.vc, xf(t, [p[0] + n[0] * (0.05 + k * 0.035), y - 0.19 + k * 0.01, p[2] + n[2] * (0.05 + k * 0.035)], [0.04 * k, phi + Math.PI, 0.1 * (k - 0.5)]), { color: '#1f1e1d', cast: false });
+      }
+      // the chain: a sagging loop of dark links from a nail, beside the tubes
+      const phi2 = -1.42, y2 = 1.3, r2 = rIn(y2) - 0.02;
+      const nail = new THREE.Vector3(Math.sin(phi2) * r2, y2, Math.cos(phi2) * r2);
+      const tan = new THREE.Vector3(Math.cos(phi2), 0, -Math.sin(phi2));
+      const pts = [];
+      for (let k = 0; k <= 8; k++) {
+        const s = k / 8;
+        const q = nail.clone().addScaledVector(tan, (s - 0.5) * 0.08).add(new THREE.Vector3(0, -Math.sin(s * Math.PI) * 0.3, 0));
+        q.addScaledVector(new THREE.Vector3(-Math.sin(phi2), 0, -Math.cos(phi2)), 0.012);
+        pts.push(q.toArray());
+      }
+      F.add(MM.metal, tube(pts, 0.007, 4, 18), { color: '#4a4744', cast: false });
+      F.add(MM.metal, new THREE.SphereGeometry(0.01, 5, 3).translate(nail.x, nail.y + 0.005, nail.z), { color: '#2a2622', cast: false });
+    }
+    // a crate of spare parts inside the door on the left: old tyres and a saddle poking out
+    {
+      const C = F.at(mat4([-0.66, 0.05, 0.92], [0, -0.35, 0]));
+      for (const sz of [-1, 1]) C.add(MM.wood, board(0.36, 0.18, 0.014, { rng }).translate(0, 0.09, sz * 0.12), { color: rng.pick([WOOD.oakLight, '#c9a77a']), cast: false });
+      for (const sx of [-1, 1]) C.add(MM.wood, board(0.014, 0.18, 0.24, { rng, along: 'y' }).translate(sx * 0.173, 0.09, 0), { color: WOOD.oak, cast: false });
+      C.add(MM.vc, new THREE.TorusGeometry(0.15, 0.028, 4, 16).rotateX(1.2).translate(0.02, 0.2, -0.01), { color: '#2a2622', cast: false });
+      C.add(MM.vc, new THREE.TorusGeometry(0.13, 0.026, 4, 16).rotateX(1.5).rotateZ(0.3).translate(-0.04, 0.17, 0.02), { color: '#b8925e', cast: false });
+      C.add(MM.vc, new THREE.SphereGeometry(0.07, 8, 5).scale(1.5, 0.45, 0.9).rotateZ(0.5).translate(0.1, 0.22, 0.03), { color: '#5a3a26', cast: false });
     }
     // a red rolling tool chest on the right, drawers half open
     {
@@ -1147,20 +1228,29 @@ export function buildWorkshop(ctx, B, rng, halos) {
     });
   }
 
-  // a worn flagstone apron in front of the doors, moss in the joints
+  // a worn flagstone apron in front of the doors: separate, sunken stones with
+  // moss and earth in the gaps, dark and damp (never one pale flat patch that
+  // the doorway's light turns into a puddle of cream at night), thinning out
+  // into the grass at the edge instead of ending in a hard outline
   {
     const zc = zFront(0, 0) + 0.15;
-    for (let i = 0; i < 26; i++) {
-      const a = rng.range(-1.2, 1.2), d = Math.sqrt(rng.next()) * 1.45;
+    const placed = [];
+    for (let tries = 0; tries < 160 && placed.length < 20; tries++) {
+      const a = rng.range(-1.2, 1.2), d = Math.sqrt(rng.next()) * 1.5;
+      const edge = d / 1.5; // 0 at the threshold … 1 at the rim
+      if (rng.next() < smooth01((edge - 0.45) / 0.55) * 0.75) continue; // (sparser towards the rim)
       const x = Math.sin(a) * d, z = zc + Math.cos(a) * d * 0.75;
-      const r = rng.range(0.16, 0.26);
-      const g = stoneGeo(rng, { r, sx: rng.range(1.0, 1.5), sz: rng.range(0.8, 1.1), sy: 0.18, lump: 0.12, flatTop: 0.1, detail: 1 });
-      xf(g, [x, 0.01, z], [0, rng.next() * TAU, 0]);
-      F.add(MM.pebble, g, { color: rng.pick(['#8f8778', '#857e70', '#9a8f7a', '#7c776c']) });
-      if (rng.chance(0.4)) {
+      const r = rng.range(0.15, 0.23) * (1 - 0.38 * edge);
+      if (placed.some((q) => Math.hypot(q.x - x, q.z - z) < (q.r + r) * 1.3)) continue;
+      placed.push({ x, z, r });
+      const g = stoneGeo(rng, { r, sx: rng.range(1.0, 1.4), sz: rng.range(0.8, 1.05), sy: 0.16, lump: 0.14, flatTop: 0.1, detail: 1 });
+      // (sunk into the ground, the outer ones deeper)
+      xf(g, [x, -0.004 - 0.012 * edge, z], [rng.jitter(0.04), rng.next() * TAU, rng.jitter(0.04)]);
+      F.add(MM.pebble, g, { color: rng.pick(['#6b6457', '#625c50', '#736a5a', '#5c5850', '#666052']) });
+      if (rng.chance(0.55)) {
         const m = mossGeo(rng, { r: rng.range(0.06, 0.12), h: 0.025 });
-        xf(m, [x + r, 0, z + rng.jitter(0.1)], [0, rng.next() * TAU, 0]);
-        F.add(MM.moss, m, { color: '#6f8f3a' });
+        xf(m, [x + r * rng.range(0.9, 1.2), 0, z + rng.jitter(0.12)], [0, rng.next() * TAU, 0]);
+        F.add(MM.moss, m, { color: rng.pick(['#6f8f3a', '#5d7d30']) });
       }
     }
   }
@@ -1214,7 +1304,8 @@ export function buildWorkshop(ctx, B, rng, halos) {
       F.add(MM.metal, rod([mastX, post.y + 0.04, mastZ], elbow.toArray(), 0.014, 0.014, 6), { color: '#9ea2a5' });
       F.add(MM.metal, rod(elbow.toArray(), head.toArray(), 0.013, 0.012, 6), { color: '#9ea2a5' });
     }
-    F.add(MM.glossy, new THREE.SphereGeometry(0.03, 8, 6).translate(mastX, post.y + 0.08, mastZ), { color: '#c0392b', cast: false });
+    // (a dark rubber end cap on the mast — never a red knob floating over the saddle bag like a tail light)
+    F.add(MM.vc, new THREE.CylinderGeometry(0.026, 0.026, 0.03, 8).translate(mastX, post.y + 0.055, mastZ), { color: '#2a2724', cast: false });
     // a little tray of tools on the mast
     const ty = post.y * 0.62;
     F.add(MM.metal, new THREE.BoxGeometry(0.24, 0.02, 0.16).translate(mastX, ty, mastZ - 0.04), { color: STAND });
@@ -1238,25 +1329,51 @@ export function buildWorkshop(ctx, B, rng, halos) {
     T.add(MM.vc, new THREE.TorusGeometry(0.2, 0.03, segs(5, 3), segs(18, 10)).rotateY(1.3).rotateZ(0.25).translate(0.26, 0.19, 0.05), { color: '#2a2622', cast: false });
   }
 
-  // the mechanic, on the shop side of the bike (behind it, seen from the spot
-  // camera), facing the yard and reaching over to the rear wheel with his
-  // wrench: the whole bike stays in front of him, his face shows over the top
-  // tube, and from the bikes camera he stands against the dark door leaf —
-  // clear of the restored vintage bike on the bridge to the left
+  // the mechanic: sitting on an upturned crate in front of the door, just
+  // beyond the front wheel, turned three-quarters to the yard with his wrench
+  // at the front brake — never behind the frame (the cobalt silhouette and the
+  // front triangle stay whole in the bike's close-up, where he sits between the
+  // wheel and the page, lit by the doorway) and never in front of the restored
+  // bike on the bridge. Between spells of work he looks up at the visitor.
+  // (bike-local: x along the bike, front +x; z towards the drive side / the yard)
   let mechanic = null;
+  let workAt = null, lookCam = null;
+  const fromBike = (x, y, z) => new THREE.Vector3(x, y, z).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.1).add(new THREE.Vector3(heroPos.x, 0, heroPos.z));
+  {
+    // the crate: slatted, upside down, a little askew (a cabinetmaker would see the nails)
+    const cp = fromBike(1.22, 0, -0.42);
+    const C = F.at(mat4([cp.x, 0, cp.z], [0, 0.1 - 1.0, 0]));
+    const CW = 0.36, CD = 0.26, CH = 0.2;
+    for (let i = 0; i < 4; i++) C.add(MM.wood, board(CW, 0.012, CD / 4 - 0.012, { rng }).translate(0, CH - 0.006, -CD / 2 + (i + 0.5) * (CD / 4)), { color: rng.pick([WOOD.oakLight, '#c9a77a', WOOD.spruce]) });
+    for (const sz of [-1, 1]) for (const y of [0.04, 0.12]) C.add(MM.wood, board(CW, 0.06, 0.012, { rng }).translate(0, y, sz * (CD / 2 - 0.006)), { color: rng.pick([WOOD.oakLight, '#c9a77a']), cast: false });
+    for (const sx of [-1, 1]) C.add(MM.wood, board(0.014, CH - 0.012, CD - 0.02, { rng, along: 'y' }).translate(sx * (CW / 2 - 0.007), (CH - 0.012) / 2, 0), { color: WOOD.oak, cast: false });
+    // a rag over one corner
+    C.add(MM.fabric, new THREE.PlaneGeometry(0.12, 0.1, 2, 2).rotateX(-Math.PI / 2).rotateY(0.5).translate(0.13, CH + 0.004, 0.07), { color: '#b03a2e', cast: false });
+    if (ctx.colliders?.addCircle) {
+      const w = toWorld(cp.x, 0, cp.z);
+      ctx.colliders.addCircle(w.x, w.z, 0.32, 'velowerkstatt-mechanic');
+    }
+  }
   try {
-    // (a tan leather apron: it reads against the cobalt frame in front of it)
-    mechanic = ctx.props.makePerson({ seed: 'velo-mechanic', name: 'Mechanic', holding: 'wrench', action: 'idle', apron: true, apronColor: '#8a5a36', hat: 'bandana', hatColor: '#9a3a2c', hair: 'curly', shirt: '#e8a838', beard: true });
-    // bike-local (0.2, 0, −0.52): behind the bottom bracket, clear of the stand's tripod
-    const mp = new THREE.Vector3(0.2, 0, -0.52).applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.1).add(new THREE.Vector3(heroPos.x, 0, heroPos.z));
-    mechanic.group.position.copy(mp);
-    // facing the yard and the spot camera (local yaw ≈ 0.3), turned a little towards the rear hub
-    mechanic.group.rotation.y = 0.1 - 0.16;
+    // (a tan leather apron: it reads against the cobalt frame in front of it; a
+    // warm mid-brown skin and a dark-brown beard, so his face never reads as a
+    // black disc in the shade of the cap)
+    mechanic = ctx.props.makePerson({ seed: 'velo-mechanic', name: 'Mechanic', holding: 'wrench', action: 'sit', apron: true, apronColor: '#8a5a36', hat: 'bandana', hatColor: '#b8452f', hair: 'curly', hairColor: '#5a3a26', skin: '#c98d68', shirt: '#e8a838', beard: true });
+    mechanic.group.position.copy(fromBike(1.22, 0.2, -0.42));
+    // three-quarters on: facing the front hub, which turns him half towards the yard
+    mechanic.group.rotation.y = 0.1 + Math.atan2(-0.8, 0.46);
     group.add(mechanic.group);
-    // between spells of work he looks up at the visitor (the bikes camera), so
-    // the spot shows his face over the top tube, not the top of his bandana
+    // a soft warm fill on him (the cap's shade and the dusk would otherwise
+    // swallow his face): his own variant of the villagers' material with a
+    // little emissive lift — no extra light, no extra draw call
+    mechanic.group.traverse((o) => {
+      if (o.isSkinnedMesh && o.name === 'person-body') o.material = ctx.materials.toon('#ffffff', { vertexColors: true, name: 'props-vc-skinned-fill', emissive: '#3a2618' });
+    });
+    // what he looks at: the rear derailleur while he works, the visitor between spells
+    workAt = toWorld(...fromBike(0.44, 0.42, 0.05).toArray());
     const cam = SPOT_BY_ID.bikes?.camera?.position;
-    if (cam) mechanic.lookAt(new THREE.Vector3(cam[0], cam[1], cam[2]));
+    lookCam = cam ? new THREE.Vector3(cam[0], cam[1], cam[2]) : null;
+    mechanic.lookAt(lookCam ?? workAt);
     // only the body casts (one caster, not a handful)
     let first = true;
     mechanic.group.traverse((o) => {
@@ -1611,11 +1728,7 @@ export function buildWorkshop(ctx, B, rng, halos) {
   const animate = !ctx.engine?.reducedMotion;
   let phase = 0;
   // (reduced motion: he stays looking up from his work)
-  let mechAct = '';
-  if (mechanic && !animate) {
-    mechanic.setAction('idle');
-    mechAct = 'idle';
-  }
+  let looking = lookCam ? 'cam' : 'work';
   updates.push((dt, t) => {
     if (!animate) return;
     truingWheel.rotation.z -= dt * 1.4;
@@ -1624,11 +1737,12 @@ export function buildWorkshop(ctx, B, rng, halos) {
     const spinning = phase > 0.55;
     hero.setSpin(spinning ? 6 : 0, spinning ? 2.2 : 0);
     hero.update(dt);
-    // he looks up and greets you for a while, then bends to the rear wheel again
-    const act = phase < 0.6 ? 'idle' : 'work';
-    if (mechanic && act !== mechAct) {
-      mechAct = act;
-      mechanic.setAction(act);
+    // he looks up and greets you for a while, then back down to the derailleur
+    // while the wheel turns
+    const want = phase < 0.5 && lookCam ? 'cam' : 'work';
+    if (mechanic && want !== looking) {
+      looking = want;
+      mechanic.lookAt(want === 'cam' ? lookCam : workAt);
     }
   });
 

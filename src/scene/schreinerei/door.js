@@ -423,52 +423,59 @@ export function buildDoor(ctx, B, mats) {
 
   mark('broom');
   // ── worn stone steps up to the threshold ──────────────────────────────────
-  // Individual field stones, not cast slabs: each its own width, height and
-  // tone, the arrises rounded and here and there chipped, the treads dished
-  // where feet have worn them (deepest on the walking line through the open
-  // half of the doorway), damp and darker down their sides, moss in the
-  // joints and tufts at the ends.
+  // Hand-laid flagstone treads, not cast blocks: a long threshold slab, then
+  // two flags of different widths and depths (the left one cracked clean
+  // through, its halves settled apart), then a sunk stepping slab — each
+  // with its own irregular outline, thickness, tone and slight tilt, the
+  // treads dished where feet have worn them (deepest on the walking line),
+  // moss in every joint, ferns and toadstools tucked in at the ends.
   {
     const stepMat = stepStoneMaterial(ctx);
     const walk = 0.18; // the walking line (x) through the open half of the doorway
-    const rows = [
-      { top: y0, z0: -0.04, depth: 0.52, w: W + F * 2 + 0.22, n: 3 },
-      { top: y0 / 2, z0: 0.47, depth: 0.5, w: W + F * 2 + 0.72, n: 4 },
+    const Wt = W + F * 2;
+    // [centre x, top, front z0, width, depth, tilt x, tilt z, yaw, cracked]
+    const flags = [
+      [0.02, y0 + 0.004, -0.06, Wt + 0.16, 0.54, 0.01, -0.012, 0.015, false],
+      [-0.42, y0 * 0.55, 0.43, 0.98, 0.5, 0.018, 0.02, -0.04, true],
+      [0.55, y0 * 0.5, 0.45, 0.78, 0.45, -0.012, -0.024, 0.06, false],
+      [0.12, 0.075, 0.9, 0.86, 0.34, 0.03, 0.015, -0.08, false],
     ];
-    for (const row of rows) {
-      const ws = [];
-      for (let i = 0; i < row.n; i++) ws.push(1 + rng.jitter(0.3));
-      const sum = ws.reduce((a, b) => a + b, 0);
-      let x = -row.w / 2;
-      const joints = [];
-      for (let i = 0; i < row.n; i++) {
-        const full = (ws[i] / sum) * row.w;
-        const cx = x + full / 2 + rng.jitter(0.01);
-        const sw = full - 0.035 - rng.next() * 0.02;
-        const h = row.top + 0.08;
-        const d = row.depth + rng.jitter(0.05);
-        const top = row.top + rng.jitter(0.012);
-        const g = wornStone(rng, sw, h, d, { walkX: walk - cx, tone: rng.pick(STEP_TONES) });
-        D.add(stepMat, xf(g, [cx, top - h / 2, row.z0 + d / 2 + rng.jitter(0.015)], [0, rng.jitter(0.05), 0]));
-        x += full;
-        if (i < row.n - 1) joints.push(x);
+    const joints = [];
+    for (const [cx, top, z0, w, d, rx, rz, yaw, cracked] of flags) {
+      const h = top + 0.07;
+      const place = (g, x, dz = 0, extra = [0, 0, 0]) => D.add(stepMat, xf(g, [x, top - h / 2 + extra[1], z0 + d / 2 + dz], [rx + extra[0], yaw, rz + extra[2]]));
+      if (!cracked) {
+        place(wornStone(rng, w, h, d, { walkX: walk - cx, tone: rng.pick(STEP_TONES), irregular: 0.05, taper: rng.jitter(0.08) }), cx);
+      } else {
+        // cracked in two: a jagged split a third of the way across, the outer half sunk and turned a little
+        const w0 = w * 0.42, w1 = w - w0 - 0.016;
+        const tone = rng.pick(STEP_TONES);
+        place(wornStone(rng, w0, h, d, { walkX: walk - (cx - w / 2 + w0 / 2), tone, irregular: 0.04, chips: 1 }), cx - w / 2 + w0 / 2, 0, [0.0, -0.012, 0.03]);
+        place(wornStone(rng, w1, h, d, { walkX: walk - (cx + w / 2 - w1 / 2), tone, irregular: 0.04, chips: 1 }), cx + w / 2 - w1 / 2);
+        joints.push([cx - w / 2 + w0 + 0.008, top - 0.01, z0 + d / 2, d * 0.9, 0.03]);
       }
-      // moss in the joints and at the outer ends, a fern tuft at each end
-      for (const jx of joints) {
-        for (let k = 0; k < 2; k++) {
-          const m = mossPadGeo(rng, { r: 0.05, h: 0.022, sx: 0.55, sz: 2.4, lobes: 1 });
-          D.add(mats.moss(), xf(m, [jx + rng.jitter(0.01), row.top - 0.012, row.z0 + row.depth * (0.3 + k * 0.42)], [0, rng.jitter(0.15), 0]), { cast: false });
-        }
-      }
-      for (const s of [-1, 1]) {
-        const ex = s * (row.w / 2 + 0.02);
-        D.add(mats.moss(), xf(mossPadGeo(rng, { r: 0.11, h: 0.05, sx: 0.9, sz: 1.8 }), [ex, row.top - 0.035, row.z0 + row.depth * 0.5], [0, rng.jitter(0.3), s * 0.25]), { cast: false });
-      }
+      // moss in the ground joint at each end of the flag
+      joints.push([cx - w / 2 - 0.02, 0.0, z0 + d / 2, d * 0.8, 0.06], [cx + w / 2 + 0.02, 0.0, z0 + d / 2, d * 0.8, 0.06]);
     }
+    for (const [x, y, z, len, r] of joints) {
+      const m = mossPadGeo(rng, { r, h: 0.026, sx: 0.8, sz: (len / r) * 0.5, lobes: 1 });
+      D.add(mats.moss(), xf(m, [x + rng.jitter(0.01), y, z], [0, rng.jitter(0.12), 0]), { cast: false });
+    }
+    // along the risers: moss creeping out from under each tread's nose, on
+    // the tread (or the ground) in front of it
+    for (const [cx, y, z, w] of [[0.02, y0 * 0.5 - 0.004, 0.5, 1.5], [-0.42, 0.0, 0.96, 0.9], [0.62, 0.0, 0.93, 0.6]]) {
+      D.add(mats.moss(), xf(mossPadGeo(rng, { r: 0.05, h: 0.03, sx: (w / 0.05) * 0.42, sz: 0.9, lobes: 1 }), [cx, y, z]), { cast: false });
+    }
+    // ferns and toadstools tucked in at the ends of the treads
+    const ends = [[-(Wt / 2 + 0.22), y0 * 0.5 - 0.06, 0.62], [Wt / 2 + 0.2, y0 * 0.45 - 0.06, 0.72], [-0.5, 0, 1.12]];
+    addFern(D, ctx, rng, ends[0][0], 0, ends[0][2], { size: 0.34, fronds: 6 });
+    addFern(D, ctx, rng, ends[1][0], 0, ends[1][2], { size: 0.3, fronds: 5 });
+    for (let i = 0; i < 3; i++) addToadstool(D, mats, rng, ends[i % 2][0] + rng.jitter(0.08) + (i % 2 ? -0.12 : 0.12), 0, ends[i % 2][2] + 0.18 + rng.jitter(0.06), { size: rng.range(0.045, 0.075), color: i ? '#b98a4e' : '#c9352a' });
+    for (let i = 0; i < 2; i++) addToadstool(D, mats, rng, 0.62 + rng.jitter(0.05), 0.075, 1.12 + rng.jitter(0.04), { size: rng.range(0.04, 0.06), color: '#b98a4e' });
     // a few fallen leaves on the treads (not on the walking line)
     if (LOD.small) {
-      for (const [lx, lz, ly] of [[-0.62, 0.15, y0], [0.72, 0.62, y0 / 2], [-0.85, 0.75, y0 / 2]]) {
-        D.add(mats.vc(), xf(new THREE.CircleGeometry(0.035, 6).scale(1, 0.6, 1), [lx, ly + 0.004, lz], [-Math.PI / 2, 0, rng.next() * 6]), { color: rng.pick(['#b8742f', '#c99a3e', '#9a5a2a']), cast: false });
+      for (const [lx, lz, ly] of [[-0.62, 0.15, y0], [0.72, 0.62, y0 * 0.5], [-0.85, 0.75, y0 * 0.55]]) {
+        D.add(mats.vc(), xf(new THREE.CircleGeometry(0.035, 6).scale(1, 0.6, 1), [lx, ly + 0.006, lz], [-Math.PI / 2, 0, rng.next() * 6]), { color: rng.pick(['#b8742f', '#c99a3e', '#9a5a2a']), cast: false });
       }
     }
   }
@@ -965,7 +972,7 @@ export function stepStoneMaterial(ctx) {
  * paler and smoother where it is worn, darker and greener down the damp
  * sides and towards the ground.
  */
-export function wornStone(rng, w, h, d, { walkX = 0, tone = '#928b7e', dish = 0.022, chips = 2 } = {}) {
+export function wornStone(rng, w, h, d, { walkX = 0, tone = '#928b7e', dish = 0.022, chips = 2, irregular = 0, taper = 0 } = {}) {
   const sx = Math.max(3, Math.round((w / 0.085) * LOD.k)), sz = Math.max(3, Math.round((d / 0.085) * LOD.k));
   const g = new THREE.BoxGeometry(w, h, d, sx, 2, sz);
   const ox = rng.next() * 40;
@@ -973,7 +980,7 @@ export function wornStone(rng, w, h, d, { walkX = 0, tone = '#928b7e', dish = 0.
   // chipped corners: a bevel plane cut across a top corner
   const cuts = [];
   for (let i = 0; i < chips; i++) cuts.push({ cx: rng.next() < 0.5 ? -1 : 1, cz: rng.next() < 0.6 ? 1 : -1, r: rng.range(0.05, 0.09) });
-  const rr = Math.min(0.05, hw * 0.3, hd * 0.3);
+  const rr = Math.min(irregular ? 0.028 : 0.05, hw * 0.3, hd * 0.3);
   const topK = [];
   deform(g, (v, i) => {
     const ex = Math.abs(v.x) / hw, ez = Math.abs(v.z) / hd;
@@ -1002,6 +1009,12 @@ export function wornStone(rng, w, h, d, { walkX = 0, tone = '#928b7e', dish = 0.
         v.z -= c.cz * k * c.r * 0.35;
         v.y -= k * c.r * 0.6;
       }
+    }
+    // a hand-split flag: an irregular plan (wobbling edges, one end narrower)
+    if (irregular) {
+      v.x += noiseA(v.z * 2.6 + ox, 3.1) * irregular * ex;
+      v.z += noiseB(v.x * 2.6 - ox, 1.7) * irregular * ez;
+      v.x *= 1 + taper * (v.z / hd);
     }
     // lumpy, hand-split sides; a slightly uneven top
     v.x += noiseA(v.z * 5 + ox, v.y * 5) * 0.012 * (1 - top * 0.7);

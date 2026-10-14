@@ -446,15 +446,28 @@ function buildSwing(ctx, mats, parent, L, u, updates, reduced) {
  * cameras and the loft, see lanternHangs).
  */
 const LANTERNS = [
+  // the low limb under the raised skirt: a long, irregular festoon of lanterns
+  // hanging below and in front of the leaves (x < −4, glass at y ≈ 10–14)
   ['front-left-low', 0.3, 1.5, true],
+  ['front-left-low', 0.43, 0.9, false],
+  ['front-left-low', 0.53, 1.8, false],
   ['front-left-low', 0.62, 2.2, true],
+  ['front-left-low', 0.71, 1.1, false],
+  ['front-left-low', 0.79, 1.9, false],
   ['front-left-low', 0.86, 1.4, false],
+  ['front-left-low', 0.94, 0.8, false],
+  // …and in the dark gaps between the crown's masses, along the bare inner
+  // stretches of the other limbs (warm points inside the crown at night)
   ['front', 0.45, 1.8, 'spare'],
   ['front', 0.7, 1.3, false],
   ['left-high', 0.22, 1.7, false],
+  ['left-high', 0.4, 1.0, false],
   ['back-left', 0.36, 1.6, false],
   ['right', 0.56, 1.4, false],
   ['front-right-high', 0.42, 1.5, false],
+  ['back-right', 0.4, 1.3, false],
+  ['back-high', 0.3, 1.2, false],
+  ['leader', 0.32, 1.1, false],
 ];
 const LANTERN_SCALE = 1.45; // big enough to read from the glen, small enough to stay a warm point at night
 
@@ -497,7 +510,7 @@ function boulderFrame() {
  * @param ivyLeaves      the ivy leaf-card geometry (glow-worms are sprinkled among its leaves)
  * @returns {{ update(dt, t) }}
  */
-export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLinings, ivyLeaves = null }) {
+export function buildDetails(ctx, rng, parent, { limbs, branches = [], roots, hollows, hollowLinings, ivyLeaves = null }) {
   const { materials, props } = ctx;
   const reduced = !!ctx.engine?.reducedMotion;
   const density = ctx.quality?.density ?? 1;
@@ -1244,17 +1257,42 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
     dot.dispose();
   }
   // ── glow-worms on silk under the lower limbs (night) ─────────────────────
-  // Threads of silk hang from the limbs' undersides, each with a few beads of
-  // cool light, the lowest the brightest — the crown's belly carries its own
-  // magic. The silk is a faint line (one draw call) that only shows at night;
-  // the beads join the batch, every thread's lowest bead gets a small halo.
+  // Threads of silk hang from the limbs' undersides — and in curtains from
+  // the low limb's boughs under the raised skirt — each with a few beads of
+  // cool light strung along its bottom third, the lowest the brightest: the
+  // crown's belly carries its own magic. The silk itself is a near-invisible
+  // line (one draw call, night only); the beads join the batch and every
+  // thread's lowest bead gets a small halo.
   {
     const silk = [];
     const dot = new THREE.SphereGeometry(1, byLv(6, 5, 4), byLv(4, 4, 3));
     const per = { 'front-left-low': 24, front: 18, 'left-high': 14, right: 10, 'front-right-high': 9, 'back-left': 12, 'back-right': 8, leader: 5, 'back-high': 8 };
     const v = new THREE.Vector3();
+    const dens = Math.min(1, Math.max(0.5, ctx.quality?.density ?? 1));
+    const hang = (P, len) => {
+      const bottom = P.clone();
+      bottom.y -= len;
+      bottom.x += rng.range(-0.05, 0.05);
+      bottom.z += rng.range(-0.05, 0.05);
+      if (bottom.y < 9) return;
+      if (crownBlocked(v.copy(P).lerp(bottom, 0.5), len * 0.5 + 0.15)) return;
+      silk.push(P.x, P.y, P.z, bottom.x, bottom.y, bottom.z);
+      // beaded droplets along the bottom third — a few, well apart, the
+      // upper ones tiny — so a thread reads as a dotted strand of dew-lights,
+      // never a rigid pin of light
+      const beads = rng.chance(0.35) ? 1 : rng.int(2, 3);
+      let t = 1;
+      for (let b = 0; b < beads; b++) {
+        if (t < 0.66) break;
+        v.copy(P).lerp(bottom, t);
+        const sz = b === 0 ? rng.range(0.038, 0.05) : rng.range(0.014, 0.022);
+        B.add(glowDot, dot.clone().scale(sz, sz, sz).translate(v.x, v.y, v.z));
+        if (b === 0) fungusHalos.push({ x: v.x, y: v.y, z: v.z, size: 0.24 });
+        t -= Math.max(rng.range(0.12, 0.17), 0.3 / Math.max(len, 0.5));
+      }
+    };
     for (const L of limbs) {
-      const n = Math.round((per[L.id] ?? 0) * Math.min(1, Math.max(0.5, ctx.quality?.density ?? 1)));
+      const n = Math.round((per[L.id] ?? 0) * dens);
       for (let k = 0; k < n; k++) {
         const u = rng.range(0.12, 0.92);
         const P = L.curve.getPointAt(u);
@@ -1262,23 +1300,20 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
         const side = new THREE.Vector3(-T.z, 0, T.x).normalize();
         P.addScaledVector(side, rng.range(-0.5, 0.5) * L.radiusAt(u));
         P.y -= L.radiusAt(u) * 0.8;
-        const len = rng.chance(0.6) ? rng.range(0.4, 1.3) : rng.range(1.3, 3.0);
-        const bottom = P.clone();
-        bottom.y -= len;
-        bottom.x += rng.range(-0.05, 0.05);
-        bottom.z += rng.range(-0.05, 0.05);
-        if (bottom.y < 9) continue;
-        if (crownBlocked(v.copy(P).lerp(bottom, 0.5), len * 0.5 + 0.15)) continue;
-        silk.push(P.x, P.y, P.z, bottom.x, bottom.y, bottom.z);
-        const beads = rng.chance(0.4) ? 1 : rng.int(2, 4);
-        for (let b = 0; b < beads; b++) {
-          const t = 1 - b * rng.range(0.1, 0.18);
-          if (t < 0.25) break;
-          v.copy(P).lerp(bottom, t);
-          const sz = (b === 0 ? rng.range(0.042, 0.058) : rng.range(0.024, 0.036));
-          B.add(glowDot, dot.clone().scale(sz, sz * 1.25, sz).translate(v.x, v.y, v.z));
-          if (b === 0) fungusHalos.push({ x: v.x, y: v.y, z: v.z, size: 0.26 });
-        }
+        hang(P, rng.chance(0.6) ? rng.range(0.4, 1.3) : rng.range(1.3, 3.0));
+      }
+    }
+    // curtains from the low limb's boughs (the outside of the skirt, x < −4)
+    const low = limbs.findIndex((l) => l.id === 'front-left-low');
+    for (const b of branches) {
+      if (b.depth !== 1 || b.limb !== low) continue;
+      const n = Math.round(rng.int(3, 6) * dens);
+      for (let k = 0; k < n; k++) {
+        const P = b.curve.getPointAt(rng.range(0.1, 0.7));
+        // (below the raised skirt's bellies, so they hang under the leaves)
+        if (P.x > -4 || P.y > 16.2) continue;
+        P.y -= 0.08;
+        hang(P, rng.chance(0.5) ? rng.range(0.6, 1.6) : rng.range(1.6, 3.2));
       }
     }
     dot.dispose();
@@ -1299,7 +1334,7 @@ export function buildDetails(ctx, rng, parent, { limbs, roots, hollows, hollowLi
         if (night === last) return;
         last = night;
         const k = smoothstep(0.35, 0.85, night);
-        silkMat.opacity = 0.45 * k;
+        silkMat.opacity = 0.15 * k;
         lines.visible = k > 0.01;
       });
     }

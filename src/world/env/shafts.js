@@ -21,9 +21,15 @@
 // By night a handful of shafts (addMoonbeam: the fairy ring, the lily pond,
 // the plunge pool …) stay on as cool silver moonbeams along the moonlight
 // (~35 % of the day strength, slower drift); everything else fades at dusk.
-// A moonbeam is a broad, soft glow of moonlit dust with no bright core: it
-// appears out of the dark (nothing at its top) and grows towards its foot,
-// where it pools — never a searchlight column out of the sky.
+// A moonbeam is a soft glow of moonlit dust with no bright core: narrow where
+// it leaves the crowns and widening towards the ground, visible along most of
+// its length (it melts into the crowns only over its top quarter) and landing
+// in a faint pool — never a searchlight column out of the sky. On a portrait
+// screen (the phone's high shots stand close to it) it is softer still.
+//
+// Looking towards the sun past a composed subject (the cottages from the home
+// spot), the day shafts behind the subject thin and narrow, so the red caps
+// keep their contrast against the forest instead of a wash of golden haze.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { createRng } from '../../core/rng.js';
@@ -41,6 +47,7 @@ const VERT = /* glsl */ `
   uniform vec3 uAxis;     // towards the sun
   uniform float uDayK, uNightK;
   uniform float uHigh;    // 0 … 1: how steeply the camera looks down on the glen
+  uniform float uMoonTaper; // a moonbeam's width at its top (× its foot's)
   varying vec2 vUv;
   varying vec3 vW;
   varying float vI;
@@ -63,7 +70,9 @@ const VERT = /* glsl */ `
     vec3 side = cross(axis, toCam);
     float sl = length(side);
     side = sl > 1e-4 ? side / sl : vec3(1.0, 0.0, 0.0);
-    vec3 wp = aBase + axis * (position.y * aShape.x) + side * (position.x * aShape.y);
+    // (a moonbeam narrows towards the crowns it falls from)
+    float wK = mix(1.0, mix(1.0, uMoonTaper, position.y), aMode.w);
+    vec3 wp = aBase + axis * (position.y * aShape.x) + side * (position.x * aShape.y * wK);
     vW = wp;
     vUv = vec2(position.x * 2.0, position.y);
     vSeed = aShape.w;
@@ -84,6 +93,7 @@ const FRAG = /* glsl */ `
   uniform vec3 uColor, uMoonColor;
   uniform float uTime, uStrength;
   uniform float uSoft;  // 1: a wider, softer falloff across the shafts (no depth of field to blur them; portrait)
+  uniform float uFocusDist; // distance camera → the composed subject (0: none)
   varying vec2 vUv;
   varying vec3 vW;
   varying float vI;
@@ -103,8 +113,10 @@ const FRAG = /* glsl */ `
     // the ground — and lands, pooling bright at its foot (never a searchlight
     // column from the sky)
     float dayEnds = smoothstep(0.0, 0.32, along) * (1.0 - smoothstep(0.55, 1.0, along));
-    float moonTop = 1.0 - smoothstep(0.05, 0.82, along);
-    float moonEnds = smoothstep(0.0, 0.03, along) * (1.0 + 0.5 * (1.0 - smoothstep(0.0, 0.15, along))) * moonTop * sqrt(moonTop);
+    // (a moonbeam is seen along most of its length, a touch brighter low down,
+    //  melting into the crowns over its top quarter, a faint pool at its foot)
+    float moonTop = 1.0 - smoothstep(0.72, 1.0, along);
+    float moonEnds = smoothstep(0.0, 0.03, along) * (1.0 + 0.25 * (1.0 - smoothstep(0.0, 0.12, along))) * mix(1.0, 0.7, along) * moonTop;
     float ends = mix(dayEnds, moonEnds, vKind.y);
     // fine streaks across the beam, slowly drifting dust density along it
     float streak = 0.55 + 0.45 * envNoise(vec2(across * 4.5 + vSeed * 17.0, along * 0.8 + vSeed));
@@ -136,7 +148,13 @@ const FRAG = /* glsl */ `
     float phase = 0.25 + hg * 0.22;
     // moonbeams are lit stages seen from every side, not only against the light
     phase = mix(phase, max(phase, 0.6), vKind.y);
-    float a = prof * ends * streak * drift * lit * phase * vI * vView * uStrength;
+    // looking towards the sun past the composed subject: the shafts behind it
+    // thin and narrow (the subject keeps its contrast against the forest)
+    // (around and beyond the subject's depth; the foreground shafts stay)
+    float behind = uFocusDist > 0.5 ? smoothstep(0.5, 0.9, length(vW - cameraPosition) / uFocusDist) : 0.0;
+    float glare = behind * smoothstep(0.5, 0.82, dot(v, vAxis)) * (1.0 - vKind.y);
+    prof = mix(prof, prof * prof * prof, glare);
+    float a = prof * ends * streak * drift * lit * phase * vI * vView * uStrength * (1.0 - 0.55 * glare);
     gl_FragColor = vec4(mix(uColor, uMoonColor, vKind.y) * a, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -247,6 +265,8 @@ export function buildShafts(ctx) {
     uNightK: { value: 0 },
     uSoft: { value: tier === 'high' ? 0 : 1 },
     uHigh: { value: 0 },
+    uMoonTaper: { value: 0.45 },
+    uFocusDist: { value: 0 },
   };
   const camDir = new THREE.Vector3();
   const mat = new THREE.ShaderMaterial({
@@ -306,8 +326,13 @@ export function buildShafts(ctx) {
         ctx.camera.getWorldDirection(camDir);
         uniforms.uHigh.value = THREE.MathUtils.smoothstep(-camDir.y, 0.45, 0.75);
       }
+      // (the composed subject: spot compositions and close-ups, not glides)
+      const rig = ctx.cameraRig;
+      uniforms.uFocusDist.value = rig && !rig.transitioning ? rig.focusDistance ?? 0 : 0;
       uniforms.uDayK.value = k;
-      uniforms.uNightK.value = kn * 0.35 * NIGHT_BOOST;
+      // (a portrait screen stands close to the moonbeams: softer there)
+      const portrait = (ctx.camera?.aspect ?? 2) < 1;
+      uniforms.uNightK.value = kn * 0.35 * NIGHT_BOOST * (portrait ? 0.6 : 1);
       mesh.visible = k > 0.002 || kn > 0.002;
     },
   };

@@ -29,6 +29,7 @@ import {
   M, TAU, LOD, segs, xf, alignUp, boulderGeo, stoneGeo, mossGeo, paramSurface, plantFern, plantGrass, addToadstool, addFlower, addIvy,
   wallFern, taperTube, Cards, flushCards, noiseA, noiseB, smooth01,
 } from './kit.js';
+import { makeGlowBeads } from './glowworms.js';
 
 /** Where the spring water leaves the crest (falls frame). */
 export const RIDGE = { lipW: -2.95, lipY: 11.15 };
@@ -250,31 +251,52 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
       hangers.push({ u: fu, w: fw, top, ou: sh.ou, ow: sh.ow, len });
     }
   }
-  // glow-worm curtains: under a few ledges near the falls, silk threads hang
-  // beaded with tiny droplets that glow blue-green at night (a faint teal
-  // glint by day) — the cliff's own magic after dark
+  // glow-worm curtains: under a few ledges near the falls, a handful of silk
+  // threads hang at odd spacings and lengths, each with a few sticky droplets
+  // clustered towards its tip that glint blue-green after dark — the cliff's
+  // own magic at night, invisible by day (one soft additive Points cloud,
+  // glowworms.js: no beads in the merged rock, no halo blocks)
   const curtains = [];
+  const beads = [];
   {
-    const want = LOD.k < 0.5 ? 3 : LOD.k < 1 ? 6 : 9;
+    const want = LOD.k < 0.5 ? 2 : LOD.k < 1 ? 3 : 5;
     const near = hangers.filter((hg) => Math.abs(hg.u) < 7.5 && hg.top > groundAt(hg.u, hg.w) + 1.0).sort((a, b) => Math.abs(a.u) - Math.abs(b.u));
-    for (const hg of near.slice(0, want)) {
-      const threads = rng.int(7, 11);
+    const picked = [];
+    // (spread out along the cliff: never two curtains on neighbouring ledges)
+    for (const hg of near) {
+      if (picked.length >= want) break;
+      if (picked.some((q) => Math.hypot(q.u - hg.u, q.w - hg.w) < 1.6 && Math.abs(q.top - hg.top) < 1.4)) continue;
+      picked.push(hg);
+    }
+    for (const hg of picked) {
+      const threads = rng.int(3, 5);
       for (let t = 0; t < threads; t++) {
-        const k = (t / (threads - 1) - 0.5) * hg.len * 0.8 + rng.jitter(0.05);
-        // along the ledge (perpendicular to its outward normal), just off its lip
-        const u0 = hg.u + hg.ow * k + hg.ou * 0.06, w0 = hg.w - hg.ou * k + hg.ow * 0.06;
-        const len = rng.range(0.35, 1.1);
-        const n = Math.max(4, Math.round(len / 0.08));
-        for (let b = 1; b <= n; b++) {
-          const y = hg.top - 0.08 - (b / n) * len;
-          if (heightAt(u0, w0) > y - 0.02) break; // (never inside the rock)
-          const rb = 0.015 + 0.007 * rng.next() + (b === n ? 0.006 : 0);
-          R.add(MM.glowBlue, new THREE.SphereGeometry(rb, 4, 3).translate(u0 + rng.jitter(0.01), y, w0 + rng.jitter(0.01)), { cast: false });
+        // anywhere along the ledge (perpendicular to its outward normal), just off its lip
+        const k = rng.range(-0.42, 0.42) * hg.len;
+        const u0 = hg.u + hg.ow * k + hg.ou * (0.05 + rng.range(0, 0.05)), w0 = hg.w - hg.ou * k + hg.ow * (0.05 + rng.range(0, 0.05));
+        // mostly short threads, now and then a long one
+        const len = 0.2 + 1.2 * Math.pow(rng.next(), 1.7);
+        const y0 = hg.top - 0.06;
+        // never inside the rock: shorten the thread to where it would touch
+        let L = len;
+        for (let s = 0.1; s <= len; s += 0.1) if (heightAt(u0, w0) > y0 - s - 0.03) { L = s - 0.1; break; }
+        if (L < 0.15) continue;
+        // the drop at the tip, and a few more clustered above it
+        const n = rng.int(2, 5);
+        for (let b = 0; b < n; b++) {
+          const f = b === 0 ? 1 : 1 - 0.42 * Math.pow(rng.next(), 1.6);
+          beads.push({
+            p: toWorld(u0 + rng.jitter(0.008), y0 - f * L, w0 + rng.jitter(0.008)),
+            b: b === 0 ? rng.range(0.75, 1.0) : rng.range(0.3, 0.8),
+            s: b === 0 ? rng.range(0.045, 0.06) : rng.range(0.028, 0.045),
+            ph: rng.next(),
+          });
         }
       }
       curtains.push([hg.u + hg.ou * 0.1, hg.top - 0.45, hg.w + hg.ow * 0.1]);
     }
   }
+  const glowworms = beads.length ? makeGlowBeads(ctx, beads, { name: 'glowworm-beads' }) : null;
 
   // ivy & moss curtains hanging from the crest edge and the shelves, hugging the face
   {
@@ -672,8 +694,10 @@ export function buildRidge(ctx, R, rng, { toWorld, groundAt }) {
     heightAt,
     // (a handful of glowing clusters is magic; dozens would be a runway)
     glowCaps: springCaps.concat(glowCaps.filter((_, i) => i % 3 === 0)).slice(0, 12),
-    /** Glow-worm curtains under the ledges (u, y, w): where their soft halo goes. */
+    /** Glow-worm curtains under the ledges (u, y, w) — their droplets glow on their own (no halo). */
     curtains,
+    /** The glow-worms' droplets: { points, update(t) } (night only; the caller adds & updates it). */
+    glowworms,
     /** The spring channel's course (u, y, w) from the hollow under the arching root towards the lip. */
     spring: [
       [springAt.u, RIDGE.lipY + 0.27, springAt.w + 0.05],

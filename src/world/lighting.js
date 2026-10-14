@@ -62,14 +62,19 @@
 // addPoint returns null once the budget is used up.)
 //
 // ctx.lights = { sun, hemi, rim, beam, keyDir, shadowExtent, shadowCenter, canopy, addPoint(position, opts), allocate(), points,
-//                pools ({ count, meshes, ms, list } — the night light pools), strandBulbs, strandPools, rigs, retune() }
+//                pools ({ count, meshes, ms, list, skipped } — the night light pools), strandBulbs, strandPools, rigs, retune(),
+//                addIndoorVolume(box3, { rotY | matrix }) }
 //   keyDir is live (world space, towards the current key light).
+//   addIndoorVolume: a room's interior (Box3 of the inner wall faces, floor to
+//   ceiling; optional yaw about its centre, or a local box + its object's
+//   matrixWorld) in which the sun / moon (and their canopy flecks) and the rim
+//   are switched off — env/canopy.js. Call it during the build; ≤ 8 rooms.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { smoothstep } from '../core/rng.js';
 import { SUN_LIGHT_DIR, MOON_LIGHT_DIR, dirFromAngles, envUniforms } from './env/celestial.js';
 import { installFog } from './env/fog.js';
-import { installCanopy, canopyParams } from './env/canopy.js';
+import { installCanopy, canopyParams, addIndoorVolume } from './env/canopy.js';
 import { buildEnvMaps } from './env/envmap.js';
 import { SPOTS, OAK, SCHREINEREI, RIVERSIDE, STREAM } from './layout.js';
 import { getHeight, isInWater, getPathDistance } from './ground.js';
@@ -445,7 +450,28 @@ export default async function build(ctx) {
     const t0 = performance.now();
     scene.updateMatrixWorld();
     const pools = [];
-    const groundY = (x, z) => (isInWater(x, z) ? Math.max(getHeight(x, z), STREAM.waterLevel) : getHeight(x, z));
+    // Water: the stream, plunge pool and pond surface lie at STREAM.waterLevel
+    // wherever the carved ground dips below it (that shoreline runs up to ~1.5
+    // beyond isInWater's nominal half width — hence the generous pad). The
+    // surface under a point is the ground, or the water's surface over the water
+    // (continuous at the waterline: no step), but a pool never lies ON the
+    // water: draped pools fade out over the last 0.35 of bank height above the
+    // waterline (dryK), and a draped pool centred in or within 0.4 of the water
+    // is not built at all (the water shader mirrors the lanterns instead).
+    const WL = STREAM.waterLevel;
+    const wetZone = (x, z) => isInWater(x, z, 1.6);
+    const groundY = (x, z) => (wetZone(x, z) ? Math.max(getHeight(x, z), WL) : getHeight(x, z));
+    const dryK = (x, z) => (wetZone(x, z) ? smoothstep(0, 0.35, getHeight(x, z) - WL) : 1);
+    const nearWater = (x, z, r = 0.4) => {
+      if (!wetZone(x, z)) return false;
+      if (getHeight(x, z) < WL + 0.02) return true;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        if (getHeight(x + Math.cos(a) * r, z + Math.sin(a) * r) < WL + 0.02) return true;
+      }
+      return false;
+    };
+    let skipped = 0;
 
     // lanterns without a point request: the oak's hanging lanterns, both
     // bridge lanterns and the path lanterns on posts (collider tag
@@ -618,16 +644,27 @@ export default async function build(ctx) {
      * floor; a table top or a narrow step that is too small hands over to the
      * next surface down), else the ground (a draped pool). → { y, size, flat }
      */
-    function placePool(p, size0) {
+    function placePool(p, size0, minSize = 0) {
       const gy = groundY(p.x, p.z);
       let y = surfaceBelow(p);
+      // a work top under the lamp that is too small for its pool (a bench, a
+      // table): the largest pool (≥ minSize) that still fits on it, as `small`
+      let small = null;
       for (let level = 0; level < 3 && y - gy > 0.08; level++) {
         let size = size0;
-        for (let k = 0; k < 3; k++, size *= 0.75) if (floorCovers(p.x, y, p.z, size * 0.85)) return { y, size, flat: true };
+        for (let k = 0; k < 3; k++, size *= 0.75) if (floorCovers(p.x, y, p.z, size * 0.85)) return { y, size, flat: true, small };
+        if (!small && level === 0 && minSize > 0) {
+          for (; size >= minSize; size *= 0.75) {
+            if (floorCovers(p.x, y, p.z, size * 0.85)) {
+              small = { y, size };
+              break;
+            }
+          }
+        }
         probe.set(p.x, y, p.z);
         y = surfaceBelow(probe, 0.03);
       }
-      return { y: gy, size: size0, flat: false };
+      return { y: gy, size: size0, flat: false, small };
     }
 
     // ① under every point request (live or not)
@@ -639,18 +676,25 @@ export default async function build(ctx) {
       const night = l.userData.intensity.night;
       const reach = Math.sqrt((l.distance || 7) / 7);
       const warm = isWarmColor(l.color);
-      const at = placePool(p, THREE.MathUtils.clamp(0.9 + 0.38 * h0, 1.15, 2.3) * reach);
+      const at = placePool(p, THREE.MathUtils.clamp(0.9 + 0.38 * h0, 1.15, 2.3) * reach, 0.18);
       const h = p.y - at.y;
+      const k0 = (live.has(r) ? 0.45 : 1) * THREE.MathUtils.clamp(night / 4.5, 0.55, 1.25) * (warm ? 1 : 0.55);
       pools.push({
         x: p.x,
         y: at.y,
         z: p.z,
         size: at.size,
         color: l.color.getStyle(),
-        strength: ((live.has(r) ? 0.45 : 1) * THREE.MathUtils.clamp(night / 4.5, 0.55, 1.25) * (warm ? 1 : 0.55)) / (1 + 0.06 * h * h),
+        strength: k0 / (1 + 0.06 * h * h),
         // decks, floors & the loft get a flat pool, the ground a draped one
         flat: at.flat,
       });
+      // … and a work lamp over a bench or table also pools on the work itself
+      // (a warm pool on the work top, the floor below in the bench's shade)
+      const hs = at.small ? p.y - at.small.y : 0;
+      if (at.small && hs > 0.3 && hs < 2.2) {
+        pools.push({ x: p.x, y: at.small.y, z: p.z, size: at.small.size, color: l.color.getStyle(), strength: (1.15 * k0) / (1 + 0.06 * hs * hs), flat: true, rings: 4, segs: 16 });
+      }
     }
 
     // ①b lanterns without a point request (see `extra` above)
@@ -739,24 +783,33 @@ export default async function build(ctx) {
       doorway(A.x + lx * cs + lz * sn, A.z - lx * sn + lz * cs, sn, cs, { size: 1.35, stretch: 1.4, strength: 0.8 });
     }
 
+    // no pool on the water (see dryK / nearWater above)
+    for (let i = pools.length - 1; i >= 0; i--) {
+      const p = pools[i];
+      if (!p.flat && nearWater(p.x, p.z)) {
+        pools.splice(i, 1);
+        skipped++;
+      }
+    }
     if (!pools.length) return;
     // flat pools (decks, floors) and terrain-draped pools in one mesh each
     const flat = pools.filter((p) => p.flat);
     const draped = pools.filter((p) => !p.flat);
     lightPoolMeshes.length = 0;
-    if (draped.length) lightPoolMeshes.push(lightPools(draped, { height: groundY, lift: 0.1 }));
+    if (draped.length) lightPoolMeshes.push(lightPools(draped, { height: groundY, lift: 0.1, fade: dryK }));
     if (flat.length) lightPoolMeshes.push(lightPools(flat, { lift: 0.03 }));
     for (const m of lightPoolMeshes) {
       m.visible = (env?.night ?? 0) > 0.02;
       scene.add(m);
     }
-    ctx.lights.pools = { count: pools.length, meshes: lightPoolMeshes, ms: Math.round(performance.now() - t0), list: pools };
+    ctx.lights.pools = { count: pools.length, meshes: lightPoolMeshes, ms: Math.round(performance.now() - t0), list: pools, skipped };
   }
   function isWarmColor(c) {
     const hsl = c.getHSL({ h: 0, s: 0, l: 0 });
     return (hsl.h < 0.17 || hsl.h > 0.95) && hsl.s > 0.25;
   }
   const lightPoolMeshes = [];
+  const indoorVolumes = [];
   function applyPoint(l, n) {
     // Lanterns swell a little beyond linear as dusk falls (they "come on").
     const k = smoothstep(0.15, 0.9, n);
@@ -785,6 +838,19 @@ export default async function build(ctx) {
     settings: { canopy: 1 },
     /** The day / night light rigs (live-tunable; call retune() after a change). */
     rigs: { day: DAY, night: NIGHT },
+    /**
+     * A room without sun: addIndoorVolume(box3, { rotY | matrix, pad, padDown }) —
+     * inside it the sun / moon key (and its canopy flecks) and the rim light are
+     * off (env/canopy.js). box3 = the room's interior (inner wall faces, floor to
+     * ceiling). Returns the slot or -1 (≤ 8 rooms).
+     */
+    addIndoorVolume(box, opts) {
+      const i = addIndoorVolume(box, opts);
+      if (i >= 0) indoorVolumes.push({ i, box: box.clone?.() ?? box, opts: opts ?? {} });
+      return i;
+    },
+    /** The registered rooms ({ i, box, opts }). */
+    indoorVolumes,
     retune() {
       lastNight = -1;
     },

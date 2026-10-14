@@ -7,10 +7,13 @@
 //   god rays            slanted golden shafts carved by the real canopy gaps
 //                       (env/shafts.js, shadow-map driven) + the canopy-gap
 //                       sunbeam onto the Schreinerei (lighting's SpotLight);
-//                       by night two hero moonbeams (a short, broad, nearly
-//                       overhead glow pooling on the fairy ring, and from the
-//                       moon's gap onto the plunge pool) + a quieter one on
-//                       the lily pond stay on
+//                       by night two hero moonbeams (one slanting down from
+//                       the moon's side through the crown gap right of the
+//                       loft onto the path to the bridge — seen from the glen,
+//                       the overview, the eye-level intro and the bikes, never
+//                       across the Schreinerei porch — and one from the moon's
+//                       gap by the falls onto the plunge pool) + a quieter one
+//                       on the lily pond stay on
 //   sunbeam dust        glittering motes that only sparkle in sunlight
 //                       (env/sunmotes.js)
 //   pixie dust          bigger twinkling gold & mint sparkles swirling around
@@ -20,7 +23,8 @@
 //   low mist            drifting veils over the stream, the pool and the glen's
 //                       rim, thicker & moonlit at night (env/groundMist.js)
 //
-// ctx.atmosphere = { fogParams, shafts, motes, sparkles, mist, settings, addShaft(x, z, opts), addMoonbeam(x, z, opts) }
+// ctx.atmosphere = { fogParams, shafts, motes, sparkles, mist, settings, moonbeams, addShaft(x, z, opts), addMoonbeam(x, z, opts) }
+//   moonbeams — the hero moonbeams once placed: [{ foot, axis, width, length }]
 //   settings.shafts / .motes / .sparkles / .mist — live multipliers (debug & tuning)
 //   addShaft(x, z, { length, width, intensity }) — ask for a god ray falling on
 //     (x, z) (e.g. onto a doorstep); returns false when the budget is used up.
@@ -41,8 +45,19 @@ import { buildGroundMist } from './env/groundMist.js';
 
 installFog();
 
-/** The hero moonbeam on the fairy ring: steep, short, broad and soft. */
-const RING_BEAM = { elevation: 78, length: 11, width: 6.5, intensity: 1.8 };
+/**
+ * The hero moonbeam: from the moon's side (between the moon disc's azimuth and
+ * the moonlight's), slanting down through the crown gap right of the loft onto
+ * the path to the bridge. From the glen camera it stands in the dark air
+ * between the oak's stairs and the falls (clear of the Schreinerei porch and
+ * the door), from the overview likewise, at the eye-level intro on the right,
+ * on the bikes' wide shot on the left. (A beam rising from the fairy ring
+ * could not avoid the porch: from every composed camera the ring lies right
+ * in front of the Schreinerei.)
+ */
+const HERO_BEAM = { x: 6.2, z: 6.4, elevation: 60, azimuth: 30, length: 21, width: 3.4, intensity: 0.9 };
+/** The plunge-pool beam: from the gap below-right of the moon (from the glen), down onto the pool. */
+const FALLS_BEAM = { elevation: 60, azimuth: 40, length: 24, width: 4.0, intensity: 1.45 };
 
 export default async function build(ctx) {
   const { scene, engine } = ctx;
@@ -75,12 +90,11 @@ export default async function build(ctx) {
       shafts.addBeam(x, getHeight(x, z), z, SUN_LIGHT_DIR, { length: 26, width: w, intensity: i });
     }
   }
-  // moonbeams: placed on the first frame after the build, once the fairy ring stands.
-  // Two hero beams, each landing in a pool of glowing mist with slow silver
-  // motes drifting down inside: one on the fairy ring (from the azimuth of the
-  // lighting's night beam, but steep — seen from the glen, the overview and
-  // the ring itself), one falling from the moon's canopy gap above the
-  // waterfall onto the plunge pool. The lily pond gets a quieter one.
+  // moonbeams: placed on the first frame after the build, once the fairy ring
+  // stands (its pixie dust gathers there). Two hero beams, each landing in a
+  // little pool of glowing mist with slow silver motes drifting down inside:
+  // the path beam (HERO_BEAM) and one falling from the moon's canopy gap by
+  // the waterfall onto the plunge pool. The lily pond gets a quieter one.
   let moonbeams = false;
   const ringBox = new THREE.Box3();
   /**
@@ -112,39 +126,25 @@ export default async function build(ctx) {
   }
   function placeMoonbeams() {
     moonbeams = true;
-    const night = ctx.lights?.beams?.night;
     const ring = ringCentre();
     // the pixie dust gathers on the fairy ring
     if (ring && sparkles) sparkles.anchors.ring.set(ring.x, ring.y + 0.05, ring.z);
     if (!shafts) return;
     const heroes = [];
-    if (ring) {
-      // from the moon's side (the azimuth of the lighting's night beam) but
-      // nearly overhead: a short, broad, dusty glow that appears out of the
-      // dark and pools on the ring. Steep, so from the glen camera it rises
-      // out of the ring instead of slanting across the oak and laying a milky
-      // stripe over the Schreinerei porch; on the phone's glen shot it is a
-      // soft glow, not the strongest diagonal of the frame.
-      let az = 58;
-      if (night) {
-        const d = new THREE.Vector3().subVectors(night.pos, night.target);
-        if (Math.hypot(d.x, d.z) > 1e-3) az = THREE.MathUtils.radToDeg(Math.atan2(d.x, -d.z));
-      }
-      const axis = dirFromAngles(RING_BEAM.elevation, az);
-      shafts.addMoonbeam(ring.x, ring.z, { length: RING_BEAM.length, width: RING_BEAM.width, intensity: RING_BEAM.intensity, axis });
-      heroes.push({ foot: ring, axis, width: RING_BEAM.width, length: RING_BEAM.length });
+    for (const [b, foot] of [
+      [HERO_BEAM, new THREE.Vector3(HERO_BEAM.x, getHeight(HERO_BEAM.x, HERO_BEAM.z), HERO_BEAM.z)],
+      [FALLS_BEAM, new THREE.Vector3(STREAM.pool.x, getHeight(STREAM.pool.x, STREAM.pool.z), STREAM.pool.z)],
+    ]) {
+      const axis = dirFromAngles(b.elevation, b.azimuth);
+      shafts.addMoonbeam(foot.x, foot.z, { length: b.length, width: b.width, intensity: b.intensity, axis });
+      heroes.push({ foot, axis, width: b.width, length: b.length });
     }
-    {
-      // from the moon's canopy gap above the waterfall down onto the plunge pool
-      const axis = dirFromAngles(64, 14);
-      const foot = new THREE.Vector3(STREAM.pool.x, getHeight(STREAM.pool.x, STREAM.pool.z), STREAM.pool.z);
-      shafts.addMoonbeam(foot.x, foot.z, { length: 30, width: 4.2, intensity: 1.7, axis });
-      heroes.push({ foot, axis, width: 4.2, length: 30 });
-    }
-    // a quieter one on the lily pond
-    shafts.addMoonbeam(STREAM.pond.x, STREAM.pond.z, { length: 26, width: 3.4, intensity: 1.0 });
+    // a quieter, short one on the lily pond (steep: it never climbs across
+    // the bridge or the Velowerkstatt cap in the glen shot)
+    shafts.addMoonbeam(STREAM.pond.x, STREAM.pond.z, { length: 10, width: 3.0, intensity: 0.6, axis: dirFromAngles(68, 20) });
     mist?.setBeams(heroes);
     sparkles?.setBeams(heroes);
+    if (ctx.atmosphere) ctx.atmosphere.moonbeams = heroes;
   }
   const motes = safe('sunbeam dust', () => buildSunMotes(ctx));
   if (motes) {
@@ -171,6 +171,7 @@ export default async function build(ctx) {
     sparkles,
     mist,
     settings,
+    moonbeams: [],
     addShaft: (x, z, opts) => shafts?.addShaft(x, z, opts) ?? false,
     addMoonbeam: (x, z, opts) => shafts?.addMoonbeam(x, z, opts) ?? false,
   };

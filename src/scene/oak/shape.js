@@ -428,17 +428,21 @@ export const BURLS = [
   // round-4 gnarl: a great swollen burl on the front above the door zone (the
   // Schreinerei's shelf fungi grow on it), one low on the front-left flank
   { a: -14, y: 11.3, h: 0.58, r: 1.05 },
-  { a: -63, y: 6.7, h: 0.5, r: 0.85 },
+  { a: -63, y: 6.9, h: 0.66, r: 1.0 },
   { a: -122, y: 13.0, h: 0.45, r: 0.9 },
+  // round 6: two more old swellings on the front-left flank that the glen and
+  // the Schreinerei see above the annex roof (the grain parts around them)
+  { a: -78, y: 11.6, h: 0.6, r: 1.0 },
+  { a: -32, y: 8.6, h: 0.44, r: 0.8 },
 ];
 /**
- * The bole's grain: lobes, cords, furrows and the bark texture all spiral the
- * same way at this rate (radians per unit of height) — ≈ a quarter turn over
- * the bole, a helix leaning ≈ 15° at the trunk's radius (the furrows also
- * wander about it), so the trunk reads as wrung, fused stems instead of a
- * fluted column.
+ * The bole's grain: lobes, sinews, furrows and the bark texture all spiral the
+ * same way at this rate (radians per unit of height) — a helix leaning ≈ 17°
+ * at the trunk's radius — so the trunk reads as wrung, fused stems instead of
+ * a fluted column. (See grainWarp: the grain also wanders and parts around
+ * the burls, knots and hollows.)
  */
-export const LOBE_TWIST = 0.1;
+export const LOBE_TWIST = 0.115;
 /** Twist of the bark texture on the bole (oakBarkMaterial in oak.js follows the furrows). */
 export const GRAIN_TWIST = LOBE_TWIST;
 /** Knots: a ring of swollen bark around a dimple (old branch scars). */
@@ -454,7 +458,7 @@ export const KNOTS = [
 ];
 /** Hollows: a cup carved into the trunk with a swollen rim. `owl` gets a resident. */
 export const HOLLOWS = [
-  { id: 'owl', a: -50, y: 9.7, rx: 0.7, ry: 0.96, depth: 1.2 },
+  { id: 'owl', a: -50, y: 9.7, rx: 0.78, ry: 1.08, depth: 1.25, rim: 0.32 },
   { id: 'den', a: 183, y: 1.55, rx: 0.7, ry: 0.95, depth: 1.15 },
   // a shallow, mossy nook above the Schreinerei door (left of the sign) where
   // a tiny family of toadstools lives — the hero shot's bark gets a story
@@ -466,6 +470,42 @@ const nFur = createNoise3D(7);
 const nFur2 = createNoise3D(19);
 const nBig = createNoise3D(31);
 const nMoss = createNoise3D(53);
+const nGrain = createNoise3D(71);
+const nSinew = createNoise3D(89);
+
+/**
+ * The bole's GRAIN as an angle offset: g = a + grainWarp(a, y) is constant
+ * along a ridge. It spirals (LOBE_TWIST), wanders slowly round the bole — so
+ * the ridges crowd together in places and spread apart in others (≈ ×0.5–1.8)
+ * — and parts around every burl, knot and hollow like wood grain around a
+ * knot. The sinews, the furrows AND the bark texture (oak.js, per vertex)
+ * follow it, so the texture's fissures run along the sculpted ridges.
+ */
+export function grainWarp(a, y) {
+  const yc = Math.max(y, 0);
+  const ca = Math.cos(a), sa = Math.sin(a);
+  let w = -LOBE_TWIST * yc;
+  // slow wander (two octaves): the spacing of the ridges varies round the bole
+  w += 0.23 * nGrain(ca * 1.1 + 3, sa * 1.1, yc * 0.055) + 0.08 * nGrain(ca * 2.6 - 8, sa * 2.6, yc * 0.12 + 5);
+  // the grain parts around the burls, knots & hollows (the flow widens over them)
+  // (overlapping features share one parting, capped so the grain never folds back)
+  const R0 = Math.max(baseRadius(yc), 0.5);
+  let sumD = 0, sumE = 0;
+  const part = (fa, fy, size, k) => {
+    const s = angDiff(a, fa * DEG) * R0, dy = y - fy;
+    const rho = size * 1.75;
+    const e = Math.exp(-(s * s + dy * dy * 0.55) / (rho * rho));
+    if (e > 1e-3) {
+      sumD += k * s * e;
+      sumE += k * e;
+    }
+  };
+  for (let i = 0; i < BURLS.length; i++) part(BURLS[i].a, BURLS[i].y, BURLS[i].r, 0.42);
+  for (let i = 0; i < KNOTS.length; i++) part(KNOTS[i].a, KNOTS[i].y, KNOTS[i].r * 1.6, 0.48);
+  for (let i = 0; i < HOLLOWS.length; i++) part(HOLLOWS[i].a, HOLLOWS[i].y, Math.max(HOLLOWS[i].rx, HOLLOWS[i].ry) * 1.1, 0.5);
+  if (sumE > 0) w -= (sumD / R0) * Math.min(1, 0.45 / sumE);
+  return w;
+}
 
 /** The un-sculpted radius: the layout contract up to the fork, then a dome that closes inside the limbs. */
 export function baseRadius(y) {
@@ -555,18 +595,22 @@ export function trunkSample(a, y) {
   // 1b. Character: two or three broad lobes that spiral a quarter turn over
   //     12 units, so the trunk reads as fused, twisting stems (silhouette
   //     changes width as it rises); subtle where things attach.
+  const g = a + grainWarp(a, y);
+  const cg = Math.cos(g), sg = Math.sin(g);
   {
     const ph = a - yc * LOBE_TWIST;
     const lobe = 0.62 * Math.cos(3 * ph + 0.4) + 0.38 * Math.cos(2 * ph - 1.1);
     r += lobe * R0 * (0.035 + 0.11 * free) * (1 - 0.6 * smoothstep(14, 17.5, yc));
-    // …wound with a few thick cords (the fused stems' fibre bundles) that
-    // follow the same twist, so the bole reads as wrung, not turned
-    // (irregular: the spacing wanders and every cord swells, thins and
-    //  merges along its length — sinews, not a turned column's flutes)
-    const pc = 5 * ph + 2.1 * nBig(Math.cos(ph) * 0.9 - 7, Math.sin(ph) * 0.9, yc * 0.09 + 40);
-    const cord = 0.5 + 0.5 * Math.cos(pc);
-    const cordAmp = 0.45 + 0.8 * (0.5 + 0.5 * nFur2(Math.cos(ph) * 1.6 + 30, Math.sin(ph) * 1.6, yc * 0.16));
-    r += (cord * cord - 0.36) * cordAmp * R0 * (0.02 + 0.13 * free) * (1 - smoothstep(15.5, 18.5, yc)) * smoothstep(-0.4, 1.2, yc);
+    // …wound with irregular SINEWS (the fused stems' fibre bundles) along the
+    // grain: broad rounded ridges between narrow dark valleys (the zero lines
+    // of a noise stretched along the grain), so they run long, fork and merge
+    // (Y-joins), crowd and spread with the grain, and their depth swells and
+    // fades (×0.5–1.5) — wrung sinews, not a turned column's even flutes
+    const ns = nSinew(cg * 1.85 + 7, sg * 1.85, yc * 0.085);
+    let sn = smoothstep(0.0, 0.3, Math.abs(ns));
+    sn = sn * (2 - sn);
+    const depth = (0.03 + 0.2 * free) * (0.5 + (0.5 + 0.5 * nSinew(cg * 0.8 + 40, sg * 0.8, yc * 0.13 - 9)));
+    r += (sn - 0.72) * depth * (1 - smoothstep(15.5, 18.5, yc)) * smoothstep(-0.4, 1.2, yc);
   }
   // 1c. Girth: the old bole swells and pinches as it rises (a belly low on
   //     the left & back, a waist under the fork, a swelling into the limbs) —
@@ -581,10 +625,8 @@ export function trunkSample(a, y) {
   // 2. Furrows: V-shaped fissures (zero crossings of noise), stretched along
   //    the twisting grain.
   // along the bole's spiral grain, wandering about it (no barber-pole stripes)
-  const at = a - LOBE_TWIST * yc + 0.4 * nBig(Math.cos(a) * 0.8 + 50, Math.sin(a) * 0.8, yc * 0.09 - 20);
-  const ca = Math.cos(at), sa = Math.sin(at);
-  const f1 = Math.abs(nFur(ca * 4.4, sa * 4.4, yc * 0.42));
-  const f2 = Math.abs(nFur2(ca * 9.5 + 3, sa * 9.5, yc * 1.1));
+  const f1 = Math.abs(nFur(cg * 4.4, sg * 4.4, yc * 0.42));
+  const f2 = Math.abs(nFur2(cg * 9.5 + 3, sg * 9.5, yc * 1.1));
   r += (Math.min(f1, 0.55) * 2 - 0.55) * (0.11 + 0.1 * free) + (Math.min(f2, 0.5) * 2 - 0.5) * 0.05;
 
   // 3. Slow bulges that make the trunk lumpy and gnarled (bigger where free).

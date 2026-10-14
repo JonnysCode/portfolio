@@ -1,7 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Night glows: fireflies drifting and blinking — gathered in four swarms
-// (the lily pond, the stream's bend, the fairy ring, under the Great Oak's
-// left limb), roaming round the oak's roots, the cottages and the glowing
+// Night glows: fireflies drifting and blinking — gathered in swarms (the
+// lily pond, the stream's bend and its run below the falls, the falls'
+// spray, the fairy ring, under the Great Oak's left limb, behind the
+// Wohnatelier, above the deck), roaming round the oak's roots, the cottages and the glowing
 // mushrooms, a few low at the forest edge, and a handful of big, slow "hero"
 // fireflies with long lazy blinks near every spot's focus — plus soft halos
 // breathing around the glowing mushrooms. Dark areas stay dark: the lights
@@ -19,7 +20,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { getHeight, streamPolyline } from '../ground.js';
-import { OAK, STREAM, COTTAGE, GLEN_RADIUS, SPOTS } from '../layout.js';
+import { OAK, STREAM, COTTAGE, SCHREINEREI, GLEN_RADIUS, SPOTS } from '../layout.js';
 import { palette } from '../../core/palette.js';
 import { sharedUniforms } from '../../core/materials.js';
 import { pointUniforms, SOFT_DISC, DIST_FADE } from './points.js';
@@ -33,12 +34,14 @@ uniform float uFogNear;
 uniform float uFogFar;
 uniform float uFocus;    // camera → point of interest (the depth of field's focus)
 uniform float uBokeh;    // how hard out-of-focus points are suppressed (0 = never)
+uniform vec2 uBack;      // behind the focus: x = fade at full blur, y = growth per px of blur (0: old speck fade)
 attribute vec4 aParams;  // phase, speed, wander radius, size
 attribute vec3 aColor;
 attribute vec3 aBlink;   // blink rate, resting brightness, dusk threshold
 attribute vec3 aSwirl;   // swirl centre x, z, angular speed (0 = none)
 varying vec3 vColor;
 varying float vAlpha;
+varying float vSoft;
 ${DIST_FADE}
 void main() {
   float ph = aParams.x;
@@ -74,8 +77,23 @@ void main() {
   // 720p, same model as post.js) × the fly's size — far out of focus, a fly
   // fades to a faint speck (dust on the lens otherwise, in the close-ups)
   float cocS = 10.0 * (d - uFocus) / max(d, 0.1);
-  float coc = cocS >= 0.0 ? min(max(cocS - 0.9, 0.0), 9.0) : 5.0 * (1.0 - exp(-max(-cocS - 1.2, 0.0) * 0.15));
-  vAlpha *= 1.0 - 0.88 * uBokeh * smoothstep(3.0, 6.5, coc * clamp(aParams.w / 0.28, 0.6, 2.2));
+  vSoft = 0.0;
+  if (cocS >= 0.0 && uBack.y > 0.0) {
+    // (round 6) BEHIND the focus a fly is part of the night's backdrop: the
+    // warm orbs over the stream, behind the cottages and the deck. Out of
+    // focus it grows into a soft, dim disc (bokeh) and fades only gently —
+    // the near field above stays suppressed (that is where blobs come from)
+    float cb = min(max(cocS - 0.9, 0.0), 9.0);
+    vAlpha *= 1.0 - uBack.x * smoothstep(3.0, 9.0, cb);
+    float grow = 1.0 + uBack.y * cb;
+    gl_PointSize = min(gl_PointSize * grow, 28.0);
+    // (a bigger disc spreads the same light: flatter core, dimmer per pixel)
+    vSoft = smoothstep(1.0, 2.0, grow);
+    vAlpha /= mix(1.0, grow, 0.55);
+  } else {
+    float coc = cocS >= 0.0 ? min(max(cocS - 0.9, 0.0), 9.0) : 5.0 * (1.0 - exp(-max(-cocS - 1.2, 0.0) * 0.15));
+    vAlpha *= 1.0 - 0.88 * uBokeh * smoothstep(3.0, 6.5, coc * clamp(aParams.w / 0.28, 0.6, 2.2));
+  }
   if (vAlpha < 0.004) gl_PointSize = 0.0;
   gl_Position = projectionMatrix * mv;
 }
@@ -84,11 +102,12 @@ void main() {
 const FRAG = /* glsl */ `
 varying vec3 vColor;
 varying float vAlpha;
+varying float vSoft;
 ${SOFT_DISC}
 void main() {
   float halo;
-  float core = softCore(gl_PointCoord, 0.22, halo);
-  float a = (core + halo * 0.7) * vAlpha;
+  float core = softCore(gl_PointCoord, mix(0.22, 0.75, vSoft), halo);
+  float a = (core * (1.0 - 0.6 * vSoft) + halo * 0.7) * vAlpha;
   if (a < 0.003) discard;
   gl_FragColor = vec4((vColor + vec3(core * 0.6)) * a, 1.0);
   #include <tonemapping_fragment>
@@ -132,7 +151,7 @@ function inNearField(x, y, z, wander, reach = 0.6) {
   return false;
 }
 
-function pointsMaterial(reduced, bokeh = 1) {
+function pointsMaterial(reduced, bokeh = 1, back = [0, 0]) {
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime: sharedUniforms.uTime,
@@ -140,6 +159,7 @@ function pointsMaterial(reduced, bokeh = 1) {
       uMotion: { value: reduced ? 0.4 : 1 },
       uFocus: { value: 20 },
       uBokeh: { value: bokeh },
+      uBack: { value: new THREE.Vector2(back[0], back[1]) },
       ...pointUniforms,
     },
     vertexShader: VERT,
@@ -162,6 +182,13 @@ function pointsMaterial(reduced, bokeh = 1) {
  * centre; and at every spot a handful of bigger, slower HERO fireflies drift
  * near what the camera came to see, with long, lazy blinks. Out-of-focus
  * flies fade (shader: the post's circle of confusion × their size).
+ *
+ * Round 6: the background is back. Flies in FRONT of the focus still shrink
+ * and fade (no blobs before the lens); flies BEHIND it fade only gently and
+ * grow into soft, dim discs — the warm orbs behind every subject. 0.85 ×
+ * count again, and four more swarms where the spot shots' backgrounds are:
+ * over the stream between the bridge and the falls, in the falls' spray,
+ * behind the Wohnatelier and above the deck's far side.
  */
 export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = false, ring = null } = {}) {
   const rng = ctx.rng('ambient-fireflies');
@@ -201,7 +228,19 @@ export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = fa
   const swarms = [];
   swarms.push({ id: 'pond', x: STREAM.pond.x, z: STREAM.pond.z, r: STREAM.pond.radius * 0.62, h: [0.3, 1.7], k: 0.95 });
   swarms.push({ id: 'bend', x: 12.4, z: 11.2, r: 1.7, h: [0.25, 1.6], k: 0.6 });
-  if (ring) swarms.push({ id: 'ring', x: ring.x, z: ring.z, r: (ring.r ?? 1.2) * 1.5, h: [0.2, 1.5], k: 1 });
+  // (round 6: the ring's swarm thinner and higher — from the glen and the
+  //  overview the ring, its glow and a dense swarm merged into one blob)
+  if (ring) swarms.push({ id: 'ring', x: ring.x, z: ring.z, r: (ring.r ?? 1.2) * 1.7, h: [0.45, 2.0], k: 0.6 });
+  // (round 6) swarms that land in the spots' BACKGROUNDS — the warm orbs
+  // behind each subject that made the night close-ups enchanted:
+  //   over the stream between the bridge and the falls (behind the Velowerkstatt)
+  swarms.push({ id: 'stream', x: 14, z: -2, r: 2.5, h: [0.3, 2.4], k: 0.95 });
+  //   in the spray below the falls (a small swirl in the mist)
+  swarms.push({ id: 'spray', x: STREAM.pool.x + 0.4, z: STREAM.pool.z - 0.6, r: 1.7, h: [0.6, 2.8], k: 0.45 });
+  //   behind the Wohnatelier (the interior spot's backdrop)
+  swarms.push({ id: 'atelier', x: COTTAGE.atelier.x - 2.5, z: COTTAGE.atelier.z - 4.5, r: 2.4, h: [0.8, 3.6], k: 0.75 });
+  //   above the deck's far side (behind the finished pieces in the Schreinerei shot)
+  swarms.push({ id: 'deck', x: SCHREINEREI.deck.x + 1.4, z: SCHREINEREI.deck.z - 2.4, r: 1.7, h: [1.2, 3.4], k: 0.55 });
   {
     // under the Great Oak's left limb (as the glen's camera sees it: −x)
     let best = null;
@@ -213,8 +252,9 @@ export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = fa
     const p = best ? best.l.curve.getPoint(0.62) : new THREE.Vector3(OAK.x - 8, 12, OAK.z + 2);
     swarms.push({ id: 'limb', x: p.x, z: p.z, r: 2.6, h: [1.4, 4.2], k: 1 });
   }
-  const total = Math.round(count * 0.65);
-  const inSwarms = Math.round(total * 0.46);
+  // (round 6: back up from 0.65 — round 5 cut the background orbs too far)
+  const total = Math.round(count * 0.85);
+  const inSwarms = Math.round(total * 0.5);
   const kSum = swarms.reduce((a, w) => a + w.k, 0);
   for (const w of swarms) {
     const want = Math.round((inSwarms * w.k) / kSum);
@@ -297,7 +337,10 @@ export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = fa
     stats.heroes += made;
   }
   // breathing halos around glowing mushrooms
+  // (round 6: not in the fairy ring's heart — a metre-wide cyan disc there was
+  //  part of the ring's blob from the glen; the ring has its own glow)
   for (const g of glowSpots) {
+    if (ring && Math.hypot(g.x - ring.x, g.z - ring.z) < (ring.r ?? 1.2) + 0.2) continue;
     pos.push(g.x, g.y + 0.05, g.z);
     params.push(rng.range(0, 1), 0.05, 0.02, rng.range(0.8, 1.1));
     colors.push(cyan.r * 0.3, cyan.g * 0.3, cyan.b * 0.3);
@@ -311,7 +354,8 @@ export function createFireflies(ctx, { glowSpots = [], count = 500, reduced = fa
   geo.setAttribute('aColor', new THREE.Float32BufferAttribute(colors, 3));
   geo.setAttribute('aBlink', new THREE.Float32BufferAttribute(blink, 3));
   geo.setAttribute('aSwirl', new THREE.Float32BufferAttribute(swirl, 3));
-  const mat = pointsMaterial(reduced);
+  // (behind the focus: a gentle fade, growing into soft dim discs)
+  const mat = pointsMaterial(reduced, 1, [0.35, 0.12]);
   const points = new THREE.Points(geo, mat);
   points.name = 'ambient:fireflies';
   points.frustumCulled = false;

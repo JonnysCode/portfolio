@@ -14,6 +14,14 @@
 // Splat weights come from a per-vertex attribute (aSplat: path, damp, litter,
 // trampled) baked from ground.js' grids; transitions are height-blended with
 // the textures' own relief so moss cushions overgrow the soil naturally.
+//
+// Sun flecks (round 6): where the canopy lets direct sun through, the floor
+// reads as golden-green MOSS, never sand — soil, needles and litter take a dark
+// olive-moss tone, the sunny moss keeps its green (its albedo set greener than
+// it should read: the amber key and the warm grade lift a highlight's red), the
+// paths stop short of beige, the wide views' front band stays a dark foreground
+// frame; the floor is matte (no golden specular sheen at grazing angles). Only
+// the sunlit part of the light changes — the shade keeps its humus.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { KINDS } from '../../core/textures/index.js';
@@ -171,7 +179,8 @@ const FRAG_MAIN = /* glsl */ `
   float tDrift = vPatch.y * smoothstep(0.25, 0.55, tFray * 0.8 + vPatch.y * 0.35) * tOpen * (1.0 - 0.5 * tYard) * (1.0 - tDamp * 0.8);
   // (the yards: more clover and worn, pebbly bare patches)
   float tClov = smoothstep(0.2, 0.6, vPatch.z * (0.75 + 0.5 * nFine) * (1.0 + 0.9 * tYard)) * tOpen * (1.0 - tDamp * 0.5);
-  float tBare = clamp(vPatch.w * (1.0 + 0.7 * tYard), 0.0, 1.0) * smoothstep(0.3, 0.6, tFray * 0.7 + vPatch.w * 0.4) * tOpen;
+  // (round 6: the yards' bare patches no longer swell — sunlit, they read as sand)
+  float tBare = clamp(vPatch.w * (1.0 + 0.2 * tYard), 0.0, 1.0) * smoothstep(0.3, 0.6, tFray * 0.7 + vPatch.w * 0.4) * tOpen;
   // paths: ragged edges, packed earth in the middle, a trampled soil fringe
   float tPathE = vSplat.x + (nMid - 0.5) * 0.5 + (nSmall - 0.5) * 0.55 + (sA.a - 0.5) * 0.3;
   float tWPath = smoothstep(0.5, 0.62, tPathE);
@@ -181,7 +190,8 @@ const FRAG_MAIN = /* glsl */ `
   mA = mix(mA, mA2, tSwap);
   mD = mix(mD, mD2, tSwap);
   float tHM = mA.a;
-  float tBias = vSplat.z * 1.6 - 0.9 + tFringe * 1.2 + vSplat.w * 0.75 + tDamp * 0.3 + (nMid - 0.5) * 0.8 + (nSmall - 0.5) * 0.6;
+  // (round 6: the trampled yards keep more moss & clover — 0.75 left them bare brown)
+  float tBias = vSplat.z * 1.6 - 0.9 + tFringe * 1.2 + vSplat.w * 0.4 + tDamp * 0.3 + (nMid - 0.5) * 0.8 + (nSmall - 0.5) * 0.6;
   // (drifts: only the leaves show over the moss — the humus between them stays
   //  moss, so a drift reads as fallen leaves, not as a dark hole)
   tBias += tDrift * 0.8 + tBare * 1.1 - tCush * 1.1;
@@ -211,6 +221,14 @@ const FRAG_MAIN = /* glsl */ `
     tSoil = mix(tSoil, tSoil * tNeedleCol / tSoilMean * (0.78 + 0.45 * tNeedle), tBare * 0.75);
   }
   tSoil *= mix(1.0, 0.6, tDamp);
+  // (round 6) dry soil never pales towards sand: its albedo is capped (a dark,
+  // rich humus, the leaf drifts a little brighter) and nudged towards olive
+  {
+    float sl = dot(tSoil, vec3(0.2126, 0.7152, 0.0722));
+    float cap = 0.062 + 0.02 * tDrift;
+    tSoil *= min(1.0, cap / max(sl, 1e-4));
+    tSoil = mix(tSoil, tSoil * vec3(0.92, 1.08, 0.7), 0.35 * (1.0 - tDrift));
+  }
   // packed earth: the soil's pebbles at low contrast on a lighter, sandy base
   vec3 tPathC = tPathCol * mix(vec3(0.85), sA2.rgb / tSoilMean, 0.4) * (0.8 + 0.4 * sA.a);
   tPathC = mix(tPathC, tPathC * vec3(0.75, 0.72, 0.68), tDamp * 0.7);
@@ -326,6 +344,55 @@ const FRAG_VELVET = /* glsl */ `
     reflectedLight.directDiffuse *= 1.0 + tVelvet * fres;
     reflectedLight.indirectDiffuse *= 1.0 + tVelvet * 1.4 * fres;
   }
+  // (round 6) where a fleck of sun lands on the floor it lights MOSS, never
+  // sand: in direct sun, soil, bare needles and litter take on a dark olive
+  // moss tone (their albedo capped) and the paths' packed earth stops short
+  // of beige. (Only the sunlit part of the light — the shade keeps its humus.)
+  {
+    vec3 tLw = vec3(0.2126, 0.7152, 0.0722);
+    vec3 tAlb = max(diffuseColor.rgb, vec3(0.002));
+    float tIrr = dot(reflectedLight.directDiffuse, tLw) / max(dot(tAlb, tLw), 1e-4);
+    float tSun = smoothstep(0.16, 0.7, tIrr) * (1.0 - tNight);
+    if (tSun > 0.002) {
+      float tSoilK = tWSoil * (1.0 - tWPath) * (1.0 - 0.45 * tDrift) * 0.85;
+      vec3 tOlive = mix(tMossDeep, tMossSun, 0.22 + 0.22 * nSmall) * (0.82 + 0.3 * nFine);
+      tOlive.r = min(tOlive.r, tOlive.g * 0.45);
+      vec3 tTgt = mix(tAlb, tOlive, tSoilK);
+      // (packed earth: capped short of sand, a touch greener at its mossy edges)
+      float tPl = dot(tTgt, tLw);
+      tTgt *= mix(1.0, min(1.0, 0.13 / max(tPl, 1e-4)), tWPath);
+      // (the sunny moss: the golden patches' albedo is nearly r = g — under the
+      //  amber key (#ffd49a: green ⅔ of red, blue ⅓) and the grade's warm
+      //  highlights that came out ochre-beige, the 'sand' of the sunlit glades.
+      //  In a fleck it keeps its green: red held near half the green, so the
+      //  lit moss lands golden-olive; the brightest capped)
+      float tMossK = (1.0 - tWSoil) * (1.0 - tWPath);
+      // (the warm grade lifts a highlight's red by ≈ ⅔ again: the fleck's albedo
+      //  is set greener than it should read, so it lands golden-green)
+      vec3 tGreen = vec3(min(tTgt.r, tTgt.g * 0.4), tTgt.g, min(tTgt.b, tTgt.g * 0.2));
+      tTgt = mix(tTgt, tGreen, tMossK);
+      float tMl = dot(tTgt, tLw);
+      tTgt *= mix(1.0, min(1.0, 0.14 / max(tMl, 1e-4)), tMossK);
+      // (the wide views' front band — beyond the glen, under the forest wall's
+      //  canopy, always out of focus at the bottom of the frame — keeps its
+      //  sun flecks low: a dark, rich foreground frame, never pale patches)
+      float tFront = smoothstep(25.0, 33.0, length(tP)) * smoothstep(17.0, 27.0, tP.y);
+      float tFl = dot(tTgt, tLw);
+      tTgt *= mix(1.0, min(1.0, 0.085 / max(tFl, 1e-4)), tFront);
+      vec3 tRatio = clamp(tTgt / tAlb, vec3(0.0), vec3(4.0));
+      // (the whole diffuse of a fleck: its sky light too — the shade's khaki
+      //  under the sunlit green kept the fleck pale)
+      reflectedLight.directDiffuse *= mix(vec3(1.0), tRatio, tSun);
+      reflectedLight.indirectDiffuse *= mix(vec3(1.0), tRatio, tSun);
+    }
+    // (moss, humus and leaf litter are matte: the amber sun's specular sheen —
+    //  broad and strong at the cameras' grazing angles — was what bleached the
+    //  sunlit flecks to beige. Only the damp ground by the water and the packed
+    //  earth of the paths keep some sheen)
+    float tSheen = mix(0.22, 1.0, max(tDamp, tWPath * 0.6));
+    reflectedLight.directSpecular *= tSheen;
+    reflectedLight.indirectSpecular *= mix(0.45, 1.0, max(tDamp, tWPath * 0.6));
+  }
 `;
 
 const lin = (hex) => new THREE.Color(hex);
@@ -371,7 +438,7 @@ export function makeTerrainMaterial(ctx) {
       .replace('#include <aomap_fragment>', FRAG_AO)
       .replace('#include <lights_fragment_end>', FRAG_VELVET);
   };
-  m.customProgramCacheKey = () => `forest-floor-v5-${detail}`;
+  m.customProgramCacheKey = () => `forest-floor-v6d-${detail}`;
   m.userData.uniforms = uniforms;
   return m;
 }

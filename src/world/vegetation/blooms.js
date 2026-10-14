@@ -23,6 +23,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { GeoBuilder, TAU } from './common.js';
+import { createRng } from '../../core/rng.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const col = (hex) => new THREE.Color(hex);
@@ -285,18 +286,79 @@ export function bloomTemplate(kind, rng, { lite = false } = {}) {
 }
 
 // ─── hydrangea ───────────────────────────────────────────────────────────────
+// (round 6) The mophead used to be 26 big flat star cards at random angles —
+// on the paper material it read as crumpled paper blocks, white by day and
+// grey-blue by night. Now each head is a smooth, slightly flattened dome in the
+// florets' own (deeper) colour, covered evenly (a Fibonacci lattice) by many
+// small four-petal florets whose normals follow the dome: the head shades
+// like a soft ball, up close every floret is a little cross of round petals.
 const HYD = {
-  blue: ['#6f8fe0', '#7a7ad8', '#8a8ae4', '#6aa0e4', '#9a86dc'],
-  pink: ['#e88ab8', '#f09cc4', '#e07aac', '#f4b0d0', '#d880b8'],
-  white: ['#f4f2ec', '#eef0e4', '#f8f4f0', '#e8ecdc'],
+  blue: ['#6a86dc', '#7478d4', '#8284e0', '#6496dc', '#8c80d8'],
+  pink: ['#e488b4', '#ec98c0', '#dc78a8', '#f0a8c8', '#d47cb2'],
+  // (a lime-cream 'Annabelle' white — pure white blew out to paper in the sun)
+  white: ['#e6ecd6', '#dde6cc', '#ecefdf', '#d6e2c2'],
 };
+const _dn = new THREE.Vector3();
+const _pd = new THREE.Vector3();
+const _ps = new THREE.Vector3();
+
+/** A smooth dome (upper ~70 % of a flattened ball) in colour `c`: rings × seg, normals outward. */
+function headDome(B, c, r, color, { seg = 8, rings = 3, flat = 0.82 } = {}) {
+  const base = B.count;
+  B.vert(c.x, c.y + r * flat, c.z, 0, 1, 0, 0.5, 0.5, color);
+  for (let k = 1; k <= rings; k++) {
+    const phi = (k / rings) * 1.95; // from the top down to ≈ 112°
+    for (let i = 0; i < seg; i++) {
+      const th = (i / seg) * TAU;
+      const nx = Math.sin(phi) * Math.cos(th), ny = Math.cos(phi), nz = Math.sin(phi) * Math.sin(th);
+      _dn.set(nx, ny / flat, nz).normalize();
+      B.vert(c.x + nx * r, c.y + ny * r * flat, c.z + nz * r, _dn.x, _dn.y, _dn.z, 0.5 + nx * 0.5, 0.5 + nz * 0.5, color.clone().multiplyScalar(0.9 + 0.1 * ny));
+    }
+  }
+  for (let i = 0; i < seg; i++) B.tri(base, base + 1 + ((i + 1) % seg), base + 1 + i);
+  for (let k = 1; k < rings; k++) {
+    const a0 = base + 1 + (k - 1) * seg, b0 = base + 1 + k * seg;
+    for (let i = 0; i < seg; i++) {
+      const i1 = (i + 1) % seg;
+      B.quad(a0 + i, a0 + i1, b0 + i1, b0 + i);
+    }
+  }
+}
+
+/**
+ * A hydrangea floret on the head at p (dome normal n): four round petals
+ * (two triangles each) around a tiny eye, every vertex lit with the dome's
+ * normal (a smooth head, not facets); the petal tips droop a little.
+ */
+function floret(B, p, n, r, petal, eye, rot) {
+  const ref = Math.abs(n.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : UP;
+  _u.crossVectors(ref, n).normalize();
+  _v.crossVectors(n, _u).normalize();
+  for (let i = 0; i < 4; i++) {
+    const a = rot + (i / 4) * TAU;
+    _pd.set(0, 0, 0).addScaledVector(_u, Math.cos(a)).addScaledVector(_v, Math.sin(a));
+    _ps.crossVectors(n, _pd).normalize();
+    const b = B.count;
+    const tip = p.clone().addScaledVector(_pd, r).addScaledVector(n, -r * 0.18);
+    const mid = p.clone().addScaledVector(_pd, r * 0.55).addScaledVector(n, r * 0.04);
+    const w = r * 0.42;
+    B.vert(p.x, p.y, p.z, n.x, n.y, n.z, 0.5, 0, eye);
+    B.vert(mid.x - _ps.x * w, mid.y - _ps.y * w, mid.z - _ps.z * w, n.x, n.y, n.z, 0, 0.55, petal);
+    B.vert(tip.x, tip.y, tip.z, n.x, n.y, n.z, 0.5, 1, petal);
+    B.vert(mid.x + _ps.x * w, mid.y + _ps.y * w, mid.z + _ps.z * w, n.x, n.y, n.z, 1, 0.55, petal);
+    // (wound to face along n: two-sided materials flip a back face's normal)
+    B.tri(b, b + 1, b + 2);
+    B.tri(b, b + 2, b + 3);
+  }
+}
 
 /**
  * A low hydrangea shrub at (x, y, z), radius ≈ 0.55·s: a dome of big dark,
  * toothed leaves, mophead blooms of four-petal florets on top. hue: 'blue' |
- * 'pink' | 'white'. lite: fewer florets. Writes straight into GeoBuilder B.
+ * 'pink' | 'white'. lite: fewer florets. Writes the leaves into B and the
+ * mopheads into H (default: B — their own smooth material is the caller's choice).
  */
-export function hydrangea(B, rng, x, y, z, s, hue = 'blue', { lite = false } = {}) {
+export function hydrangea(B, rng, x, y, z, s, hue = 'blue', { lite = false, heads: H = B } = {}) {
   const leafCol = col('#3e6e30'), leafTip = col('#5c8c3c');
   const R = 0.55 * s;
   // leaves: pairs radiating from the dome, overlapping like shingles
@@ -310,23 +372,55 @@ export function hydrangea(B, rng, x, y, z, s, hue = 'blue', { lite = false } = {
   // mophead blooms
   const heads = lite ? 4 : 6;
   const pal = HYD[hue] ?? HYD.blue;
+  const GOLD = Math.PI * (3 - Math.sqrt(5));
   for (let h = 0; h < heads; h++) {
     const az = (h / heads) * TAU + rng.jitter(0.6);
     const el = h === 0 ? 1 : rng.range(0.35, 0.8);
     const c = new THREE.Vector3(x + Math.sin(az) * R * 0.62 * Math.cos(el * 1.2), y + R * (0.55 + 0.55 * el), z + Math.cos(az) * R * 0.62 * Math.cos(el * 1.2));
     const hr = R * rng.range(0.3, 0.38);
     const base = col(rng.pick(pal));
-    const florets = lite ? 16 : 26;
+    // (the head leans outwards a little, towards its side of the shrub)
+    const tilt = new THREE.Vector3(Math.sin(az) * 0.35 * (1 - el * 0.6), 1, Math.cos(az) * 0.35 * (1 - el * 0.6)).normalize();
+    const q = new THREE.Quaternion().setFromUnitVectors(UP, tilt);
+    // the ball beneath: the florets' colour, deeper — no dark gaps between them
+    const flat = 0.84;
+    {
+      const b0 = H.count;
+      headDome(H, c, hr * 0.94, base.clone().multiplyScalar(0.72), { seg: lite ? 7 : 8, rings: 3, flat });
+      // (turn the dome with the head)
+      for (let i = b0; i < H.count; i++) {
+        _dn.set(H.pos[i * 3] - c.x, H.pos[i * 3 + 1] - c.y, H.pos[i * 3 + 2] - c.z).applyQuaternion(q);
+        H.pos[i * 3] = c.x + _dn.x;
+        H.pos[i * 3 + 1] = c.y + _dn.y;
+        H.pos[i * 3 + 2] = c.z + _dn.z;
+        _dn.set(H.nor[i * 3], H.nor[i * 3 + 1], H.nor[i * 3 + 2]).applyQuaternion(q);
+        H.nor[i * 3] = _dn.x;
+        H.nor[i * 3 + 1] = _dn.y;
+        H.nor[i * 3 + 2] = _dn.z;
+      }
+    }
+    // (the old mophead's random draws are burnt here, so the shrubs placed
+    //  after this one stay exactly where they were; the florets draw from a
+    //  stream of their own)
+    for (let k = 0; k < (lite ? 16 : 26) * 5; k++) rng.next();
+    const frng = createRng(`vegetation:hydrangea-head:${x.toFixed(2)},${z.toFixed(2)}:${h}`);
+    const florets = lite ? 26 : 42;
+    const fr = hr * (lite ? 0.36 : 0.3);
+    const lime = col('#e8f0c8');
     for (let f = 0; f < florets; f++) {
-      // spread over the upper part of a ball
-      const fy = rng.range(-0.15, 1);
-      const fa = rng.range(0, TAU);
-      const fr = Math.sqrt(1 - fy * fy);
-      const n = new THREE.Vector3(Math.sin(fa) * fr, fy, Math.cos(fa) * fr);
-      const p = c.clone().addScaledVector(n, hr);
-      // (florets age from lime-cream at the heart to the full hue at the edge)
-      const fc = base.clone().offsetHSL(rng.jitter(0.03), 0, rng.jitter(0.05));
-      star(B, p, n, hr * rng.range(0.36, 0.46), fc, fc.clone().lerp(col('#f4f0d8'), 0.4), 4, 0.72);
+      // an even Fibonacci cover of the dome's upper ~70 %
+      const t = (f + 0.5) / florets;
+      const fy = 1 - t * 1.25;
+      const rr = Math.sqrt(Math.max(0, 1 - fy * fy));
+      const fa = f * GOLD + h;
+      const n = new THREE.Vector3(Math.cos(fa) * rr + frng.jitter(0.06), fy, Math.sin(fa) * rr + frng.jitter(0.06)).normalize();
+      const ns = new THREE.Vector3(n.x, n.y / flat, n.z).normalize().applyQuaternion(q);
+      const p = new THREE.Vector3(n.x * hr, n.y * hr * flat, n.z * hr).applyQuaternion(q).add(c).addScaledVector(ns, hr * 0.03);
+      // (florets age from lime-cream at the heart to the full hue at the edge;
+      //  the top of the head a touch lighter)
+      const fc = base.clone().offsetHSL(frng.jitter(0.025), 0, frng.jitter(0.04) + 0.03 * fy);
+      if (fy > 0.75 && frng.chance(0.35)) fc.lerp(lime, 0.35);
+      floret(H, p, ns, fr * frng.range(0.85, 1.15), fc, fc.clone().lerp(col('#f4f0d8'), 0.45), frng.range(0, TAU));
     }
   }
 }

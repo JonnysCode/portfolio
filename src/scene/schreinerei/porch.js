@@ -204,8 +204,10 @@ export function buildPorch(ctx, B, mats, annexShingles = null) {
     const px = RP.x - 0.02, pz = RP.z + 0.16;
     F.add(mats.wood('walnut'), xf(new THREE.CylinderGeometry(0.012, 0.012, 0.14, 6), [px, 1.47, pz - 0.05], [Math.PI / 2, 0, 0]), { cast: false });
     addBowSaw(F, mats, rng, mat4([px, 1.24, pz + 0.01], [0, 0, 0.04]), { scale: 0.72 });
-    F.add(mats.rope(), xf(new THREE.TorusGeometry(0.09, 0.016, 5, 16), [RP.x + 0.24, 0.95, RP.z - 0.02], [0, Math.PI / 2, 0]), { cast: false });
-    F.add(mats.rope(), xf(new THREE.TorusGeometry(0.08, 0.016, 5, 16), [RP.x + 0.255, 0.93, RP.z - 0.01], [0.3, Math.PI / 2, 0]), { cast: false });
+    // (on its own peg above the saw: the twin root winds round the post's foot)
+    F.add(mats.wood('walnut'), xf(new THREE.CylinderGeometry(0.011, 0.011, 0.12, 6), [px + 0.02, 1.86, pz - 0.04], [Math.PI / 2, 0, 0]), { cast: false });
+    F.add(mats.rope(), xf(new THREE.TorusGeometry(0.09, 0.016, 5, 16), [px + 0.02, 1.77, pz + 0.03], [0.12, 0, 0]), { cast: false });
+    F.add(mats.rope(), xf(new THREE.TorusGeometry(0.08, 0.016, 5, 16), [px + 0.035, 1.76, pz + 0.045], [0.2, 0.3, 0]), { cast: false });
   }
   // ivy trailing down from the porch eave — only at the porch's two ends,
   // outside the posts (nothing hangs across the bench, Jonny or the vise) —
@@ -703,6 +705,74 @@ function buildHobelbank(ctx, mats, rng) {
       const sc = rng.range(0.5, 0.85);
       xf(c, [rng.range(-0.05, 0.55), H + BOARD.t + 0.008 + rng.next() * 0.015, rng.range(0.0, D / 2 - 0.02)], [rng.next() * 6, rng.next() * 6, rng.next() * 6], sc);
       Bb.add(mats.wood('maple'), c, { color: rng.pick(['#c99c63', '#d3aa74', '#bd8f58']), cast: false });
+    }
+  }
+  // ── a working bench's patina: the front arris darkened and rounded by
+  // hands and oil, dark rims round the dog holes, amber glue drips (on the
+  // top and running over the front edge), saw kerfs and nicks near the tail
+  // vise, faint pencil cross-hatching where a cut was laid out; the tray holds
+  // the everyday kit — a marking gauge (Streichmass), a bench hook, sawdust in
+  // its corners — and a little glue pot with its brush stands at the bench end
+  {
+    const wornOil = '#9c6e43';
+    Bb.add(vc, new THREE.CylinderGeometry(0.012, 0.012, L - 0.03, 8).rotateZ(Math.PI / 2).translate(0, H - 0.008, D / 2 - 0.006), { color: wornOil, cast: false });
+    Bb.add(vc, new THREE.BoxGeometry(L - 0.04, 0.03, 0.003).translate(0, H - 0.026, D / 2 + 0.0012), { color: '#a87a4c', cast: false });
+    for (let i = 0; i < 10; i++) {
+      const x = -L / 2 + 0.3 + i * 0.112;
+      Bb.add(vc, new THREE.BoxGeometry(0.042, 0.0015, 0.052).translate(x + rng.jitter(0.003), H + 0.0003, dogZ), { color: '#8e6440', cast: false });
+    }
+    // glue drips: dried beads on the top, two runs over the front edge
+    const amber = '#c4882c';
+    for (const [x, z, r] of [[-0.12, 0.02, 0.012], [0.42, -0.03, 0.009], [-0.6, -0.04, 0.014], [0.7, 0.24, 0.008]]) {
+      Bb.add(vc, new THREE.SphereGeometry(r, 7, 4).scale(1.3, 0.28, 1).translate(x, H + 0.001, z), { color: amber, cast: false });
+    }
+    for (const [x, len] of [[0.28, 0.05], [-0.36, 0.035]]) {
+      Bb.add(vc, new THREE.SphereGeometry(0.007, 6, 4).scale(1, len / 0.014, 0.5).translate(x, H - len / 2 - 0.004, D / 2 + 0.003), { color: amber, cast: false });
+      Bb.add(vc, new THREE.SphereGeometry(0.009, 6, 4).translate(x, H - len - 0.004, D / 2 + 0.004), { color: amber, cast: false });
+    }
+    // saw kerfs across the top and nicks in the front arris by the tail vise
+    for (let k = 0; k < 3; k++) {
+      Bb.add(vc, new THREE.BoxGeometry(0.0025, 0.0015, 0.055 + k * 0.012).translate(0.36 + k * 0.045, H + 0.0006, -0.025 + rng.jitter(0.006)).rotateY(0), { color: '#4a3420', cast: false });
+      Bb.add(vc, new THREE.BoxGeometry(0.003, 0.014, 0.004).translate(0.52 + k * 0.07, H - 0.007, D / 2 + 0.0015), { color: '#5a3e26', cast: false });
+    }
+    // faint pencil cross-hatching where a cut was laid out
+    for (let k = 0; k < 5; k++) {
+      for (const a of [0.7, -0.7]) {
+        const g = new THREE.BoxGeometry(0.06, 0.0012, 0.0016).rotateY(a).translate(0.55 + k * 0.018, H + 0.0007, -0.03);
+        Bb.add(vc, g, { color: '#6a6660', cast: false });
+      }
+    }
+    // the marking gauge (Streichmass) in the tray: beam, fence, wedge, pin
+    {
+      const gx = 0.07, gz = trayZ + 0.02, gy = trayY + 0.012;
+      Bb.add(mats.wood('#c89a68'), xf(board(0.19, 0.018, 0.018, { along: 'x', rng, r: 0.003 }), [gx, gy, gz]), { cast: false });
+      Bb.add(mats.wood('#b07d4e'), xf(board(0.024, 0.06, 0.05, { along: 'y', rng, r: 0.004 }), [gx - 0.03, gy + 0.008, gz], [Math.PI / 2, 0, 0]), { cast: false });
+      Bb.add(mats.wood('#4b3426'), xf(new THREE.BoxGeometry(0.012, 0.03, 0.008), [gx - 0.03, gy + 0.012, gz - 0.016]), { cast: false });
+      Bb.add(steel, xf(new THREE.CylinderGeometry(0.002, 0.002, 0.012, 4).rotateX(Math.PI / 2), [gx + 0.085, gy, gz + 0.012]), { cast: false });
+    }
+    // a bench hook (Bankhaken) at the tray's end: a board with a cleat on each face
+    {
+      const hx0 = -L / 2 + 0.12, hz0 = trayZ;
+      Bb.add(mats.wood('#c49a6c'), xf(board(0.15, 0.012, 0.11, { along: 'x', rng, r: 0.002 }), [hx0, trayY + 0.026, hz0], [0.05, 0, 0]), { cast: false });
+      Bb.add(mats.wood('#a87d55'), xf(board(0.02, 0.022, 0.11, { along: 'z', rng, r: 0.002 }), [hx0 - 0.065, trayY + 0.043, hz0]), { cast: false });
+      Bb.add(mats.wood('#a87d55'), xf(board(0.02, 0.022, 0.11, { along: 'z', rng, r: 0.002 }), [hx0 + 0.065, trayY + 0.009, hz0]), { cast: false });
+    }
+    // sawdust settled in the tray's corners and along its lip
+    for (const [x, z, r] of [[-0.05, trayZ - 0.05, 0.03], [0.2, trayZ + 0.05, 0.025], [0.62, trayZ - 0.04, 0.035], [0.4, trayZ + 0.04, 0.02], [-0.66, trayZ + 0.05, 0.022]]) {
+      Bb.add(vc, new THREE.SphereGeometry(r, 7, 4).scale(1.4, 0.18, 0.9).translate(x, trayY - 0.003, z), { color: rng.pick(['#e2c792', '#dcc08c', '#e8d4a8']), cast: false });
+    }
+    // the glue pot with its brush at the bench end
+    {
+      const px = -L / 2 + 0.09, pz = -0.025;
+      Bb.add(mats.clay('#6b4a32'), new THREE.CylinderGeometry(0.03, 0.027, 0.055, 12, 1, true).translate(px, H + 0.0275, pz), { cast: false });
+      Bb.add(vc, new THREE.CircleGeometry(0.028, 12).rotateX(-Math.PI / 2).translate(px, H + 0.048, pz), { color: '#a8661c', cast: false });
+      Bb.add(mats.wood('ash'), new THREE.CylinderGeometry(0.005, 0.006, 0.12, 6).rotateZ(-0.35).translate(px + 0.018, H + 0.09, pz), { cast: false });
+      Bb.add(vc, new THREE.CylinderGeometry(0.009, 0.007, 0.025, 6).rotateZ(-0.35).translate(px + 0.0, H + 0.04, pz), { color: '#3a2a1c', cast: false });
+      for (let k = 0; k < 3; k++) {
+        const a = 1.2 + k * 0.7;
+        Bb.add(vc, new THREE.SphereGeometry(0.006, 5, 4).scale(1, 2.2, 1).translate(px + Math.cos(a) * 0.03, H + 0.035 - k * 0.006, pz + Math.sin(a) * 0.03), { color: amber, cast: false });
+      }
+      Bb.add(vc, new THREE.SphereGeometry(0.02, 8, 4).scale(1.4, 0.15, 1).translate(px + 0.01, H + 0.0012, pz + 0.035), { color: amber, cast: false });
     }
   }
   Bb.build(g, 'hobelbank', { mergeShadow: true });

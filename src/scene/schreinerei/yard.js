@@ -31,10 +31,10 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createRng } from '../../core/rng.js';
 import { getHeight } from '../../world/ground.js';
-import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, mossPadGeo, uvBox, uvCyl, paintBy, addToadstool, addFern, addLanternPost, LOD, segs, count } from './kit.js';
+import { Batch, board, timber, xf, mat4, stoneGeo, mossGeo, mossPadGeo, uvBox, uvCyl, paintBy, paintWear, addToadstool, addFern, addLanternPost, LOD, segs, count } from './kit.js';
 import { SPOTS } from '../../world/layout.js';
 import { ANNEX, annexFrame, annexToWorld } from './annex.js';
-import { addTrack, addHandcart, addDowelBucket, addOffcuts, addLeaningBoards, addBesom, addRipVignette, addStickeredStack, addShavingTrail, leafGeo, flagstoneGeo, addFlagApron, addChoppingBlock, addSweptShavings } from './craft.js';
+import { addTrack, addHandcart, addDowelBucket, addOffcuts, addLeaningBoards, addBesom, addRipVignette, addStickeredStack, addShavingTrail, leafGeo, flagstoneGeo, addFlagApron, addChoppingBlock, addSweptShavings, addSawhorse, addSawdust, addGluePot, addMarkingGauge } from './craft.js';
 
 export function buildYard(ctx, B, mats) {
   const rng = createRng('yard');
@@ -113,14 +113,32 @@ export function buildYard(ctx, B, mats) {
     c[1] = groundY(c[0], c[2]);
     const R = 0.46, H = 1.1;
     const rings = Math.round(H / 0.1);
+    // (low tier: only the logs' outer end-grain faces, a little proud or sunk,
+    // in front of a dark bark core — what the stack shows from outside, at a
+    // third of the triangles)
+    const capsOnly = LOD.k < 0.5;
+    if (capsOnly) {
+      const core = new THREE.CylinderGeometry(R - 0.035, R - 0.02, H, 12, 1, true);
+      F.add(mats.wood('#3f3024'), xf(uvCyl(core, 1 / 1.4, [0, 0], R), [c[0], c[1] + 0.06 + H / 2 - 0.05, c[2]]));
+    }
     for (let i = 0; i < rings; i++) {
       const y = 0.06 + i * 0.1;
       const r = R * (1 - (i / rings) * 0.08);
       const n = Math.round((Math.PI * 2 * r) / 0.11);
       for (let k = 0; k < n; k++) {
         const a = (k / n) * Math.PI * 2 + (i % 2) * (Math.PI / n);
+        if (capsOnly) {
+          const endC = rng.pick(['#c2a886', '#d0bc9a', '#b39776', '#c8b08e', '#b8a080']);
+          rng.pick(['#4e3b2c', '#5a4434', '#463528']);
+          const tx = rng.jitter(0.1), tz = rng.jitter(0.3);
+          const cap = new THREE.CircleGeometry(0.06, 5);
+          uvBox(cap, 'z', undefined, [(i * 3.71 + k * 1.37) % 9, (i * 1.93 + k * 2.89) % 9]);
+          const rr = r - 0.004 + tz * 0.04;
+          F.add(mats.wood(endC), xf(cap, [c[0] + Math.sin(a) * rr, c[1] + y, c[2] + Math.cos(a) * rr], [tx * 0.5, a, tz]), { cast: false });
+          continue;
+        }
         // logs: bark on the sides, pale end grain on the ends (the visible face)
-        // (medium & low: open-ended, only the outer end grain capped — the inner end is never seen)
+        // (medium: open-ended, only the outer end grain capped — the inner end is never seen)
         const log = new THREE.CylinderGeometry(0.058, 0.062, 0.34, LOD.k < 0.5 ? 5 : 6, 1, LOD.k < 1);
         if (LOD.k < 1) {
           const cap = new THREE.CircleGeometry(0.058, LOD.k < 0.5 ? 5 : 6).rotateX(-Math.PI / 2).translate(0, 0.17, 0);
@@ -251,7 +269,10 @@ export function buildYard(ctx, B, mats) {
       parts.push([sp, xf(board(0.03, 0.2, 0.68, { along: 'z', rng }), [s * 0.27, 0.42, 0], [0, 0, s * 0.25])]);
       parts.push([sp, xf(board(0.56, 0.2, 0.03, { along: 'x', rng }), [0, 0.42, s * 0.33], [s * -0.25, 0, 0])]);
       // handles and legs
-      parts.push([tim, xf(board(0.045, 0.045, 1.25, { along: 'z', rng }), [s * 0.2, 0.32, -0.15], [0.12, 0, 0])]);
+      // (the handles' grip ends darkened by hands)
+      const hdl = board(0.045, 0.045, 1.25, { along: 'z', rng, segs: LOD.lite ? 0 : 5 });
+      paintWear(hdl, '#8d8070', (x, y, z) => (z < -0.4 ? 0.5 : 0), { dark: '#3a3029' });
+      parts.push([mats.wood('#8d8070'), xf(hdl, [s * 0.2, 0.32, -0.15], [0.12, 0, 0])]);
       parts.push([tim, xf(board(0.04, 0.3, 0.04, { along: 'y', rng }), [s * 0.2, 0.15, -0.38])]);
     }
     // wheel: solid wooden disc with an iron tyre
@@ -361,9 +382,13 @@ export function buildYard(ctx, B, mats) {
     tp.push({ x: end.x + 0.45, z: end.z + 0.25 });
     // (the painterly humus tinted by the track's vertex colours: a clear,
     // paler worn band — still textured soil, never a smooth plastic ribbon)
-    tracks.push(addTrack(B, mats, rng, getHeight, tp, { width: 0.78 }));
+    // (sawdust trodden into it by the workshop door; the spur from the
+    // Hobelbank paler still — the shavings & dust carried out on the boots)
+    const doorW = annexToWorld(-0.3, 0, hz + 0.6);
+    const near = (p, r) => (x, z) => Math.max(0, 1 - Math.hypot(x - p.x, z - p.z) / r);
+    tracks.push(addTrack(B, mats, rng, getHeight, tp, { width: 0.78, dust: near(doorW, 1.6) }));
     const a = annexToWorld(1.75, 0, hz + 2.0), b = annexToWorld(1.6, 0, hz + 2.55), c = curve.getPointAt(0.43);
-    tracks.push(addTrack(B, mats, rng, getHeight, [{ x: a.x, z: a.z }, { x: b.x, z: b.z }, { x: c.x, z: c.z }], { width: 0.52, lift: 0.011 }));
+    tracks.push(addTrack(B, mats, rng, getHeight, [{ x: a.x, z: a.z }, { x: b.x, z: b.z }, { x: c.x, z: c.z }], { width: 0.52, lift: 0.011, dust: near(a, 2.2) }));
     // a flagged apron in front of the workshop door: flat chamfered flags
     // laid with 2–4 cm joints, moss green in every joint
     addFlagApron(F, mats, rng, { x0: -1.2, x1: 0.62, z0: hz + 0.1, z1: hz + 0.82, cw: 0.32, cd: 0.25 });
@@ -463,11 +488,31 @@ export function buildYard(ctx, B, mats) {
     }
   }
   {
-    // a twig besom leaning on the outside of the porch's left post
+    // a twig besom leaning on the outside of the porch's left post — and the
+    // little heap it swept together beside it
     const foot = annexToWorld(0.72, 0.02, hz + 1.86);
     const top = annexToWorld(0.97, 1.18, hz + 1.6);
     addBesom(B, mats, rng, foot, top);
     keep.push({ x: foot.x, z: foot.z, r: 0.2 });
+    const heap = annexToWorld(0.5, 0, hz + 2.02);
+    addSawdust(B, mats, rng, getHeight, heap.x, heap.z, { r: 0.09, h: 0.03, chips: 5 });
+    keep.push({ x: heap.x, z: heap.z, r: 0.16 });
+  }
+  {
+    // sawdust swept into the corners: against the plinth beside the workshop
+    // door's flags, and where the oak door's bottom step meets the ground
+    // (old, darkened by rain), a fresher drift on top of one
+    const D0 = ctx.layout.OAK.door;
+    const corners = [
+      { p: annexToWorld(-1.34, 0, hz + 0.17), r: 0.11, tone: 'old' },
+      { p: new THREE.Vector3(D0.x - 0.98, 0, D0.z + 1.42), r: 0.1, tone: 'old' },
+      { p: new THREE.Vector3(D0.x + 1.02, 0, D0.z + 1.38), r: 0.12, tone: 'old' },
+      { p: new THREE.Vector3(D0.x + 0.94, 0, D0.z + 1.5), r: 0.07, tone: 'fresh' },
+    ];
+    for (const c of corners) {
+      addSawdust(B, mats, rng, getHeight, c.p.x, c.p.z, { r: c.r, h: 0.022, sx: 1.6, tone: c.tone, chips: 3 });
+      keep.push({ x: c.p.x, z: c.p.z, r: c.r + 0.06 });
+    }
   }
   tally('craft');
 
@@ -487,8 +532,8 @@ export function buildYard(ctx, B, mats) {
       const x = rng.range(-hx - 0.4, hx + 0.6), z = hz + rng.range(0.1, 0.45);
       if (x > -1.25 && x < 0.7) continue; // keep the doorway clear
       const h = rng.range(0.08, 0.2);
-      F.add(vc, xf(new THREE.CylinderGeometry(0.003, 0.004, h, 3), [x, h / 2, z]), { color: '#4f7f36', cast: false });
-      F.add(vc, xf(new THREE.SphereGeometry(rng.range(0.014, 0.024), 5, 3), [x, h, z], null, [1, 0.6, 1]), { color: rng.pick(['#f2ead8', '#e8c22a', '#b39ddb', '#ef7a5a', '#ffffff', '#7fb3e0']), cast: false });
+      F.add(vc, xf(new THREE.CylinderGeometry(0.003, 0.004, h, 3, 1, LOD.k < 0.5), [x, h / 2, z]), { color: '#4f7f36', cast: false });
+      F.add(vc, xf(new THREE.SphereGeometry(rng.range(0.014, 0.024), LOD.k < 0.5 ? 4 : 5, LOD.k < 0.5 ? 2 : 3), [x, h, z], null, [1, 0.6, 1]), { color: rng.pick(['#f2ead8', '#e8c22a', '#b39ddb', '#ef7a5a', '#ffffff', '#7fb3e0']), cast: false });
     }
   }
 
@@ -593,9 +638,10 @@ function scatterGround(ctx, B, mats, rng, { chest = null, keep = [], stones = []
       B.add(grass, g.translate(x, y, z), { cast: false });
     }
   };
+  const lo = LOD.k < 0.5;
   const flower = (x, y, z, h, color) => {
-    B.add(vc, xf(new THREE.CylinderGeometry(0.003, 0.004, h, 3), [x, y + h / 2, z]), { color: '#4f7f36', cast: false });
-    B.add(vc, xf(new THREE.SphereGeometry(rng.range(0.014, 0.022), 5, 3), [x, y + h, z], null, [1, 0.6, 1]), { color, cast: false });
+    B.add(vc, xf(new THREE.CylinderGeometry(0.003, 0.004, h, 3, 1, lo), [x, y + h / 2, z]), { color: '#4f7f36', cast: false });
+    B.add(vc, xf(new THREE.SphereGeometry(rng.range(0.014, 0.022), lo ? 4 : 5, lo ? 2 : 3), [x, y + h, z], null, [1, 0.6, 1]), { color, cast: false });
   };
   const FLOWERS = ['#f2ead8', '#e8c22a', '#b39ddb', '#ef7a5a', '#ffffff', '#7fb3e0'];
   // members of a clump: spread round a centre, densest in the middle, never on anything
@@ -749,19 +795,10 @@ function buildChestVignette(ctx, B, mats, rng) {
   const cam = SPOTS.find((s) => s.id === 'woodworking')?.camera.position ?? [0.9, 3.5, 11.4];
   const yaw = Math.atan2(cam[0] - cx, cam[2] - cz) + 0.62; // the front-left corner towards the visitor
   const F = B.at(mat4([cx, cy, cz], [0, yaw, 0]));
-  const tim = mats.timber();
-  // two low sawhorses (lower than the Hobelbank: the work sits at bench height)
+  // two low sawhorses (lower than the Hobelbank: the work sits at bench height),
+  // old ones: arrises worn dark, kerfs, pencil ticks, glue run off the chest
   const hy = 0.33;
-  for (const sx of [-0.2, 0.2]) {
-    F.add(tim, board(0.075, 0.06, 0.52, { along: 'z', rng, scale: 1 / 1.6 }).translate(sx, hy - 0.03, 0));
-    for (const sz of [-1, 1]) {
-      for (const lx of [-1, 1]) {
-        const a = [sx + lx * 0.025, hy - 0.05, sz * 0.19], b = [sx + lx * 0.1, 0, sz * 0.24];
-        F.add(tim, timber(a, b, 0.04, 0.04, { rng, wobble: 0.004, up: [0, 0, 1] }), { cast: false });
-      }
-    }
-    F.add(tim, board(0.03, 0.05, 0.44, { along: 'z', rng, scale: 1 / 1.6 }).translate(sx, 0.11, 0), { cast: false });
-  }
+  for (const sx of [-0.2, 0.2]) addSawhorse(F, mats, rng, mat4([sx, 0, 0], [0, rng.jitter(0.04), 0]), { h: hy, len: 0.52, wood: '#8e7558', kerfs: 2, glue: 3 });
   // the chest: oak, sides through-dovetailed, a raised bottom, no lid yet
   const L = 0.62, D = 0.34, H = 0.3, t = 0.022, y0 = hy;
   const oak = mats.wood('#b08e64');
@@ -831,8 +868,33 @@ function buildChestVignette(ctx, B, mats, rng) {
     F.add(oak, board(0.02, 0.34, 0.36, { along: 'y', rng }).applyMatrix4(m));
     for (const s of [-1, 1]) F.add(oak2, board(0.022, 0.05, 0.36, { along: 'z', rng }).translate(0, s * 0.17, 0).applyMatrix4(m), { cast: false });
   }
-  // shavings & sawdust underneath
+  // the glue-up: dried amber squeeze-out along each corner joint (and a run
+  // down the front-left corner that dripped onto the sawhorse), the glue pot
+  // with its brush at the near horse's foot, a few drops beside it, and the
+  // marking gauge that scribed the baselines lying on the far horse's end
+  if (LOD.k >= 0.5) {
+    const glue = ['#b5822f', '#a8742a', '#c4923c'];
+    for (const s of [-1, 1]) {
+      for (const q of [-1, 1]) {
+        for (let i = 0, n = s < 0 && q > 0 ? 5 : 3; i < n; i++) {
+          const y = y0 + rng.range(0.01, H - 0.02);
+          F.add(vc, xf(new THREE.SphereGeometry(rng.range(0.0028, 0.0045), 5, 3), [s * (L / 2 - t + rng.jitter(0.002)), y, q * (D / 2 + 0.0012)], null, [1, 1.6, 0.35]), { color: rng.pick(glue), cast: false, receive: false });
+        }
+      }
+    }
+    // the run at the front-left corner, ending in a drop on the sawhorse
+    F.add(vc, xf(new THREE.SphereGeometry(0.003, 5, 3), [-(L / 2 - t), y0 + 0.05, D / 2 + 0.0012], null, [1, 9, 0.35]), { color: glue[1], cast: false, receive: false });
+  }
+  {
+    const gp = [-0.06, 0, 0.36];
+    addGluePot(F.at(mat4(gp, [0, rng.next() * 6, 0])), mats, rng);
+    if (LOD.k >= 0.5) for (let i = 0; i < 3; i++) F.add(vc, xf(new THREE.CircleGeometry(rng.range(0.005, 0.011), 6), [gp[0] + rng.jitter(0.09), 0.003, gp[2] + rng.jitter(0.07)], [-Math.PI / 2, 0, 0], [1.3, 1, 1]), { color: '#9a6a28', cast: false, receive: false });
+    addMarkingGauge(F.at(mat4([0.2, hy, 0.205], [0, 0.1, 0])), mats, rng);
+  }
+  // shavings & sawdust underneath: a drift under the joint where the saw and
+  // chisel worked, a sprinkle round the horses' feet
   for (let i = 0; i < 3; i++) F.add(vc, xf(mossGeo(rng, { r: rng.range(0.08, 0.16), h: 0.01 }), [rng.jitter(0.35), 0.002, rng.jitter(0.25)]), { color: '#e6cc98', cast: false });
+  addSawdust(F, mats, rng, () => 0, -0.3, 0.12, { r: 0.1, h: 0.022, chips: 5 });
   ctx.colliders?.addBox?.(cx, cz, 0.45, 0.32, yaw, 'chest');
   return { x: cx, z: cz, yaw };
 }

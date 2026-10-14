@@ -13,14 +13,15 @@ import { paintWood, whenFontsReady, FONT_DISPLAY, FONT_HAND } from '../../props/
 import {
   Batch, mats, xf, mat4, board, boardBetween, rod, stoneGeo, blockStone, mossGeo, tube, taperTube, sagCurve, leafGeo,
   Cards, addFlower, addGrass, addFern, addToadstool, addIvy, uvBox, paintFn, deform, TAU, WOOD, IRON, FLOWER_COLORS,
-  noiseA, KIT,
+  noiseA, KIT, SINK, FAIRY_BULBS, smooth01,
 } from './kit.js';
 
 const _v = new THREE.Vector3();
 
 /** A frame-local adapter: geometry built around the origin is placed by `m` before entering F. */
 export function local(F, m) {
-  return { add: (mat, geo, opts) => F.add(mat, geo.applyMatrix4(m), opts) };
+  // (.matrix: where the frame sits in batch space — e.g. for the fairy-light bulbs' positions)
+  return { matrix: F.matrix ? F.matrix.clone().multiply(m) : m.clone(), add: (mat, geo, opts) => F.add(mat, geo.applyMatrix4(m), opts) };
 }
 
 // ─── fence ───────────────────────────────────────────────────────────────────
@@ -207,6 +208,12 @@ export function stringLights(F, lines, halos, { spacing = 0.28, sag = 0.08, tran
         _v.set(p.x, p.y - bulb * 1.35, p.z);
         if (transform) _v.applyMatrix4(transform);
         halos.push({ x: _v.x, y: _v.y, z: _v.z, size: 0.2 });
+      }
+      // (for the caps' night warmth next to each bulb: kit.js bakeBulbGlow, in batch space)
+      if (F !== SINK) {
+        _v.set(p.x, p.y - bulb * 1.35, p.z);
+        if (F.matrix) _v.applyMatrix4(F.matrix);
+        FAIRY_BULBS.push({ x: _v.x, y: _v.y, z: _v.z });
       }
     }
   }
@@ -838,7 +845,19 @@ export function pot(F, rng, x, y, z, s = 0.18, plant = true) {
   const g = new THREE.LatheGeometry(prof, 12);
   const uv = g.attributes.uv;
   for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 2, uv.getY(i));
-  F.add(M.clay, g.translate(x, y, z), { color: rng.pick(['#b5633e', '#a85a38', '#c0704a']), cast: false });
+  // fired terracotta, never red plastic: a dusty orange-brown body (the clay material is a
+  // neutral body: the vertex colour sets the hue), a little darker and damper towards the foot,
+  // with a pale salt bloom (efflorescence) blotched over the belly and the rim
+  const base = new THREE.Color(rng.pick(['#c46a43', '#bd6440', '#c97452']));
+  const damp = base.clone().multiplyScalar(0.72), salt = new THREE.Color('#e9dccb');
+  const ph = x * 7.3 + z * 3.1; // (from the position: no extra random draw)
+  paintFn(g, base, (px, py, pz, i, c) => {
+    const t = py / (s * 1.15);
+    c.lerp(damp, (1 - smooth01(t / 0.35)) * 0.6);
+    const n = noiseA(Math.atan2(px, pz) * 1.6 + ph, t * 3.1) * 0.6 + noiseA(Math.atan2(px, pz) * 4.2 - ph, t * 7.5) * 0.4;
+    c.lerp(salt, smooth01((n - 0.12) / 0.35) * (0.35 + 0.35 * smooth01((t - 0.75) / 0.2)));
+  });
+  F.add(M.clay, g.translate(x, y, z), { cast: false, color: null });
   F.add(M.soil, new THREE.CircleGeometry(s * 0.78, 10).rotateX(-Math.PI / 2).translate(x, y + s * 1.03, z), { cast: false });
   if (plant) {
     if (rng.chance(0.5)) addFern(F, rng, x, y + s * 1.05, z, { size: s * 2.2, fronds: 6 });

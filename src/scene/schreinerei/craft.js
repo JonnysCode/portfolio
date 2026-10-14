@@ -25,18 +25,37 @@
 //                                           sawdust and fresh shavings
 //   addStickeredStack(F, mats, rng, opts)   boards drying on stickers (Stapel)
 //   addShavingTrail(B, mats, rng, gh, pts)  curled shavings blown along a line
+//   addSawdust(B, mats, rng, gh, x, z)      a soft drift of sawdust & chips
+//                                           (swept into corners, under the work)
+//   addGluePot(F, mats, rng)                a Leimtopf: a dented enamel pot,
+//                                           amber glue run down its side, the
+//                                           brush standing in it
+//   addMarkingGauge(F, mats, rng)           a beech Streichmass (the gauge that
+//                                           scribed the dovetails' baselines)
 //   leafGeo()                               a fallen oak leaf (flat, lobed)
+//
+// Working patina (kit.paintWear): the tools and work stations show their use —
+// sawhorse arrises darkened and rounded by hands and boards, their tops nicked
+// by saw kerfs, pencil ticks and amber glue drips; grips, handles and the
+// drawbar's T darkened where hands hold them; feet and buckets damp-dark at
+// the soil. The finished pieces on the deck stay finished (deck.js).
 //
 // Frames (F) are Batch views (B.at(matrix)) with the origin on the ground,
 // +Z the object's front.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { board, timber, xf, mat4, uvBox, tube, mossGeo, mossPadGeo, stoneGeo, noiseA, noiseB, addHandSaw, addFClamp, doubleFace, LOD, segs, count } from './kit.js';
+import { board, timber, xf, mat4, uvBox, tube, mossGeo, mossPadGeo, stoneGeo, noiseA, noiseB, addHandSaw, addFClamp, doubleFace, paintWear, SPECIES, LOD, segs, count } from './kit.js';
 import { barkMount } from './door.js';
 import { shavingGeo } from './fx.js';
 
 const IRON = '#2f2b28';
+/** Dried hide glue (Knochenleim): amber, darker where it ran thick. */
+const GLUE = ['#b5822f', '#a8742a', '#c4923c'];
+/** Graphite on wood. */
+const PENCIL = '#4a4643';
+/** A species name or hex → the hex a proxy paints. */
+const hexOf = (c) => SPECIES[c] ?? c;
 
 /** A small square strut from a to b ([x,y,z]), for the cart's fork arms. */
 function timberish(a, b, w = 0.04) {
@@ -60,7 +79,7 @@ function timberish(a, b, w = 0.04) {
  * 0.012, material (vertex-coloured; default the 'soil' surface), leaves = 1 }.
  * Returns dist(x, z): signed distance to the track's edge (< 0 = on it).
  */
-export function addTrack(B, mats, rng, gh, pts, { width = 0.7, lift = 0.012, material = null, leaves = 1 } = {}) {
+export function addTrack(B, mats, rng, gh, pts, { width = 0.7, lift = 0.012, material = null, leaves = 1, dust = null } = {}) {
   const mat = material ?? mats.soilSurface?.() ?? mats.vc();
   const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p.x, 0, p.z)), false, 'centripetal');
   const len = curve.getLength();
@@ -74,6 +93,8 @@ export function addTrack(B, mats, rng, gh, pts, { width = 0.7, lift = 0.012, mat
   const cMid = new THREE.Color('#8f7154');
   const cEdge = new THREE.Color('#5f4733');
   const cDust = new THREE.Color('#a08263');
+  // (dust(x, z) → 0..1: sawdust trodden into the soil near the work)
+  const cSaw = new THREE.Color('#bb9d70');
   const c = new THREE.Color();
   const samples = [];
   const tan = new THREE.Vector3();
@@ -102,6 +123,7 @@ export function addTrack(B, mats, rng, gh, pts, { width = 0.7, lift = 0.012, mat
       // finer grain: damp darker dents and dry pale scuffs
       const f = noiseB(x * 9.3 - seed, z * 9.3);
       c.multiplyScalar(0.9 + f * 0.1 + rng.next() * 0.1);
+      if (dust) c.lerp(cSaw, Math.min(0.75, dust(x, z) * (0.55 + 0.45 * k) * (0.7 + 0.3 * f)));
       col.push(c.r, c.g, c.b);
       uv.push(a * 0.5 + 0.5, u * len);
     }
@@ -236,7 +258,8 @@ export function addHandcart(F, mats, rng) {
     const nr = 8;
     for (let i = 0; i < nr; i++) {
       const z = -bedL / 2 + 0.05 + (i * (bedL - 0.1)) / (nr - 1);
-      add(ash, uvBox(new THREE.CylinderGeometry(0.009, 0.011, sideH - 0.03, 6), 'y').translate(0, sideH / 2 + 0.01, z), { cast: false });
+      // (low tier: four facets, open — the ends hide in the rails)
+      add(ash, uvBox(LOD.k < 0.5 ? new THREE.CylinderGeometry(0.009, 0.011, sideH - 0.03, 4, 1, true) : new THREE.CylinderGeometry(0.009, 0.011, sideH - 0.03, 6), 'y').translate(0, sideH / 2 + 0.01, z), { cast: false });
     }
     // the rails' rounded ends stick out a little and are worn pale
     // little iron stays from the bed beams up to the ladder
@@ -276,7 +299,10 @@ export function addHandcart(F, mats, rng) {
     const len = Math.hypot(b[1] - a[1], b[2] - a[2]);
     const tilt = Math.atan2(b[2] - a[2], b[1] - a[1]);
     F.add(ash, xf(board(0.04, len, 0.036, { along: 'y', rng, r: 0.01 }), [0, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2], [tilt, 0, 0]));
-    F.add(ash, xf(uvBox(new THREE.CylinderGeometry(0.018, 0.018, 0.3, 8), 'y'), [0, b[1] + 0.015, b[2] - 0.004], [0, 0, Math.PI / 2]));
+    // the T-handle, darkened by hands either side of the middle
+    const th = uvBox(new THREE.CylinderGeometry(0.018, 0.018, 0.3, 8, LOD.k < 0.5 ? 1 : 6), 'y');
+    paintWear(th, '#a3865f', (x, y) => (Math.abs(y) > 0.04 ? 0.78 * Math.min(1, (Math.abs(y) - 0.04) / 0.04) : -0.1), { dark: '#4a3422' });
+    F.add(ash, xf(th, [0, b[1] + 0.015, b[2] - 0.004], [0, 0, Math.PI / 2]));
     // the fork & pin at the front axle
     F.add(iron, xf(new THREE.CylinderGeometry(0.01, 0.01, 0.1, 6), [0, R2 + 0.02, pz], [0, 0, Math.PI / 2]), { cast: false });
     F.add(iron, xf(new THREE.TorusGeometry(0.025, 0.006, 4, 10), [0, b[1] - 0.06, b[2] + 0.01], [tilt + Math.PI / 2, 0, 0]), { cast: false });
@@ -317,7 +343,7 @@ export function addHandcart(F, mats, rng) {
         const x = (u - 0.5) * (bedW + 0.12);
         pts.push([x, bedY + 0.2 + (y - bedY - 0.2 + 0.012) * Math.sin(u * Math.PI) ** 0.4, z + Math.sin(u * 9) * 0.004]);
       }
-      F.add(mats.rope(), tube(pts, 0.007, 4, 20), { cast: false });
+      F.add(mats.rope(), tube(pts, 0.007, LOD.k < 0.5 ? 3 : 4, LOD.k < 0.5 ? 8 : 20), { cast: false });
     }
     // a jack plane riding on top of the load, its tote towards the visitor
     const py = y + 0.0225;
@@ -345,14 +371,17 @@ export function addDowelBucket(F, mats, rng) {
     const w = ((2 * Math.PI * (r0 + r1)) / 2 / ns) * 0.97;
     const st = board(w, h, 0.016, { along: 'y', rng, r: 0.003 });
     // tilt outwards, then turn to its place on the ring
+    // (damp-dark at the foot where it stands on the soil, the rim rubbed pale)
+    const sc = rng.pick(['#9c7a52', '#a48259', '#8f6f4b']);
+    paintWear(st, sc, (x, y) => (y < 0 ? 0.32 : -0.12));
     st.rotateX(tilt).translate(0, h / 2, (r0 + r1) / 2).rotateY(a);
-    F.add(mats.wood(rng.pick(['#9c7a52', '#a48259', '#8f6f4b'])), st, { cast: i % 3 === 0 });
+    F.add(mats.wood(sc), st, { cast: i % 3 === 0 });
   }
   // the bottom inside, and the full-to-the-brim dark inside
   const rOut = (y) => r0 + ((r1 - r0) * y) / h + 0.008;
   F.add(mats.vc(), xf(new THREE.CircleGeometry(rOut(h - 0.07) - 0.018, 14), [0, h - 0.07, 0], [-Math.PI / 2, 0, 0]), { color: '#3a2a1c', cast: false });
   for (const y of [0.045, h - 0.045]) {
-    F.add(iron, new THREE.TorusGeometry(rOut(y) + 0.002, 0.0075, 4, 22).rotateX(Math.PI / 2).translate(0, y, 0), { cast: false });
+    F.add(iron, new THREE.TorusGeometry(rOut(y) + 0.002, 0.0075, LOD.k < 0.5 ? 3 : 4, LOD.k < 0.5 ? 13 : 22).rotateX(Math.PI / 2).translate(0, y, 0), { cast: false });
   }
   // the bail, laid down to one side
   {
@@ -363,7 +392,8 @@ export function addDowelBucket(F, mats, rng) {
   }
   // dowels (Dübel): pale beech rods standing in a fan
   const dowel = (x, z, len, lean, dir, r) => {
-    const g = uvBox(new THREE.CylinderGeometry(r, r, len, 6), 'y');
+    // (low tier: four facets, open at the foot — it stands in the bucket)
+    const g = uvBox(LOD.k < 0.5 ? new THREE.CylinderGeometry(r, r, len, 4, 1, true) : new THREE.CylinderGeometry(r, r, len, 6), 'y');
     g.translate(0, len / 2, 0).rotateX(lean).rotateY(dir).translate(x, h - 0.09, z);
     F.add(mats.wood(rng.pick(['#e2c9a0', '#d8bd92', '#e8d3ad', '#cfb184'])), g, { cast: false });
     // the cut end: a slightly darker cap
@@ -462,7 +492,8 @@ export function addLeaningBoards(ctx, B, mats, rng, boards) {
     m.makeBasis(side, up, fwd).setPosition(fp.x, fp.y, fp.z);
     m.multiply(new THREE.Matrix4().makeRotationY(b.twist ?? 0));
     const t = b.t ?? 0.035;
-    const g = board(b.w, L, t, { along: 'y', rng, r: 0.005 });
+    // (high: more length segments, so the rain-splash at the foot stays a band)
+    const g = board(b.w, L, t, { along: 'y', rng, r: 0.005, segs: LOD.k >= 1 ? 6 : 0 });
     // rough: a little cupped and wavy along the edges
     const pa = g.attributes.position;
     for (let i = 0; i < pa.count; i++) {
@@ -471,6 +502,8 @@ export function addLeaningBoards(ctx, B, mats, rng, boards) {
       if (Math.abs(x) > b.w * 0.45) pa.setX(i, x + noiseB(y * 3 + b.x * 3, x * 9) * 0.008);
     }
     g.computeVertexNormals();
+    // weathered: rain-splashed dark at the foot, the upper end greyed by the sun
+    paintWear(g, b.color, (x, y) => (y < -L / 2 + L * 0.2 ? 0.36 : y > L * 0.3 ? -0.12 : 0));
     g.translate(0, L / 2, 0);
     B.add(mats.wood(b.color), g.applyMatrix4(m));
     // the sawn top end catches the light
@@ -522,7 +555,13 @@ export function addBesom(B, mats, rng, foot, top) {
       pa.setXYZ(i, c.x + (pa.getX(i) - c.x) * k, pa.getY(i), c.z + (pa.getZ(i) - c.z) * k);
     }
     g.computeVertexNormals();
-    B.add(mats.wood('#6b5443'), place(uvBox(g, 'y', 1 / 1.4, [rng.next() * 5, 0], { endGrain: false }), 0));
+    uvBox(g, 'y', 1 / 1.4, [rng.next() * 5, 0], { endGrain: false });
+    // the bark rubbed dark & shiny where the hands hold it (the top third and a hand-width at the middle)
+    paintWear(g, '#6b5443', (x, y) => {
+      const t = (y - y0) / (y1 - y0);
+      return t > 0.68 ? 0.45 * Math.min(1, (t - 0.68) / 0.12) : Math.abs(t - 0.4) < 0.08 ? 0.3 : 0;
+    }, { dark: '#2c2119' });
+    B.add(mats.wood('#6b5443'), place(g, 0));
     // the cut top: pale end grain
     B.add(mats.wood('#c9ae86'), place(xf(new THREE.CircleGeometry(0.0115, 6), [pts[n].x, y1 + 0.0005, pts[n].z], [-Math.PI / 2, 0, 0]), 0), { cast: false });
   }
@@ -565,20 +604,69 @@ export function leafGeo() {
  * beam, four splayed legs let into its sides, a cross stretcher on each leg
  * pair and a long one between them. h = height of the beam's top.
  */
-export function addSawhorse(F, mats, rng, m, { h = 0.36, len = 0.56, wood = '#9a7a56' } = {}) {
+export function addSawhorse(F, mats, rng, m, { h = 0.36, len = 0.56, wood = '#9a7a56', worn = true, kerfs = 3, glue = 0, marks = true } = {}) {
   const w = mats.wood(wood);
+  const base = hexOf(wood);
   const add = (g, opts) => F.add(w, g.applyMatrix4(m), opts);
-  add(board(0.085, 0.07, len, { along: 'z', rng, r: 0.008 }).translate(0, h - 0.035, 0));
+  // the top beam: both top arrises darkened & rounded by hands and by every
+  // board slid over them, the top scuffed paler and dusty, the end grain grimy
+  // (an old horse: weathered grey-brown, the fresh board on it reads the brighter)
+  const beam = board(0.085, 0.07, len, { along: 'z', rng, r: 0.008 });
+  const wearOpts = { dark: '#2e2218', light: '#8c8273' };
+  if (worn) {
+    const ph = rng.next() * 9;
+    paintWear(beam, base, (x, y, z, nx, ny, nz) => {
+      if (Math.abs(nz) > 0.9) return 0.42;
+      if (ny > 0.95) return -0.38 - 0.18 * noiseA(z * 7 + ph, x * 9);
+      if (ny > 0.3) return 0.78;
+      return y > 0.02 ? 0.5 : 0.1;
+    }, wearOpts);
+  }
+  add(beam.translate(0, h - 0.035, 0));
   const top = h - 0.05, zt = len / 2 - 0.085, splay = 0.13, rake = 0.06;
   const yS = 0.15, u = 1 - yS / top; // the stretchers' height & the legs' spread there
   for (const sz of [-1, 1]) {
     for (const sx of [-1, 1]) {
-      add(timber([sx * 0.03, top, sz * zt], [sx * (0.03 + splay), 0, sz * (zt + rake)], 0.04, 0.04, { rng, wobble: 0.003, up: [0, 0, 1], r: 0.006 }), { cast: false });
+      const leg = timber([sx * 0.03, top, sz * zt], [sx * (0.03 + splay), 0, sz * (zt + rake)], 0.04, 0.04, { rng, wobble: 0.003, up: [0, 0, 1], r: 0.006 });
+      // (feet darkened by the damp soil)
+      if (worn) paintWear(leg, base, (x, y) => (y < 0.12 ? 0.55 * (1 - y / 0.12) : -0.3), wearOpts);
+      add(leg, { cast: false });
     }
     const half = 0.03 + splay * (1 - u) + 0.03;
     add(board(half * 2, 0.045, 0.024, { along: 'x', rng, r: 0.005 }).translate(0, yS, sz * (zt + rake * (1 - u) + 0.032)), { cast: false });
   }
   add(board(0.028, 0.038, 2 * (zt + rake * (1 - u)) + 0.04, { along: 'z', rng, r: 0.005 }).translate(0, yS + 0.042, 0), { cast: false });
+  // the marks of use on the top beam (high & medium): saw kerfs where a cut ran
+  // on into the horse (across the top, over the arris and down the side),
+  // pencil ticks on its side, amber glue drips
+  if (!worn || LOD.k < 0.5) return;
+  const vc = mats.vc();
+  const dark = '#2b1e13';
+  const put = (g, color) => F.add(vc, g.applyMatrix4(m), { color, cast: false, receive: false });
+  for (let i = 0; i < kerfs; i++) {
+    const z = rng.range(-len / 2 + 0.05, len / 2 - 0.05), a = rng.jitter(0.35), side = rng.next() < 0.5 ? -1 : 1;
+    const kl = rng.range(0.04, 0.09);
+    // a kerf across the flat of the top, in from one arris
+    put(xf(new THREE.PlaneGeometry(kl, 0.0035), [side * (0.034 - (kl / 2) * Math.cos(a)), h + 0.0007, z], [-Math.PI / 2, 0, a]), dark);
+    // and its nick down that side face, below the arris
+    const nl = rng.range(0.008, 0.02);
+    put(xf(new THREE.PlaneGeometry(0.0035, nl), [side * 0.0432, h - 0.008 - nl / 2, z], [0, side * Math.PI / 2, 0]), dark);
+  }
+  if (marks) {
+    // a tally and a cross in pencil on the near side face
+    const z0 = rng.range(-0.08, 0.08);
+    for (let k = 0; k < 4; k++) put(xf(new THREE.PlaneGeometry(0.0016, 0.022), [0.0434, h - 0.034, z0 + k * 0.007], [0, Math.PI / 2, rng.jitter(0.12)]), PENCIL);
+    put(xf(new THREE.PlaneGeometry(0.0016, 0.034), [0.0434, h - 0.034, z0 + 0.0105], [0, Math.PI / 2, 1.2]), PENCIL);
+    const z1 = z0 + (z0 > 0 ? -0.12 : 0.12);
+    for (const r of [0.75, -0.75]) put(xf(new THREE.PlaneGeometry(0.0016, 0.026), [0.0434, h - 0.03, z1], [0, Math.PI / 2, r]), PENCIL);
+  }
+  for (let i = 0; i < glue; i++) {
+    // a drop on the top that ran over the edge and down the side
+    const z = rng.range(-len / 2 + 0.04, len / 2 - 0.04), side = rng.next() < 0.5 ? -1 : 1, c = rng.pick(GLUE);
+    const r = rng.range(0.005, 0.009);
+    put(xf(new THREE.SphereGeometry(r, segs(6, 5), 3), [side * rng.range(0.012, 0.03), h + 0.0004, z], null, [1.3, 0.22, 1]), c);
+    if (rng.next() < 0.7) put(xf(new THREE.SphereGeometry(r * 0.55, 5, 3), [side * 0.0435, h - 0.016, z + rng.jitter(0.004)], null, [0.25, 2.6, 1]), c);
+  }
 }
 
 // ─── the rip-cut vignette (hero foreground) ──────────────────────────────────
@@ -626,15 +714,29 @@ export function addRipVignette(F, mats, rng, { L = 1.34, W = 0.2, T = 0.034, h =
     const R = new THREE.Matrix4().makeBasis(new THREE.Vector3(-c, -s, 0), new THREE.Vector3(-s, c, 0), new THREE.Vector3(0, 0, -1));
     const P = new THREE.Vector3(f * len, -0.052, 0).applyMatrix4(R);
     R.setPosition(xk + 0.004 - P.x, y1 - 0.012 - P.y, zc - P.z);
-    addHandSaw(F, mats, R, { len, wood: '#6a4a34' });
+    addHandSaw(F, mats, R, { len, wood: '#6a4a34', worn: true });
   }
   // sawdust: a soft heap under the kerf's end, a sprinkle on the near horse and the board
-  F.add(vc, xf(mossGeo(rng, { r: 0.16, h: 0.03, sx: 1.3 }), [xk + 0.08, 0.004, zc * 0.5]), { color: '#e2c99a', cast: false });
+  // (a mound, not a sheet: peaked under the kerf, its fan thinning out)
+  addSawdust(F, mats, rng, () => 0, xk + 0.08, zc * 0.5, { r: 0.1, h: 0.055, sx: 1.3, chips: 4 });
   F.add(vc, xf(mossGeo(rng, { r: 0.06, h: 0.012, sx: 1.4 }), [hx, h + 0.001, 0.04]), { color: '#e8d3a8', cast: false });
   F.add(vc, xf(mossGeo(rng, { r: 0.05, h: 0.006, sx: 2.2 }), [xk + 0.06, y1 + 0.001, zc]), { color: '#e8d3a8', cast: false });
   // an F-clamp holding the board's left end down to its horse
   // (the bar beside the beam's outer face, the fixed jaw on the board, the sliding one under the beam)
-  addFClamp(F, mats, mat4([-hx - 0.058, y1 + 0.034 - 0.2, 0.045]), { len: 0.2, reach: 0.09, color: '#c4372a', open: 0.21 });
+  addFClamp(F, mats, mat4([-hx - 0.058, y1 + 0.034 - 0.2, 0.045]), { len: 0.2, reach: 0.09, color: '#c4372a', open: 0.21, worn: true });
+  // the waste side of the rip line marked as a Schreiner marks it: a pencil
+  // squiggle along the strip still to come off, beyond the kerf
+  if (LOD.k >= 0.5) {
+    const zw = (zc + W / 2) / 2;
+    const xs = xk - 0.04, xe = -L / 2 + 0.16;
+    const n = Math.max(3, Math.round((xs - xe) / 0.07));
+    for (let i = 0; i < n; i++) {
+      const xa = xs - ((xs - xe) * i) / n, xb = xs - ((xs - xe) * (i + 1)) / n;
+      const za = zw + (i % 2 ? -1 : 1) * 0.011, zb = zw + (i % 2 ? 1 : -1) * 0.011;
+      const sl = Math.hypot(xb - xa, zb - za);
+      F.add(vc, xf(new THREE.PlaneGeometry(sl, 0.0016), [(xa + xb) / 2, y1 + 0.0005, (za + zb) / 2], [-Math.PI / 2, 0, Math.atan2(zb - za, xb - xa) * -1]), { color: PENCIL, cast: false, receive: false });
+    }
+  }
   // the folding rule (Meterstab): a folded bundle with two legs swung out, lying on the board
   {
     const yel = '#e8c22a';
@@ -732,7 +834,8 @@ export function addShavingTrail(B, mats, rng, gh, pts, { n = 26, spread = 0.22, 
   const curls = [doubleFace(shavingGeo(0.03, 0.02, 1.3)), doubleFace(shavingGeo(0.038, 0.024, 1.9)), doubleFace(shavingGeo(0.026, 0.018, 1.1))];
   const tones = ['#c99c63', '#bd8f58', '#d3aa74', '#e6d3a4', '#ddc690'];
   const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p.x, 0, p.z)));
-  const total = count(n, 6);
+  // (low tier: about two in five — a scatter still, at a third of the cost)
+  const total = LOD.k < 0.5 ? Math.max(6, Math.round(n * LOD.k)) : count(n, 6);
   const out = [];
   for (let i = 0; i < total; i++) {
     const u = Math.pow(rng.next(), 1.6); // dense at the start, thinning out
@@ -885,7 +988,10 @@ export function addChoppingBlock(F, mats, rng, { r = 0.21, h = 0.4 } = {}) {
     // (haft frame: the haft runs up local +y from the eye; the blade points
     // along local +x, which the 63° lean turns down into the block)
     const m = mat4([0.02, h + 0.05, 0.01], [0.1, 0.35, -1.1]);
-    F.add(mats.wood('#c4a272'), xf(board(0.032, 0.62, 0.022, { along: 'y', rng, r: 0.009 }), [0, 0.29, 0]).applyMatrix4(m));
+    // (the hickory haft darkened by hands at its grip end, a hand-width below the head too)
+    const haft = board(0.032, 0.62, 0.022, { along: 'y', rng, r: 0.009, segs: LOD.lite ? 0 : 6 });
+    paintWear(haft, '#c4a272', (x, y) => (y > 0.12 ? 0.55 * Math.min(1, (y - 0.12) / 0.1) : y < -0.2 ? 0.25 : 0));
+    F.add(mats.wood('#c4a272'), xf(haft, [0, 0.29, 0]).applyMatrix4(m));
     // the head: poll & eye round the haft's end, the cheeks flaring to the bit
     const head = new THREE.Shape([[-0.026, -0.022], [0.03, -0.02], [0.094, -0.046], [0.104, 0.0], [0.094, 0.046], [0.03, 0.022], [-0.026, 0.022]].map(([x, y]) => new THREE.Vector2(x, y)));
     const hg = new THREE.ExtrudeGeometry(head, { depth: 0.024, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 1 });
@@ -929,4 +1035,107 @@ export function addSweptShavings(B, mats, rng, gh, from, to, { n = 24, heaps = 3
   }
   const mid = { x: (from.x + to.x) / 2 + rng.jitter(0.2), z: (from.z + to.z) / 2 };
   return addShavingTrail(B, mats, rng, gh, [from, mid, to], { n, spread, scale });
+}
+
+// ─── sawdust ─────────────────────────────────────────────────────────────────
+/**
+ * A soft drift of sawdust swept into a corner or fallen under the work (world
+ * x, z; conformed to the ground by gh): one low lumpy mound, a thin fan round
+ * it and (high) a few chips and a curl. opts: { r = 0.12, h = 0.025, sx = 1.4,
+ * yaw, tone ('fresh' | 'old'), chips = 4 }.
+ */
+export function addSawdust(B, mats, rng, gh, x, z, { r = 0.12, h = 0.025, sx = 1.4, yaw = null, tone = 'fresh', chips = 4 } = {}) {
+  const vc = mats.vc();
+  const tones = tone === 'old' ? ['#a8865a', '#9c7c53', '#b08e60'] : ['#d2b586', '#c9ab7c', '#d8bd90'];
+  const a = yaw ?? rng.next() * Math.PI;
+  const y = gh(x, z);
+  B.add(vc, xf(mossGeo(rng, { r, h, sx }), [x, y, z], [0, a, 0]), { color: rng.pick(tones), cast: false });
+  // the thin fan the broom (or the wind) left round it
+  B.add(vc, xf(mossGeo(rng, { r: r * 1.7, h: h * 0.18, sx: sx * 0.9 }), [x + rng.jitter(r * 0.3), y - 0.002, z + rng.jitter(r * 0.3)], [0, a + rng.jitter(0.6), 0]), { color: tones[1], cast: false });
+  if (!LOD.small) return;
+  for (let i = 0; i < chips; i++) {
+    const ca = rng.next() * Math.PI * 2, cr = r * rng.range(0.6, 1.6);
+    const cx = x + Math.cos(ca) * cr, cz = z + Math.sin(ca) * cr;
+    B.add(mats.wood(rng.pick(['#d8bd92', '#c9a77a', '#e2c9a0'])), xf(new THREE.BoxGeometry(rng.range(0.018, 0.04), 0.005, rng.range(0.008, 0.016)), [cx, gh(cx, cz) + 0.004, cz], [rng.jitter(0.3), rng.next() * 6, 0]), { cast: false });
+  }
+}
+
+// ─── glue pot ────────────────────────────────────────────────────────────────
+/**
+ * A Swiss Leimtopf for hide glue: a squat, slightly dented cream-enamelled pot
+ * with a dark rim and a wire bail, amber glue run down one side and dried in
+ * a crust on the rim, the glue brush standing in it (beech handle, bristles
+ * clotted with glue). ≈ 0.08 across, 0.16 tall with the brush. Origin under
+ * its middle. Returns { r }.
+ */
+export function addGluePot(F, mats, rng) {
+  const r = 0.036, h = 0.055;
+  const enamel = '#e7dcc4';
+  const pot = new THREE.CylinderGeometry(r, r * 1.04, h, segs(12, 7), 2, true);
+  // a dent or two & the glue that ran down the side (painted amber, darker below)
+  const ph = rng.next() * 6;
+  const pa = pot.attributes.position;
+  for (let i = 0; i < pa.count; i++) {
+    const x = pa.getX(i), z = pa.getZ(i), a = Math.atan2(z, x);
+    const k = 1 - 0.07 * Math.max(0, Math.cos(a - ph) - 0.6) * 2.5;
+    pa.setX(i, x * k);
+    pa.setZ(i, z * k);
+  }
+  pot.computeVertexNormals();
+  paintWear(pot, enamel, (x, y, z) => {
+    const a = Math.atan2(z, x);
+    const run = Math.cos(a - ph - 2.2);
+    if (run > 0.8) return y > -h / 2 + 0.01 ? 0.85 : 0.6; // the glue run
+    return y < -h / 2 + 0.005 ? 0.35 : 0; // grimy foot
+  }, { dark: '#9a6a28' });
+  const vc = mats.vc();
+  F.add(vc, pot.translate(0, h / 2, 0), { cast: false });
+  // bottom (closed from below), the glue inside, the dark enamel rim with its crust
+  F.add(vc, xf(new THREE.CircleGeometry(r * 1.03, segs(12, 7)), [0, 0.001, 0], [Math.PI / 2, 0, 0]), { color: '#4a4036', cast: false });
+  F.add(vc, xf(new THREE.CircleGeometry(r * 0.94, segs(12, 7)), [0, h - 0.012, 0], [-Math.PI / 2, 0, 0]), { color: '#8a5a1e', cast: false });
+  F.add(vc, xf(new THREE.TorusGeometry(r, 0.0035, 3, segs(14, 8)), [0, h, 0], [Math.PI / 2, 0, 0]), { color: '#3a3330', cast: false });
+  for (let i = 0; i < (LOD.small ? 3 : 1); i++) {
+    const a = ph + 2.2 + rng.jitter(0.5);
+    F.add(vc, xf(new THREE.SphereGeometry(0.006, 5, 3), [Math.cos(a) * r, h + 0.002, Math.sin(a) * r], null, [1.4, 0.5, 1]), { color: rng.pick(GLUE), cast: false });
+  }
+  // the wire bail, laid back
+  // (a half ring from ear to ear across x, tipped back about that axis)
+  F.add(mats.metal('#4a4542'), xf(new THREE.TorusGeometry(r + 0.004, 0.0018, 3, segs(10, 6), Math.PI), [0, h - 0.004, 0], [1.35, 0, 0]), { cast: false });
+  // the brush, leaning in it: beech handle, a tin ferrule, clotted bristles
+  {
+    const lean = 0.32, dir = ph + 0.9;
+    const M = mat4([Math.cos(dir) * r * 0.25, h - 0.03, Math.sin(dir) * r * 0.25], [0, -dir, lean]);
+    const handle = uvBox(new THREE.CylinderGeometry(0.0055, 0.007, 0.11, segs(6, 4)), 'y').translate(0, 0.09, 0);
+    paintWear(handle, '#c9a77a', (x, y) => (y < 0.06 ? 0.55 : 0.12), { dark: '#8a5a1e' });
+    F.add(mats.wood('#c9a77a'), handle.applyMatrix4(M), { cast: false });
+    F.add(mats.metal('#9a9893'), new THREE.CylinderGeometry(0.009, 0.008, 0.02, segs(8, 5), 1, true).translate(0, 0.03, 0).applyMatrix4(M), { cast: false });
+    F.add(vc, new THREE.CylinderGeometry(0.0095, 0.006, 0.03, segs(7, 5)).translate(0, 0.008, 0).applyMatrix4(M), { color: '#6e4a1c', cast: false });
+  }
+  return { r: r + 0.01 };
+}
+
+// ─── marking gauge ───────────────────────────────────────────────────────────
+/**
+ * A Streichmass (marking gauge) lying on its side: a square beech stem with
+ * the scribing pin near one end, the fence (Anschlag) locked by its wedge,
+ * the stem darkened where the fingers hold it behind the fence. Stem along
+ * +X, centred, lying on y = 0. Returns nothing.
+ */
+export function addMarkingGauge(F, mats, rng) {
+  const beech = '#c8a27c';
+  // (built round the stem's axis, then laid down: resting on the fence's edge
+  // and the pin end, the stem tipped a little)
+  const M = mat4([0, 0.022, 0], [0, 0, 0.15]);
+  const add = (mat, g) => F.add(mat, g.applyMatrix4(M), { cast: false });
+  const stem = board(0.19, 0.018, 0.018, { along: 'x', rng, r: 0.002 });
+  paintWear(stem, beech, (x) => (x > 0.0 && x < 0.07 ? 0.32 : x < -0.08 ? 0.12 : 0));
+  add(mats.wood(beech), stem);
+  // the fence, a hand's width from the pin, its edges handled dark
+  const fence = board(0.024, 0.044, 0.05, { along: 'z', rng, r: 0.006 });
+  paintWear(fence, '#b8946c', (x, y, z) => (Math.abs(y) > 0.016 || Math.abs(z) > 0.02 ? 0.26 : 0));
+  add(mats.wood('#b8946c'), fence.translate(-0.012, 0, 0));
+  // the wedge through the fence's top
+  add(mats.wood('#9a7650'), xf(board(0.012, 0.026, 0.009, { along: 'y', rng, r: 0.002 }), [-0.012, 0.026, 0.012], [0, 0, 0.12]));
+  // the steel pin near the far end, its point down at the face
+  add(mats.metal('#b9bcbe'), new THREE.CylinderGeometry(0.0012, 0.0004, 0.014, 4).translate(-0.084, -0.012, 0));
 }

@@ -36,6 +36,9 @@ void main() {
   float awake = smoothstep(0.35, 0.7, uNight);
   float nearK = smoothstep(uFocus * 0.32, uFocus * 0.7, d);
   vAlpha = a * awake * distFade(d) * smoothstep(2.0, 6.0, d) * nearK;
+  // (round 6: from the glen and the overview the wisps were part of the ring's
+  //  pale veil — they thin out with distance like the ring's own glow)
+  vAlpha *= mix(1.0, 0.45, smoothstep(10.0, 25.0, d));
   gl_PointSize = clamp(aParams.w * (0.7 + 0.5 * life) * uScale / max(d, 0.1), 0.0, 18.0);
   if (vAlpha < 0.004) gl_PointSize = 0.0;
   gl_Position = projectionMatrix * mv;
@@ -50,7 +53,8 @@ void main() {
   float core = softCore(gl_PointCoord, 0.16, halo);
   float a = (core * 0.7 + halo) * vAlpha;
   if (a < 0.003) discard;
-  gl_FragColor = vec4((vec3(0.5, 0.95, 0.8) + vec3(core * 0.4)) * a * 0.75, 1.0);
+  // (a saturated mint-cyan, like the ring's caps — never a white veil)
+  gl_FragColor = vec4((vec3(0.3, 0.9, 0.66) + vec3(0.1, 0.25, 0.2) * core) * a * 0.75, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }

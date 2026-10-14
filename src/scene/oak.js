@@ -2,23 +2,24 @@
 // THE GREAT OAK — the hero of the glen.
 //
 // A colossal, gnarled, slowly twisting oak: buttress roots snaking over the
-// moss, a bole of fused, wrung stems (broad lobes and cords spiralling a
-// quarter turn as it rises, big burls) that flares like a vase into the fork,
-// a door niche at its foot (the Schreinerei door goes there), hollows and
+// moss, a bole of fused, wrung stems — broad lobes and irregular sinews that
+// spiral ≈ 17°, crowd and spread, fork and merge, and part around the burls
+// like wood grain round a knot — that flares like a vase into the fork, a
+// door niche at its foot (the Schreinerei door goes there), hollows, burls and
 // knots, massive limbs kinked at knobbly elbows (two high ones carry the crown
-// past the top of the wide shots), and a huge crown of painterly clusters-of-
-// clusters — broad, drooping, layered pads trailing sprig curtains — with a
-// few windows onto the limbs and the sky, golden sun-kissed tops and cool
-// bellies (at night a dark blue-green silhouette with a thin silver moon rim).
-// The long low limb reaches over the cottage path under a lush skirt (one
-// window near the trunk), with lanterns, fairy lights, ivy, thin grey-sage
-// beard moss and glow-worms on silk; one buttress root arches over a mossy
+// past the top of the wide shots), and a crown of tiered cloud masses — one
+// per limb, golden on top, cool blue-green beneath, with dark gaps between
+// them where the limbs and the lanterns hang (at night a deep blue-green with
+// a silver moon rim and warm bounce from the lamps below).
+// The long low limb reaches over the cottage path UNDER its raised skirt, with
+// a festoon of lanterns, fairy lights, ivy, thin grey-sage beard moss and
+// glow-worms on near-invisible silk; one buttress root arches over a mossy
 // boulder it grips; bracket fungi grow in overlapping tiers of zoned shelves.
-// The bole's bark is finely fissured (cavity darkening, cross-checks, moss
-// creeping into the crevices) and leans gently with its cords; the limbs'
-// and branches' bark is UV-mapped so its fissures run ALONG every limb. The
-// moss shell hugs the bark and ends in a ragged, dithered edge. Three detail
-// tiers (OAK_LOD, OAK_BUDGET). All procedural (see ./oak/*).
+// The bole's bark texture follows the sculpted grain (per vertex), with
+// cavity darkening, blocky cross-checks and moss creeping into the crevices;
+// the limbs' and branches' bark is UV-mapped so its fissures run ALONG every
+// limb. The moss shell hugs the bark and ends in a ragged, dithered edge.
+// Three detail tiers (OAK_LOD, OAK_BUDGET). All procedural (see ./oak/*).
 //
 // Exposes for other builders:
 //   ctx.oak = {
@@ -41,7 +42,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { OAK } from '../world/layout.js';
-import { trunkRadius, polar, DOOR_NICHE, FORK_Y, GRAIN_TWIST } from './oak/shape.js';
+import { trunkRadius, polar, DOOR_NICHE, FORK_Y } from './oak/shape.js';
 import { buildTrunkGeometry, buildTrunkMossGeometry, buildHollowCavities } from './oak/trunk.js';
 import { buildRoots } from './oak/roots.js';
 import { buildLimbs } from './oak/limbs.js';
@@ -121,40 +122,40 @@ function oakLimbMaterial(materials) {
 }
 
 /**
- * The trunk & root bark: a finer bark scale (plates and furrows read at hero
- * distance), with the per-vertex `oak` attribute (x moss boost, y cavity,
- * z trunk mask): moss creeps into the crevices where the shell thins out, the
- * flute valleys and furrows darken, and short horizontal cross-checks break
- * the long flutes so the bole reads as ancient fissured bark, not a planed board.
+ * The trunk & root bark, with the per-vertex `oak` attribute (x moss boost,
+ * y cavity, z trunk mask, w grain angle): the bole's bark texture follows its
+ * sculpted grain (shape.js grainWarp) — the lookup, position AND normal, is
+ * turned about the trunk axis by the grain angle, a local rigid turn, so the
+ * fissures lean with the sinews (≈ 17°), crowd and spread with them and part
+ * around the burls and hollows, with no stretched projection; moss creeps
+ * into the crevices where the shell thins out, the sinew valleys and furrows
+ * darken, and staggered horizontal checks (each with a lit lip above it)
+ * break the ridges into blocky oak plates. The roots (mask 0, angle 0) keep
+ * their own grain.
  */
 function oakBarkMaterial(materials) {
-  return withVarying(materials.surface('bark', { mossy: 0.17, scale: 0.95, roughness: 1.15, color: '#73604a' }), {
+  const OX = OAK.x.toFixed(3), OZ = OAK.z.toFixed(3);
+  return withVarying(materials.surface('bark', { mossy: 0.17, scale: 1.25, roughness: 1.15, color: '#73604a' }), {
     attr: 'oak',
-    type: 'vec3',
+    type: 'vec4',
     tag: 'oak-bark',
     fragment(shader) {
       const before = shader.fragmentShader;
       shader.fragmentShader = shader.fragmentShader
-        // the bole's bark grain leans with its cords & furrows (shape.js
-        // GRAIN_TWIST, at half the rate — the fissures lean ≈ 8°): turn the
-        // triplanar lookup about the trunk axis by an angle that grows with
-        // height, but ONLY between y ≈ 1 and 12.5. Above, the angle stays
-        // constant: a rotation that changes with height sweeps the top-down
-        // projection of every up-facing surface (the fork, the limb collars,
-        // the burls under them) into spiral contour rings and zig-zags. No
-        // positional noise in the angle either (it stretched & squeezed the
-        // fissures around the bole into a melted, planed-wood grain). The
-        // roots (trunk mask 0) keep their own grain.
         .replace(
           'vec3 sfTP = sfWPos * sfTile.x;',
           `vec3 sfTP;
+  float oakC = cos(vOak.w), oakS = sin(vOak.w);
   {
-    vec2 oRel = sfWPos.xz - vec2(${OAK.x.toFixed(3)}, ${OAK.z.toFixed(3)});
-    float oTh = -${(GRAIN_TWIST * 0.5).toFixed(4)} * (clamp(sfWPos.y, 1.0, 12.5) - 1.0) * vOak.z;
-    float oC = cos(oTh), oS = sin(oTh);
-    vec2 oRot = vec2(oRel.x * oC + oRel.y * oS, oRel.y * oC - oRel.x * oS);
-    sfTP = vec3(oRot.x + ${OAK.x.toFixed(3)}, sfWPos.y, oRot.y + ${OAK.z.toFixed(3)}) * sfTile.x;
+    vec2 oRel = sfWPos.xz - vec2(${OX}, ${OZ});
+    vec2 oRot = vec2(oRel.x * oakC + oRel.y * oakS, oRel.y * oakC - oRel.x * oakS);
+    sfTP = vec3(oRot.x + ${OX}, sfWPos.y, oRot.y + ${OZ}) * sfTile.x;
   }`
+        )
+        .replace(
+          'sfTriplanar(sfMap, sfDetail, sfTP, sfGN, sfP.x, sfTile.y, sfA, sfD, sfN);',
+          `sfTriplanar(sfMap, sfDetail, sfTP, vec3(sfGN.x * oakC + sfGN.z * oakS, sfGN.y, sfGN.z * oakC - sfGN.x * oakS), sfP.x, sfTile.y, sfA, sfD, sfN);
+  sfN = vec3(sfN.x * oakC - sfN.z * oakS, sfN.y, sfN.z * oakC + sfN.x * oakS);`
         )
         .replace('float thr = 1.15 - sfQ.x * 1.75;', 'float thr = 1.15 - clamp(sfQ.x + vOak.x, 0.0, 0.92) * 1.75;')
         .replace(
@@ -162,18 +163,25 @@ function oakBarkMaterial(materials) {
           `${SOFT_BARK}
   diffuseColor.rgb *= sfCol;
   {
-    // deep flute valleys & furrows: painterly cavity darkening
-    diffuseColor.rgb *= 1.0 - 0.32 * vOak.y;
-    // cross-checks: short horizontal fissures across the ridges of the bole
-    vec2 oq = vec2(atan(sfWPos.x - (${OAK.x.toFixed(3)}), sfWPos.z - (${OAK.z.toFixed(3)})), sfWPos.y);
-    float ow = sfNoise3(vec3(oq.x * 2.4, oq.y * 0.45, 3.7));
-    float ob = abs(fract(oq.y * 1.15 + ow * 1.3) - 0.5);
-    float oseg = smoothstep(0.5, 0.62, sfNoise3(vec3(oq.x * 11.0, oq.y * 2.2, 8.1)));
-    float ochk = (1.0 - smoothstep(0.012, 0.045, ob)) * oseg * (1.0 - vOak.y) * vOak.z * (1.0 - smoothstep(14.0, 17.0, oq.y));
-    diffuseColor.rgb *= 1.0 - 0.45 * ochk;
+    // deep sinew valleys & furrows: painterly cavity darkening
+    diffuseColor.rgb *= 1.0 - 0.36 * vOak.y;
+    // checks: short horizontal fissures across the ridges of the bole, a row
+    // every ≈ 0.6 (wavy, staggered, broken into short runs), each with the
+    // plate's lit lower lip just above it — blocky oak plates, not long pipes
+    vec2 oD = sfWPos.xz - vec2(${OX}, ${OZ});
+    float oGa = atan(oD.x, oD.y) + vOak.w;
+    vec2 oCs = vec2(cos(oGa), sin(oGa));
+    float ow = sfNoise3(vec3(oCs * 1.7, sfWPos.y * 0.4 + 3.7));
+    float ofr = fract(sfWPos.y * 1.75 + ow * 1.5);
+    float ob = abs(ofr - 0.5);
+    float oseg = smoothstep(0.44, 0.58, sfNoise3(vec3(oCs * 7.5, sfWPos.y * 2.0 + 8.1)));
+    float oFade = oseg * (1.0 - vOak.y) * vOak.z * (1.0 - smoothstep(14.0, 17.0, sfWPos.y)) * smoothstep(0.3, 1.2, sfWPos.y);
+    float ochk = (1.0 - smoothstep(0.022, 0.075, ob)) * oFade;
+    float olip = smoothstep(0.52, 0.56, ofr) * (1.0 - smoothstep(0.6, 0.72, ofr)) * oFade;
+    diffuseColor.rgb *= (1.0 - 0.55 * ochk) * (1.0 + 0.18 * olip);
   }`
         );
-      if (shader.fragmentShader === before) console.warn('oak: bark shader patch did not apply');
+      if ((shader.fragmentShader.match(/oakC/g) ?? []).length < 4 || !shader.fragmentShader.includes('olip') || shader.fragmentShader === before) console.warn('oak: bark shader patch did not apply');
     },
   });
 }
@@ -247,15 +255,16 @@ export default async function build(ctx) {
 
   // the moss shell is built on the bark grid (its normals), before the merge
   const trunkMossGeo = buildTrunkMossGeometry(trunkGeo);
-  for (const g of roots.bark) g.setAttribute('oak', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 3), 3));
+  for (const g of roots.bark) g.setAttribute('oak', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 4), 4));
   {
-    // trunk: (moss, cavity) + trunk mask 1 (the roots keep 0)
+    // trunk: (moss, cavity) + trunk mask 1 (the roots keep 0) + grain angle
     const src = trunkGeo.attributes.oak.array;
-    const oak3 = new Float32Array((src.length / 2) * 3);
-    for (let i = 0; i < src.length / 2; i++) oak3.set([src[i * 2], src[i * 2 + 1], 1], i * 3);
-    trunkGeo.setAttribute('oak', new THREE.BufferAttribute(oak3, 3));
+    const n = src.length / 3;
+    const oak4 = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) oak4.set([src[i * 3], src[i * 3 + 1], 1, src[i * 3 + 2]], i * 4);
+    trunkGeo.setAttribute('oak', new THREE.BufferAttribute(oak4, 4));
   }
-  const barkLow = merge([trunkGeo, ...roots.bark], 'trunk', { oak: 3 });
+  const barkLow = merge([trunkGeo, ...roots.bark], 'trunk', { oak: 4 });
   group.add(staticMesh(barkLow, oakBarkMaterial(materials), { name: 'oak-trunk' }));
   // ivy: woody stems join the limb bark, the leaf cards are one mesh
   const ivy = buildIvy(rng.fork('ivy'), skeleton.limbs, { density, stems: lod.ivyStems, beard: lod.beard });
@@ -285,7 +294,11 @@ export default async function build(ctx) {
 
   // ── crown ────────────────────────────────────────────────────────────────
   // (the crown's bellies catch a warm bounce from the lanterns at night)
-  const bounce = lanternHangs(skeleton.limbs).map(({ glass }) => [glass.x, glass.y + 1.2, glass.z, 3.6, 0.7]);
+  // (three of the low limb's lanterns, spread along it: the shader has six slots)
+  const bounce = lanternHangs(skeleton.limbs)
+    .filter((h) => h.id === 'front-left-low' && h.light === true)
+    .concat(lanternHangs(skeleton.limbs).filter((h) => h.id === 'front-left-low' && Math.abs(h.u - 0.86) < 0.01))
+    .map(({ glass }) => [glass.x, glass.y + 1.4, glass.z, 4.2, 0.75]);
   const crown = buildCrown(ctx, rng.fork('crown'), skeleton.clumps, { density, limbs: skeleton.limbs, branches: skeleton.branches, bounce });
   if (!debug.includes('noleaves')) for (const m of crown.meshes) group.add(m);
 
@@ -294,6 +307,7 @@ export default async function build(ctx) {
   await tick();
   const details = buildDetails(ctx, rng.fork('details'), group, {
     limbs: skeleton.limbs,
+    branches: skeleton.branches,
     roots: roots.roots,
     hollows: hollows.mouths,
     hollowLinings: hollows.parts,

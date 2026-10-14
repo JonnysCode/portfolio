@@ -21,7 +21,7 @@
 import * as THREE from 'three';
 import { SCHREINEREI } from '../../world/layout.js';
 import { createRng } from '../../core/rng.js';
-import { Batch, board, timber, xf, mat4, stoneGeo, mossPadGeo, uvBox, peg, addToadstool, addFern, addLantern, addFairyLights, SPECIES, LOD, segs, noiseA } from './kit.js';
+import { Batch, board, timber, xf, mat4, stoneGeo, mossPadGeo, uvBox, peg, paintWear, addToadstool, addFern, addLantern, addFairyLights, SPECIES, LOD, segs, count, noiseA, withLite } from './kit.js';
 import { makeNotes } from './fx.js';
 import { barkMount } from './door.js';
 
@@ -79,7 +79,9 @@ export function buildDeck(ctx, B, mats) {
   for (let i = 0; i < nB; i++) {
     const z = -hd + pitch * (i + 0.5);
     const c = LARCH[rng.int(0, LARCH.length - 1)];
-    const g = deckBoardGeo(bLen, tBoard, bw, { cup: 0.0012 + rng.next() * 0.0008 });
+    const cup = 0.0012 + rng.next() * 0.0008;
+    // (low tier: a plain box — the 1 mm cup and the chamfers are sub-pixel there)
+    const g = LOD.lite ? new THREE.BoxGeometry(bLen, tBoard, bw) : deckBoardGeo(bLen, tBoard, bw, { cup });
     uvBox(g, 'x', 1 / 1.4, [rng.next() * 7, rng.next() * 7]);
     F.add(mats.wood(c), xf(g, [0, h - tBoard / 2 + rng.jitter(0.0006), z], [0, rng.jitter(0.002), rng.jitter(0.004)]));
     // a pair of screws on every joist line (each pair a hair off square: driven by hand)
@@ -101,10 +103,14 @@ export function buildDeck(ctx, B, mats) {
   const rimY = h - tBoard - rimH / 2;
   F.add(mats.wood(LARCH[1]), xf(board(hw * 2, rimH, rimT, { along: 'x', rng, r: 0.007 }), [0, rimY, hd - rimT / 2 - 0.004]));
   for (const s of [-1, 1]) F.add(mats.wood(LARCH[3]), xf(board(rimT, rimH, hd * 2 - 0.008, { along: 'z', rng, r: 0.007 }), [s * (hw - rimT / 2), rimY, -0.004]));
-  // two steps down at the front-left (towards the door path): larch treads on stringers
+  // two steps down at the front-left (towards the door path): larch treads on
+  // stringers, each worn pale and smooth where the feet land, a bit off-centre
+  // (the side the path comes from)
   for (let i = 0; i < 2; i++) {
     const sy = h * (1 - (i + 1) / 3);
-    F.add(mats.wood(LARCH[2]), xf(board(0.9, 0.035, 0.26, { along: 'x', rng, r: 0.006 }), [-hw + 0.55, sy, hd + 0.16 + i * 0.25]));
+    const tread = board(0.9, 0.035, 0.26, { along: 'x', rng, r: 0.006, segs: LOD.lite ? 0 : 6 });
+    paintWear(tread, LARCH[2], (x, y, z, nx, ny) => (ny > 0.9 ? -0.42 * Math.max(0, 1 - Math.abs(x + 0.08) / 0.3) : Math.abs(x) > 0.4 ? 0.12 : 0), { light: '#c4b7a2' });
+    F.add(mats.wood(LARCH[2]), xf(tread, [-hw + 0.55, sy, hd + 0.16 + i * 0.25]));
     for (const s of [-1, 1]) F.add(tim, xf(board(0.05, sy, 0.2, { along: 'y', rng }), [-hw + 0.55 + s * 0.4, sy / 2, hd + 0.16 + i * 0.25]), { cast: false });
   }
 
@@ -129,8 +135,9 @@ export function buildDeck(ctx, B, mats) {
     for (let i = 1; i < nb; i++) {
       const t = i / nb;
       const x = a[0] + (b[0] - a[0]) * t, z = a[1] + (b[1] - a[1]) * t;
-      // turned profile (its ends hide in the rails)
-      const bal = new THREE.LatheGeometry([[0.018, 0], [0.018, 0.04], [0.026, 0.12], [0.014, 0.22], [0.022, 0.3], [0.014, 0.38], [0.018, 0.47]].map(([r, y]) => new THREE.Vector2(r, y)), segs(6, 4));
+      // turned profile (its ends hide in the rails; low tier: one belly, four facets)
+      const prof = LOD.lite ? [[0.018, 0], [0.025, 0.14], [0.015, 0.3], [0.018, 0.47]] : [[0.018, 0], [0.018, 0.04], [0.026, 0.12], [0.014, 0.22], [0.022, 0.3], [0.014, 0.38], [0.018, 0.47]];
+      const bal = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), segs(6, 4));
       F.add(mats.wood('oak'), xf(uvBox(bal, 'y'), [x, h + 0.14, z]), { cast: false });
     }
   };
@@ -151,10 +158,11 @@ export function buildDeck(ctx, B, mats) {
 
   // ── the pieces ─────────────────────────────────────────────────────────────
   // the furniture is a touch bigger than the villagers' everyday props so the
-  // chibi guests sit at it naturally
+  // chibi guests sit at it naturally (the pieces keep their chamfers on every
+  // tier — withLite(false): their close-ups frame them)
   const FS = 1.15;
   const pm = mats.piece;
-  const table = buildDiningTable(ctx, pm, rng);
+  const table = withLite(false, () => buildDiningTable(ctx, pm, rng));
   table.position.set(-0.6, h, -0.08);
   table.scale.setScalar(FS);
   group.add(table);
@@ -164,7 +172,7 @@ export function buildDeck(ctx, B, mats) {
     F.add(mats.glow('#ffcf7a', 0.6), xf(new THREE.SphereGeometry(0.008, 6, 4), [table.position.x + f.x * FS, h + f.y * FS, table.position.z + f.z * FS], null, [FS, 1.8 * FS, FS]), { cast: false, receive: false });
   }
   const cabX = 0.55;
-  const cabinet = buildRecordCabinet(ctx, pm, rng);
+  const cabinet = withLite(false, () => buildRecordCabinet(ctx, pm, rng));
   cabinet.position.set(cabX, h, -hd + 0.3);
   cabinet.scale.setScalar(FS);
   group.add(cabinet);
@@ -172,11 +180,11 @@ export function buildDeck(ctx, B, mats) {
   // spinning record and its tonearm read from the woodworking camera
   const PS = 1.45;
   const reduced = !!ctx.engine?.reducedMotion;
-  const player = buildRecordPlayer(ctx, pm, rng, { idleSpin: !reduced });
+  const player = withLite(false, () => buildRecordPlayer(ctx, pm, rng, { idleSpin: !reduced }));
   player.group.position.set(cabX, h + cabinet.userData.topY * FS, -hd + 0.33);
   player.group.scale.setScalar(PS);
   group.add(player.group);
-  const coffee = buildCoffeeTable(ctx, pm, rng);
+  const coffee = withLite(false, () => buildCoffeeTable(ctx, pm, rng));
   coffee.position.set(0.82, h, 0.78);
   coffee.rotation.y = -0.2;
   coffee.scale.setScalar(FS);
@@ -188,7 +196,7 @@ export function buildDeck(ctx, B, mats) {
     F.add(mats.fabric('#b89a62'), xf(new THREE.TorusGeometry(0.56, 0.012, 3, segs(28, 14)), [0, 0.009, 0], [Math.PI / 2, 0, 0], [1.25, 0.9, 1]).applyMatrix4(R), { cast: false });
     F.add(mats.fabric('#6f7a5a'), xf(new THREE.TorusGeometry(0.45, 0.01, 3, segs(28, 14)), [0, 0.009, 0], [Math.PI / 2, 0, 0], [1.25, 0.9, 1]).applyMatrix4(R), { cast: false });
   }
-  const chair = buildArmchair(ctx, pm, rng);
+  const chair = withLite(false, () => buildArmchair(ctx, pm, rng));
   chair.position.set(1.62, h, -0.88);
   chair.rotation.y = -0.75;
   chair.scale.setScalar(FS);
@@ -262,10 +270,10 @@ export function buildDeck(ctx, B, mats) {
       F.add(mats.wood('oak'), xf(board(0.46, 0.3, 0.34, { along: 'x', rng }), [px, 0.15, pz]));
       F.add(mats.soil(), xf(new THREE.BoxGeometry(0.4, 0.02, 0.28), [px, 0.3, pz]), { cast: false });
       const vc = mats.vc();
-      for (let i = 0; i < 14; i++) {
+      for (let i = 0, n = count(14, 8); i < n; i++) {
         const x = px + rng.jitter(0.18), z = pz + rng.jitter(0.12), hh = rng.range(0.08, 0.22);
-        F.add(vc, xf(new THREE.CylinderGeometry(0.004, 0.005, hh, 3), [x, 0.3 + hh / 2, z]), { color: '#4f7f36', cast: false });
-        F.add(vc, xf(new THREE.SphereGeometry(rng.range(0.02, 0.035), 6, 4), [x, 0.3 + hh, z], null, [1, 0.6, 1]), { color: rng.pick(['#d6332a', '#f2ead8', '#e8c22a', '#b39ddb', '#ef7a5a']), cast: false });
+        F.add(vc, xf(new THREE.CylinderGeometry(0.004, 0.005, hh, 3, 1, LOD.k < 1), [x, 0.3 + hh / 2, z]), { color: '#4f7f36', cast: false });
+        F.add(vc, xf(new THREE.SphereGeometry(rng.range(0.02, 0.035), segs(6, 4), segs(4, 2)), [x, 0.3 + hh, z], null, [1, 0.6, 1]), { color: rng.pick(['#d6332a', '#f2ead8', '#e8c22a', '#b39ddb', '#ef7a5a']), cast: false });
       }
       addFern(F, ctx, rng, px + 0.12, 0.3, pz - 0.05, { size: 0.3, fronds: 5 });
     }

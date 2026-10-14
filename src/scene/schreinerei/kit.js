@@ -29,13 +29,30 @@ const noiseB = createNoise2D(5531);
  * `LOD.small` before adding the tiniest decor (nail heads, loose shavings,
  * pebbles, toadstool spots) — high draws all of it, medium and low skip it.
  * (Builds are synchronous, so a module-level value is safe.)
+ *
+ * `LOD.lite` (off unless a builder opts in, low tier only — see
+ * schreinerei.js): board() and timber() make plain boxes (12 triangles)
+ * instead of chamfered 8-sided beams (16·segs + 12): a 1 cm chamfer is
+ * sub-pixel on the low tier. A board asked for explicit `segs` (it gets bent)
+ * keeps its beam.
  */
-export const LOD = { k: 1, tier: 'high', small: true };
+export const LOD = { k: 1, tier: 'high', small: true, lite: false };
 export function setDetail(tier = 'high') {
   LOD.tier = tier;
   LOD.k = tier === 'low' ? 0.4 : tier === 'medium' ? 0.6 : 1;
   LOD.small = tier !== 'low' && tier !== 'medium';
+  LOD.lite = false;
   return LOD.k;
+}
+/** Run fn with LOD.lite set to `on` (restored afterwards). Returns fn's result. */
+export function withLite(on, fn) {
+  const was = LOD.lite;
+  LOD.lite = !!on;
+  try {
+    return fn();
+  } finally {
+    LOD.lite = was;
+  }
 }
 /** A segment count scaled by the tier's detail (never below `min`). */
 export const segs = (n, min = 3) => Math.max(min, Math.round(n * LOD.k));
@@ -174,6 +191,35 @@ export function paintBy(geo, fn) {
   return geo;
 }
 
+/**
+ * Working patina: a per-vertex colour from `base`, pulled towards `dark`
+ * (grime of hands, oil, soil — handled edges, grips, feet) or towards `light`
+ * (scuffed, dusty, sun-bleached) by fn(x, y, z, nx, ny, nz) → w in [-1, 1]
+ * (w > 0 darker, w < 0 lighter; positions & normals in the geometry's own
+ * space). On a proxy material (mats.wood …) the painted colours replace the
+ * proxy's flat colour. Returns geo.
+ */
+const _wd = new THREE.Color();
+const _wl = new THREE.Color();
+export function paintWear(geo, base, fn, { dark = '#3b2a1c', light = '#dccaa4' } = {}) {
+  if (!geo.attributes.normal) geo.computeVertexNormals();
+  const pos = geo.attributes.position, nor = geo.attributes.normal;
+  const arr = new Float32Array(pos.count * 3);
+  _wd.set(dark);
+  _wl.set(light);
+  for (let i = 0; i < pos.count; i++) {
+    _c.set(base);
+    const w = Math.max(-1, Math.min(1, fn(pos.getX(i), pos.getY(i), pos.getZ(i), nor.getX(i), nor.getY(i), nor.getZ(i)) || 0));
+    if (w > 0) _c.lerp(_wd, w);
+    else if (w < 0) _c.lerp(_wl, -w);
+    arr[i * 3] = _c.r;
+    arr[i * 3 + 1] = _c.g;
+    arr[i * 3 + 2] = _c.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return geo;
+}
+
 /** Fill a geometry's colour attribute with one colour (sRGB hex → linear). */
 export function paint(geo, color) {
   _c.set(color);
@@ -201,6 +247,11 @@ export class Batch {
    */
   add(material, geo, opts = {}) {
     this.added += (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
+    if (globalThis.__KITPROF__) {
+      const st = new Error().stack.split('\n').slice(2, 6).map((l) => (l.match(/at (\S+)/)?.[1] ?? '?') + ':' + (l.match(/:(\d+):\d+\)?$/)?.[1] ?? '')).join(' < ');
+      const P = globalThis.__KITPROF__;
+      P[st] = (P[st] ?? 0) + (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
+    }
     if (material.isProxy) {
       // a geometry painted beforehand (paintBy) keeps its own colours
       if (opts.color === undefined && !geo.attributes.color) opts = { ...opts, color: material.color };
@@ -497,8 +548,9 @@ export function beamBox(w, h, d, along = 'x', c = 0.012, segs = 1) {
  */
 export function board(w, h, d, { along = 'x', r = 0.01, rng = null, scale = 1 / TILE.wood, segs = 0 } = {}) {
   const len = along === 'x' ? w : along === 'y' ? h : d;
-  // (length segments only matter where a deform bends the board: fewer on the lower tiers)
-  const g = beamBox(w, h, d, along, r, segs || Math.max(1, Math.round((len / 0.7) * LOD.k)));
+  // (length segments only matter where a deform bends the board: fewer on the
+  // lower tiers; LOD.lite: a plain box)
+  const g = LOD.lite && !segs ? new THREE.BoxGeometry(w, h, d) : beamBox(w, h, d, along, r, segs || Math.max(1, Math.round((len / 0.7) * LOD.k)));
   return uvBox(g, along, scale, rng ? [rng.next() * 7, rng.next() * 7] : [0, 0]);
 }
 
@@ -509,7 +561,7 @@ export function board(w, h, d, { along = 'x', r = 0.01, rng = null, scale = 1 / 
 export function timber(a, b, w, h, { rng = null, up = [0, 1, 0], r = 0.018, wobble = 0.012, scale = 1 / TILE.timber } = {}) {
   const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
   const n = Math.max(1, Math.round((len / 0.5) * (LOD.k < 1 ? Math.max(0.5, LOD.k) : 1)));
-  const g = beamGeo(len, h, w, r, n);
+  const g = LOD.lite ? new THREE.BoxGeometry(len, h, w) : beamGeo(len, h, w, r, n);
   if (rng && wobble > 0) {
     const s1 = rng.next() * 10, s2 = rng.next() * 10;
     const k1 = rng.jitter(1), k2 = rng.jitter(1);
@@ -935,8 +987,10 @@ export function addLantern(F, mats, pos, world, { scale = 1, color = '#2f2b28' }
   const m = mat4(pos, null, scale);
   const parts = [];
   // ring, roof, cap
-  parts.push([iron, new THREE.TorusGeometry(0.035, 0.009, 4, 10).translate(0, -0.01, 0)]);
-  parts.push([iron, new THREE.SphereGeometry(0.028, 6, 4).translate(0, -0.06, 0)]);
+  // (low tier: the ring, knobs and finial with fewer facets — 0.5 cm at that size)
+  const lo = LOD.k < 0.5;
+  parts.push([iron, new THREE.TorusGeometry(0.035, 0.009, lo ? 3 : 4, lo ? 6 : 10).translate(0, -0.01, 0)]);
+  parts.push([iron, new THREE.SphereGeometry(0.028, lo ? 5 : 6, lo ? 3 : 4).translate(0, -0.06, 0)]);
   parts.push([iron, new THREE.ConeGeometry(0.17, 0.12, 6, 1).translate(0, -0.12, 0)]);
   parts.push([iron, new THREE.CylinderGeometry(0.175, 0.175, 0.018, 6).translate(0, -0.185, 0)]);
   // corner posts & glass (glow)
@@ -946,7 +1000,7 @@ export function addLantern(F, mats, pos, world, { scale = 1, color = '#2f2b28' }
   }
   parts.push([mats.glow('#ffd79a', 0.9, 3.2), new THREE.CylinderGeometry(0.115, 0.1, 0.24, 6).translate(0, -0.32, 0)]);
   parts.push([iron, new THREE.CylinderGeometry(0.13, 0.11, 0.025, 6).translate(0, -0.455, 0)]);
-  parts.push([iron, new THREE.SphereGeometry(0.025, 6, 4).translate(0, -0.48, 0)]);
+  parts.push([iron, new THREE.SphereGeometry(0.025, lo ? 5 : 6, lo ? 3 : 4).translate(0, -0.48, 0)]);
   for (const [mat, g] of parts) F.add(mat, g.applyMatrix4(m), { cast: false });
   if (world) pushHalo(new THREE.Vector3(world.x, world.y - 0.32 * scale, world.z), 0.7 * scale);
 }
@@ -969,8 +1023,9 @@ export function addFairyLights(F, mats, points, toWorld, { sag = 0.08, spacing =
     const n = Math.max(1, Math.floor(span / spacing));
     for (let k = 0; k < n; k++) {
       const p = curve.getPointAt((k + 0.5) / n);
-      F.add(wire, new THREE.CylinderGeometry(0.011, 0.011, 0.022, segs(5, 4), 1, !LOD.small).translate(p.x, p.y - 0.014, p.z), { cast: false });
-      const bulb = new THREE.SphereGeometry(0.022, segs(6, 4), segs(4, 3));
+      // (low tier: no socket, an 8-sided bead of a bulb — the halo carries it)
+      if (LOD.k >= 0.5) F.add(wire, new THREE.CylinderGeometry(0.011, 0.011, 0.022, segs(5, 4), 1, !LOD.small).translate(p.x, p.y - 0.014, p.z), { cast: false });
+      const bulb = LOD.k < 0.5 ? new THREE.OctahedronGeometry(0.023, 0) : new THREE.SphereGeometry(0.022, segs(6, 4), segs(4, 3));
       bulb.scale(1, 1.3, 1);
       F.add(bulbMat, bulb.translate(p.x, p.y - 0.045, p.z), { cast: false, receive: false });
       tmp.set(p.x, p.y - 0.045, p.z);
@@ -1063,7 +1118,7 @@ export function addBowSaw(F, mats, rng, m, { scale = 1, wood = '#c8a27c' } = {})
  * the heel (x = 0, 0.12 tall) tapering to the toe (x = len, 0.05 tall), teeth
  * along the bottom, a closed D-handle with two brass screws at the heel.
  */
-export function addHandSaw(F, mats, m, { len = 0.5, wood = '#5c4334' } = {}) {
+export function addHandSaw(F, mats, m, { len = 0.5, wood = '#5c4334', worn = false } = {}) {
   const s = new THREE.Shape();
   const nT = Math.round(len / 0.016);
   s.moveTo(0, 0.06);
@@ -1092,7 +1147,14 @@ export function addHandSaw(F, mats, m, { len = 0.5, wood = '#5c4334' } = {}) {
   h.holes.push(hole);
   const hg = new THREE.ExtrudeGeometry(h, { depth: 0.022, bevelEnabled: true, bevelSize: 0.004, bevelThickness: 0.004, bevelSegments: 1, curveSegments: 5 });
   hg.translate(0, 0, -0.011);
-  bake(F, m, mats.wood(wood), uvBox(hg, 'x'));
+  uvBox(hg, 'x');
+  // worn: the grip round the hand hole darkened & polished by years of hands,
+  // the horn's edges rubbed paler
+  if (worn) paintWear(hg, SPECIES[wood] ?? wood, (x, y) => {
+    const d = Math.hypot((x + 0.062) / 1.2, y + 0.005);
+    return d < 0.075 ? 0.5 * (1 - d / 0.075) : y > 0.07 ? -0.18 : 0;
+  });
+  bake(F, m, mats.wood(wood), hg);
   for (const [x, y] of [[0.0, 0.035], [0.005, -0.03]]) bake(F, m, mats.metal('#c9a04a'), new THREE.CylinderGeometry(0.008, 0.008, 0.03, 8).rotateX(Math.PI / 2).translate(x, y, 0));
 }
 
@@ -1101,7 +1163,7 @@ export function addHandSaw(F, mats, m, { len = 0.5, wood = '#5c4334' } = {}) {
  * jaws reaching towards +X: painted cast jaws, a steel bar, the screw with its
  * wooden handle under the sliding jaw. `open` = sliding-jaw height (0..1 of len).
  */
-export function addFClamp(F, mats, m, { len = 0.5, reach = 0.11, color = '#c4372a', open = 0.35, handle = '#d9b27c' } = {}) {
+export function addFClamp(F, mats, m, { len = 0.5, reach = 0.11, color = '#c4372a', open = 0.35, handle = '#d9b27c', worn = false } = {}) {
   const jaw = mats.metal(color);
   bake(F, m, mats.metal('#8f969b'), new THREE.BoxGeometry(0.012, len, 0.024).translate(0, len / 2, 0));
   bake(F, m, jaw, new THREE.BoxGeometry(reach + 0.03, 0.034, 0.03).translate(reach / 2 - 0.004, len - 0.017, 0));
@@ -1110,7 +1172,10 @@ export function addFClamp(F, mats, m, { len = 0.5, reach = 0.11, color = '#c4372
   // the screw from the sliding jaw towards the fixed one, its handle below
   bake(F, m, mats.metal('#8f969b'), new THREE.CylinderGeometry(0.006, 0.006, 0.1, 6).translate(reach - 0.01, yj + 0.03, 0));
   bake(F, m, mats.metal('#8f969b'), new THREE.CylinderGeometry(0.014, 0.014, 0.008, 8).translate(reach - 0.01, yj + 0.082, 0));
-  bake(F, m, mats.wood(handle), uvBox(new THREE.CylinderGeometry(0.016, 0.014, 0.085, 8), 'y').translate(reach - 0.01, yj - 0.064, 0));
+  const hg = uvBox(new THREE.CylinderGeometry(0.016, 0.014, 0.085, 8), 'y');
+  // worn: the handle grimy where the fingers turn it
+  if (worn) paintWear(hg, SPECIES[handle] ?? handle, (x, y) => 0.42 * Math.max(0, 1 - Math.abs(y + 0.006) / 0.034));
+  bake(F, m, mats.wood(handle), hg.translate(reach - 0.01, yj - 0.064, 0));
 }
 
 /** A turned part (LatheGeometry about Y) from [r, y] pairs. */

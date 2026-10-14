@@ -165,7 +165,10 @@ export function mushroomGlowMaterials(ctx) {
   if (set) return set;
   const gills = M.surface('gills', { vertexColors: true }).clone();
   gills.name = 'gills-glow';
-  gills.emissive = new THREE.Color('#86ecc4');
+  // (round 6: a cleaner cyan-teal — the bioluminescent under-cap glow of the
+  //  references — and the light reaches the rim: from the side the gills read
+  //  as a glowing band under the cap, not a dark lid on a glowing stem)
+  gills.emissive = new THREE.Color('#5eead6');
   // the glow is graded like light in real gills: brightest by the stem, ≈ 30 %
   // at the rim, with faint radial lamellae (the gills' disc UVs: centre = stem)
   // — no longer one evenly lit, hard-edged ellipse (a cyan saucer from afar)
@@ -178,7 +181,7 @@ export function mushroomGlowMaterials(ctx) {
     vec2 gq = vUv - 0.5;
     float gr = clamp(length(gq) * 2.0, 0.0, 1.0);
     float ga = atan(gq.y, gq.x);
-    float gg = mix(1.0, 0.22, smoothstep(0.12, 0.9, gr));
+    float gg = mix(1.0, 0.62, smoothstep(0.12, 0.95, gr));
     float gs = ga * 38.0;
     float gw = 38.0 * length(fwidth(gq)) / max(length(gq), 1e-3);
     float gl = 0.5 + 0.5 * cos(gs + 2.0 * sin(ga * 5.0));
@@ -191,12 +194,12 @@ export function mushroomGlowMaterials(ctx) {
   }
   const warts = M.standard('#ffffff', { roughness: 0.9, vertexColors: true }).clone();
   warts.name = 'warts-glow';
-  warts.emissive = new THREE.Color('#e4ffd8');
+  warts.emissive = new THREE.Color('#b4f6e6');
   // (the forest giants' spots: a faint milky-mint glint and a silver moon catch,
   //  so the dome reads above the glowing gills — the cottages clone `warts`)
   const wartsMoon = moonRim(M.standard('#ffffff', { roughness: 0.9, vertexColors: true }), { rim: 0.04, pow: 2, up: 0.5, color: [0.8, 0.86, 0.9] });
   wartsMoon.name = 'warts-glow-moon';
-  wartsMoon.emissive = new THREE.Color('#e4ffd8');
+  wartsMoon.emissive = new THREE.Color('#b4f6e6');
   // (and the plain spots of every forest giant: a faint milky glow at night — soft
   //  pale dots that keep the dome readable, never blue-grey gravel)
   const wartsPlain = moonRim(M.standard('#ffffff', { roughness: 0.9, vertexColors: true }), { rim: 0.04, pow: 2, up: 0.5, color: [0.8, 0.86, 0.9] });
@@ -207,10 +210,12 @@ export function mushroomGlowMaterials(ctx) {
     warts,
     wartsMoon,
     wartsPlain,
+    // (round 6: the gills carry the light — brighter; the enchanted spots a
+    //  faint cyan glint; the dome itself stays dark red under a thin moon rim)
     levels: [
-      [gills, 0.03, 1.0],
-      [warts, 0.0, 0.42],
-      [wartsMoon, 0.0, 0.52],
+      [gills, 0.03, 1.35],
+      [warts, 0.0, 0.4],
+      [wartsMoon, 0.0, 0.42],
       [wartsPlain, 0.0, 0.1],
     ],
   };
@@ -281,7 +286,7 @@ function glowSheathMaterial() {
   });
   return sheathMat;
 }
-const SHEATH = new THREE.Color('#7cf0c8');
+const SHEATH = new THREE.Color('#62eedc');
 
 export class MushroomKit {
   /**
@@ -489,8 +494,10 @@ export class MushroomKit {
       // (the giants' halo stays tucked under the cap, round the stem's top — a
       //  wide halo disc read as a flying saucer from across the glen)
       const big = H > 1.2;
-      const under = F.o.clone().addScaledVector(F.y, -R * (big ? 0.16 : 0.3));
-      this.glowPoints.push({ x: under.x, y: under.y, z: under.z, size: R * (big ? Math.min(0.55, (opts.haloK ?? 1.5) * 0.45) : opts.haloK ?? 1.5) });
+      // (round 6: a little wider again — the soft teal glow pooling under the
+      //  cap that made round 4's giants bioluminescent — still tucked under it)
+      const under = F.o.clone().addScaledVector(F.y, -R * (big ? 0.2 : 0.3));
+      this.glowPoints.push({ x: under.x, y: under.y, z: under.z, size: R * (big ? Math.min(0.72, (opts.haloK ?? 1.5) * 0.6) : opts.haloK ?? 1.5) });
       if (H > 0.6) {
         // the glow sheath: the upper stem lit by the gills, fading downwards …
         const S = this.sheath;
@@ -502,7 +509,9 @@ export class MushroomKit {
           const p = stemPts[k];
           const a = stemPts[Math.max(0, k - 1)], b = stemPts[Math.min(rings, k + 1)];
           const SF = frameFor(p, b.clone().sub(a));
-          const g = Math.pow(THREE.MathUtils.smoothstep(t, 0.4, 0.97), 1.6) * 0.36;
+          // (round 6: only the top of the stem catches the gills' light — the
+          //  whole upper stem glowing read as a flat mint lamp post)
+          const g = Math.pow(THREE.MathUtils.smoothstep(t, 0.62, 0.98), 1.8) * 0.16;
           const c = SHEATH.clone().multiplyScalar(g);
           const r = stemProfile[k] * 1.06 + R * 0.004;
           for (let i = 0; i <= ss; i++) {
@@ -527,7 +536,7 @@ export class MushroomKit {
             { r: r0 * 1.31, y: -drop * 0.33, v: 0.4 },
             { r: r0 * 1.45, y: -drop * 0.78, v: 0.8 },
             { r: r0 * 1.41, y: -drop * 0.99, v: 1 },
-          ], ss, { wob, color: (k) => SHEATH.clone().multiplyScalar(0.3 - k * 0.07) });
+          ], ss, { wob, color: (k) => SHEATH.clone().multiplyScalar(0.12 - k * 0.03) });
         }
         // … and the thin cap rim glowing through: a narrow band over the rim
         //    roll only (the cap's own facets, lifted off the surface), fading out
@@ -538,7 +547,22 @@ export class MushroomKit {
           const band = [p0, p1, up].map((p) => ({ r: p.r * 1.006 + R * 0.008, y: p.y + R * 0.006, v: 0 }));
           lathe(S, F, band, seg, {
             wob: (th, k) => capWob(th, k === 2 ? 1 : k),
-            color: (k) => SHEATH.clone().multiplyScalar(k === 0 ? 0.24 : k === 1 ? 0.1 : 0),
+            color: (k) => SHEATH.clone().multiplyScalar(k === 0 ? 0.2 : k === 1 ? 0.06 : 0),
+          });
+        }
+        // … and (round 6) the gills' edges just under the rim: a narrow cyan
+        //    band hanging below the cap's edge, so from the side — where the
+        //    gills themselves hide under the cap — the mushroom still shows
+        //    where its light comes from
+        if (!upturned) {
+          const r0 = R * 0.925, y0 = -R * 0.05;
+          lathe(S, F, [
+            { r: r0 * 1.004, y: y0 + R * 0.004, v: 0 },
+            { r: r0 * 0.975, y: y0 - R * 0.045, v: 0.5 },
+            { r: r0 * 0.93, y: y0 - R * 0.07, v: 1 },
+          ], seg, {
+            wob: (th) => capWob(th, 0),
+            color: (k) => SHEATH.clone().multiplyScalar(k === 0 ? 0.42 : k === 1 ? 0.3 : 0.08),
           });
         }
       }
@@ -951,7 +975,8 @@ export class MushroomKit {
     // (moon: the giants' domes catch a silver moon rim at night, so a cap
     //  reads as a mushroom above its glowing gills — not a dark void)
     const capMat = M.surface('mushroomCap', { vertexColors: true, color: '#a0a0a0' });
-    add(this.caps, moon ? moonRim(capMat, { rim: 0.07, pow: 2.5, up: 0.65, side: 0.5 }) : capMat, 'caps');
+    // (round 6: a THIN rim — the broad one washed the domes pastel at night)
+    add(this.caps, moon ? moonRim(capMat, { rim: 0.055, pow: 3.6, up: 0.65, side: 0.5 }) : capMat, 'caps');
     add(this.stems, M.surface('mushroomStem', { vertexColors: true }), 'stems');
     if (this.shared) return out;
     add(this.gills, M.surface('gills', { vertexColors: true }), 'gills', false);
