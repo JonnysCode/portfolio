@@ -64,9 +64,10 @@ import { sharedUniforms } from '../core/materials.js';
 /**
  * Triangle budget per tier (moduleStats: budget / overBudget). Measured with the
  * shared props (lanterns, string lights, the snail, the coder) included:
- * high ≈ 173k, medium ≈ 120k, low ≈ 91k triangles (round 5: + the lift slot's
- * framing; before round 4: 171k / 169k / 168k); shadow-pass triangles high ≈
- * 63k, medium ≈ 40k (were 98k / 92k). (moduleStats also counts the two
+ * high ≈ 181k, medium ≈ 125k, low ≈ 95k triangles (round 6: + the leafy boughs
+ * round the deck, ≈ 3.9k at high; round 5: + the lift slot's framing; before
+ * round 4: 171k / 169k / 168k); shadow-pass triangles high ≈ 63k, medium ≈ 40k
+ * (were 98k / 92k). (moduleStats also counts the two
  * invisible lift hotspot boxes as draws: they are never rendered.)
  */
 export const LOFT_BUDGET = { high: 185000, medium: 130000, low: 110000 };

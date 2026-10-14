@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The guidebook — the whole portfolio as a little printed book: who Jonny is,
-// how to reach him, and every place of the glen with every piece in it (full
+// how to reach Jonny, and every place of the glen with every piece in it (full
 // text, cut lists, tags, links). It is also the complete, accessible fallback
 // when WebGL is unavailable — nothing on the site is reachable ONLY in 3D.
 //

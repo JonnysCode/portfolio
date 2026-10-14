@@ -30,6 +30,8 @@ const TONES = { belly: '#3f5a40', mid: '#667b4f', sage: '#5f7a5e', olive: '#7a7d
  */
 const BOUGHS = [
   [121, 2.3, 2.3, 0.75, 0.25, 9], // behind the treehouse's right gable
+  [108, 4.7, 2.0, 0.6, 0.4, 7], // over the treehouse's back, above its ridge
+  [32, 4.3, 2.2, -0.6, 0.35, 8], // up the bare bark over the "Snail Lift" sign
   [-27, 2.5, 2.0, -0.7, 0.3, 8], // left of the deck, over the server rack's corner of the bark
   [-12, -1.35, 1.7, -0.55, -0.35, 6], // under the deck's left end
   [124, -1.05, 1.6, 0.5, -0.4, 6], // under the deck's right end

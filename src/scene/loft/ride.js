@@ -78,6 +78,12 @@ export function createLiftRide(ctx, { elevator, deck }) {
    * deck the rim and the railing hid it, and the lens cut through the ivy.
    */
   const UNDER = DECK_Y - 1.15;
+  /** while the snail comes to the station: how far up / down the trunk the lens goes to meet it, its steepest look (tan) */
+  const CALL_REACH = { up: 4.5, down: 2.0 };
+  const CALL_PITCH = 0.32;
+  /** riding down: the lens over the deck while the snail is up in its slot (0 under the planks … 1 in the slot) */
+  const ABOVE = DECK_Y + 2.4;
+  const onDeck = (y) => smooth(DECK_Y - 1.7, DECK_Y - 0.1, y);
   const lensY = (y) => smin(y + 1.1 - 0.8 * smooth(yBottom + 1.0, DECK_Y - 1.6, y), UNDER, 0.5);
 
   /**
@@ -230,14 +236,36 @@ export function createLiftRide(ctx, { elevator, deck }) {
     const st = A.state;
     const live = elevator.hookY;
     const calling = st.phase === 'call';
-    // From the first frame the lens rides along with the snail wherever it is
-    // on the trunk — beside it, level with it — as it hurries to the station,
+    // From the first frame the lens goes to meet the snail where it is on the
+    // trunk as it hurries to the station — beside it, nearly level with it —
     // and comes down (or up) with it: it never looks up from the roots at a
-    // snail far above under the deck. While the snail is still up in the slot
-    // above the planks the eye waits level under the deck for it to come down
+    // snail far above under the deck. It strays from the station only so far
+    // (further up the trunk than down it: from the Code Loft it waits near the
+    // top and watches the snail climb to it rather than diving to the roots
+    // and back) and never pitches steeply; while the snail is still up in the
+    // slot above the planks the eye waits under the deck for it to come down
     // through (it never stares up at the deck's underside).
     follow(A.v, A.d, live, calling ? 0 : st.progress, LP, L);
-    if (calling) L.y = Math.min(L.y, UNDER + 0.35);
+    if (calling) {
+      LP.y = THREE.MathUtils.clamp(LP.y, A.p3.y - CALL_REACH.down, A.p3.y + CALL_REACH.up);
+      const run = Math.hypot(L.x - LP.x, L.z - LP.z);
+      L.y = THREE.MathUtils.clamp(Math.min(L.y, UNDER + 0.35), LP.y - CALL_PITCH * run, LP.y + CALL_PITCH * run);
+    }
+    if (A.d === 'down') {
+      // riding down from the Code Loft: while the snail waits up in its slot
+      // the lens looks across the deck at it and the basket (not up at the
+      // planks from below), then sinks with it through the slot
+      const k = onDeck(S.y);
+      if (k > 0) {
+        // (and a little further round towards the track: past the server rack's corner)
+        const turn = -A.v.side * 0.35 * k, c = Math.cos(turn), sn = Math.sin(turn);
+        const dx = LP.x - OAK.x, dz = LP.z - OAK.z;
+        LP.x = OAK.x + dx * c + dz * sn;
+        LP.z = OAK.z - dx * sn + dz * c;
+        LP.y += (ABOVE - LP.y) * k;
+        L.y += (S.y - 0.1 - L.y) * k;
+      }
+    }
     if (A.t < A.approach) {
       const k = easeInOut(A.t / A.approach);
       if (A.bez) A.bez(A.p0, A.p1, A.p2, A.p3, k, P);

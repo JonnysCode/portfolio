@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Pencil sketches — the charming placeholder "photo" of a journal entry that
 // has no images yet: a little ink drawing on a watercolour wash, as if Jonny
-// had sketched the piece into his field journal. Pure inline SVG.
+// had sketched the piece into a field journal. Pure inline SVG.
 //
 //   sketchFor(entry) → '<svg …>' markup
 // ─────────────────────────────────────────────────────────────────────────────

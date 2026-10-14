@@ -3,8 +3,8 @@
 // little model in the glen, for the journal page and the guidebook card.
 //
 // These lines describe the 3D miniature only (what the code in src/scene/
-// models — joints, parts, props), never the owner's real piece, his life or
-// his work: the real story, years, photos and materials belong in content.js
+// models — joints, parts, props), never the owner's real piece, life or
+// work: the real story, years, photos and materials belong in content.js
 // and are written by the owner. Keep every line true to the model: when a
 // builder changes a piece, change its line here (or delete it).
 //

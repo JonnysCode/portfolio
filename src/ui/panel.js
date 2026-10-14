@@ -14,7 +14,7 @@
 // whose words are just a sentence (no story written yet) shows its polaroid
 // large under them instead of a small print beside a blank column.
 // About & contact show who this is on a little card — the profile's name and
-// roles, the page's facts (a Steckbrief) or where to find him (a Visitenkarte) —
+// roles, the page's facts (a Steckbrief) or where to find Jonny (a Visitenkarte) —
 // from content.js only. Without a mail address they never promise a letter: the
 // strongest link leads ("Find me on GitHub") and the copy's mailbox lines are
 // left out (draft.js).
@@ -187,8 +187,8 @@ export function createJournal(ctx, { onClose, onNavigate, polaroids } = {}) {
   /**
    * Who this is, at a glance — only facts content.js holds: the profile's name and
    * roles (its tagline), then on the About page its facts (a Steckbrief, the
-   * portrait pinned to it), on the contact page where he lives and where to find
-   * him (a Visitenkarte: every address, the mailbox photo only with a mail address).
+   * portrait pinned to it), on the contact page where Jonny lives and where to find
+   * them (a Visitenkarte: every address, the mailbox photo only with a mail address).
    */
   function callingCard(entry, shown) {
     const P = content.profile ?? {};
@@ -304,7 +304,7 @@ export function createJournal(ctx, { onClose, onNavigate, polaroids } = {}) {
       const card = callingCard(entry, shown);
       const paras = paragraphs(shown);
       const text = paras.length ? h('div', { class: 'journal__body' }, paras) : null;
-      // about: who (the card) → how to reach him → his words; contact: the invitation → the button → the card
+      // about: who (the card) → how to reach Jonny → their own words; contact: the invitation → the button → the card
       return entry.kind === 'about' ? [head, card, cta, text, photos(entry), foot] : [head, text, cta, card, photos(entry), foot];
     }
     // the links right under the title (above the fold); the photo pinned beside the words,
