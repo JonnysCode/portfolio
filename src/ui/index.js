@@ -28,7 +28,11 @@
 // open page / book or glides back to the previous place. A link on load skips
 // the intro and goes straight there.
 // Places with things beyond the edge of the frame (phones!) get little edge
-// chips ("‹ 2 more") that swing the camera round to them.
+// chips ("‹ 2 more") that swing the camera round to them; in the overview a
+// place beyond the frame keeps its label, pinned to that edge ("Velowerkstatt ›").
+// The carved name plate is a button: "who is this?" → the About page.
+// Keyboard: a place chosen from the overview (a label), the map or the guidebook
+// lands focus on its first ✦ (Tab steps on through the things there).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { SPOTS, SPOT_BY_ID, SPOT_FOR_AREA } from '../world/layout.js';
@@ -39,6 +43,7 @@ import { createJournal } from './panel.js';
 import { renderGuidebook } from './guidebook.js';
 import { createMap } from './map.js';
 import { reportDrafts } from './draft.js';
+import { createPolaroids } from './polaroid.js';
 
 const HINT_KEY = 'woodland:hinted';
 /**
@@ -49,6 +54,16 @@ const HINT_KEY = 'woodland:hinted';
 const FOCUS_TWEAKS = {
   // the Hobelbank: a 3/4 front view slightly above the top — vises, board, shavings and Jonny planing
   'workbench-wip': { radius: 0.9, lift: 0.35, distance: 2.4, polar: 1.22 },
+  // About Me (desktop): the rig's framing (cameraRig FRAMING) looks over from the door to
+  // the cat's bench; lifted, the framed portrait in the window above sits in the
+  // upper third of the free view (clear of the name plate), door and bench below it.
+  // (Phones keep the rig's own framing: the bottom sheet leaves the top free already.)
+  'about-me': ({ narrow }) => (narrow ? null : { lift: 0.7 }),
+};
+/** An entry's framing tweak (some depend on the screen). */
+const focusTweak = (id, info) => {
+  const t = FOCUS_TWEAKS[id];
+  return (typeof t === 'function' ? t(info) : t) ?? {};
 };
 const GLEN_CAM = new THREE.Vector3(...SPOT_BY_ID.glen.camera.position);
 /** How high above each spot's focus its floating overview label hangs (clear of caps & roofs). */
@@ -69,14 +84,30 @@ export function createUI(ctx) {
   const loader = createLoader(root, { title: `${P.name}’s Woodland`, tagline: P.tagline });
 
   // ── HUD: carved name plate + round buttons + secrets tag ──────────────────
+  // the carved name plate: "who is this?" — a button to the About page (the guidebook without one)
+  const aboutId = Object.keys(content.entries ?? {}).find((id) => content.entries[id]?.kind === 'about') ?? null;
   const plate = h(
-    'div',
-    { class: 'plate' },
+    'button',
+    { class: 'plate', type: 'button', 'aria-label': aboutId ? `About ${P.name}` : `${P.name}’s Woodland — the guidebook`, title: aboutId ? `About ${P.name}` : 'The guidebook', onclick: () => openAbout() },
     h('i', { class: 'plate__nail is-l', 'aria-hidden': 'true' }),
     h('i', { class: 'plate__nail is-r', 'aria-hidden': 'true' }),
-    h('div', { class: 'plate__name' }, `${P.name}’s Woodland`),
-    h('div', { class: 'plate__tag' }, P.tagline),
+    h('span', { class: 'plate__name' }, `${P.name}’s Woodland`),
+    h('span', { class: 'plate__tag' }, P.tagline),
   );
+  function openAbout() {
+    ctx.audio?.play?.('click');
+    if (!aboutId || !ctx.cameraRig) return ui.showGuidebook();
+    if (intro) skipIntro();
+    if (ui.isModalOpen) closeModal('nav');
+    if (journal.isOpen && currentEntry?.id === aboutId) return;
+    ui.openEntry(aboutId);
+  }
+
+  // ── how the visitor last reached for the UI (keyboard or pointer) ─────────
+  // (a place chosen with the keyboard hands focus on to its first ✦ on arrival)
+  let viaKeys = false;
+  window.addEventListener('keydown', () => (viaKeys = true), true);
+  window.addEventListener('pointerdown', () => (viaKeys = false), true);
   const btn = (name, label, onclick, extra = {}) =>
     h('button', { class: 'hud-btn', type: 'button', 'aria-label': label, title: label, onclick, html: icon(name), ...extra });
   const nightBtn = btn('moon', 'Night falls (N)', () => {
@@ -160,11 +191,25 @@ export function createUI(ctx) {
    */
   function centerPill(id, smooth = false) {
     const pill = pills.get(id);
-    if (!pill || spotList.scrollWidth <= spotList.clientWidth + 1) return;
+    if (!pill || spotList.scrollWidth <= spotList.clientWidth + 1) return syncBarClip();
     const left = pill.offsetLeft + pill.offsetWidth / 2 - spotList.clientWidth / 2; // (the list is the pills' offsetParent)
     if (smooth && !reduced) spotList.scrollTo({ left, behavior: 'smooth' });
     else spotList.scrollLeft = left;
+    // (the fades for where the bar is going: a smooth scroll reports its steps a frame late)
+    syncBarClip(left);
   }
+  /**
+   * Pills cut off by the bar's edge fade out (a soft edge says "there is more this
+   * way") — only on a side where something is hidden.
+   */
+  function syncBarClip(at) {
+    const max = spotList.scrollWidth - spotList.clientWidth;
+    const x = Math.min(max, Math.max(0, typeof at === 'number' ? at : spotList.scrollLeft));
+    spotList.classList.toggle('is-clip-l', max > 1 && x > 1);
+    spotList.classList.toggle('is-clip-r', max > 1 && x < max - 1);
+  }
+  spotList.addEventListener('scroll', () => syncBarClip(), { passive: true });
+  window.addEventListener('resize', () => requestAnimationFrame(() => syncBarClip()));
   function setCurrentSpot(id) {
     for (const [sid, pill] of pills) {
       const on = sid === id;
@@ -192,7 +237,7 @@ export function createUI(ctx) {
   const labels = SPOTS.filter((s) => s.id !== 'glen').map((s) => {
     const el = h(
       'button',
-      { class: 'spot-label', type: 'button', 'aria-label': `Visit ${s.title} — ${s.subtitle}`, onclick: () => go(s.id) },
+      { class: 'spot-label', type: 'button', 'aria-label': `Visit ${s.title} — ${s.subtitle}`, onclick: () => goFocused(s.id) },
       h(
         'span',
         { class: 'spot-label__flag' },
@@ -219,10 +264,43 @@ export function createUI(ctx) {
       l.measured = -99;
     }
   }
-  const hsLayer = h('div', { class: 'hs-layer', role: 'group', 'aria-label': 'Things to explore here' });
+  const hsLayer = h('div', { class: 'hs-layer', role: 'group', 'aria-label': 'Things to explore here', tabindex: '-1' });
   // first in the tab order (before the HUD and the spot bar): Tab steps through
-  // the things at this place straight away, as the help card promises
-  root.prepend(hsLayer, labelLayer);
+  // the things at this place straight away, as the help card promises — the
+  // overview's labels just before them, so Tab from a label (were it ever left
+  // holding focus) goes on to the ✦ of the place, not to the HUD
+  root.prepend(labelLayer, hsLayer);
+  /**
+   * A place chosen with the keyboard (a label, a map pin, the guidebook's "Go
+   * there"): on arrival focus moves on to its first ✦ — the label it came from
+   * hides, the book / map closed — so Tab carries on through the things there.
+   */
+  let focusOnArrive = null;
+  function goFocused(id) {
+    focusOnArrive = viaKeys ? id : null;
+    go(id);
+  }
+  /** Is focus lost (the page, the canvas) or on something that can no longer take it? */
+  function focusStranded() {
+    const a = document.activeElement;
+    if (!a || a === document.body || a === document.documentElement || a === ctx.engine?.renderer?.domElement) return true;
+    if (!a.isConnected || labelLayer.contains(a) || modal.contains(a)) return true;
+    return a.tabIndex < 0 && !a.closest('.journal');
+  }
+  function landFocus(rig, moving) {
+    if (!focusOnArrive) return;
+    if (rig.spot !== focusOnArrive) {
+      if (!moving) focusOnArrive = null; // (gone somewhere else meanwhile)
+      return;
+    }
+    if (moving) return;
+    const id = focusOnArrive;
+    focusOnArrive = null;
+    if (journal.isOpen || ui.isModalOpen || intro || !focusStranded()) return;
+    // (the overview: its first label; a place: its first ✦ in view — else the group itself)
+    const first = id === 'glen' ? labels.find((l) => l.shown)?.el : hsButtons.find((x) => x.tab === 0)?.b;
+    (first ?? hsLayer).focus({ preventScroll: true });
+  }
   let hsButtons = [];
   function rebuildHotspotButtons(spotId) {
     const list = ctx.interactions?.forSpot?.(spotId) ?? [];
@@ -296,10 +374,13 @@ export function createUI(ctx) {
   const speechAnnounce = h('div', { class: 'sr-only', 'aria-live': 'polite' });
   root.append(toasts, banner, speechLayer, speechAnnounce, fader);
   let bannerTimer = 0;
+  let bannerQuietUntil = 0; // (a page is about to open: no banner over it)
   let namedTimer = 0;
 
   // ── journal page ──────────────────────────────────────────────────────────
-  const journal = createJournal(ctx, { onClose: () => ui.closePanel(), onNavigate: (id) => ui.openEntry(id) });
+  // live polaroids of the pieces in the glen (until the owner's photos arrive)
+  const polaroids = ctx.engine ? createPolaroids(ctx) : null;
+  const journal = createJournal(ctx, { onClose: () => ui.closePanel(), onNavigate: (id) => ui.openEntry(id), polaroids });
   root.append(journal.el);
   /** user: closed by the visitor (✕, Esc, pull-down, a tap beside it) — history steps back / is rewritten. */
   function closeJournal({ release = true, user = false } = {}) {
@@ -361,7 +442,7 @@ export function createUI(ctx) {
   const map = createMap(ctx, {
     onPick: (id) => {
       closeModal('nav');
-      go(id);
+      goFocused(id);
     },
   });
 
@@ -547,10 +628,59 @@ export function createUI(ctx) {
     ctx.audio?.setEnabled?.(ctx.audio?.preference ?? true);
     syncSound();
     hideIntro();
-    ctx.cameraRig?.playIntro?.().then((ok) => {
-      if (ok) showHintOnce();
-    });
+    const flight = ctx.cameraRig?.playIntro?.();
+    if (flight) {
+      startFlight();
+      flight.then((ok) => {
+        endFlight();
+        if (ok) showHintOnce();
+      });
+    }
     ctx.engine?.renderer?.domElement?.focus?.({ preventScroll: true });
+  }
+
+  // ── the flight in: the glen alone (no HUD over the giants), the HUD fades in on the crane ──
+  /** Seconds into the flight when the HUD comes back (cameraRig INTRO: the crane rises 8.4 → 9.6 s). */
+  const HUD_BACK_AT = 9.2;
+  let flying = null; // { t }
+  const skipChip = h('button', { class: 'intro-skip', type: 'button', tabindex: '-1', 'aria-label': 'Skip the flight in', onclick: () => skipFlight() }, 'skip', h('span', { html: icon('right') }));
+  root.append(skipChip);
+  function startFlight() {
+    flying = { t: 0 };
+    root.classList.add('is-flying');
+    skipChip.tabIndex = 0;
+    window.addEventListener('pointerdown', onFlightInput, true);
+    window.addEventListener('keydown', onFlightInput, true);
+    window.addEventListener('wheel', onFlightInput, { capture: true, passive: true });
+  }
+  /** Any input during the flight (the rig hurries it along): the HUD is wanted now. */
+  function onFlightInput(e) {
+    if (skipChip.contains(e.target)) return; // (the chip does its own thing)
+    showHud();
+  }
+  function showHud() {
+    if (!root.classList.contains('is-flying')) return;
+    root.classList.remove('is-flying');
+    skipChip.tabIndex = -1;
+    if (document.activeElement === skipChip) ctx.engine?.renderer?.domElement?.focus?.({ preventScroll: true });
+    window.removeEventListener('pointerdown', onFlightInput, true);
+    window.removeEventListener('keydown', onFlightInput, true);
+    window.removeEventListener('wheel', onFlightInput, { capture: true });
+  }
+  function endFlight() {
+    flying = null;
+    showHud();
+  }
+  /** "skip ›": straight to the overview (a soft cut). */
+  function skipFlight() {
+    const rig = ctx.cameraRig;
+    showHud();
+    if (!flying || !rig?.transitioning) return;
+    if (reduced) return rig.snap();
+    ui.fade(true).then(() => {
+      rig.snap();
+      setTimeout(() => ui.fade(false), 60);
+    });
   }
   function skipToGuidebook() {
     hideIntro();
@@ -571,6 +701,17 @@ export function createUI(ctx) {
       /* ignore */
     }
     ui.toast(isTouch ? 'Drag to look around · pinch to zoom · tap the ✦ sparkles · the bar below takes you places' : 'Drag to look around · scroll to zoom · click the ✦ sparkles · ← → to travel', seen ? 4200 : 7000, { icon: 'sparkle' });
+    // a first visit: who made all this? — the name plate is the way to say hello
+    if (!seen && aboutId) {
+      setTimeout(() => {
+        if (journal.isOpen || ui.isModalOpen || intro) return;
+        ui.toast(`${isTouch ? 'Tap' : 'Click'} my name up there to say hello`, 5200, { icon: 'leaf' });
+        plate.classList.remove('is-hinting');
+        void plate.offsetWidth;
+        plate.classList.add('is-hinting');
+        setTimeout(() => plate.classList.remove('is-hinting'), 3400);
+      }, 7400);
+    }
   }
 
   // ── keyboard ──────────────────────────────────────────────────────────────
@@ -617,6 +758,7 @@ export function createUI(ctx) {
 
   // ── per-frame screen-space things (labels, hotspot buttons, speech, inset) ─
   const v = new THREE.Vector3();
+  const cv = new THREE.Vector3();
   const sp = {};
   const bubbles = new Set();
   /** The canvas box every projection uses (it is sized to the visible viewport, not 100vh). */
@@ -644,24 +786,33 @@ export function createUI(ctx) {
     return out;
   }
   const placed = [];
-  function frame() {
+  function frame(dt = 0) {
     const rig = ctx.cameraRig;
     const cam = ctx.camera;
     if (!rig || !cam) return;
+    // the flight in: the HUD fades back in as the camera cranes up into the overview
+    if (flying && (flying.t += dt) >= HUD_BACK_AT) showHud();
     cam.updateMatrixWorld(); // the rig moved it this frame; project with fresh matrices
     measureView();
     const W = view.w, H = view.h;
     // floating spot labels in the overview
     // (a debug/screenshot camera override shows them only when it looks at the glen from afar)
     const atGlen = rig.overridden ? cam.position.distanceTo(GLEN_CAM) < 14 : rig.spot === 'glen';
-    const showLabels = atGlen && !rig.transitioning && !rig.focused && !ui.isModalOpen && !intro;
+    const showLabels = atGlen && !rig.transitioning && !rig.focused && !journal.isOpen && !ui.isModalOpen && !intro;
     placed.length = 0;
     for (const l of labels) {
       let on = showLabels;
       let edge = 0;
       if (on) {
         toScreen(l.pos, sp);
-        on = sp.z < 1 && Math.abs(v.x) < 2.6 && v.y < 0.8 && v.y > -0.82;
+        // a place beyond the left / right edge (phones: the Velowerkstatt) is never
+        // simply dropped: its label is pinned to that edge at its height ("Velowerkstatt ›");
+        // one in frame shows while its anchor is within the frame's height
+        cv.copy(l.pos).applyMatrix4(cam.matrixWorldInverse);
+        const ahead = cv.z < -0.05;
+        const ax0 = sp.x - view.x;
+        const offX = !ahead || ax0 < 14 || ax0 > W - 14;
+        if (!offX) on = v.y < 0.8 && v.y > -0.82;
         if (on) {
           // the flag's size, measured now and then (not every frame: no layout thrash)
           if (!l.fw || ctx.engine.frame - (l.measured ?? -99) > 45) {
@@ -670,12 +821,26 @@ export function createUI(ctx) {
             l.fh = f.offsetHeight || 40;
             l.measured = ctx.engine.frame;
           }
-          let x = sp.x - view.x;
-          const y = sp.y - view.y;
-          // places beyond the frame (phones!) get a little signpost pinned to the edge
+          let ax = ax0;
+          let y = sp.y - view.y;
+          if (!ahead) {
+            // (behind the lens: the projection flips — the side it lies on, mid-height)
+            ax = cv.x < 0 ? -1 : W + 1;
+            y = H * 0.5;
+          }
+          if (offX) y = Math.min(H * 0.74, Math.max((narrow() ? 104 : 84) + (l.fh ?? 40) + 34, y));
+          let x = ax;
+          let nudge = 0;
+          // a place beyond the frame (phones!) gets a little signpost pinned to the edge;
+          // one whose anchor IS in frame keeps its stem on it and only slides its flag inwards
           const half = Math.min(110, l.fw / 2) + 10;
-          if (x < half) (edge = -1), (x = half);
+          const inFrame = ax > 14 && ax < W - 14;
+          if (inFrame) {
+            if (ax < l.fw / 2 + 8) nudge = l.fw / 2 + 8 - ax;
+            else if (ax > W - l.fw / 2 - 8) nudge = W - l.fw / 2 - 8 - ax;
+          } else if (x < half) (edge = -1), (x = half);
           else if (x > W - half) (edge = 1), (x = W - half);
+          l.nudge = nudge;
           l.x = view.x + x;
           l.y = view.y + y;
           placed.push(l);
@@ -706,6 +871,13 @@ export function createUI(ctx) {
       if (lift !== l.liftPx) {
         l.liftPx = lift;
         l.el.style.setProperty('--lift', `${lift}px`);
+        // a lifted label's long stem passes behind the flags below it, never across them
+        l.el.style.zIndex = lift > 2 ? '1' : '2';
+      }
+      const nudge = Math.round(l.nudge ?? 0);
+      if (nudge !== l.nudgePx) {
+        l.nudgePx = nudge;
+        l.el.style.setProperty('--nudge', `${nudge}px`);
       }
     }
     // keyboard hotspot buttons follow their markers; things beyond an edge are counted for the chips
@@ -733,6 +905,10 @@ export function createUI(ctx) {
     }
     syncChip(chips.l, yl, H);
     syncChip(chips.r, yr, H);
+    // a place chosen with the keyboard: focus lands on its first ✦ once the glide is over
+    if (focusOnArrive) landFocus(rig, moving);
+    // the arrival tag never stays over a detail being framed (a secret, a page)
+    if (rig.focused && banner.classList.contains('is-visible')) banner.classList.remove('is-visible');
     // speech bubbles
     for (const b of bubbles) b.update();
     // keep the subject framed beside the journal page — or just above the spot bar
@@ -784,7 +960,8 @@ export function createUI(ctx) {
     let nd = 0;
     for (const l of list) {
       const w = (l.fw ?? 140) + GAP, hh = (l.fh ?? 40) + GAP;
-      const left = l.x - w / 2, right = l.x + w / 2;
+      const cx = l.x + (l.nudge ?? 0);
+      const left = cx - w / 2, right = cx + w / 2;
       let bottom = l.y - 30; // the flag sits on a 30px stem
       for (let pass = 0; pass < 6; pass++) {
         let moved = false;
@@ -929,6 +1106,8 @@ export function createUI(ctx) {
 
   const ui = {
     root,
+    /** Live polaroids of the pieces (polaroid.js) — also handy from the console. */
+    polaroids,
     isPanelOpen: false,
     isModalOpen: false,
     setProgress(p, label) {
@@ -1046,7 +1225,10 @@ export function createUI(ctx) {
         else if (st.modal === 'guide') ui.showGuidebook();
         else showHintOnce();
       };
-      if (st.entry || st.modal) setTimeout(then, reduced ? 0 : 700);
+      if (st.entry || st.modal) {
+        bannerQuietUntil = performance.now() + 2500;
+        setTimeout(then, reduced ? 0 : 700);
+      }
       else then();
       return true;
     },
@@ -1068,7 +1250,9 @@ export function createUI(ctx) {
       ctx.interactions?.setFocused?.(null);
       ui.hideTooltip();
       journal.open(entry, { siblings: content.entriesForArea(entry.area) });
-      if (document.activeElement?.classList?.contains('hs-btn')) document.activeElement.blur();
+      // (focus is normally on the page's title by now; should the browser not have
+      // let it move yet, the button lets go — the page takes it on the next frame)
+      if (!journal.hasFocus && document.activeElement?.classList?.contains('hs-btn')) document.activeElement.blur();
       ui.isPanelOpen = true;
       root.classList.add('has-panel');
       banner.classList.remove('is-visible');
@@ -1082,7 +1266,7 @@ export function createUI(ctx) {
       try {
         if (hs) {
           ctx.interactions?.setOpen?.(hs);
-          rig.focus(hs.object, { ...(hs.focus ?? {}), ...(FOCUS_TWEAKS[id] ?? {}), spot: SPOT_BY_ID[hs.area] ? hs.area : undefined });
+          rig.focus(hs.object, { ...(hs.focus ?? {}), ...focusTweak(id, { narrow: narrow() }), spot: SPOT_BY_ID[hs.area] ? hs.area : undefined });
         } else {
           const spotId = SPOT_FOR_AREA[entry.area];
           if (spotId && spotId !== rig.spot) rig.goTo(spotId);
@@ -1105,6 +1289,7 @@ export function createUI(ctx) {
         'guide',
         renderGuidebook(ctx, {
           show3d: !!ctx.cameraRig,
+          polaroids,
           linkFor,
           onCopyLink: (link, e) => copyLink(link, e.title),
           onShow: (id) => {
@@ -1113,7 +1298,7 @@ export function createUI(ctx) {
           },
           onVisit: (id) => {
             closeModal('nav');
-            go(id);
+            goFocused(id);
           },
         }),
         { wide: true },
@@ -1135,7 +1320,7 @@ export function createUI(ctx) {
           'ul',
           { class: 'help__list' },
           isTouch
-            ? [row(['drag'], 'look around'), row(['pinch'], 'zoom in & out'), row(['two fingers'], 'move sideways'), row(['swipe', 'swipe'], 'look round to the edge — then on to the next place'), row(['tap ✦'], 'open a journal page')]
+            ? [row(['drag'], 'look around'), row(['pinch'], 'zoom in & out'), row(['two fingers'], 'move sideways'), row(['← swipe', 'swipe →'], 'look round to the edge — then on to the next place'), row(['tap ✦'], 'open a journal page')]
             : [row(['drag'], 'look around'), row(['scroll'], 'zoom in & out'), row(['right-drag', 'shift-drag'], 'move sideways'), row(['click ✦'], 'open a journal page'), row(['←', '→'], 'previous / next place'), row(['1', '–', '6'], 'jump to a place'), row(['G'], 'guidebook'), row(['M'], 'map'), row(['N'], 'day & night'), row(['Esc'], 'close'), row(['Tab'], 'step through the things at a place')],
         ),
         h('p', { class: 'help__secret' }, h('span', { html: icon('sparkle') }), isTouch ? 'Not everything here has a sparkle. A few little secrets hide in the glen — tap anything that looks curious, some things answer.' : 'Not everything here has a sparkle. A few little secrets hide in the glen — hover around and see who answers.', foundAllByDay() && h('span', { class: 'help__night' }, ' Some things only show themselves after dark (N).')),
@@ -1199,22 +1384,33 @@ export function createUI(ctx) {
         setTimeout(() => el.remove(), 500);
       }, ms);
     },
+    /**
+     * A small paper tag under the name plate on arrival: the place, how many pages
+     * wait there and whether a secret hides there too — for ~2 s, never over a
+     * detail being framed or a page that is opening.
+     */
     showAreaBanner(spotId) {
       const s = SPOT_BY_ID[spotId];
       if (!s) return;
+      const rig = ctx.cameraRig;
+      if (journal.isOpen || ui.isModalOpen || intro || rig?.focused || performance.now() < bannerQuietUntil) return;
       const info = content.areas[spotId];
-      const n = ctx.interactions?.forSpot?.(spotId)?.length ?? 0;
+      const it = ctx.interactions;
+      const list = it?.forSpot?.(spotId) ?? [];
+      const unread = list.filter((x) => !it.isVisited?.(x.entryId)).length;
+      const hidden = (it?.hotspots ?? []).filter((x) => x.kind === 'secret' && x.area === spotId && x.enabled && !x.visited).length;
+      const pages = list.length === 0 ? '' : unread === 0 ? 'every page read' : `${unread} page${unread === 1 ? '' : 's'} to read`;
+      const secret = hidden === 0 ? '' : hidden === 1 ? 'a secret hides here' : `${hidden} secrets hide here`;
       banner.replaceChildren(
         h('div', { class: 'banner__kicker' }, info?.kicker ?? s.subtitle),
         h('div', { class: 'banner__title' }, info?.title ?? s.title),
-        svg(`<svg class="banner__flourish" viewBox="0 0 220 14" aria-hidden="true"><path d="M2 8 C 40 2, 70 12, 110 7 S 180 3, 218 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`),
-        n > 0 && h('div', { class: 'banner__count' }, `${n} thing${n === 1 ? '' : 's'} to discover here`),
+        (pages || secret) && h('div', { class: 'banner__count' }, pages, pages && secret && ' · ', secret && h('span', { class: 'banner__spark', html: icon('sparkle') }), secret),
       );
       banner.classList.remove('is-visible');
       void banner.offsetWidth;
       banner.classList.add('is-visible');
       clearTimeout(bannerTimer);
-      bannerTimer = setTimeout(() => banner.classList.remove('is-visible'), 3600);
+      bannerTimer = setTimeout(() => banner.classList.remove('is-visible'), 2300);
     },
     speech(text, anchor, { duration } = {}) {
       if (!ctx.camera) return null;

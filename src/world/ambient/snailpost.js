@@ -1,10 +1,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The Schneckenpost — the glen's slowest and most reliable postal service.
-// A yellow post snail with a little postie riding in the saddle crawls the
-// paths: from the main path past the Schreinerei, along the bridge path,
-// over the humpbacked stone bridge to the Velowerkstatt on the far bank —
-// and back again, pausing at either end (deliveries!) and for a breather on
-// the bridge's crest.
+// A caramel garden snail in the post's livery (red saddle blanket with the
+// post horn) with a little postie riding in the saddle crawls the paths: from
+// the main path past the Schreinerei, along the bridge path, over the
+// humpbacked stone bridge to the Velowerkstatt on the far bank — and back
+// again, pausing at either end (deliveries!) and for a breather on the
+// bridge's crest. It is a small snail (× SNAIL_SCALE — it used to be wider
+// than the bridge and dwarfed its rider) and it starts out on the bridge
+// path, crawling towards the bridge: the crest is reached only well after
+// the visitor has arrived, so the arch, its lanterns and the Velowerkstatt
+// are never hidden behind a shell in the first views. At night its pale toon
+// body is dimmed (the windows and lanterns carry the light, not the snail).
 //
 // Plus the wild ones: two tiny snails grazing on mossy rocks; one of them is
 // a 'secret' hotspot.
@@ -14,8 +20,15 @@
 // pitches with the slope. CPU: one tiny update per frame, no allocations.
 // ─────────────────────────────────────────────────────────────────────────────
 import { getHeight, pathPolylines } from '../ground.js';
+import * as THREE from 'three';
 import { PATHS, OAK } from '../layout.js';
 import { palette } from '../../core/palette.js';
+
+/** The post snail's size (the rider keeps closer to a villager's size). */
+const SNAIL_SCALE = 0.7;
+const RIDER_SCALE = 1.2; // (relative to the snail: ≈ 0.84 of a villager)
+/** Where along the route it starts (on the bridge path, short of the bridge). */
+const START_S = 0.66;
 
 /** Height of the stone bridge's walking surface at local x (matches scene/riverside/bridge.js deckY). */
 function deckHeight(x) {
@@ -91,11 +104,17 @@ function sample(route, s, out = _a) {
 export function createSnailPost(ctx, { reduced = false } = {}) {
   const { makeSnail, makePerson } = ctx.props;
   const route = buildRoute();
-  const snail = makeSnail({ post: true, seed: 'schneckenpost-glen' });
+  // (a caramel shell with chestnut growth bands — the post's yellow lives on
+  //  in the rider's cap and the blanket's trim, not on a glowing shell)
+  const snail = makeSnail({ post: true, seed: 'schneckenpost-glen', scale: SNAIL_SCALE, shellColor: '#c08848', stripe: '#7a4c28', bodyColor: '#d9c6a4' });
   snail.group.name = 'ambient:schneckenpost';
   snail.group.rotation.order = 'YXZ';
   const rider = makePerson({ seed: 'postie-ruedi', name: 'Ruedi', hat: 'cap', hatColor: palette.postYellow, shirt: '#3f5f8f', pants: '#2f3b4f', scarf: true, scarfColor: palette.swissRed, action: 'ride' });
+  rider.group.scale.multiplyScalar(RIDER_SCALE);
   snail.seat.add(rider.group);
+  // the pale toon body dims at night (its own material instance: the ripple uniforms)
+  const bodyMat = snail.group.getObjectByName('schneckenpost-body')?.material ?? null;
+  const dayCol = bodyMat?.color?.clone() ?? null;
   ctx.scene.add(snail.group);
   snail.group.traverse((o) => {
     if (o.isMesh) o.castShadow = true;
@@ -113,14 +132,15 @@ export function createSnailPost(ctx, { reduced = false } = {}) {
     onActivate: () => ctx.ui?.speech?.(lines[line++ % lines.length], rider.group),
   });
 
-  const speed = reduced ? 0.32 : 0.5;
+  // (a smaller snail crawls a little slower)
+  const speed = (reduced ? 0.32 : 0.5) * 0.85;
   // state machine: crawl → pause (ends, bridge crest, now and then).
-  // It starts with a breather on the bridge's crest, the best seat in the glen
-  // (and out of every spot camera's way).
-  let s = route.crestS;
+  // It starts on the bridge path, heading for the bridge (it will take its
+  // breather on the crest later, once the visitor is looking round).
+  let s = route.length * START_S;
   let dir = 1;
-  let pause = 6;
-  let crestDone = true;
+  let pause = 1.5;
+  let crestDone = false;
   let yaw = 0, pitch = 0;
   const p = { x: 0, y: 0, z: 0 }, q = { x: 0, y: 0, z: 0 }, r = { x: 0, y: 0, z: 0 };
   let nextBreather = 12;
@@ -145,6 +165,10 @@ export function createSnailPost(ctx, { reduced = false } = {}) {
     rider,
     route,
     update(dt) {
+      if (bodyMat && dayCol) {
+        const k = THREE.MathUtils.smoothstep(ctx.env?.night ?? 0, 0.2, 0.9);
+        bodyMat.color.copy(dayCol).multiplyScalar(1 - 0.42 * k);
+      }
       if (dt <= 0) return;
       dt = Math.min(dt, 0.1);
       if (pause > 0) {

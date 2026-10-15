@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { getHeight, getPathDistance } from '../../world/ground.js';
 import { materials } from '../../core/materials.js';
-import { mats, xf, mossGeo, stoneGeo, leafGeo, addFern, addGrass, addFlower, addToadstool, TAU } from './kit.js';
+import { mats, xf, mossGeo, stoneGeo, leafGeo, addFern, addGrass, addFlower, addToadstool, TAU, KIT, SINK } from './kit.js';
 
 let glowCapMat = null;
 /** Pale, bioluminescent caps: barely tinted by day, softly glowing teal at night. */
@@ -36,18 +36,23 @@ export function scatterPad(F, rng, { cx, cz, r0, r1, keepOut = [], density = 1, 
     const r = Math.sqrt(rng.range(r0 * r0, r1 * r1));
     return [cx + Math.sin(a) * r, cz + Math.cos(a) * r];
   };
+  // (fewer on the lower tiers — but every item is still drawn, the thinned ones into a sink, so
+  //  the random draws and the next pad's layout never depend on the tier)
+  const dens = Math.min(1, Math.max(0, density));
+  const G = (i) => (Math.floor((i + 1) * dens) > Math.floor(i * dens) ? F : SINK);
   // a few soft moss cushions
-  const nMoss = Math.round(area * 0.12 * density);
+  const nMoss = Math.round(area * 0.12);
   for (let i = 0; i < nMoss; i++) {
     const [x, z] = sample();
     if (!free(x, z, 0.1)) continue;
-    F.add(M.moss, xf(mossGeo(rng, { r: rng.range(0.14, 0.3), h: rng.range(0.06, 0.11), sx: rng.range(0.8, 1.3) }), [x, getHeight(x, z), z], [0, rng.next() * 3, 0]), { cast: false });
+    G(i).add(M.moss, xf(mossGeo(rng, { r: rng.range(0.14, 0.3), h: rng.range(0.06, 0.11), sx: rng.range(0.8, 1.3) }), [x, getHeight(x, z), z], [0, rng.next() * 3, 0]), { cast: false });
   }
   // then clumps: each a little community of plants around a centre
-  const nClumps = Math.round(area * 0.9 * density);
+  const nClumps = Math.round(area * 0.9);
   for (let c = 0; c < nClumps; c++) {
     const [qx, qz] = sample();
     if (!free(qx, qz)) continue;
+    const FC = G(c);
     const theme = rng.next();
     const k = rng.int(3, 7);
     for (let i = 0; i < k; i++) {
@@ -57,28 +62,28 @@ export function scatterPad(F, rng, { cx, cz, r0, r1, keepOut = [], density = 1, 
       const roll = rng.next();
       if (theme < 0.4) {
         // grassy tussock with a flower or two
-        if (roll < 0.75) addGrass(F, rng, x, y, z, { size: rng.range(0.28, 0.5), blades: rng.int(3, 6) });
-        else addFlower(F, rng, x, y, z, { size: rng.range(0.045, 0.07), stem: rng.range(0.15, 0.35) });
+        if (roll < 0.75) addGrass(FC, rng, x, y, z, { size: rng.range(0.28, 0.5), blades: rng.int(3, 6) });
+        else addFlower(FC, rng, x, y, z, { size: rng.range(0.045, 0.07), stem: rng.range(0.15, 0.35) });
       } else if (theme < 0.62) {
         // ferny corner
-        if (roll < 0.6) addFern(F, rng, x, y, z, { size: rng.range(0.4, 0.8), fronds: rng.int(6, 9) });
-        else addGrass(F, rng, x, y, z, { size: rng.range(0.25, 0.4), blades: 3 });
+        if (roll < 0.6) addFern(FC, rng, x, y, z, { size: rng.range(0.4, 0.8), fronds: rng.int(6, 9) });
+        else addGrass(FC, rng, x, y, z, { size: rng.range(0.25, 0.4), blades: 3 });
       } else if (theme < 0.75) {
         // leaf litter, pebbles & a mossy stone
         if (roll < 0.6) {
           const lf = leafGeo(rng.range(0.08, 0.13), 0.7, 0.1, 2);
           lf.rotateX(-Math.PI / 2 + rng.jitter(0.2));
           lf.rotateY(rng.next() * TAU);
-          F.add(M.leafy, lf.translate(x, y + 0.012 + rng.next() * 0.01, z), { color: rng.pick(['#b8762e', '#c98a3a', '#9a5a2a', '#d9a441', '#7a5a2a']), cast: false });
-        } else F.add(M.stone, xf(stoneGeo(rng, { r: rng.range(0.05, 0.18), sy: 0.55, detail: 'low' }), [x, y + 0.02, z], [0, rng.next() * 3, 0]), { color: rng.pick(['#a49c8c', '#9c9282', '#b3a58c']), cast: false });
+          FC.add(M.leafy, lf.translate(x, y + 0.012 + rng.next() * 0.01, z), { color: rng.pick(['#b8762e', '#c98a3a', '#9a5a2a', '#d9a441', '#7a5a2a']), cast: false });
+        } else FC.add(M.stone, xf(stoneGeo(rng, { r: rng.range(0.05, 0.18), sy: 0.55, detail: 'low' }), [x, y + 0.02, z], [0, rng.next() * 3, 0]), { color: rng.pick(['#a49c8c', '#9c9282', '#b3a58c']), cast: false });
       } else if (theme < 0.88) {
         // toadstool ring
         const col = rng.pick(['#c4301f', '#c4301f', '#b8562a', '#a77c52', '#d8c8a8']);
-        addToadstool(F, rng, x, y, z, { size: rng.range(0.06, 0.15), color: col, warts: col === '#c4301f' });
+        addToadstool(FC, rng, x, y, z, { size: rng.range(0.06, 0.15), color: col, warts: col === '#c4301f' });
       } else {
         // wild flowers
-        addFlower(F, rng, x, y, z, { size: rng.range(0.05, 0.075), stem: rng.range(0.18, 0.4), color: rng.pick(['#f4f0e6', '#b48fd6', '#f2c14e', '#f29bb8']) });
-        if (roll < 0.5) addGrass(F, rng, x, y, z, { size: 0.3, blades: 3 });
+        addFlower(FC, rng, x, y, z, { size: rng.range(0.05, 0.075), stem: rng.range(0.18, 0.4), color: rng.pick(['#f4f0e6', '#b48fd6', '#f2c14e', '#f29bb8']) });
+        if (roll < 0.5) addGrass(FC, rng, x, y, z, { size: 0.3, blades: 3 });
       }
     }
   }
@@ -105,7 +110,8 @@ export function glowShrooms(F, rng, x, y, z, count = 5, halos = null) {
     F.add(M.stem, xf(new THREE.CylinderGeometry(0.008, 0.014, h, 5).translate(0, h / 2, 0), [px, y, pz], lean), { color: '#e8f0e4', cast: false });
     const tip = new THREE.Vector3(0, h, 0).applyEuler(new THREE.Euler(lean[0], 0, lean[2]));
     const cr = rng.range(0.03, 0.06);
-    const cap = new THREE.SphereGeometry(cr, 8, 4, 0, TAU, 0, Math.PI / 2).scale(1, rng.range(0.6, 1.1), 1);
+    const lo = KIT.detail < 0.6;
+    const cap = new THREE.SphereGeometry(cr, lo ? 6 : 8, lo ? 3 : 4, 0, TAU, 0, Math.PI / 2).scale(1, rng.range(0.6, 1.1), 1);
     F.add(glowCap(), cap.translate(px + tip.x, y + tip.y - cr * 0.1, pz + tip.z), { cast: false });
   }
   if (halos) halos.push({ x, y: y + 0.18, z, size: 0.55 });

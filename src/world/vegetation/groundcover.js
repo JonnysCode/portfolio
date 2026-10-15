@@ -86,7 +86,7 @@ export function mossyRock(B, rng, x, z, size, { flat = 0.6, sink = 0.32, color =
 }
 
 /** A soft moss mound / cushion (moss material). */
-export function mossMound(B, rng, x, z, w, h, { color = null } = {}) {
+export function mossMound(B, rng, x, z, w, h, { color = null, ground = null } = {}) {
   const [seg, rings] = moundSeg;
   const base = B.count;
   const idx0 = B.idx.length;
@@ -106,7 +106,8 @@ export function mossMound(B, rng, x, z, w, h, { color = null } = {}) {
       const pz = z + lx * sy + lz * cy;
       // dome profile; the rim dips below the soil
       const hh = h * Math.pow(Math.max(0, 1 - t * t), 0.8) * (1 + 0.15 * noise(px * 2.1, pz * 2.1)) - (t > 0.95 ? h * 0.25 : 0);
-      const py = getHeight(px, pz) + hh - 0.01;
+      // (ground: the surface it grows on — a log's back — else the forest floor)
+      const py = (ground ? ground(px, pz) : getHeight(px, pz)) + hh - 0.01;
       B.vert(px, py, pz, 0, 1, 0, 0, 0, c);
       if (k === 0) break; // single centre vertex
     }

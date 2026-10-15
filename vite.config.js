@@ -19,7 +19,7 @@ function contentReminder() {
       }
       const drafts = (src.match(/DRAFT/g) ?? []).length;
       const notes = [];
-      if (/email:\s*'[^']*@example\./.test(src)) notes.push('profile.email is still a placeholder (@example.com): the contact button stays hidden');
+      if (/email:\s*'[^']*@example\./.test(src)) notes.push('profile.email is still a placeholder (@example.com): the contact page leads with your strongest link instead');
       if (drafts) notes.push(`${drafts} DRAFT placeholders: those texts are hidden in production`);
       if (notes.length) this.warn(`\n  ✏️  src/content/content.js needs your real content:\n  - ${notes.join('\n  - ')}\n`);
     },

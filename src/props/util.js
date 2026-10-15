@@ -57,6 +57,15 @@ export const LAYERS = {
   plantCast: { mat: () => vcWind(0.06, 0.05), cast: true, receive: true },
 };
 
+/**
+ * Register a custom layer (e.g. lantern.js' candle-lit glass): def = { mat: () => Material,
+ * cast, receive, uv (keep the part's own uv), lamp (keep / add 'aLampDelay') }. Idempotent.
+ */
+export function defineLayer(name, def) {
+  if (!LAYERS[name]) LAYERS[name] = def;
+  return name;
+}
+
 const glowDefs = new Map();
 function layerDef(name) {
   if (LAYERS[name]) return LAYERS[name];

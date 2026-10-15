@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { getHeight, getNormal, getPathDistance } from '../ground.js';
 import { GeoBuilder, TAU, instanced, fieldBroad, groundPatches, normalizeAttributes } from './common.js';
+import { createRng } from '../../core/rng.js';
 import { canGrow, oakDist, OAK_KEEP } from './zones.js';
 
 /** A small curled leaf lying flat: tip along +Z, folded along the midrib, edges lifted (4 triangles). */
@@ -43,13 +44,16 @@ function pebbleGeometry() {
 }
 
 const LEAF_TONES = ['#8a5a2a', '#a8692c', '#b8823a', '#6e4a26', '#c49a48', '#93622f', '#7a6a30', '#a0502a'];
+/** (round 6) the front band's leaves: deep russet & umber — pale tan leaves in a sun fleck read as sand from the wide views */
+const FRONT_TONES = ['#6e4222', '#7a4a24', '#5e3c20', '#844a26', '#6a4a26', '#8a4424'];
 const PEBBLE_TONES = ['#9a9488', '#8b867c', '#a59d8c', '#7e7a72', '#b0a690'];
 
 /**
- * Scatter the litter. trees: forest plan trees ({ x, z, radius }).
+ * Scatter the litter. trees: forest plan trees ({ x, z, radius }); extra:
+ * ready-made leaf placements to add to the leaf mesh (the leaf drifts).
  * Returns the meshes (caller adds them) and the instance counts.
  */
-export function buildLitter(ctx, rng, { trees = [], density = 1 } = {}) {
+export function buildLitter(ctx, rng, { trees = [], density = 1, extra = [], avoid = null, front = false } = {}) {
   const M = ctx.materials;
   const leaves = [];
   const pebbles = [];
@@ -57,8 +61,9 @@ export function buildLitter(ctx, rng, { trees = [], density = 1 } = {}) {
   const gp = {};
   const tone = (list, l = 0.06) => new THREE.Color(rng.pick(list)).offsetHSL(rng.jitter(0.02), rng.jitter(0.08), rng.jitter(l));
 
-  const addLeaf = (x, z) => {
+  const addLeaf = (x, z, tones = LEAF_TONES) => {
     if (!canGrow(x, z, { path: 0.55, oak: OAK_KEEP })) return;
+    if (avoid && avoid(x, z)) return;
     getNormal(x, z, nrm);
     leaves.push({
       x,
@@ -68,7 +73,7 @@ export function buildLitter(ctx, rng, { trees = [], density = 1 } = {}) {
       tx: rng.jitter(0.25) - nrm.z * 0.6,
       tz: rng.jitter(0.25) + nrm.x * 0.6,
       s: rng.range(0.75, 1.35),
-      color: tone(LEAF_TONES),
+      color: tone(tones),
     });
   };
 
@@ -110,10 +115,36 @@ export function buildLitter(ctx, rng, { trees = [], density = 1 } = {}) {
     const w = pd > 0.85 && pd < 1.6 ? 0.8 : 0.03 + gp.soil * 0.75;
     if (!rng.chance(w)) continue;
     if (!canGrow(x, z, { path: 0.9 })) continue;
+    if (avoid && avoid(x, z)) continue;
     const s = rng.range(0.025, 0.07) * (rng.chance(0.1) ? 1.8 : 1);
     pebbles.push({ x, y: getHeight(x, z) - s * 0.25, z, ry: rng.range(0, TAU), tx: rng.jitter(0.3), tz: rng.jitter(0.3), s, sx: rng.range(0.8, 1.3), color: tone(PEBBLE_TONES, 0.08) });
   }
 
+  // (round 6) the front band the wide views look over (the bottom of
+  // glen-wide, its bottom-left, the old framing log's corridor): clumps of
+  // fallen leaves in the gaps between the ferns — its own random stream, so
+  // the glen's litter above stays exactly where it was
+  if (front) {
+    const frng = createRng('vegetation:litter-front');
+    const nF = Math.round(1400 * density);
+    let made = 0;
+    for (let k = 0; k < nF * 4 && made < nF; k++) {
+      const x = frng.range(-30, 28), z = frng.range(24, 46);
+      if (Math.hypot(x, z) > 46) continue;
+      groundPatches(x, z, gp);
+      const w = 0.35 + gp.drift * 0.6 + gp.soil * 0.4 - gp.cushion * 0.25 + (fieldBroad(x, z) > 0.55 ? 0.2 : 0);
+      if (!frng.chance(w)) continue;
+      const c = frng.int(2, 5);
+      for (let i = 0; i < c; i++) {
+        const before = leaves.length;
+        addLeaf(x + frng.jitter(0.35), z + frng.jitter(0.35), FRONT_TONES);
+        if (leaves.length > before) made++;
+      }
+    }
+  }
+
+  // (the ochre & russet leaf drifts of vegetation/drifts.js share the mesh)
+  for (const it of extra) leaves.push(it);
   const leafMat = M.surface('leaf', { vertexColors: true, side: THREE.DoubleSide });
   const pebbleMat = M.surface('rock', { vertexColors: true, mossy: 0.15, scale: 0.25 });
   const meshes = [

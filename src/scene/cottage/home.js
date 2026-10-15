@@ -16,7 +16,7 @@ import { COTTAGE } from '../../world/layout.js';
 import { getHeight } from '../../world/ground.js';
 import { createRng } from '../../core/rng.js';
 import { makeMushroomHouse } from '../../props/mushroomHouse.js';
-import { mats, mat4, xf, mossGeo, stoneGeo, addFern, addGrass, addFlower, addToadstool, FLOWER_COLORS } from './kit.js';
+import { mats, mat4, xf, mossGeo, stoneGeo, addFern, addGrass, addFlower, addToadstool, FLOWER_COLORS, SINK } from './kit.js';
 import { fenceArc, gateArch, flagstones, vegBed, pumpkin, gardenBench, woodpile, stringLights, makeWoodlandSign, makeMailbox, makeCat, wateringCan, pot, clothesline, rainBarrel, birdHouse, frog, hedgehog } from './garden.js';
 import { whenFontsReady, FONT_HAND } from '../../props/text.js';
 
@@ -194,7 +194,7 @@ export function buildHome(ctx, B, root, halos, smoke = [], rimHalos = null) {
     out.hotspots.push([cat.group, { kind: 'secret', area: 'home', label: 'A sleepy cat…', focus: { distance: 2.2, height: 0.15 }, onActivate: () => ctx.ui?.speech?.('Mrrrp.', cat.group) }]);
     // a mug and a book left on the bench
     const L = { add: (mat, geo, opts) => F.add(mat, geo.applyMatrix4(m), opts) };
-    L.add(M.clay, new THREE.CylinderGeometry(0.045, 0.04, 0.09, 10).translate(-0.4, seat.y + 0.045, 0.05), { color: '#e9e2d4', cast: false });
+    L.add(M.vc, new THREE.CylinderGeometry(0.045, 0.04, 0.09, 10).translate(-0.4, seat.y + 0.045, 0.05), { color: '#e9e2d4', cast: false });
     L.add(M.paper, xf(new THREE.BoxGeometry(0.2, 0.035, 0.15), [-0.15, seat.y + 0.02, 0.02], [0, 0.4, 0]), { color: '#7a3b2e', cast: false });
   }
 
@@ -210,30 +210,34 @@ export function buildHome(ctx, B, root, halos, smoke = [], rimHalos = null) {
   }
 
   // flowers & ferns along the inside of the fence, moss and toadstools by the houses
-  for (let i = 0; i < 46; i++) {
+  // (fewer on the lower tiers: every item is still drawn — the thinned ones into a sink — so
+  // the random draws, and with them everything placed after, never depend on the tier)
+  const dens = 0.45 + 0.55 * Math.min(1, ctx.quality?.density ?? 1);
+  const G = (i) => (Math.floor((i + 1) * dens) > Math.floor(i * dens) ? F : SINK);
+  for (let i = 0, n = 46; i < n; i++) {
     const az = rng.range(0.2, 2.1);
     if (Math.abs(az - HOME_DOOR_AZ) < 0.28) continue;
     const r = R - rng.range(0.15, 0.6);
     const [x, z] = at(az, r);
     if (az > 0.25 && az < 0.95 && r < 3.75) continue; // the veg bed
     const roll = rng.next();
-    if (roll < 0.55) addFlower(F, rng, x, 0, z, { size: rng.range(0.05, 0.08), stem: rng.range(0.18, 0.42), color: rng.pick(FLOWER_COLORS) });
-    else if (roll < 0.75) addFern(F, rng, x, 0, z, { size: rng.range(0.35, 0.6) });
-    else addGrass(F, rng, x, 0, z, { size: rng.range(0.25, 0.4), blades: 3 });
+    if (roll < 0.55) addFlower(G(i), rng, x, 0, z, { size: rng.range(0.05, 0.08), stem: rng.range(0.18, 0.42), color: rng.pick(FLOWER_COLORS) });
+    else if (roll < 0.75) addFern(G(i), rng, x, 0, z, { size: rng.range(0.35, 0.6) });
+    else addGrass(G(i), rng, x, 0, z, { size: rng.range(0.25, 0.4), blades: 3 });
   }
   // outside the fence: a few big ferns, mossy stones and fly agarics
-  for (let i = 0; i < 26; i++) {
+  for (let i = 0, n = 26; i < n; i++) {
     const az = rng.range(-0.4, 2.6);
     if (Math.abs(az - HOME_DOOR_AZ) < 0.32) continue;
     const r = rng.range(R + 0.25, R + 0.75);
     const [x, z] = at(az, r);
     const y = getHeight(x, z);
     const roll = rng.next();
-    if (roll < 0.3) addFern(F, rng, x, y, z, { size: rng.range(0.5, 0.8), fronds: 8 });
-    else if (roll < 0.5) F.add(M.moss, xf(mossGeo(rng, { r: rng.range(0.2, 0.4), h: 0.08 }), [x, y, z]), { cast: false });
-    else if (roll < 0.65) F.add(M.stone, xf(stoneGeo(rng, { r: rng.range(0.15, 0.3) }), [x, y + 0.05, z], [0, rng.next() * 3, 0]), { color: '#a49c8c', cast: false });
-    else if (roll < 0.85) addToadstool(F, rng, x, y, z, { size: rng.range(0.1, 0.2) });
-    else addGrass(F, rng, x, y, z, { size: 0.4, blades: 4 });
+    if (roll < 0.3) addFern(G(i), rng, x, y, z, { size: rng.range(0.5, 0.8), fronds: 8 });
+    else if (roll < 0.5) G(i).add(M.moss, xf(mossGeo(rng, { r: rng.range(0.2, 0.4), h: 0.08 }), [x, y, z]), { cast: false });
+    else if (roll < 0.65) G(i).add(M.stone, xf(stoneGeo(rng, { r: rng.range(0.15, 0.3) }), [x, y + 0.05, z], [0, rng.next() * 3, 0]), { color: '#a49c8c', cast: false });
+    else if (roll < 0.85) addToadstool(G(i), rng, x, y, z, { size: rng.range(0.1, 0.2) });
+    else addGrass(G(i), rng, x, y, z, { size: 0.4, blades: 4 });
   }
   // terracotta pots by the steps
   {

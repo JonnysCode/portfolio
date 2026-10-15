@@ -29,7 +29,7 @@
 import * as THREE from 'three';
 import { OAK } from '../../world/layout.js';
 import { getHeight } from '../../world/ground.js';
-import { DEG, TAU, OLD_OAK, BOUGH_BARK, DARK_OAK, NEW_WOOD, LICHEN, polar, radial, board, timber, branch, tubeAlong, xf, deform, stoneGeo, mossGeo, addToadstool, ivyCard, shelfFungus, lashing, weatherPaint, lichenGeo, crookedPath } from './kit.js';
+import { DEG, TAU, OLD_OAK, BOUGH_BARK, DARK_OAK, NEW_WOOD, LICHEN, LOD, lodRadial, lodSegs, polar, radial, board, timber, branch, tubeAlong, xf, deform, stoneGeo, mossGeo, addToadstool, ivyCard, shelfFungus, lashing, weatherPaint, lichenGeo, crookedPath } from './kit.js';
 import { ELEVATOR_AZ, STAIR_WELL, LIFT } from './deck.js';
 
 /** The stair's course: azimuths in degrees around the oak (it climbs clockwise). */
@@ -145,7 +145,7 @@ export function buildStairs(ctx, B, mats, env) {
       // seventh one a split half-log (a repair with whatever lay around)
       let g;
       if (log) {
-        g = new THREE.CylinderGeometry(STAIR.depth * 0.55, STAIR.depth * 0.55, len + 0.02, 9, 3, false, 0, Math.PI);
+        g = new THREE.CylinderGeometry(STAIR.depth * 0.55, STAIR.depth * 0.55, len + 0.02, lodRadial(9, 5), lodSegs(3, 1), false, 0, Math.PI);
         // axis along X, the round side down, flattened: a split log
         g.rotateZ(Math.PI / 2).rotateX(Math.PI).scale(1, 0.42, 1);
         g.translate(0, 0.015, 0);
@@ -170,8 +170,8 @@ export function buildStairs(ctx, B, mats, env) {
       }
       g.applyMatrix4(m);
       B.add(mats.timber(tone), g);
-      // two oak pegs through the tread into the bough
-      for (const k of [-1, 1]) {
+      // two oak pegs through the tread into the bough (only on 'high': below it they are a pixel)
+      for (const k of LOD.minutiae ? [-1, 1] : []) {
         const pp = polar(a, r0 + BR, s.y + 0.002).addScaledVector(t, k * 0.06);
         B.add(mats.timber(fresh ? '#8a6d4c' : '#4f4032'), xf(new THREE.CylinderGeometry(0.017, 0.017, 0.012, 6), [pp.x, pp.y, pp.z]), { cast: false });
       }

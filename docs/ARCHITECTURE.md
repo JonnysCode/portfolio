@@ -63,6 +63,12 @@ elevator track). `src/scene/oak/shape.js` also exports `crownBlocked(p, r)`,
 `trunkRadius`, `ROOTS`, `LIMBS`, `HOLLOWS`, `FORK_Y`. The crown spans y ≈ 12–45
 and ≈ 40 wide; the loft volume and every spot camera frustum are kept clear.
 
+Other shared world data: `ctx.forest = { trees, giants, canopy, glowSpots,
+flowerPatches, mossyRocks, snailRocks, logs, stumps, fairyRing: {x, y, z, r} }`
+(vegetation); `ctx.modules.terrain.paintBlooms(zones)` paints the flower drifts'
+wash into the ground; `ridgeHeight(u, w, groundY)` (scene/riverside/ridge.js)
+describes the waterfall escarpment that vegetation keeps clear.
+
 ## Art bible
 
 Reference images live in `/root/.claude/uploads/5671997e-a07c-5490-b81d-336014d01540/`
@@ -97,12 +103,26 @@ mushroom houses on platforms in a giant tree with rope bridges). Look at them.
   stylised look. Never mutate a cached material. The vertex-coloured oak
   `wood` keeps an orange hue whatever its vertex colours; for grey, weathered
   or silvered wood use the vertex-coloured `timber`, which normalises to white.
+  Wood with `species` + `vertexColors` renders at exactly the vertex colours
+  (adjust the colour, not the species). The moss overlay ignores vertex
+  colours; tune it with `mossGain`. Real end grain: box-UV helpers add
+  `END_GRAIN_V` (core/materials.js) to V on end-grain faces (`materials.boxUV()`
+  does). Bark with a near-white vertex colour renders as papery birch.
+  ⚠️ `scene/oak.js` and `oak/crown.js` string-patch lines of
+  `core/textures/surfaceShader.js` (`vec3 sfTP = sfWPos * sfTile.x;`,
+  `float thr = 1.15 - sfQ.x * 1.75;`, `diffuseColor.rgb *= sfCol;`, the foliage
+  translucency line) — renaming them silently disables the oak's patches.
 * **Light budget:** only `world/lighting.js` creates lights (sun/moon key,
   hemisphere, rim, the canopy-gap sunbeam). Builders may add **warm point lights
   only through `ctx.lights.addPoint(position, { color, day, night, priority, spot })`**,
   requested during the build; `ctx.lights.allocate()` then hands the tier's budget
   out (one per spot first, then by priority) — a request may never go live, so
   always pair it with emissive glow. Glow = emissive + bloom + glow sprites.
+  At night every request (live or not), the oak and bridge lanterns, collider
+  posts tagged `'path-lantern'`, lit doorways and every cluster of small fairy-light
+  bulbs (`props-glow-halo` materials) also get a warm **light pool** on the surface
+  below (`lightPool(s)` in `props/glow.js`, one draw call for all), and a night-only
+  "warm air" pass in post.js glows softly around warm lights.
 * **Life:** villagers busy with tasks, snails crawling (one is the treehouse
   elevator), smoke, swaying lanterns, fireflies, butterflies, the stream
   flowing, the waterfall foaming, motes drifting in sunbeams.
@@ -123,11 +143,20 @@ discoveries. Content lives only in `src/content/content.js`.
   `holdIntro()` / `playIntro()`, `focusDistance` (drives depth of field). Glides are
   planned around obstacles by `systems/cameraObstacles.js` (oak, giants, caps, houses):
   any Object3D whose `userData` has numeric `capRadius` and `rimY` is treated as a
-  mushroom cap (`makeMushroomHouse` sets them). `focus(obj, { search: 'wide' })` widens
-  the occluder search. Phones use each spot's `portrait` camera override (layout.js).
+  mushroom cap (`makeMushroomHouse` and the giant fly agarics set them). `focus(obj, { search: 'wide' })`
+  widens the occluder search; `obs.decorAlong(a, b)` counts soft occluders (fairy-light bulbs
+  — materials named `props-glow-halo` — and groups named `lampPost`) so close-ups avoid them,
+  and `systems/nearFade.js` dither-fades anything within ~0.9 of the lens (it appends to
+  three's `dithering_fragment` chunk: append, never replace). Phones use each spot's
+  `portrait` camera override (layout.js). The intro descends to an eye-level glide on the
+  main path before craning up into the overview (`debug.intro(sec)`, view `eyelevel`); the
+  HUD stays hidden while it flies (`.is-flying`, with a skip chip). A spot can have several
+  phone stops (`rig.stop`, `rig.stops(id)`, `rig.toStop(i)`; a flick steps through them).
+  The snail lift is a real ride (`scene/loft/ride.js`).
 * **Hotspots** (`ctx.interactions`): `add(object, { entryId, area, label, focus, kind })`,
   `forSpot(id)`, `findByEntry(id)`, `markVisited(id)`, `progress()`. `kind: 'secret'`
-  hotspots get no marker, sparkle on hover and count as discoveries. Entries with
+  hotspots get no marker, sparkle on hover and count as discoveries; after a while
+  idling at a spot one gives a one-time tell (`onTell(fn)`). Entries with
   `featured: true` get a small sparkle in the overview.
 * **UI** (`ctx.ui`): see the header of `src/ui/index.js` — `openEntry`, `showGuidebook`,
   `showMap`, `speech(text, object3d)`, `toast`, `bindWorld()` (called once the world exists).
@@ -137,7 +166,12 @@ discoveries. Content lives only in `src/content/content.js`.
   into a spot or entry, and Back/Forward walk the history.
 * **DRAFT content** (`src/ui/draft.js`): entries marked DRAFT in `content.js` are
   flagged in dev and hidden in production builds, together with the placeholder
-  `example.com` mail button. `?drafts=show|hide` overrides this.
+  `example.com` mail button. `?drafts=show|hide` overrides this. `presentEntry(entry,
+  { profile })` decides what a page shows; without an email the contact copy drops its
+  letter promise (an entry's `noMail: { subtitle, body }` overrides that).
+* **Polaroids** (`src/ui/polaroid.js`): until an entry has `images`, its page shows a
+  one-off render of the in-world piece (cached per entry, day and night; characters
+  turned away or in front are hidden for the photo).
 * **Link previews:** `public/og.jpg` (1200 × 630). The `og:image` URL in `index.html`
   is absolute and assumes GitHub Pages at `jonnyscode.github.io/portfolio`.
 
@@ -179,11 +213,21 @@ skipped (the rest of the glen still loads).
 ## Performance budget
 
 * Desktop target 60 fps (mid GPU), phones 30 fps at `medium`/`low` tier.
-  `ctx.quality.post` is `'full'` (bloom, AO, depth of field, grade), `'lite'`
-  (bloom + grade) or `false`; `density` scales scatter counts.
+  Every coarse-pointer device (phones, tablets) starts at `medium`; ≤ 2 cores or
+  ≤ 2 GB starts at `low`. A runtime **governor** (core/engine.js) watches the median
+  frame time and steps down DPR → AO → DOF → shadow map → shadow rate → bloom,
+  remembering the level (`localStorage` `woodland.governor.v1`; `?governor=0` off,
+  `?governor=reset` forgets). `ctx.quality.post` is `'full'` (bloom, AO, depth of
+  field, grade), `'lite'` (bloom + grade), `'grade'` (low tier: grade only) or
+  `false`; `density` scales scatter counts. `ctx.post.settings` is live-tunable
+  (day/night saturation, greens, highlight lift …) for A/B checks.
   `__woodland.ctx.moduleStats()` reports draw calls / triangles / shadow casters
-  per module.
-* Whole scene ≲ 2.5 M triangles and ≲ 450 draw calls at `high`.
+  per module, plus `budget`/`overBudget` where a module exposes `budget`
+  (terrain, vegetation, loft).
+* Whole scene ≲ 2.5 M triangles (sum of `moduleStats`, ≈ 2.3 M today) and ≲ 450
+  draw calls at `high`. The renderer's per-frame count adds the shadow pass
+  (≈ 0.75 M; the shadow map is redrawn every other frame), so it alternates
+  ≈ 2.2 / 3.0 M.
   Per scene module ≲ 60 draw calls. Merge static meshes per material
   (`mergeGeometries`), `InstancedMesh` for repeats (shingles, stones, leaves,
   bulbs). Share geometries & materials.

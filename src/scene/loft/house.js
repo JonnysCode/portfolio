@@ -16,7 +16,7 @@
 // so the whole house leans.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { DEG, TAU, WOOD, IRON, BRASS, TILE, addFlowerTuft, smallBitsRemap, paintBy, board, timber, beamBox, peg, xf, mat4, uvBox, deform, layShingles, ShingleField, shingleGeo, mossGeo, branch, ivyCard, tubeAlong, alongX, noiseA } from './kit.js';
+import { DEG, TAU, WOOD, IRON, BRASS, TILE, lodRadial, lodSegs, addFlowerTuft, smallBitsRemap, paintBy, board, timber, beamBox, peg, xf, mat4, uvBox, deform, layShingles, ShingleField, shingleGeo, mossGeo, branch, ivyCard, tubeAlong, alongX, noiseA } from './kit.js';
 
 // ── dimensions ──────────────────────────────────────────────────────────────
 export const HOUSE = {
@@ -230,7 +230,8 @@ export function buildHouse(ctx, B, mats, env, screens) {
     const normal = new THREE.Vector3().crossVectors(along, upDir);
     const origin = new THREE.Vector3(side > 0 ? x0 : x1, eaveY, side * eaveZ);
     // roof boards (sheathing) under the shakes — seen from below at the eaves
-    const sheet = board(roofLen, 0.04, slopeLen + 0.02, { along: 'x', rng, segs: 6 });
+    // (lod: false — it follows the sag under the shakes, keep its segments on every tier)
+    const sheet = board(roofLen, 0.04, slopeLen + 0.02, { along: 'x', rng, segs: 6, lod: false });
     const X = new THREE.Vector3(1, 0, 0);
     const mid = origin.clone().addScaledVector(along, roofLen / 2).addScaledVector(upDir, slopeLen / 2).addScaledVector(normal, -0.022);
     sheet.applyMatrix4(new THREE.Matrix4().makeBasis(X, normal, new THREE.Vector3().crossVectors(X, normal)).setPosition(mid));
@@ -428,9 +429,9 @@ export function buildHouse(ctx, B, mats, env, screens) {
     const p3 = new THREE.Vector3(pipe.x - 0.14, roofY + 1.5, zr - 0.18);
     const rust = mats.metal('#4b3a30');
     for (const [a, b] of [[p0, p1], [p1, p2], [p2, p3]]) {
-      const g = new THREE.CylinderGeometry(0.075, 0.075, a.distanceTo(b) + 0.02, 10, 1, true).rotateZ(Math.PI / 2);
+      const g = new THREE.CylinderGeometry(0.075, 0.075, a.distanceTo(b) + 0.02, lodRadial(10, 8), 1, true).rotateZ(Math.PI / 2);
       L.add(rust, alongX(g, a, b));
-      L.add(rust, xf(new THREE.TorusGeometry(0.078, 0.014, 5, 12), [b.x, b.y, b.z], [Math.PI / 2, 0, 0]), { cast: false });
+      L.add(rust, xf(new THREE.TorusGeometry(0.078, 0.014, lodSegs(5, 3), lodRadial(12, 8)), [b.x, b.y, b.z], [Math.PI / 2, 0, 0]), { cast: false });
     }
     // flashing collar on the roof
     const col = new THREE.CylinderGeometry(0.16, 0.2, 0.05, 10);

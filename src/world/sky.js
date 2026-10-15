@@ -3,9 +3,15 @@
 // glimpsed through canopy gaps and above the far crowns:
 //
 //   dome      soft blue-green sky, a luminous warm haze around the low sun
-//             (back-left), thin painterly cloud wisps; at night deep blue with
-//             stars peeking and a big hazy moon low over the far forest at the
-//             back-right, between the trunks. At and below the horizon it is
+//             (back-left), thin painterly cloud wisps, and painted into it the
+//             endless forest beyond the far giants: hazy far crowns rising from
+//             the horizon, a ragged leaf canopy hanging from above, faint
+//             distant trunks in the bright air between — so no gap between
+//             the giants ever opens onto a flat patch of sky; at night deep
+//             blue with faint twinkling stars in those gaps (now and then a
+//             shooting star) and a big storybook moon low over the far forest
+//             at the back-right, between the trunks (a clean disc with soft
+//             grey seas, a thin faint halo ring, a modest glow). At and below the horizon it is
 //             exactly the aerial-perspective mist colour, so the fogged far
 //             forest melts into it without a seam. On 'low' (thin far forest,
 //             no canopy shadows) the dome itself is pushed towards the mist so
@@ -29,6 +35,8 @@ import { buildBackdrop } from './env/backdrop.js';
 installFog();
 
 const DOME_RADIUS = 450;
+/** Angular radius of the hero moon disc (radians): a big storybook moon. */
+const MOON_RADIUS = 0.034;
 
 const domeVertex = /* glsl */ `
   varying vec3 vDir;
@@ -41,10 +49,23 @@ const domeVertex = /* glsl */ `
 const domeFragment = /* glsl */ `
   uniform vec3 uSkyZenith, uSkyMid, uSkyHorizon, uSunGlow;
   uniform vec3 uSunDir, uMoonDir;
-  uniform float uNight, uTime, uStars, uLow;
+  uniform float uNight, uTime, uStars, uLow, uMotion;
   varying vec3 vDir;
   ${GLSL_NOISE}
   ${FOG_GLSL}
+  // a row of rounded crowns along u (one per unit, random heights): 0 … 1
+  float skyCrowns(float u, float seed) {
+    float c = floor(u);
+    float f = fract(u) - 0.5;
+    float hgt = 0.45 + 0.55 * envHash(vec2(c, seed));
+    float w = 0.5 + 0.18 * envHash(vec2(c + 3.7, seed));
+    float b = sqrt(max(0.0, 1.0 - (f / w) * (f / w)));
+    // (neighbours overlap a little: no hard V between two crowns)
+    float cn = floor(u + 0.5);
+    float fn = fract(u + 0.5) - 0.5;
+    float bn = sqrt(max(0.0, 1.0 - (fn / 0.62) * (fn / 0.62))) * (0.35 + 0.5 * envHash(vec2(cn, seed + 1.3)));
+    return max(b * hgt, bn);
+  }
 
   void main() {
     vec3 d = normalize(vDir);
@@ -81,45 +102,9 @@ const domeFragment = /* glsl */ `
       col = mix(col, hazeCol, 0.82 * smoothstep(-0.02, 0.3, y));
     }
 
-    // ── stars peeking through ──
-    if (uNight > 0.01 && uStars > 0.5) {
-      vec3 sp = d * 70.0;
-      vec3 cell = floor(sp);
-      float h = envHash(cell.xy + cell.z * 17.31);
-      if (h > 0.6) {
-        vec3 off = vec3(envHash(cell.yz + 3.1), envHash(cell.zx + 7.7), envHash(cell.xy + 11.3)) - 0.5;
-        float dist = length(fract(sp) - 0.5 - off * 0.5);
-        float size = mix(0.06, 0.18, pow(fract(h * 13.7), 3.0));
-        float tw = 0.55 + 0.45 * sin(uTime * (1.3 + 2.7 * fract(h * 7.3)) + h * 60.0);
-        float star = smoothstep(size, size * 0.2, dist) * tw;
-        vec3 sc = mix(vec3(1.0, 0.9, 0.75), vec3(0.75, 0.85, 1.0), fract(h * 3.7));
-        col += sc * star * uNight * smoothstep(0.05, 0.3, y) * 2.2;
-      }
-    }
-
     // ── at & below the horizon: exactly the (fully fogged) mist colour ──
     vec3 mist = woodlandFogColor(d);
     col = mix(col, mist, 1.0 - smoothstep(-0.02, 0.16, y));
-
-    // ── moon disc + halo: low over the far forest at the back-right, glimpsed
-    //    between the colossal trunks — seen through the mist, so near the
-    //    horizon it is hazier and a touch warmer, and the painted treelines
-    //    pass in front of it ──
-    if (uNight > 0.01) {
-      float md = max(dot(d, uMoonDir), 0.0);
-      vec3 mr = normalize(cross(uMoonDir, vec3(0.0, 1.0, 0.0)));
-      vec3 mu = cross(mr, uMoonDir);
-      vec2 ml = vec2(dot(d, mr), dot(d, mu)) / 0.045;
-      float r = length(ml);
-      float clear = smoothstep(-0.01, 0.2, y);
-      vec3 moonCol = vec3(1.3, 1.3, 1.4) * mix(vec3(1.05, 0.95, 0.82), vec3(1.0), clear);
-      moonCol *= 0.8 + 0.2 * smoothstep(0.3, 0.7, envNoise(ml * 2.1 + 4.0));
-      moonCol *= mix(0.62, 1.0, smoothstep(-0.9, -0.2, dot(ml, vec2(-0.75, -0.2))));
-      float disc = smoothstep(1.0, 0.9, r) * step(0.0, dot(d, uMoonDir));
-      float haze = mix(0.55, 1.0, clear);
-      col += vec3(0.5, 0.6, 0.95) * (pow(md, 500.0) * 0.7 + pow(md, 60.0) * 0.3 + pow(md, 8.0) * 0.08) * uNight * haze;
-      col = mix(col, moonCol, disc * uNight * haze);
-    }
 
     // ── the endless forest beyond: two soft painted treelines dissolving in the mist ──
     float az = atan(d.x, -d.z);
@@ -127,15 +112,154 @@ const domeFragment = /* glsl */ `
     float tl2 = 0.035 + 0.035 * envFbm(vec2(az * 14.0, 7.3)) + 0.02 * envNoise(vec2(az * 70.0, 5.5));
     // by night the painted treelines dip around the low moon (a clearing far away)
     float moonAz = atan(uMoonDir.x, -uMoonDir.z);
-    float notch = uNight * (1.0 - smoothstep(0.05, 0.17, abs(az - moonAz)));
-    tl1 *= 1.0 - 0.8 * notch;
-    tl2 *= 1.0 - 0.6 * notch;
+    float notch = uNight * (1.0 - smoothstep(0.06, 0.2, abs(az - moonAz)));
+    tl1 *= 1.0 - 0.95 * notch;
+    tl2 *= 1.0 - 0.9 * notch;
     float fw = fwidth(y) * 1.5 + 0.002;
     vec3 far1 = mix(mist, uSkyZenith * 0.35 + mist * 0.45, 0.32 * day + 0.2 * uNight);
     vec3 far2 = mix(mist, uSkyZenith * 0.3 + mist * 0.4, 0.5 * day + 0.3 * uNight);
     col = mix(col, far1, smoothstep(fw, -fw, y - tl1) * smoothstep(-0.05, 0.02, y));
     col = mix(col, far2, smoothstep(fw, -fw, y - tl2) * smoothstep(-0.05, 0.02, y));
-    col = mix(col, mist, 1.0 - smoothstep(-0.03, 0.03, y));
+    // (under the moon the misty horizon sits a little lower: the far valley)
+    col = mix(col, mist, 1.0 - smoothstep(-0.03, 0.03, y + 0.025 * notch));
+
+    // ── stars: a few hundred faint twinkling points, seen in the gaps of the
+    //    canopy — down to just above the far crowns, fainter in the haze ──
+    if (uNight > 0.01 && uStars > 0.5) {
+      vec3 sp = d * 46.0;
+      vec3 cell = floor(sp);
+      float h = envHash(cell.xy + cell.z * 17.31);
+      if (h > 0.7) {
+        vec3 off = vec3(envHash(cell.yz + 3.1), envHash(cell.zx + 7.7), envHash(cell.xy + 11.3)) - 0.5;
+        float dist = length(fract(sp) - 0.5 - off * 0.5);
+        float big = pow(fract(h * 13.7), 4.0);
+        // (a few bigger, brighter ones survive the far-field blur of the lens)
+        float size = mix(0.07, 0.3, big);
+        float tw = 0.45 + 0.55 * sin(uTime * uMotion * (1.1 + 2.4 * fract(h * 7.3)) + h * 60.0);
+        float star = smoothstep(size, size * 0.15, dist) * mix(0.55, 1.0, tw * tw);
+        vec3 sc = mix(vec3(1.0, 0.92, 0.8), vec3(0.78, 0.88, 1.0), fract(h * 3.7));
+        float alt = smoothstep(0.015, 0.07, y) * mix(0.45, 1.0, smoothstep(0.07, 0.3, y));
+        col += sc * star * uNight * alt * mix(1.4, 4.5, big);
+      }
+      // a rare shooting star (≈ every 40 s, about 0.9 s long) streaking down
+      // across the low sky by the moon — a tiny secret for the patient
+      if (uMotion > 0.5) {
+        float period = 40.0;
+        float k = floor(uTime / period);
+        float ph = uTime - k * period;
+        float dur = 0.9;
+        if (ph < dur) {
+          float r1 = envHash(vec2(k, 3.7)), r2 = envHash(vec2(k, 9.1)), r3 = envHash(vec2(k, 5.3));
+          // in azimuth / elevation (radians): from upper left to lower right, or mirrored
+          vec2 s0 = vec2(mix(-0.35, 0.75, r1), mix(0.1, 0.24, r2));
+          vec2 dir2 = normalize(vec2(r3 > 0.5 ? 1.0 : -1.0, -0.42));
+          float u = ph / dur;
+          vec2 head = s0 + dir2 * u * 0.2;
+          vec2 q = vec2(az, asin(clamp(y, -1.0, 1.0)));
+          vec2 rel = q - head;
+          float along = dot(rel, -dir2);
+          float across = abs(rel.x * dir2.y - rel.y * dir2.x);
+          float trail = smoothstep(0.075, 0.0, along) * step(-0.002, along) * smoothstep(0.0022, 0.0, across);
+          float fade = smoothstep(0.0, 0.15, u) * (1.0 - smoothstep(0.7, 1.0, u));
+          col += vec3(0.9, 0.95, 1.0) * trail * fade * uNight * 2.2 * (1.0 - smoothstep(0.0, 0.075, along) * 0.6);
+        }
+      }
+    }
+
+    // ── the far forest wall beyond the giants: painted treelines in layers ──
+    //    rows of rounded far crowns at three depths (the farthest palest and
+    //    tallest, the nearest darkest), a scalloped leaf canopy hanging from
+    //    above, and between them the hazy air with faint far trunks standing
+    //    in it — the gaps between the far giants are never a flat patch of
+    //    sky. By night dark silhouettes against the moonlit haze (stars in
+    //    the air), the window around the moon kept open.
+    {
+      float el = asin(clamp(y, -1.0, 1.0));
+      float few = fwidth(el) * 1.2 + 1e-4;
+      float moonGap = uNight * (1.0 - smoothstep(0.09, 0.3, abs(az - moonAz))) * (1.0 - smoothstep(0.14, 0.32, el));
+      // three rows of rounded crowns: top edge = base + scalloped bumps + leafy notches
+      float e1 = 0.13 + 0.06 * envFbm(vec2(az * 2.3, 1.7)) + 0.045 * skyCrowns(az * 13.0, 3.1) + 0.005 * envNoise(vec2(az * 260.0, el * 260.0));
+      float e2 = 0.085 + 0.04 * envFbm(vec2(az * 3.1, 5.9)) + 0.035 * skyCrowns(az * 21.0, 8.3) + 0.004 * envNoise(vec2(az * 320.0, el * 320.0) + 7.0);
+      float e3 = 0.045 + 0.03 * envFbm(vec2(az * 4.3, 2.2)) + 0.026 * skyCrowns(az * 33.0, 4.7) + 0.003 * envNoise(vec2(az * 380.0, el * 380.0) - 3.0);
+      float gapK = 1.0 - 0.92 * moonGap;
+      float r1 = smoothstep(few, -few, el - e1 * gapK);
+      float r2 = smoothstep(few, -few, el - e2 * gapK);
+      float r3 = smoothstep(few, -few, el - e3 * gapK);
+      // the canopy hanging from above: inverted scallops, drooping lobes
+      float lobe = pow(envNoise(vec2(az * 8.0, 1.3)), 2.0);
+      float eC = 0.4 + 0.12 * envFbm(vec2(az * 2.7, 9.1)) - 0.1 * lobe - 0.035 * skyCrowns(az * 11.0, 6.6) - 0.006 * envNoise(vec2(az * 220.0, el * 220.0));
+      eC += 0.35 * moonGap;
+      float rC = smoothstep(-few, few, el - eC);
+      float wall = smoothstep(-0.03, 0.01, y) * (1.0 - smoothstep(0.66, 0.85, el));
+      // the hazy air between: the mist, a touch lighter higher up, faint far trunks
+      float hi = smoothstep(0.08, 0.4, el);
+      // (a misty depth glowing just above the far crowns, deeper and greener
+      //  up towards the canopy's shade — by day a sage haze, never sky-cyan;
+      //  by night the moonlit sky with its stars shows through)
+      vec3 airDay = mist * mix(1.1, 0.86, hi);
+      airDay = mix(vec3(dot(airDay, vec3(0.2126, 0.7152, 0.0722))), airDay, 0.72) + uSunGlow * 0.025;
+      vec3 air = mix(airDay, mix(mist, col, mix(0.3, 0.7, hi)), uNight);
+      float trunkLine = smoothstep(0.62, 0.92, envNoise(vec2(az * 36.0, 0.5))) * (1.0 - hi);
+      air = mix(air, mist * 0.86, trunkLine * 0.3 * (1.0 - uNight));
+      air += haze * day * 0.3;
+      col = mix(col, air, wall * (1.0 - moonGap) * 0.92);
+      // the rows: deeper than the mist, cool blue-green (near-black navy by night),
+      // each with a little leafy light and dark in it
+      float lv = envNoise(vec2(az * 120.0, el * 120.0)) * 0.5 + envNoise(vec2(az * 40.0, el * 40.0)) * 0.5;
+      vec3 deep = uSkyZenith * 0.26 + mist * 0.36;
+      vec3 sunAir = haze * day;
+      float lowK = 1.0 - 0.5 * uLow;
+      vec3 row1 = mix(mist, deep, mix(0.26, 0.35, uNight)) * mix(0.94, 1.05, lv) + sunAir * 0.45;
+      vec3 row2 = mix(mist, deep, mix(0.48, 0.55, uNight)) * mix(0.9, 1.07, lv) + sunAir * 0.32;
+      vec3 row3 = mix(mist, deep, mix(0.68, 0.7, uNight)) * mix(0.86, 1.08, lv) + sunAir * 0.2;
+      vec3 rowC = mix(mist, deep * 0.85, mix(0.62, 0.62, uNight)) * mix(0.84, 1.1, lv) + sunAir * 0.25;
+      col = mix(col, row1, r1 * wall * lowK);
+      col = mix(col, row2, r2 * wall * lowK);
+      col = mix(col, row3, r3 * wall * lowK);
+      col = mix(col, rowC, rC * wall * lowK * smoothstep(0.03, 0.12, y));
+    }
+
+    // ── the hero moon: a crisp, readable disc in the canopy gap above the
+    //    waterfall (the far forest keeps a window open for it, and a valley
+    //    beneath it), so the giants nearby stand as silhouettes. A storybook
+    //    moon: soft mare mottling, a gentle limb darkening, a clean edge, a
+    //    thin faint halo ring around it and only a modest glow — the bright
+    //    mist around it must not swallow the disc into a fog blob. It rises
+    //    out of the far valley's mist: its lowest rim is a little veiled ──
+    if (uNight > 0.01) {
+      float md = max(dot(d, uMoonDir), 0.0);
+      vec3 mr = normalize(cross(uMoonDir, vec3(0.0, 1.0, 0.0)));
+      vec3 mu = cross(mr, uMoonDir);
+      vec2 ml = vec2(dot(d, mr), dot(d, mu)) / ${MOON_RADIUS.toFixed(4)};
+      float r = length(ml); // (distance from the disc's centre, in disc radii)
+      float clear = smoothstep(-0.04, 0.1, y);
+      vec3 moonCol = vec3(1.08, 1.1, 1.16) * mix(vec3(1.06, 0.98, 0.9), vec3(1.0), clear);
+      // maria: a few big soft grey seas (big enough to survive the far-field
+      // blur of the depth of field), broken up by finer mottling
+      vec2 q = ml;
+      float mare = exp(-dot(q - vec2(-0.32, 0.36), q - vec2(-0.32, 0.36)) * 7.0)
+        + 0.8 * exp(-dot(q - vec2(0.2, 0.32), q - vec2(0.2, 0.32)) * 13.0)
+        + 0.85 * exp(-dot(q - vec2(0.38, -0.02), q - vec2(0.38, -0.02)) * 10.0)
+        + 0.7 * exp(-dot(q - vec2(-0.58, -0.12), q - vec2(-0.58, -0.12)) * 6.0)
+        + 0.5 * exp(-dot(q - vec2(0.02, -0.4), q - vec2(0.02, -0.4)) * 15.0);
+      mare = clamp(mare, 0.0, 1.0) * (0.65 + 0.35 * envNoise(q * 4.5 + 3.0));
+      moonCol *= 1.0 - 0.54 * mare;
+      moonCol *= mix(0.78, 1.0, smoothstep(-0.9, -0.15, dot(ml, vec2(-0.75, -0.2))));
+      moonCol *= 1.0 - 0.22 * pow(min(r, 1.0), 3.0);
+      // (a clean, antialiased edge)
+      float aa = max(fwidth(r), 1e-4) * 1.2;
+      float front = step(0.0, dot(d, uMoonDir));
+      float disc = (1.0 - smoothstep(1.0 - aa, 1.0 + aa, r)) * front;
+      float haze = mix(0.6, 1.0, clear);
+      // a tight corona hugging the limb, a soft glow, the wide faint Mie halo
+      vec3 halo = vec3(0.55, 0.66, 1.0) * (exp(-max(r - 1.0, 0.0) * 9.0) * 0.22 * step(1.0, r) * front + pow(md, 160.0) * 0.1 + pow(md, 8.0) * 0.12 + pow(md, 2.5) * 0.05);
+      // a thin faint halo ring a little way out
+      halo += vec3(0.62, 0.72, 1.0) * exp(-pow((r - 1.6) / 0.12, 2.0)) * 0.07 * front;
+      col += halo * uNight * haze;
+      // (low in the mist the disc dims and warms a little, but stays a solid disc)
+      float veil = smoothstep(-0.055, 0.0, y);
+      col = mix(col, moonCol * mix(0.82, 1.0, clear), disc * uNight * mix(0.6, 1.0, veil));
+    }
     // (low tier, night: a little above the horizon the gaps sink into darkness)
     if (uLow > 0.5) col *= mix(1.0, 0.6, uNight * smoothstep(0.03, 0.22, y));
 
@@ -165,6 +289,8 @@ export default async function build(ctx) {
       uSunGlow: U.uSunGlow, uSunDir: U.uSunDir, uMoonDir: U.uMoonDir,
       uNight: U.uNight, uTime: U.uTime,
       uStars: { value: 1 },
+      // (prefers-reduced-motion: the stars barely twinkle, no shooting star)
+      uMotion: { value: ctx.engine?.reducedMotion ? 0.15 : 1 },
       uLow: { value: (ctx.quality?.tier ?? 'high') === 'low' ? 1 : 0 },
     },
     vertexShader: domeVertex,
@@ -204,7 +330,9 @@ export default async function build(ctx) {
   const glowDir = new THREE.Vector3();
   const warm = new THREE.Color();
   const warmDay = new THREE.Color('#cfa565');
-  const warmNight = new THREE.Color('#3d5a8c');
+  // (by night the mist glows silver-blue towards the moon: the far trunks there
+  //  stand as silhouettes against it, as in the backlit references)
+  const warmNight = new THREE.Color('#6585bb');
   const isLow = (ctx.quality?.tier ?? 'high') === 'low';
   // (quality.post may be `true` = the tier's default chain: 'full' only on high)
   const postMode = ctx.quality?.post === true ? (ctx.quality?.tier === 'high' ? 'full' : 'lite') : ctx.quality?.post;
@@ -222,17 +350,17 @@ export default async function build(ctx) {
     }
     scene.fog.color.copy(U.uFogColor.value);
     scene.background.copy(U.uFogColor.value);
-    // in-scatter lobe: golden towards the sun by day, a faint cool moon glow by night
+    // in-scatter lobe: golden towards the sun by day, a broad silver moon glow by night
     glowDir.copy(SUN_SKY_DIR).lerp(MOON_SKY_DIR, smoothstep(0.3, 0.7, n)).normalize();
     fogParams.sun[0] = glowDir.x;
     fogParams.sun[1] = glowDir.y;
     fogParams.sun[2] = glowDir.z;
-    fogParams.sun[3] = 0.3 - 0.02 * n;
+    fogParams.sun[3] = 0.3 + 0.2 * n;
     warm.copy(warmDay).lerp(warmNight, n);
     fogParams.warm[0] = warm.r;
     fogParams.warm[1] = warm.g;
     fogParams.warm[2] = warm.b;
-    fogParams.warm[3] = 13 - 2 * n;
+    fogParams.warm[3] = 13 - 6 * n;
     // the ground mist thickens at night
     fogParams.height[0] = 0.0055 + 0.011 * n;
     fogParams.height[1] = 0.42 - 0.06 * n;
@@ -247,6 +375,7 @@ export default async function build(ctx) {
       applyNight(n);
     }
     // Adaptive distance haze: crisp diorama when zoomed out, soft depth up close.
+    backdrop?.camera(camera);
     const rig = ctx.cameraRig;
     if (rig?.target) focus.copy(rig.target);
     else focus.set(0, 4, -2);

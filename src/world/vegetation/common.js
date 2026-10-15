@@ -10,6 +10,12 @@
 //   mergeSafe(geos)   mergeGeometries that first aligns attribute sets
 //   moonlit(mat)      a clone of a foliage material that dims to a moonlit
 //                     silhouette at night, with a silver rim on its upper edges
+//                     (the old mossBalanced() patch is gone: the surface shader's
+//                     moss now ignores vertex colours itself — opts.mossGain)
+//   moonRim(mat)      a clone of a surface material with a narrow silver moon
+//                     rim at night (giant trunks' bark, mushroom domes, petals)
+//   nightPetals(mat)  moonRim + blue petals desaturating/darkening by night
+//   freeAfterUpload   drop static meshes' CPU vertex arrays once on the GPU
 //   noise helpers     seeded 2D simplex fields shared by terrain & scatter,
 //                     groundPatches() (cushions, drifts, clover, soil) and
 //                     microRelief() — the floor and the undergrowth agree
@@ -18,6 +24,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createNoise2D, fbm } from '../../core/noise.js';
 import { sharedUniforms } from '../../core/materials.js';
+import { MOON_LIGHT_DIR } from '../env/celestial.js';
 
 export const TAU = Math.PI * 2;
 
@@ -188,6 +195,18 @@ export class GeoBuilder {
       Nn[v * 3 + 2] /= l;
     }
   }
+  /**
+   * Drop the accumulated vertex data (plain JS arrays — ≈ 8 bytes a number,
+   * tens of MB for the forest) once the geometry has been emitted: a builder
+   * that a closure keeps alive must not keep its arrays alive too.
+   */
+  release() {
+    this.pos = [];
+    this.nor = [];
+    this.uv = [];
+    this.col = [];
+    this.idx = [];
+  }
   /** Emit the geometry (optionally recomputing smooth normals). */
   build({ computeNormals = false } = {}) {
     const g = new THREE.BufferGeometry();
@@ -279,6 +298,40 @@ export function instanced(name, geometry, material, items, { cast = false, recei
   return mesh;
 }
 
+// ─── memory: CPU copies of static geometry ──────────────────────────────────
+const dropArray = function () {
+  this.array = null;
+};
+/**
+ * Static, non-raycast meshes don't need their vertex arrays once WebGL has
+ * them: free each attribute's (and the index's, the instance matrices' and
+ * colours') CPU copy right after its upload. Bounds are computed first (the
+ * renderer culls by them). Skipped: meshes flagged userData.keepRaycast /
+ * keepCpu, glow halos (systems/cameraObstacles.js reads their positions),
+ * and whatever `skip(mesh)` says. Returns the number of meshes released.
+ */
+export function freeAfterUpload(meshes, { skip = null } = {}) {
+  let n = 0;
+  for (const o of meshes) {
+    if (!o || !(o.isMesh || o.isPoints)) continue;
+    if (o.userData.keepRaycast || o.userData.keepCpu || o.material?.name === 'props-glow-halo' || (skip && skip(o))) continue;
+    const g = o.geometry;
+    if (!g || g.userData.keepCpu) continue;
+    if (!g.boundingSphere) g.computeBoundingSphere();
+    if (!g.boundingBox) g.computeBoundingBox();
+    if (o.isInstancedMesh) {
+      if (!o.boundingSphere) o.computeBoundingSphere();
+      if (!o.boundingBox) o.computeBoundingBox();
+      o.instanceMatrix.onUpload(dropArray);
+      o.instanceColor?.onUpload(dropArray);
+    }
+    for (const a of Object.values(g.attributes)) if (a.isBufferAttribute) a.onUpload(dropArray);
+    g.index?.onUpload(dropArray);
+    n++;
+  }
+  return n;
+}
+
 /** Simple static mesh helper. */
 export function staticMesh(name, geometry, material, { cast = false, receive = true } = {}) {
   const m = new THREE.Mesh(geometry, material);
@@ -330,32 +383,68 @@ export function moonlit(base, { dim = 0.6, rim = 0.03, color = [0.55, 0.68, 0.92
   return m;
 }
 
-// ─── moss-balanced surfaces ──────────────────────────────────────────────────
+// ─── moon rim (surfaces) ─────────────────────────────────────────────────────
 /**
- * A clone of a vertex-coloured, `mossy` surface material whose moss overlay
- * ignores the vertex colour. (The overlay paints the moss texture's own albedo
- * and the vertex colour then multiplies it again: on a moss-tinted log, root
- * or stone top the two multiplied down to near black.) gain lifts the moss a
- * little towards the sunlit carpet around it. The cached material is never
- * mutated; if the surface shader changes the patch simply does nothing.
+ * A clone of a (cached) surface / standard material whose silhouette catches
+ * a narrow silver moon rim at night — on the edges that face the moonlight
+ * (lighting's MOON_LIGHT_DIR, back-right), brighter where the camera looks
+ * towards the moon (backlit). opts: rim (strength), pow (edge narrowness),
+ * up (0..1: weight towards upward faces — cap domes), side (0..1: weight
+ * towards the moon's side), color (linear rgb). By day nothing changes; the
+ * cached material itself is never mutated.
  */
-export function mossBalanced(base, gain = 1.3) {
+export function moonRim(base, { rim = 0.05, pow = 4, up = 0, side = 1, color = [0.6, 0.7, 0.95], afterColor = '', key: extraKey = '' } = {}) {
   const m = base.clone();
-  m.name = `${base.name}-mossbal`;
+  m.name = `${base.name}-moonrim`;
   const prev = m.onBeforeCompile;
+  const f = (v) => v.toFixed(3);
+  const md = MOON_LIGHT_DIR;
+  const mh = new THREE.Vector3(md.x, 0, md.z).normalize();
   m.onBeforeCompile = (shader, renderer) => {
     prev?.call(m, shader, renderer);
-    shader.fragmentShader = shader.fragmentShader.replace(
-      'sfCol = mix(sfCol, mA.rgb * mix(vec3(1.0), vec3(1.1, 1.14, 0.9), up), m);',
-      `#ifdef USE_COLOR
-    sfCol = mix(sfCol, mA.rgb * mix(vec3(1.0), vec3(1.1, 1.14, 0.9), up) * ${gain.toFixed(3)} / max(vColor.rgb, vec3(0.05)), m);
-#else
-    sfCol = mix(sfCol, mA.rgb * mix(vec3(1.0), vec3(1.1, 1.14, 0.9), up), m);
-#endif`,
-    );
+    shader.uniforms.uVegNight = sharedUniforms.uNight;
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uVegNight;')
+      .replace('#include <color_fragment>', `#include <color_fragment>\n${afterColor}`)
+      .replace('#include <opaque_fragment>', `if (uVegNight > 0.001) {
+    vec3 mrV = normalize(vViewPosition);
+    float mrEdge = pow(1.0 - abs(dot(normal, mrV)), ${f(pow)});
+    vec3 mrMoon = normalize((viewMatrix * vec4(${f(md.x)}, ${f(md.y)}, ${f(md.z)}, 0.0)).xyz);
+    vec3 mrMH = normalize((viewMatrix * vec4(${f(mh.x)}, 0.0, ${f(mh.z)}, 0.0)).xyz);
+    vec3 mrUp = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+    float mrSide = mix(1.0, smoothstep(-0.15, 0.6, dot(normal, mrMH)), ${f(side)});
+    float mrTop = mix(1.0, smoothstep(-0.1, 0.75, dot(normal, mrUp)), ${f(up)});
+    float mrBack = pow(max(dot(-mrV, mrMoon), 0.0), 4.0);
+    outgoingLight += vec3(${color.map(f).join(', ')}) * (mrEdge * mrSide * mrTop * ${f(rim)} * (1.0 + 2.0 * mrBack) * uVegNight);
+  }
+#include <opaque_fragment>`);
   };
   const key = m.customProgramCacheKey();
-  m.customProgramCacheKey = () => `${key}|mossbal-${gain}`;
+  m.customProgramCacheKey = () => `${key}|moonrim-${rim}-${pow}-${up}-${side}-${color.join(',')}${extraKey ? '-' + extraKey : ''}`;
   return m;
 }
 
+/**
+ * Night petals: blue flowers (forget-me-nots, bluebells, blue hydrangeas) go
+ * the way of real blue in moonlight — desaturated and darker (≈ 40 %), so the
+ * mint and teal glows stay the only cool, saturated colours of the night —
+ * and every petal's edge catches a tiny silver moon glint instead of the
+ * drift reading as one continuous wash of blue. Other hues barely change.
+ */
+export function nightPetals(base) {
+  return moonRim(base, {
+    rim: 0.03,
+    pow: 3,
+    up: 0.7,
+    side: 0.3,
+    key: 'night-petals',
+    afterColor: `{
+    vec3 npC = diffuseColor.rgb;
+    float npL = dot(npC, vec3(0.2126, 0.7152, 0.0722));
+    float npBlue = clamp((npC.b - max(npC.r, npC.g)) / max(npC.b, 1e-3), 0.0, 1.0);
+    float npK = smoothstep(0.15, 0.6, npBlue) * uVegNight;
+    npC = mix(npC, vec3(npL) * vec3(0.9, 0.95, 1.08), 0.55 * npK);
+    diffuseColor.rgb = npC * (1.0 - 0.4 * npK);
+  }`,
+  });
+}

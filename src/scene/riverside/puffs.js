@@ -63,6 +63,8 @@ uniform vec3 uKeyColor;
 uniform float uNight;
 uniform float uOpacity;
 uniform float uFloor;
+uniform float uGlow;
+uniform float uTime;
 varying float vAlpha;
 varying float vRand;
 varying float vY;
@@ -75,9 +77,16 @@ void main() {
   float a = pow(smoothstep(0.5, 0.0, d), 1.4) * vAlpha * uOpacity * (0.75 + 0.25 * vRand);
   // a soft floor (the pool's surface): the puff thins out instead of being cut off
   float fy = vY - c.y * vSize;
-  a *= smoothstep(uFloor, uFloor + 0.3, fy);
+  float floorK = smoothstep(uFloor, uFloor + 0.45, fy);
+  a *= floorK;
   float lit = 0.75 + 0.25 * smoothstep(0.3, -0.3, c.y);
   vec3 col = uColor * lit * (uKeyColor * 0.35 + uSkyHorizon * 0.6) * (1.0 - 0.6 * uNight);
+  if (uGlow > 0.0) {
+    // night: moonlit silver spray, a few droplets glinting as they tumble
+    float tw = step(0.86, vRand) * pow(max(0.0, sin(uTime * (3.0 + 5.0 * vRand) + vRand * 60.0)), 8.0);
+    col += vec3(0.55, 0.7, 0.95) * uGlow * uNight * (0.16 + 1.6 * tw * smoothstep(0.25, 0.0, d));
+    a = max(a, tw * uNight * uGlow * 0.6 * smoothstep(0.2, 0.0, d) * vAlpha * floorK);
+  }
   gl_FragColor = vec4(col, a);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -122,6 +131,7 @@ export function makePuffs(ctx, opts = {}) {
     uColor: { value: new THREE.Color(opts.color ?? '#f2f7f6') },
     uOpacity: { value: opts.opacity ?? 0.3 },
     uFloor: { value: opts.floor ?? -1e4 },
+    uGlow: { value: opts.nightGlow ?? 0 },
     uSkyHorizon: envUniforms.uSkyHorizon,
     uKeyColor: envUniforms.uKeyColor,
     uNight: sharedUniforms.uNight,

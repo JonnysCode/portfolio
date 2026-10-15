@@ -11,7 +11,8 @@
 // hands) that is animated as always, but they are drawn as ONE rigidly
 // skinned, vertex-coloured mesh (each part follows its Object3D as a bone):
 // a villager is 1 draw call (+1 for a wooden / glowing held item) and 1 shadow
-// draw, ~2.5k triangles.
+// draw, ~3–3.7k triangles (round parts are tessellated for close-ups; what is
+// tucked inside the head or hidden under a hat is dropped — see SEG).
 //
 // UPDATING — pick ONE mechanism (both are safe, they never double-update):
 //   • do nothing: the person registers itself in the props ticker and
@@ -92,34 +93,104 @@ function onHead(geo, x, y, grow = 0, roll = 0) {
 }
 
 /**
+ * Tessellation of the round parts. Heads, hair, beards, hats and bodies are
+ * smooth toy shapes: dense enough that close-ups (the deck tea party, Jonny at
+ * the Hobelbank) show soft curves, not facets. The triangles are paid for by
+ * dropping what nobody can see — the parts of hair / beard / hat shells tucked
+ * inside the head, and head or hair hidden under a hat (see headShell).
+ */
+const SEG = { head: [20, 15], shell: [22, 15], torso: [16, 10], limb: 6 };
+/** A vertex this far (in cover units ≈ direction) inside an outer shell is hidden by it. */
+const HIDE_MARGIN = 0.14;
+
+/** Keep only the triangles with at least one visible vertex (hidden: per-vertex flags). */
+function cullHidden(geo, hidden) {
+  const idx = geo.index.array;
+  const keep = [];
+  for (let i = 0; i < idx.length; i += 3) {
+    const a = idx[i], b = idx[i + 1], c = idx[i + 2];
+    if (!(hidden[a] && hidden[b] && hidden[c])) keep.push(a, b, c);
+  }
+  geo.setIndex(keep);
+  return geo;
+}
+
+/** Is direction d (unit, from the head centre) covered by one of these shells (with margin)? */
+const coveredBy = (shells, d) => shells.some((t) => (t.dist ?? t.cover)(d) > HIDE_MARGIN);
+
+/**
  * A shell around the head (hair, hats) that only keeps the region where
  * cover(d) > 0 (d = unit direction from the head centre); the rest is tucked
- * inside the head so it disappears.
+ * inside the head so it disappears — and those triangles, and the ones under
+ * an `outer` shell (a hat over the hair), are dropped. The tuck is a smooth
+ * ramp in `dist` (default: cover), not a step: the shell meets the head
+ * exactly along dist = 0, so a hairline or a beard's edge is a soft curve
+ * instead of a staircase along the sphere's grid.
  */
-function headShell(scale, cover, seg = [22, 14], flare = null) {
+// shells keep their thickness up to a short rise at the edge (hats a crisp one), then dive into the head
+const TUCK = { rise: 0.06, riseHat: 0.035, dive: 0.3, deep: 0.86 };
+function headShell(scale, cover, seg = SEG.shell, flare = null, outer = [], dist = cover, hat = false) {
+  const rise = hat ? TUCK.riseHat : TUCK.rise;
   const g = new THREE.SphereGeometry(HR * scale, seg[0], seg[1]);
   g.scale(HS[0], HS[1], HS[2]);
   const d = new THREE.Vector3();
-  deform(g, (v) => {
+  const hidden = new Uint8Array(g.attributes.position.count);
+  deform(g, (v, i) => {
     d.set(v.x / HS[0], v.y / HS[1], v.z / HS[2]).normalize();
-    const c = cover(d);
-    if (c < 0) v.multiplyScalar(Math.max(0.82, 1 + c * 1.5) * (0.9 / scale));
-    else if (flare) v.multiplyScalar(1 + flare(d));
+    const c = dist(d);
+    // radius (× HR): rises from the head surface at c = 0 to the full shell, dives to `deep` inside
+    let r;
+    if (c >= 0) {
+      const k = Math.min(1, c / rise);
+      r = (1 + (scale - 1) * k) * (1 + (flare ? flare(d) * k : 0));
+      if (coveredBy(outer, d)) hidden[i] = 1;
+    } else {
+      r = 1 - (1 - TUCK.deep) * Math.min(1, -c / TUCK.dive);
+      if (r < 0.975) hidden[i] = 1; // below the head's polygon chords: never seen
+    }
+    v.multiplyScalar(r / scale);
   });
   g.computeVertexNormals();
+  cullHidden(g, hidden);
   g.translate(0, HC, 0);
   return g;
+}
+
+/**
+ * Build the collected head shells (outermost first, each hiding what lies
+ * under the shells outside it) and the head itself (minus what they cover).
+ * shells: [{ scale, cover, dist?, seg?, flare?, hat?, add(geo) }]
+ */
+function buildHead(P, o, shells) {
+  // hats over hair over beard
+  shells.sort((a, b) => (b.hat ? 1 : 0) - (a.hat ? 1 : 0) || b.scale - a.scale);
+  shells.forEach((sh, i) => {
+    const outer = shells.slice(0, i).filter((t) => (t.hat && !sh.hat) || t.scale > sh.scale + 0.004);
+    sh.add(headShell(sh.scale, sh.cover, sh.seg ?? SEG.shell, sh.flare ?? null, outer, sh.dist ?? sh.cover, !!sh.hat));
+  });
+  const head = new THREE.SphereGeometry(HR, SEG.head[0], SEG.head[1]);
+  head.scale(HS[0], HS[1], HS[2]);
+  const pos = head.attributes.position;
+  const hidden = new Uint8Array(pos.count);
+  const d = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    d.set(pos.getX(i) / HS[0], pos.getY(i) / HS[1], pos.getZ(i) / HS[2]).normalize();
+    if (coveredBy(shells, d)) hidden[i] = 1;
+  }
+  cullHidden(head, hidden);
+  head.translate(0, HC, 0);
+  P.add('paint', head, o.skin);
 }
 
 // ── part builders (cached per colour/style combination) ─────────────────────
 function legGeos(o) {
   return cached(`p-leg|${o.pants}|${o.shoes}`, () => {
     const P = new Parts();
-    P.add('paint', new THREE.CapsuleGeometry(0.063, 0.1, 2, 6).translate(0, -0.1, 0), o.pants);
+    P.add('paint', new THREE.CapsuleGeometry(0.063, 0.1, 2, SEG.limb).translate(0, -0.1, 0), o.pants);
     // shoe: a chubby rounded toe + sole
-    const shoe = blob(0.072, [0.88, 0.62, 1.3], 8, 5);
+    const shoe = blob(0.072, [0.88, 0.62, 1.3], 9, 6);
     P.add('paint', shoe.translate(0, -0.228, 0.028), o.shoes);
-    P.add('paint', blob(0.07, [0.86, 0.22, 1.28], 8, 3).translate(0, -0.258, 0.028), shade(o.shoes, -0.12));
+    P.add('paint', blob(0.07, [0.86, 0.22, 1.28], 9, 3).translate(0, -0.258, 0.028), shade(o.shoes, -0.12));
     return P.finish();
   });
 }
@@ -127,14 +198,14 @@ function legGeos(o) {
 function armGeos(o, side) {
   return cached(`p-arm|${o.shirt}|${o.skin}|${side}|${o.sleeve}`, () => {
     const P = new Parts();
-    const sleeve = new THREE.CapsuleGeometry(0.047, 0.1, 2, 6).translate(0, -0.075, 0);
+    const sleeve = new THREE.CapsuleGeometry(0.047, 0.1, 2, SEG.limb).translate(0, -0.075, 0);
     paintFn(sleeve, (x, y, z, nx, ny, nz, i, c) => c.set(y < -0.13 && o.sleeve === 'short' ? o.skin : o.shirt));
     P.add('paint', sleeve);
     // cuff
-    if (o.sleeve !== 'short') P.add('paint', new THREE.CylinderGeometry(0.05, 0.05, 0.03, 7, 1, true).translate(0, -0.155, 0), shade(o.shirt, -0.06));
+    if (o.sleeve !== 'short') P.add('paint', new THREE.CylinderGeometry(0.05, 0.05, 0.03, SEG.limb, 1, true).translate(0, -0.155, 0), shade(o.shirt, -0.06));
     // mitten hand + thumb
     P.add('paint', blob(0.058, [0.95, 1.05, 0.9], 8, 6).translate(0, HAND_Y, 0.004), o.skin);
-    P.add('paint', blob(0.026, [1, 1.2, 1], 5, 3).translate(side * -0.04, HAND_Y + 0.012, 0.03), o.skin);
+    P.add('paint', blob(0.026, [1, 1.2, 1], 6, 4).translate(side * -0.04, HAND_Y + 0.012, 0.03), o.skin);
     return P.finish();
   });
 }
@@ -160,7 +231,17 @@ function torsoGeos(o) {
   const key = `p-torso|${o.shirt}|${o.pants}|${o.apron}|${o.apronColor}|${o.scarf}|${o.scarfColor}|${o.belt}|${o.buttons}`;
   return cached(key, () => {
     const P = new Parts();
-    const body = new THREE.SphereGeometry(1, 13, 9);
+    const body = new THREE.SphereGeometry(1, SEG.torso[0], SEG.torso[1]);
+    // what the apron's bib covers (its sphere patch, see addApron, with a margin) is never seen
+    const under = new Uint8Array(body.attributes.position.count);
+    if (o.apron) {
+      const bp = body.attributes.position;
+      for (let i = 0; i < bp.count; i++) {
+        const th = Math.acos(THREE.MathUtils.clamp(bp.getY(i), -1, 1));
+        const ph = Math.atan2(bp.getZ(i), -bp.getX(i));
+        if (Math.abs(ph - Math.PI / 2) < APRON.phi - 0.12 && th > APRON.theta[0] + 0.12 && th < APRON.theta[1] - 0.12) under[i] = 1;
+      }
+    }
     body.scale(TR[0], TR[1], TR[2]);
     // slightly pear shaped: wider bottom
     deform(body, (v) => {
@@ -175,6 +256,7 @@ function torsoGeos(o) {
       if (y < 0.075) c.set(o.pants);
       else c.set(o.shirt).lerp(new THREE.Color(shirtLow), Math.max(0, 0.2 - y) * 2);
     });
+    if (o.apron) cullHidden(body, under);
     P.add('paint', body);
     if (o.belt) {
       P.add('paint', band(0.085, 0.017), '#5c3d27');
@@ -185,7 +267,7 @@ function torsoGeos(o) {
     }
     if (o.apron) addApron(P, o);
     if (o.scarf) {
-      const ring = new THREE.TorusGeometry(0.12, 0.045, 6, 14);
+      const ring = new THREE.TorusGeometry(0.12, 0.045, 6, 16);
       ring.rotateX(Math.PI / 2);
       paintFn(ring, (x, y, z, nx, ny, nz, i, c) => c.set(Math.sin(Math.atan2(x, z) * 6) > 0 ? o.scarfColor : shade(o.scarfColor, 0.12)));
       P.add('paint', ring.translate(0, NECK_Y - 0.01, 0.0));
@@ -199,9 +281,12 @@ function torsoGeos(o) {
 }
 
 /** Carpenter's apron: leather bib + waist pocket with a pencil and a folding rule. */
+/** The apron bib's patch of the torso sphere: azimuth ±phi around the front, polar angles theta[0]..theta[1]. */
+const APRON = { phi: 0.95, theta: [Math.PI * 0.3, Math.PI * 0.88] };
+
 function addApron(P, o) {
   const col = o.apronColor;
-  const front = new THREE.SphereGeometry(1, 10, 8, Math.PI / 2 - 0.95, 1.9, Math.PI * 0.3, Math.PI * 0.58);
+  const front = new THREE.SphereGeometry(1, 12, 9, Math.PI / 2 - APRON.phi, 2 * APRON.phi, APRON.theta[0], APRON.theta[1] - APRON.theta[0]);
   front.scale(TR[0] * 1.07, TR[1] * 1.06, TR[2] * 1.12);
   deform(front, (v) => {
     const k = 1 + (v.y < 0 ? -v.y * 0.45 : -v.y * 0.25);
@@ -238,17 +323,14 @@ function headGeos(o) {
   return cached(key, () => {
     const P = new Parts();
     const skinDark = shade(o.skin, -0.06);
-    const head = new THREE.SphereGeometry(HR, 16, 12);
-    head.scale(HS[0], HS[1], HS[2]);
-    head.translate(0, HC, 0);
-    P.add('paint', head, o.skin);
-    P.add('paint', new THREE.CylinderGeometry(0.06, 0.07, 0.08, 7, 1, true).translate(0, 0.02, 0), skinDark);
+    const shells = [];
+    P.add('paint', new THREE.CylinderGeometry(0.06, 0.07, 0.08, 8, 1, true).translate(0, 0.02, 0), skinDark);
     // ears
-    for (const s of [-1, 1]) P.add('paint', blob(0.046, [0.55, 1, 0.8], 5, 4).translate(s * HR * HS[0] * 0.98, HC - 0.01, -0.01), o.skin);
+    for (const s of [-1, 1]) P.add('paint', blob(0.046, [0.55, 1, 0.8], 6, 4).translate(s * HR * HS[0] * 0.98, HC - 0.01, -0.01), o.skin);
     // nose, cheeks, smile, brows
-    P.add('paint', onHead(blob(0.024, [1.1, 0.9, 0.8], 5, 3), 0, -0.045, 0.004), shade(o.skin, -0.03));
-    for (const s of [-1, 1]) P.add('paint', onHead(blob(0.044, [1.15, 0.72, 0.25], 7, 3), s * 0.128, -0.075, 0.004), CHEEK);
-    const smile = new THREE.TorusGeometry(0.03, 0.0085, 3, 8, Math.PI);
+    P.add('paint', onHead(blob(0.024, [1.1, 0.9, 0.8], 6, 4), 0, -0.045, 0.004), shade(o.skin, -0.03));
+    for (const s of [-1, 1]) P.add('paint', onHead(blob(0.044, [1.15, 0.72, 0.25], 8, 3), s * 0.128, -0.075, 0.004), CHEEK);
+    const smile = new THREE.TorusGeometry(0.03, 0.0085, 3, 10, Math.PI);
     smile.rotateZ(Math.PI);
     P.add('paint', onHead(smile, 0, -0.085, 0.004), INK);
     if (o.brows) {
@@ -258,10 +340,11 @@ function headGeos(o) {
         P.add('paint', onHead(brow, s * 0.088, 0.072, 0.004, s * 0.12), shade(o.hairColor, -0.05));
       }
     }
-    if (o.beard) addBeard(P, o);
+    if (o.beard) addBeard(P, o, shells);
     if (o.glasses) addGlasses(P, o);
-    addHair(P, o);
-    addHat(P, o);
+    addHair(P, o, shells);
+    addHat(P, o, shells);
+    buildHead(P, o, shells);
     return P.finish();
   });
 }
@@ -280,10 +363,15 @@ function eyeGeos() {
   });
 }
 
-function addBeard(P, o) {
-  const beard = headShell(1.06, (d) => (d.z > -0.15 && d.y < -0.18 + Math.abs(d.x) * 0.25 ? 1 : -1), [16, 11], (d) => (d.y < -0.3 ? (-d.y - 0.3) * 0.25 : 0));
-  P.add('paint', beard, o.hairColor);
-  for (const s of [-1, 1]) P.add('paint', onHead(blob(0.034, [1.5, 0.7, 0.7], 8, 5), s * 0.03, -0.068, 0.012, s * 0.25), o.hairColor);
+function addBeard(P, o, shells) {
+  shells.push({
+    scale: 1.06,
+    cover: (d) => (d.z > -0.15 && d.y < -0.18 + Math.abs(d.x) * 0.25 ? 1 : -1),
+    dist: (d) => Math.min(d.z + 0.15, -0.18 + Math.abs(d.x) * 0.25 - d.y),
+    flare: (d) => (d.y < -0.3 ? (-d.y - 0.3) * 0.25 : 0),
+    add: (g) => P.add('paint', g, o.hairColor),
+  });
+  for (const s of [-1, 1]) P.add('paint', onHead(blob(0.034, [1.5, 0.7, 0.7], 9, 5), s * 0.03, -0.068, 0.012, s * 0.25), o.hairColor);
 }
 
 function addGlasses(P) {
@@ -304,7 +392,7 @@ function addGlasses(P) {
   P.add('paint', onHead(bridge, 0, 0.005, 0.036), frame);
 }
 
-function addHair(P, o) {
+function addHair(P, o, shells) {
   const c = o.hairColor;
   const style = o.hairStyle;
   if (style === 'bald' || style === 'none') return;
@@ -322,25 +410,25 @@ function addHair(P, o) {
     return d.y - cut;
   };
   if (style === 'bob' || style === 'long') {
-    P.add('paint', headShell(1.085, coverBob, [16, 11], (d) => (d.y < 0 ? -d.y * 0.12 : 0)), c);
+    shells.push({ scale: 1.085, cover: coverBob, flare: (d) => (d.y < 0 ? -d.y * 0.12 : 0), add: (g) => P.add('paint', g, c) });
     if (style === 'long') {
-      P.add('paint', xf(new THREE.CapsuleGeometry(0.15, 0.16, 4, 10), [0, HC - 0.2, -0.13], [0.15, 0, 0], [1.25, 1, 0.65]), c);
+      P.add('paint', xf(new THREE.CapsuleGeometry(0.15, 0.16, 5, 14), [0, HC - 0.2, -0.13], [0.15, 0, 0], [1.25, 1, 0.65]), c);
     }
   } else {
-    P.add('paint', headShell(1.075, coverShort, [15, 10]), c);
+    shells.push({ scale: 1.075, cover: coverShort, add: (g) => P.add('paint', g, c) });
   }
   // bangs along the hairline
   if (style !== 'spiky' && !(o.hat === 'beanie' || o.hat === 'acorn' || o.hat === 'bandana')) {
     const n = style === 'curly' ? 5 : 3;
     for (let i = 0; i < n; i++) {
       const x = (i - (n - 1) / 2) * (0.24 / n);
-      P.add('paint', onHead(blob(0.06, [1.2, 0.7, 0.55], 5, 3), x, 0.11 + Math.cos(x * 6) * 0.015, 0.012, x * 2), c);
+      P.add('paint', onHead(blob(0.06, [1.2, 0.7, 0.55], 7, 4), x, 0.11 + Math.cos(x * 6) * 0.015, 0.012, x * 2), c);
     }
   }
   const hatted = o.hat && o.hat !== 'none';
-  if (style === 'bun' && !hatted) P.add('paint', blob(0.085, [1, 0.95, 1], 9, 6).translate(0, HC + HR * 0.95, -0.09), c);
+  if (style === 'bun' && !hatted) P.add('paint', blob(0.085, [1, 0.95, 1], 11, 7).translate(0, HC + HR * 0.95, -0.09), c);
   if (style === 'pony') {
-    P.add('paint', xf(new THREE.CapsuleGeometry(0.055, 0.14, 4, 8), [0, HC - 0.02, -0.27], [-0.5, 0, 0]), c);
+    P.add('paint', xf(new THREE.CapsuleGeometry(0.055, 0.14, 4, 10), [0, HC - 0.02, -0.27], [-0.5, 0, 0]), c);
     P.add('paint', xf(new THREE.TorusGeometry(0.045, 0.014, 4, 10), [0, HC + 0.06, -0.24], [Math.PI / 2 - 0.5, 0, 0]), palette.capCoral);
   }
   if (style === 'curly') {
@@ -352,7 +440,7 @@ function addHair(P, o) {
       const d = new THREE.Vector3(Math.sin(a) * Math.cos(el), Math.sin(el), Math.cos(a) * Math.cos(el));
       if (d.z > 0.45 && d.y < 0.55) continue;
       const p = new THREE.Vector3(d.x * HR * HS[0] * 1.07, HC + d.y * HR * HS[1] * 1.07, d.z * HR * HS[2] * 1.07);
-      P.add('paint', blob(rng.range(0.055, 0.075), [1, 1, 1], 6, 5).translate(p.x, p.y, p.z), i % 3 ? c : shade(c, 0.05));
+      P.add('paint', blob(rng.range(0.055, 0.075), [1, 1, 1], 7, 5).translate(p.x, p.y, p.z), i % 3 ? c : shade(c, 0.05));
     }
   }
   if (style === 'spiky' && !hatted) {
@@ -361,7 +449,7 @@ function addHair(P, o) {
       const a = (i / 7) * Math.PI * 2;
       const el = 0.95 + (i % 2) * 0.3;
       const d = new THREE.Vector3(Math.sin(a) * Math.cos(el), Math.sin(el), Math.cos(a) * Math.cos(el) - 0.1).normalize();
-      const cone = new THREE.ConeGeometry(0.055, 0.12, 5, 1, true);
+      const cone = new THREE.ConeGeometry(0.055, 0.12, 6, 1, true);
       cone.translate(0, 0.05, 0);
       cone.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(UP, d));
       P.add('paint', cone.translate(d.x * HR * 0.98, HC + d.y * HR * 0.93, d.z * HR * 0.98), c);
@@ -369,27 +457,34 @@ function addHair(P, o) {
   }
 }
 
-function addHat(P, o) {
+function addHat(P, o, shells) {
   const c = o.hatColor;
   const top = HC + HR * HS[1];
   switch (o.hat) {
     case 'beanie': {
       const cover = (d) => d.y - (0.1 + d.z * 0.14);
-      const shell = headShell(1.085, cover, [16, 10], (d) => Math.max(0, d.y - 0.6) * 0.12);
-      paintFn(shell, (x, y, z, nx, ny, nz, i, col) => col.set(Math.sin(Math.atan2(x, z) * 9) > 0 ? c : shade(c, -0.05)));
-      P.add('paint', shell);
-      const brim = new THREE.TorusGeometry(HR * 1.02, 0.036, 5, 18);
+      shells.push({
+        scale: 1.092, // just outside a bob (1.085) — never coplanar with the hair
+        hat: true,
+        cover,
+        flare: (d) => Math.max(0, d.y - 0.6) * 0.12,
+        add: (shell) => {
+          paintFn(shell, (x, y, z, nx, ny, nz, i, col) => col.set(Math.sin(Math.atan2(x, z) * 9) > 0 ? c : shade(c, -0.05)));
+          P.add('paint', shell);
+        },
+      });
+      const brim = new THREE.TorusGeometry(HR * 1.02, 0.036, 5, 24);
       brim.rotateX(Math.PI / 2);
       brim.scale(HS[0], 1.15, HS[2]);
       xf(brim, [0, HC + HR * 0.16, -0.012], [-0.14, 0, 0]);
       P.add('paint', brim, shade(c, -0.08));
-      P.add('paint', new THREE.IcosahedronGeometry(0.068, 1).translate(0, top + 0.06, -0.035), palette.spots);
+      P.add('paint', blob(0.068, [1, 1, 1], 9, 7).translate(0, top + 0.06, -0.035), palette.spots);
       break;
     }
     case 'mushroom': {
       const R = HR * 1.45;
       const capPts = [[0, 0.2], [R * 0.45, 0.185], [R * 0.78, 0.13], [R * 0.97, 0.04], [R, -0.005], [R * 0.9, -0.02], [R * 0.5, 0.0], [0, 0.0]];
-      const nonIdx = revolve(capPts, 13);
+      const nonIdx = revolve(capPts, 22);
       paintFn(nonIdx, (x, y, z, nx, ny, nz, i, col) => col.set(ny < -0.2 ? palette.stemShade : c));
       xf(nonIdx, [0, top - 0.07, -0.02], [-0.12, 0, 0.08]);
       P.add('paint', nonIdx);
@@ -398,7 +493,7 @@ function addHat(P, o) {
         const a = (i / 6) * Math.PI * 2 + rng.jitter(0.3);
         const rr = R * (i % 2 ? 0.62 : 0.35);
         const y = 0.2 - (rr / R) ** 2 * 0.12;
-        const spot = blob(0.032 + (i % 2) * 0.01, [1, 0.35, 1], 6, 2);
+        const spot = blob(0.032 + (i % 2) * 0.01, [1, 0.35, 1], 7, 2);
         xf(spot, [Math.sin(a) * rr, y + 0.004, Math.cos(a) * rr], [Math.cos(a) * (rr / R) * 0.5, 0, -Math.sin(a) * (rr / R) * 0.5]);
         xf(spot, [0, top - 0.07, -0.02], [-0.12, 0, 0.08]);
         P.add('paint', spot, palette.spots);
@@ -406,29 +501,35 @@ function addHat(P, o) {
       break;
     }
     case 'straw': {
-      const brim = new THREE.CylinderGeometry(0.4, 0.41, 0.018, 18);
+      const brim = new THREE.CylinderGeometry(0.4, 0.41, 0.018, 28);
       paintFn(brim, (x, y, z, nx, ny, nz, i, col) => col.set(Math.sin(Math.hypot(x, z) * 90) > 0 ? c : shade(c, -0.06)));
       xf(brim, [0, top - 0.06, -0.01], [-0.1, 0, 0]);
       P.add('paint', brim);
-      const crown = new THREE.CylinderGeometry(0.19, 0.225, 0.14, 14);
+      const crown = new THREE.CylinderGeometry(0.19, 0.225, 0.14, 20);
       paintFn(crown, (x, y, z, nx, ny, nz, i, col) => col.set(Math.sin(y * 120) > 0 ? c : shade(c, -0.06)));
       xf(crown, [0, top + 0.01, -0.02], [-0.1, 0, 0]);
       P.add('paint', crown);
-      P.add('paint', xf(new THREE.CylinderGeometry(0.228, 0.228, 0.035, 14, 1, true), [0, top - 0.035, -0.015], [-0.1, 0, 0]), palette.swissRed);
+      P.add('paint', xf(new THREE.CylinderGeometry(0.228, 0.228, 0.035, 20, 1, true), [0, top - 0.035, -0.015], [-0.1, 0, 0]), palette.swissRed);
       P.add('paint', xf(blob(0.04, [1, 0.7, 0.4], 6, 4), [0.2, top - 0.03, 0.08], [0, 0.9, 0]), palette.capCoral);
       break;
     }
     case 'acorn': {
       const cover = (d) => d.y - (0.18 + d.z * 0.08);
-      const shell = headShell(1.14, cover, [16, 9]);
-      // scaly cup pattern
-      paintFn(shell, (x, y, z, nx, ny, nz, i, col) => {
-        const a = Math.atan2(x, z);
-        const k = Math.sin(a * 8 + y * 60) * Math.sin(y * 70);
-        col.set(c).lerp(new THREE.Color(shade(c, -0.12)), k > 0 ? 0.7 : 0);
+      shells.push({
+        scale: 1.14,
+        hat: true,
+        cover,
+        add: (shell) => {
+          // scaly cup pattern
+          paintFn(shell, (x, y, z, nx, ny, nz, i, col) => {
+            const a = Math.atan2(x, z);
+            const k = Math.sin(a * 8 + y * 60) * Math.sin(y * 70);
+            col.set(c).lerp(new THREE.Color(shade(c, -0.12)), k > 0 ? 0.7 : 0);
+          });
+          P.add('paint', shell);
+        },
       });
-      P.add('paint', shell);
-      const rim = new THREE.TorusGeometry(HR * 1.1, 0.03, 4, 16);
+      const rim = new THREE.TorusGeometry(HR * 1.1, 0.03, 4, 24);
       rim.rotateX(Math.PI / 2);
       rim.scale(HS[0], 1, HS[2]);
       xf(rim, [0, HC + HR * 0.21, 0], [-0.08, 0, 0]);
@@ -438,23 +539,29 @@ function addHat(P, o) {
     }
     case 'cap': {
       const cover = (d) => d.y - (0.18 + d.z * 0.05);
-      P.add('paint', headShell(1.1, cover, [16, 9]), c);
-      const visor = new THREE.CylinderGeometry(0.17, 0.17, 0.016, 10, 1, false, -Math.PI / 2, Math.PI);
+      shells.push({ scale: 1.1, hat: true, cover, add: (g) => P.add('paint', g, c) });
+      const visor = new THREE.CylinderGeometry(0.17, 0.17, 0.016, 14, 1, false, -Math.PI / 2, Math.PI);
       visor.scale(1.1, 1, 0.9);
       xf(visor, [0, HC + 0.13, HR * 0.8], [-0.12, 0, 0]);
       P.add('paint', visor, shade(c, -0.08));
-      P.add('paint', new THREE.SphereGeometry(0.022, 6, 4).translate(0, top + 0.022, 0), shade(c, 0.1));
+      P.add('paint', new THREE.SphereGeometry(0.022, 8, 6).translate(0, top + 0.022, 0), shade(c, 0.1));
       break;
     }
     case 'bandana': {
       const cover = (d) => d.y - (0.08 + d.z * 0.2);
-      const shell = headShell(1.09, cover, [16, 9]);
-      paintFn(shell, (x, y, z, nx, ny, nz, i, col) => {
-        const dots = Math.sin(x * 70) * Math.sin(y * 70) * Math.sin(z * 70);
-        col.set(dots > 0.55 ? palette.spots : c);
+      shells.push({
+        scale: 1.09,
+        hat: true,
+        cover,
+        add: (shell) => {
+          paintFn(shell, (x, y, z, nx, ny, nz, i, col) => {
+            const dots = Math.sin(x * 70) * Math.sin(y * 70) * Math.sin(z * 70);
+            col.set(dots > 0.55 ? palette.spots : c);
+          });
+          P.add('paint', shell);
+        },
       });
-      P.add('paint', shell);
-      P.add('paint', blob(0.045, [1, 0.9, 0.8], 8, 6).translate(0, HC + 0.04, -HR - 0.01), shade(c, -0.05));
+      P.add('paint', blob(0.045, [1, 0.9, 0.8], 10, 8).translate(0, HC + 0.04, -HR - 0.01), shade(c, -0.05));
       for (const s of [-1, 1]) P.add('paint', xf(new THREE.ConeGeometry(0.035, 0.12, 5), [s * 0.04, HC - 0.03, -HR - 0.02], [0.3, 0, s * 0.45]), c);
       break;
     }
@@ -471,11 +578,14 @@ const BONE = { legL: 0, legR: 1, torso: 2, head: 3, eyes: 4, armL: 5, armR: 6, h
 const PERSON_BOUNDS = { center: [0, 0.55, 0.05], radius: 1.05, pad: 0.12 };
 
 /**
- * Characters get their own (cached) vertex-colour toon material: identical to
- * the props' shared one, but only ever drawn skinned, so the renderer never
- * has to swap programs between skinned and static draws.
+ * Characters get their own (cached) vertex-colour toon material, only ever
+ * drawn skinned (the renderer never swaps programs between skinned and static
+ * draws). Its ramp is the soft (linear-filtered) storybook ramp: the hard cel
+ * bands of the props' ramp cut polygon-shaped patches into small round heads
+ * and bellies (they read as low-poly facets in close-ups, worst under the
+ * night's several lamps); soft bands shade them like painted wooden toys.
  */
-const personMaterial = () => materials.toon('#ffffff', { vertexColors: true, name: 'props-vc-skinned' });
+const personMaterial = () => materials.toon('#ffffff', { vertexColors: true, gradientMap: materials.softGradientMap, name: 'props-vc-skinned' });
 
 /**
  * Every body part (+ the vertex-coloured layers of the held item) merged into

@@ -126,14 +126,23 @@ export function analyticHeight(x, z, pathDist = analyticPathDistance(x, z), stre
   const cw = 1 - smoothstep(STREAM.halfWidth * 0.55, STREAM.halfWidth * 1.9, streamDist);
   const pool = STREAM.pool;
   const pd = Math.hypot(x - pool.x, z - pool.z);
-  const pw2 = 1 - smoothstep(pool.radius * 0.5, pool.radius * 1.35, pd);
   const pond = STREAM.pond;
   const od = Math.hypot((x - pond.x) * 0.9, z - pond.z);
   const pw3 = 1 - smoothstep(pond.radius * 0.45, pond.radius * 1.3, od);
-  const carve = Math.max(cw, pw2, pw3);
+  const carve = Math.max(cw, pw3);
   if (carve > 0) {
-    const target = bed - Math.max(pw2, pw3) * 0.4;
+    const target = bed - pw3 * 0.4;
     h = h + (Math.min(h, target) - h) * carve;
+  }
+  // the plunge pool: a soft bowl — deepest under the falls' landing, its floor
+  // rising gently all the way to the shore — instead of a flat floor inside a
+  // steep wall (which showed through the clear water as a dark ring). The
+  // shoreline stays within ±0.25 of where it was.
+  const pw2 = 1 - smoothstep(pool.radius * 0.38, pool.radius * 1.45, pd);
+  if (pw2 > 0) {
+    const WL = STREAM.waterLevel;
+    const bowl = WL - 0.08 - 1.22 * Math.pow(1 - smoothstep(0, pool.radius * 1.6, pd), 0.75);
+    h = h + (Math.min(h, bowl) - h) * pw2;
   }
   return h;
 }

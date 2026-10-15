@@ -15,7 +15,8 @@
 //     crates of old parts, a stool, a hanging "Code Loft" sign
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { DEG, TAU, IRON, BRASS, COPPER, addFlowerTuft, Batch, smallBitsRemap, shelfFungus, radial, polar, board, timber, branch, tubeAlong, xf, mat4, alongX, mossGeo, addToadstool, ivyCard, deform, noiseA } from './kit.js';
+import { DEG, TAU, IRON, BRASS, COPPER, lodRadial, lodSegs, addFlowerTuft, Batch, smallBitsRemap, shelfFungus, radial, polar, board, timber, branch, tubeAlong, xf, mat4, alongX, mossGeo, addToadstool, ivyCard, deform, noiseA } from './kit.js';
+import { LIFT } from './deck.js';
 
 // one bulb colour: every colour of string light costs two more draw calls
 const FAIRY = ['#ffd9a0'];
@@ -121,12 +122,23 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
     g.add(fan);
     if (!reduced) updates.push((dt) => (blades.rotation.z -= dt * 3.2));
     out.server = g;
-    // cable bundle from the log to the house's left wall (lying on the deck)
+    // cable bundle from the log to the house's left wall (lying on the deck),
+    // led round the outer end of the lift slot (never across the opening)
     {
       const a = toW(-0.25, 0.04, -0.25);
       const door = house.door.centre;
-      const pts = [a, a.clone().lerp(door, 0.3).add(new THREE.Vector3(0.1, -0.02, 0.1)), a.clone().lerp(door, 0.65).add(new THREE.Vector3(-0.15, -0.02, 0)), door.clone().add(new THREE.Vector3(-0.2, -0.75, -0.05))];
-      pts.forEach((p, i) => (p.y = deck.y + 0.03 + (i === 3 ? 0.04 : 0)));
+      let pts = [a, a.clone().lerp(door, 0.3).add(new THREE.Vector3(0.1, -0.02, 0.1)), a.clone().lerp(door, 0.65).add(new THREE.Vector3(-0.15, -0.02, 0)), door.clone().add(new THREE.Vector3(-0.2, -0.75, -0.05))];
+      const sl = deck.slot;
+      if (sl?.rb !== undefined) {
+        const sa = sl.a, side = new THREE.Vector3(Math.cos(sa), 0, -Math.sin(sa));
+        const lat = (p) => p.clone().sub(sl.outer).dot(side);
+        const s0 = Math.sign(lat(a)) || 1;
+        // past the gate posts (0.6 out to either side of the slot's middle)
+        const corner = (s, k) => polar(sa, sl.rb + LIFT.slotDepth + 0.3 + k, deck.y).addScaledVector(side, s * (LIFT.slotHalf + 0.32));
+        const d = pts[3];
+        pts = [a, a.clone().lerp(corner(s0, 0.02), 0.55).add(new THREE.Vector3(0.05, 0, -0.04)), corner(s0, 0), corner(-s0, 0.05), corner(-s0, 0.05).lerp(d, 0.5).add(new THREE.Vector3(-0.06, 0, 0.05)), d];
+      }
+      pts.forEach((p, i, all) => (p.y = deck.y + 0.03 + (i === all.length - 1 ? 0.04 : 0)));
       for (let k = 0; k < 3; k++) {
         const off = new THREE.Vector3(k * 0.015, k * 0.01, k * 0.012);
         B.add(mats.paint(['#202020', '#3a4a6a', '#a8402a'][k]), tubeAlong(pts.map((p) => p.clone().add(off)), 0.011, 5), { cast: false });
@@ -257,8 +269,8 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
     const secs = [[-0.32, 0.12, 0.062], [0.12, 0.42, 0.055], [0.42, 0.62, 0.048]];
     for (const [s0, s1, r] of secs) {
       const a = pivot.clone().addScaledVector(dir, s0), b = pivot.clone().addScaledVector(dir, s1);
-      F.add(mats.metal(BRASS), alongX(new THREE.CylinderGeometry(r, r, s1 - s0, 14).rotateZ(Math.PI / 2), a, b));
-      F.add(mats.metal('#6a4a2a'), alongX(new THREE.CylinderGeometry(r + 0.008, r + 0.008, 0.03, 14).rotateZ(Math.PI / 2), b.clone().addScaledVector(dir, -0.015), b.clone().addScaledVector(dir, 0.015)), { cast: false });
+      F.add(mats.metal(BRASS), alongX(new THREE.CylinderGeometry(r, r, s1 - s0, lodRadial(14, 8)).rotateZ(Math.PI / 2), a, b));
+      F.add(mats.metal('#6a4a2a'), alongX(new THREE.CylinderGeometry(r + 0.008, r + 0.008, 0.03, lodRadial(14, 8)).rotateZ(Math.PI / 2), b.clone().addScaledVector(dir, -0.015), b.clone().addScaledVector(dir, 0.015)), { cast: false });
     }
     // dew shield & lens, eyepiece, finder scope
     const front = pivot.clone().addScaledVector(dir, 0.62);
@@ -479,9 +491,10 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
   {
     const pot = (x, z, r, color, kind) => {
       const p = local(x, 0, z);
-      B.add(mats.clay(color), xf(new THREE.CylinderGeometry(r, r * 0.78, r * 1.3, 12), [p.x, p.y + r * 0.65, p.z]));
-      B.add(mats.clay(color), xf(new THREE.TorusGeometry(r, r * 0.12, 5, 14).rotateX(Math.PI / 2), [p.x, p.y + r * 1.3, p.z]), { cast: false });
-      B.add(mats.paint('#3d2b1e'), xf(new THREE.CircleGeometry(r * 0.92, 12).rotateX(-Math.PI / 2), [p.x, p.y + r * 1.22, p.z]), { cast: false });
+      const pr = lodRadial(12, 8);
+      B.add(mats.clay(color), xf(new THREE.CylinderGeometry(r, r * 0.78, r * 1.3, pr), [p.x, p.y + r * 0.65, p.z]));
+      B.add(mats.clay(color), xf(new THREE.TorusGeometry(r, r * 0.12, lodSegs(5, 3), lodRadial(14, 8)).rotateX(Math.PI / 2), [p.x, p.y + r * 1.3, p.z]), { cast: false });
+      B.add(mats.paint('#3d2b1e'), xf(new THREE.CircleGeometry(r * 0.92, pr).rotateX(-Math.PI / 2), [p.x, p.y + r * 1.22, p.z]), { cast: false });
       if (kind === 'fern') {
         for (let k = 0; k < 10; k++) {
           const ang = (k / 10) * TAU + rng.jitter(0.3);
@@ -572,8 +585,8 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
       const cr = rng.range(0.035, 0.075) * (1.3 - (y - deck.y) / 2.5);
       const n = radial(a);
       // a short stem out of the bark, the cap turned up and out
-      const stem = new THREE.CylinderGeometry(cr * 0.22, cr * 0.3, cr * 1.2, 5).translate(0, cr * 0.6, 0);
-      const cap = new THREE.SphereGeometry(cr, 8, 4, 0, TAU, 0, Math.PI / 2).scale(1, 0.7, 1).translate(0, cr * 1.15, 0);
+      const stem = new THREE.CylinderGeometry(cr * 0.22, cr * 0.3, cr * 1.2, lodRadial(5, 4)).translate(0, cr * 0.6, 0);
+      const cap = new THREE.SphereGeometry(cr, lodRadial(8, 6), lodSegs(4, 3), 0, TAU, 0, Math.PI / 2).scale(1, 0.7, 1).translate(0, cr * 1.15, 0);
       const m = new THREE.Matrix4().makeRotationY(a).multiply(new THREE.Matrix4().makeRotationX(0.9 + rng.jitter(0.25))).setPosition(pos);
       B.add(stemMat, stem.applyMatrix4(m), { cast: false });
       B.add(glowCap, cap.applyMatrix4(m), { cast: false });

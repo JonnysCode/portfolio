@@ -32,6 +32,34 @@ export const CZ = OAK.z;
 export const noiseA = createNoise2D(51151);
 export const noiseB = createNoise2D(8383);
 
+// ─── level of detail ─────────────────────────────────────────────────────────
+/**
+ * Geometry detail for the quality tier, set once at the start of the loft
+ * build (loft.js → setDetail(ctx.quality.tier)):
+ *   high    exactly the hand-made look (every count below is untouched)
+ *   medium  ≈ 0.7 of the length segments and 0.8 of the radial segments of
+ *           branches, ropes, lashings, moss cushions, toadstools and fungi;
+ *           simpler shakes; no nail heads, tread pegs or other minutiae
+ *   low     ≈ 0.5 / 0.65 of them, plainer shakes still, and boards & timbers
+ *           with a plain square section (no 1 cm chamfer)
+ * (World modules build one after the other and only the loft uses this kit,
+ * so a module-level value is safe.)
+ */
+export const LOD = { tier: 'high', k: 1, radial: 1, minutiae: true, chamfer: true };
+export function setDetail(tier = 'high') {
+  LOD.tier = tier === 'low' || tier === 'medium' ? tier : 'high';
+  LOD.k = LOD.tier === 'low' ? 0.5 : LOD.tier === 'medium' ? 0.7 : 1;
+  LOD.radial = LOD.tier === 'low' ? 0.65 : LOD.tier === 'medium' ? 0.8 : 1;
+  LOD.minutiae = LOD.tier === 'high';
+  LOD.chamfer = LOD.tier !== 'low';
+  _petals = null; // the flower head's outline follows the tier
+  return LOD;
+}
+/** A length-segment count for the tier: exactly n on 'high', scaled (never below `min`) below. */
+export const lodSegs = (n, min = 1) => (LOD.k >= 1 ? n : Math.max(Math.min(n, min), Math.round(n * LOD.k)));
+/** A radial-segment count for the tier: exactly n on 'high', scaled (never below `min`) below. */
+export const lodRadial = (n, min = 4) => (LOD.radial >= 1 ? n : Math.max(Math.min(n, min), Math.round(n * LOD.radial)));
+
 // ─── colours ─────────────────────────────────────────────────────────────────
 /** Average colours (sRGB) riding on the shared vertex-coloured surfaces. */
 export const WOOD = {
@@ -332,8 +360,11 @@ export class Batch {
    * Merge everything into meshes added to `parent`. Returns the meshes.
    * mergeShadow: put a material's casting and non-casting parts into ONE mesh
    * (fewer draw calls for small hotspot pieces).
+   * splitShadow (with mergeShadow): …except where the non-casting part is the
+   * bulk of it (≥ 3000 triangles and twice the casting part): that part gets its
+   * own non-casting mesh, so the shadow pass only draws what was meant to cast.
    */
-  build(parent, name = 'loft', { mergeShadow = false, remap = null } = {}) {
+  build(parent, name = 'loft', { mergeShadow = false, remap = null, splitShadow = false } = {}) {
     const out = [];
     let lists = this.lists;
     if (remap) {
@@ -357,6 +388,25 @@ export class Batch {
           t.cast = t.cast || e.cast;
           t.receive = t.receive || e.receive;
         } else merged.set(e.material.uuid, { ...e, geos: [...e.geos] });
+        // (what of it was meant to cast, what not)
+        const m = merged.get(e.material.uuid);
+        const n = e.geos.reduce((s, g) => s + (g.index ? g.index.count : g.attributes.position.count) / 3, 0);
+        m.split ??= { cast: [], rest: [], castTris: 0, restTris: 0 };
+        if (e.cast) (m.split.cast.push(...e.geos), (m.split.castTris += n));
+        else (m.split.rest.push(...e.geos), (m.split.restTris += n));
+      }
+      // splitShadow: a material whose casting part is only a small share (the
+      // paint of a few birds and pipes among hundreds of flowers, nail heads and
+      // lichen; four hanging ropes among all the lashings and handrails) keeps
+      // the rest in a second, non-casting mesh: one more draw call in the main
+      // pass, thousands of triangles less in every shadow pass
+      if (splitShadow) {
+        for (const [key, m] of [...merged]) {
+          const s = m.split;
+          if (!s || !s.castTris || s.restTris < 3000 || s.restTris < 2 * s.castTris) continue;
+          merged.set(key, { ...m, cast: true, geos: s.cast });
+          merged.set(key + '|rest', { ...m, cast: false, geos: s.rest, tag: '-rest' });
+        }
       }
       lists = merged;
     }
@@ -371,7 +421,7 @@ export class Batch {
       g.computeBoundingBox();
       this.tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
       const mesh = new THREE.Mesh(g, e.material);
-      mesh.name = `${name}:${e.material.name || 'mat'}`;
+      mesh.name = `${name}:${e.material.name || 'mat'}${e.tag ?? ''}`;
       mesh.castShadow = e.cast;
       mesh.receiveShadow = e.receive;
       mesh.matrixAutoUpdate = false;
@@ -535,14 +585,19 @@ export function uvBox(geo, along = 'y', scale = 1 / TILE.wood, off = [0, 0]) {
 /**
  * A chamfered beam along X (length len, height h along Y, width w along Z):
  * an 8-sided section with `segs` length segments (so deforms can bend it).
+ * On the 'low' tier the section is a plain square one (no chamfer) and, unless
+ * `lod` is false, the length segments follow the tier.
  */
-export function beamGeo(len, h, w, c = 0.012, segs = 1) {
+export function beamGeo(len, h, w, c = 0.012, segs = 1, lod = true) {
+  if (lod) segs = lodSegs(segs, 1);
   const cc = Math.max(0.0005, Math.min(c, h * 0.3, w * 0.3));
   const hh = h / 2, hw = w / 2;
-  const sec = [
-    [-hh + cc, -hw], [hh - cc, -hw], [hh, -hw + cc], [hh, hw - cc],
-    [hh - cc, hw], [-hh + cc, hw], [-hh, hw - cc], [-hh, -hw + cc],
-  ];
+  const sec = LOD.chamfer
+    ? [
+        [-hh + cc, -hw], [hh - cc, -hw], [hh, -hw + cc], [hh, hw - cc],
+        [hh - cc, hw], [-hh + cc, hw], [-hh, hw - cc], [-hh, -hw + cc],
+      ]
+    : [[-hh, -hw], [hh, -hw], [hh, hw], [-hh, hw]];
   const pos = [];
   const nor = [];
   const idx = [];
@@ -581,16 +636,19 @@ export function beamGeo(len, h, w, c = 0.012, segs = 1) {
 }
 
 /** beamGeo oriented along an axis: sizes are (w, h, d) like a BoxGeometry. */
-export function beamBox(w, h, d, along = 'x', c = 0.012, segs = 1) {
-  if (along === 'x') return beamGeo(w, h, d, c, segs);
-  if (along === 'y') return beamGeo(h, w, d, c, segs).rotateZ(Math.PI / 2);
-  return beamGeo(d, h, w, c, segs).rotateY(-Math.PI / 2);
+export function beamBox(w, h, d, along = 'x', c = 0.012, segs = 1, lod = true) {
+  if (along === 'x') return beamGeo(w, h, d, c, segs, lod);
+  if (along === 'y') return beamGeo(h, w, d, c, segs, lod).rotateZ(Math.PI / 2);
+  return beamGeo(d, h, w, c, segs, lod).rotateY(-Math.PI / 2);
 }
 
-/** A wooden board / part with grain UVs (grain along `along`); rng gives it its own UV offset. */
-export function board(w, h, d, { along = 'x', c = 0.01, rng = null, scale = 1 / TILE.wood, segs = 0 } = {}) {
+/**
+ * A wooden board / part with grain UVs (grain along `along`); rng gives it its own UV offset.
+ * lod: false keeps its length segments on every tier (a board that must follow a deform closely).
+ */
+export function board(w, h, d, { along = 'x', c = 0.01, rng = null, scale = 1 / TILE.wood, segs = 0, lod = true } = {}) {
   const len = along === 'x' ? w : along === 'y' ? h : d;
-  const g = beamBox(w, h, d, along, c, segs || Math.max(1, Math.round(len / 0.7)));
+  const g = beamBox(w, h, d, along, c, segs || Math.max(1, Math.round(len / 0.7)), lod);
   return uvBox(g, along, scale, rng ? [rng.next() * 7, rng.next() * 7] : [0, 0]);
 }
 
@@ -620,7 +678,7 @@ export function timber(a, b, w, h, { rng = null, up = [0, 1, 0], c = 0.016, wobb
 
 /** Round peg / dowel head poking out of a face (tiny cylinder along +Z). */
 export function peg(r = 0.016, len = 0.03) {
-  const g = new THREE.CylinderGeometry(r, r * 1.1, len, 6, 1);
+  const g = new THREE.CylinderGeometry(r, r * 1.1, len, lodRadial(6, 4), 1);
   g.rotateX(Math.PI / 2);
   return g;
 }
@@ -634,7 +692,8 @@ export function peg(r = 0.016, len = 0.03) {
 export function branch(points, r0, r1 = r0 * 0.7, { radial = 6, seg = null, lump = 0.12, seed = 0, capStart = true, capEnd = true, uv = false } = {}) {
   const curve = points instanceof THREE.Curve ? points : new THREE.CatmullRomCurve3(points, false, 'centripetal');
   const len = curve.getLength();
-  const segments = seg ?? Math.max(3, Math.ceil(len / 0.18));
+  const segments = lodSegs(seg ?? Math.max(3, Math.ceil(len / 0.18)), 2);
+  radial = lodRadial(radial, 4);
   const frames = curve.computeFrenetFrames(segments, false);
   const pos = [];
   const idx = [];
@@ -689,7 +748,7 @@ export function branch(points, r0, r1 = r0 * 0.7, { radial = 6, seg = null, lump
 /** A plain tube along a curve or points (ropes, wires, cables, chains). */
 export function tubeAlong(points, radius = 0.012, radial = 5, tubular = null) {
   const curve = points instanceof THREE.Curve ? points : new THREE.CatmullRomCurve3(points.map((p) => (p.isVector3 ? p : new THREE.Vector3(p[0], p[1], p[2]))));
-  const g = new THREE.TubeGeometry(curve, tubular ?? Math.max(6, Math.ceil(curve.getLength() / 0.08)), radius, radial, false);
+  const g = new THREE.TubeGeometry(curve, lodSegs(tubular ?? Math.max(6, Math.ceil(curve.getLength() / 0.08)), 2), radius, lodRadial(radial, 3), false);
   // rope UVs: U along (TubeGeometry already gives u along, v around) — scale by length
   const uv = g.attributes.uv;
   const L = curve.getLength();
@@ -706,7 +765,7 @@ export function lashing(p, dir, r, { turns = 3, thick = 0.014, gap = 0.028, tilt
   const out = [];
   const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), d);
   for (let k = 0; k < turns; k++) {
-    const g = new THREE.TorusGeometry(r + thick * 0.6, thick, 4, 12);
+    const g = new THREE.TorusGeometry(r + thick * 0.6, thick, lodSegs(4, 3), lodRadial(12, 6));
     g.rotateX(tilt * (k % 2 ? 1 : -1));
     g.applyQuaternion(q);
     const c = p.clone().addScaledVector(d, (k - (turns - 1) / 2) * gap);
@@ -745,7 +804,7 @@ export function stoneGeo(rng, { r = 0.2, sx = 1, sy = 0.6, sz = 1, lump = 0.22, 
 
 /** A soft moss cushion (flattened lumpy dome) sitting on y = 0, facing +Y. */
 export function mossGeo(rng, { r = 0.25, h = 0.08, sx = 1, sz = 1 } = {}) {
-  let g = new THREE.SphereGeometry(1, 9, 4, 0, TAU, 0, Math.PI / 2);
+  let g = new THREE.SphereGeometry(1, lodRadial(9, 5), lodSegs(4, 3), 0, TAU, 0, Math.PI / 2);
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
   g = mergeVertices(g, 1e-4);
@@ -761,12 +820,13 @@ export function mossGeo(rng, { r = 0.25, h = 0.08, sx = 1, sz = 1 } = {}) {
 /** Small toadstool (stem + cap + gills + spots) into a frame, all vertex-coloured paint. */
 export function addToadstool(F, mats, rng, x, y, z, { size = 0.1, color = '#c9352a', lean = 0.18 } = {}) {
   const h = size * rng.range(1.0, 1.8);
-  const stem = new THREE.CylinderGeometry(size * 0.15, size * 0.22, h, 6, 2);
+  const stem = new THREE.CylinderGeometry(size * 0.15, size * 0.22, h, lodRadial(6, 4), LOD.minutiae ? 2 : 1);
   stem.translate(0, h / 2, 0);
-  const cap = new THREE.SphereGeometry(size * 0.55, 10, 5, 0, TAU, 0, Math.PI / 2);
+  const capSegs = lodRadial(10, 6);
+  const cap = new THREE.SphereGeometry(size * 0.55, capSegs, lodSegs(5, 3), 0, TAU, 0, Math.PI / 2);
   cap.scale(1, 0.6 + rng.next() * 0.35, 1);
   cap.translate(0, h, 0);
-  const gill = new THREE.CircleGeometry(size * 0.53, 10);
+  const gill = new THREE.CircleGeometry(size * 0.53, capSegs);
   gill.rotateX(Math.PI / 2);
   gill.translate(0, h + 0.002, 0);
   const rx = rng.jitter(lean), rz = rng.jitter(lean), ry = rng.next() * 6;
@@ -777,7 +837,8 @@ export function addToadstool(F, mats, rng, x, y, z, { size = 0.1, color = '#c935
   if (color !== '#b98a4e') {
     for (let i = 0; i < 5; i++) {
       const a = rng.next() * TAU, el = rng.range(0.35, 1.1);
-      const sp = new THREE.SphereGeometry(size * 0.065, 4, 3);
+      if (!LOD.minutiae && i >= 3) continue; // (three spots below 'high' — the same random stream)
+      const sp = new THREE.SphereGeometry(size * 0.065, 4, LOD.minutiae ? 3 : 2);
       const rr = size * 0.55;
       sp.translate(Math.cos(a) * Math.cos(el) * rr, h + Math.sin(el) * rr * 0.7, Math.sin(a) * Math.cos(el) * rr);
       xf(sp, [x, y, z], [rx, ry, rz]);
@@ -791,14 +852,15 @@ export function addToadstool(F, mats, rng, x, y, z, { size = 0.1, color = '#c935
  * attached at z = 0, growing into +Z, Y up. Returns { top, under } geometries.
  */
 export function shelfFungus(r, rng) {
-  const top = new THREE.SphereGeometry(r, 10, 4, 0, Math.PI, 0, Math.PI / 2);
+  const rs = lodRadial(10, 6);
+  const top = new THREE.SphereGeometry(r, rs, lodSegs(4, 3), 0, Math.PI, 0, Math.PI / 2);
   top.scale(1, 0.32 + rng.next() * 0.12, 0.85);
   // a wavy, growth-ringed rim
   deform(top, (v) => {
     const a = Math.atan2(v.z, v.x);
     v.multiplyScalar(1 + 0.06 * Math.sin(a * 7 + r * 40));
   });
-  const under = new THREE.CircleGeometry(r * 0.97, 10, 0, Math.PI);
+  const under = new THREE.CircleGeometry(r * 0.97, rs, 0, Math.PI);
   under.rotateX(Math.PI / 2);
   under.scale(1, 1, 0.85);
   under.translate(0, 0.002, 0);
@@ -894,7 +956,7 @@ export function ivyCard(base, dir, normal, size, flip = false) {
 export function addFern(F, mats, rng, x, y, z, { size = 0.45, fronds = 7 } = {}) {
   for (let i = 0; i < fronds; i++) {
     const L = size * rng.range(0.7, 1.15);
-    const g = new THREE.PlaneGeometry(L * 0.34, L, 1, 4);
+    const g = new THREE.PlaneGeometry(L * 0.34, L, 1, lodSegs(4, 2));
     g.translate(0, L / 2, 0);
     deform(g, (v) => {
       const t = v.y / L;
@@ -914,7 +976,7 @@ let _petals = null;
 function petalGeo() {
   if (!_petals) {
     const s = new THREE.Shape();
-    const N = 40;
+    const N = LOD.minutiae ? 40 : 20;
     for (let i = 0; i <= N; i++) {
       const a = (i / N) * TAU;
       const r = 0.45 + 0.55 * Math.abs(Math.cos(a * 2.5)); // five round petals
@@ -949,11 +1011,11 @@ export function addFlowerTuft(F, mats, rng, x, y, z, { r = 0.1, h = 0.14, blooms
     const a = rng.next() * TAU, rr = Math.sqrt(rng.next()) * r;
     const fy = y + h * rng.range(0.55, 1.05);
     const p = [x + Math.cos(a) * rr, fy, z + Math.sin(a) * rr];
-    F.add(mats.paint(), xf(new THREE.CylinderGeometry(0.004, 0.005, fy - y, 3).translate(0, -(fy - y) / 2, 0), p), { color: '#4f7a34', cast: false });
+    F.add(mats.paint(), xf(new THREE.CylinderGeometry(0.004, 0.005, fy - y, 3, 1, !LOD.minutiae).translate(0, -(fy - y) / 2, 0), p), { color: '#4f7a34', cast: false });
     const fs = rng.range(0.026, 0.04);
     const tilt = [rng.jitter(0.5), rng.next() * TAU, rng.jitter(0.5), 'YXZ'];
     F.add(mats.paint(), xf(petalGeo(), p, tilt, fs), { color: rng.next() < 0.75 ? col : rng.pick(colors), cast: false });
-    F.add(mats.paint(), xf(new THREE.SphereGeometry(fs * 0.32, 5, 3), [p[0], p[1] + fs * 0.12, p[2]]), { color: '#f2b62e', cast: false });
+    F.add(mats.paint(), xf(new THREE.SphereGeometry(fs * 0.32, LOD.minutiae ? 5 : 4, LOD.minutiae ? 3 : 2), [p[0], p[1] + fs * 0.12, p[2]]), { color: '#f2b62e', cast: false });
   }
 }
 
@@ -963,7 +1025,8 @@ export function addFlowerTuft(F, mats, rng, x, y, z, { r = 0.1, h = 0.14, blooms
  * plane: width along X, length along +Y (butt at y = 0), facing +Z.
  */
 export function shingleGeo(w = 0.2, l = 0.34, t = 0.024) {
-  const g = new THREE.BoxGeometry(w, l, t, 3, 2, 1);
+  // (below 'high' the butt is shaped by the bottom row alone: 28 / 20 triangles instead of 44)
+  const g = new THREE.BoxGeometry(w, l, t, LOD.tier === 'low' ? 2 : 3, LOD.tier === 'high' ? 2 : 1, 1);
   g.translate(0, l / 2, 0);
   deform(g, (v) => {
     const xn = v.x / (w / 2);

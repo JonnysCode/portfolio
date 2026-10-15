@@ -19,6 +19,8 @@
 //   makeSign({ text, style: 'post' | 'board' | 'hanging' | 'arrow', color, width })
 //   makeSignpost([{ text, angle, color }]) · makePlaque(text) · makeTextTexture(text, opts)
 //   makeTool(name) — hand plane, hammer, saw, chisel, mallet, … as standalone props
+//   lanternGlassMaterial(color) + lanternPanes({ half, y0, y1 }) — candle-lit lantern glass (amber
+//          panes, a swaying flame + wax candle drawn in the glass) for lanterns built elsewhere
 //   decor: lanterns & lamp posts, fences, benches, tables, chairs, barrels, crates, logs,
 //          rocks, stumps, bushes, flowers, mushrooms, mailbox, well, wheelbarrow, bunting,
 //          string lights, stone circles, stepping stones, parcels, glow sprites
@@ -37,6 +39,7 @@ export { paintWood, drawFittedText, canvasTexture, whenFontsReady, FONT_DISPLAY,
 export { makeTool, TOOL_NAMES } from './tools.js';
 export { makeGlowSprite, glowQuads } from './glow.js';
 export { makeSoftSmoke, makeChimneySmoke } from './smoke.js';
+export { lanternGlassMaterial, lanternPanes } from './lantern.js';
 export { LAMP, LAMP_GLSL, lampUniforms, lampOnAt, lampGlow, withLampDelay, isWarmLight } from './lamplighter.js';
 export {
   makeLantern,

@@ -16,16 +16,25 @@
 // a bell on a gallows, lanterns on the railing and half way up the track.
 //
 // The basket hangs from a brass hook on the saddle and always stays level,
-// swinging gently when the snail starts and stops. Clicking the snail glides
-// the camera to the Code Loft (the hotspot is wired in loft.js).
+// swinging gently when the snail starts and stops. Clicking the snail (or the
+// bell at the roots, or the gate up on the deck) is a RIDE: the snail is called
+// to the station, the camera hops on and rides along up (or down) the trunk
+// (elevator.ride(), the camera in loft/ride.js, the hotspots in loft.js).
+// The basket hangs 1.24–1.91 out from the bark: the slots in the deck and the
+// stair landing are cut 2.16 deep for it (LIFT.slotDepth, deck.js).
 //
 // Carrier frame: +Y out of the bark, +Z up the trunk (snail heading up).
 // The snail turns about the axis through its shell (so the hook stays put).
+// It is a caramel garden snail with a banded russet shell and a dark spiral,
+// the shell tipped over sideways the way a snail's hangs on a wall — its
+// spiral turned out to the side the glen sees the track from — and a little
+// brass davit reaching from the saddle over to the hook.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { OAK } from '../../world/layout.js';
+import { OAK, SPOT_BY_ID } from '../../world/layout.js';
+import { palette } from '../../core/palette.js';
 import { getHeight } from '../../world/ground.js';
-import { DEG, TAU, IRON, BRASS, OLD_OAK, OLD_POLE, BOUGH_BARK, DARK_OAK, LICHEN, addFlowerTuft, addToadstool, Batch, smallBitsRemap, polar, radial, board, timber, branch, tubeAlong, xf, stoneGeo, mossGeo, ivyCard, lashing, weatherPaint, lichenGeo, crookedPath, sagCurve } from './kit.js';
+import { DEG, TAU, IRON, BRASS, OLD_OAK, OLD_POLE, BOUGH_BARK, DARK_OAK, LICHEN, lodRadial, addFlowerTuft, addToadstool, Batch, smallBitsRemap, polar, radial, board, timber, branch, tubeAlong, xf, stoneGeo, mossGeo, ivyCard, lashing, weatherPaint, lichenGeo, crookedPath, sagCurve } from './kit.js';
 import { ELEVATOR_AZ, LIFT } from './deck.js';
 import { addSignPlate } from './props.js';
 
@@ -34,6 +43,19 @@ const ARM = LIFT.arm; // hook arm length out of the saddle
 const HANG = 0.46; // hook → basket rim
 const BASKET_H = 0.32;
 const SPEED = 0.36; // units per second
+/**
+ * The lift snail's look: a caramel body (a pale one read as a seal holding a
+ * lifebuoy from the Code Loft), a russet shell with a dark chocolate spiral
+ * line and banded whorls, the blue saddle blanket.
+ */
+const LOOK = { bodyColor: '#d39a5c', shellColor: '#c2602e', stripe: '#3a1b0f', blanket: '#3f6f8f' };
+/**
+ * Snails on a wall carry their shell tipped over sideways: the shell rolls
+ * this far (rad) about the body's long axis so its spiral turns out from the
+ * bark towards the side the glen looks from (the Code Loft, the Schreinerei
+ * and the ride all see the track from the same side) — whichever way it heads.
+ */
+const SHELL_ROLL = 0.42;
 
 export function buildElevator(ctx, B, mats, env, { updates }) {
   if (!ctx.props?.makeSnail) return null;
@@ -44,7 +66,8 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
   const up = new THREE.Vector3(0, 1, 0);
 
   // ── the snail on its carrier ──────────────────────────────────────────────
-  const snail = ctx.props.makeSnail({ seed: 'loft-lift', shellColor: '#d9673b', stripe: '#fff3d6', blanket: '#3f6f8f', scale: SCALE });
+  const snail = ctx.props.makeSnail({ seed: 'loft-lift', ...LOOK, scale: SCALE });
+  bandShell(snail);
   const carrier = new THREE.Group();
   carrier.name = 'loft-snail-lift';
   const pivot = new THREE.Group(); // at the shell, rotates about the bark normal (local Y)
@@ -59,15 +82,57 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
   pivot.position.set(0, 0, shellZ);
   snail.group.position.set(0, 0, -shellZ);
   pivot.add(snail.group);
-  // the brass hook arm out of the saddle, along the pivot axis (stays put when turning)
+  const hookLocal = new THREE.Vector3(seat.x, seat.y + ARM, 0); // in the pivot frame (pivot sits at z = shellZ)
+  // The shell rolls on its own bone (props/snail.js: the seat rides on it)
+  // about the coil's centre line; the hook stays on the pivot axis — it holds
+  // the basket in the track's slots — and a little brass davit reaches over to
+  // it from the saddle.
+  const shellBone = snail.seat.parent;
+  const boneRest = shellBone.position.clone();
+  const seatG = snail.seat.position.clone(); // the seat in the snail's own (unscaled) frame
+  const coilY = seatG.y - 0.74; // the coil's centre line, under the saddle's crown
+  let rod = null;
   {
     const HB = new Batch();
-    HB.add(mats.metal(BRASS), xf(new THREE.CylinderGeometry(0.018, 0.022, ARM, 6), [seat.x, seat.y + ARM / 2, 0]), { cast: false });
     HB.add(mats.metal(BRASS), xf(new THREE.TorusGeometry(0.04, 0.01, 4, 10, Math.PI * 1.3), [seat.x, seat.y + ARM + 0.01, 0.0], [0, Math.PI / 2, -0.3]), { cast: false });
-    HB.add(mats.metal(BRASS), xf(new THREE.SphereGeometry(0.035, 8, 6), [seat.x, seat.y, 0]), { cast: false });
+    HB.add(mats.metal(BRASS), xf(new THREE.SphereGeometry(0.026, 8, 6), [hookLocal.x, hookLocal.y - 0.012, 0]), { cast: false });
     HB.build(pivot, 'lift-hook', { mergeShadow: true, remap: smallBitsRemap(mats) });
+    // the davit: a unit rod along +Y, stretched from the saddle to the hook every frame
+    const RB = new Batch();
+    RB.add(mats.metal(BRASS), new THREE.CylinderGeometry(0.018, 0.022, 1, 6).translate(0, 0.5, 0), { cast: false });
+    [rod] = RB.build(pivot, 'lift-hook-arm', { remap: smallBitsRemap(mats) });
+    // its knob sits on the saddle (it rolls and sways with the shell)
+    const KB = new Batch();
+    KB.add(mats.metal(BRASS), new THREE.SphereGeometry(0.035 / SCALE, 8, 6), { cast: false });
+    const [knob] = KB.build(snail.seat, 'lift-hook-knob', { remap: smallBitsRemap(mats) });
+    if (knob) knob.raycast = () => {};
   }
-  const hookLocal = new THREE.Vector3(seat.x, seat.y + ARM, 0); // in the pivot frame (pivot sits at z = shellZ)
+  const _rollA = new THREE.Vector3();
+  const _rollD = new THREE.Vector3();
+  const _rollQ = new THREE.Quaternion();
+  const _rollS = new THREE.Vector3();
+  const Y1 = new THREE.Vector3(0, 1, 0);
+  /** Roll the shell by th (rad) about the coil's centre line; the davit follows. */
+  function rollShell(th) {
+    const s = Math.sin(th), c = Math.cos(th);
+    shellBone.rotation.z = th;
+    shellBone.position.set(boneRest.x + coilY * s, boneRest.y + coilY * (1 - c), boneRest.z);
+    if (!rod) return;
+    // the rolled seat in the pivot frame (the snail's group: scaled, at z = -shellZ)
+    _rollA.set(-(seatG.y - coilY) * s * SCALE, (coilY + (seatG.y - coilY) * c) * SCALE, 0);
+    _rollD.subVectors(hookLocal, _rollA);
+    const len = _rollD.length();
+    rod.matrix.compose(_rollA, _rollQ.setFromUnitVectors(Y1, _rollD.divideScalar(len || 1)), _rollS.set(1, len, 1));
+    rod.matrixWorldNeedsUpdate = true;
+  }
+  // which way the shell turns its spiral: towards the side the glen sees the track from
+  const viewSide = (() => {
+    const cam = SPOT_BY_ID?.code?.camera?.position;
+    if (!cam) return 1;
+    const tp = polar(a, bark(a, OAK.loft.y), OAK.loft.y);
+    const d = new THREE.Vector3(cam[0], cam[1], cam[2]).sub(tp);
+    return d.dot(lat) > 0 ? -1 : 1; // carrier +X (the snail's +X heading up) is −lat
+  })();
   root.add(carrier);
 
   // ── the basket: wicker tub, rim, cushion, ropes to a hoop, a tiny lantern ─
@@ -100,6 +165,10 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     flip(inner);
     BB.add(mats.paint('#7a5530'), xf(inner, [0, -HANG - BASKET_H / 2, 0]), { cast: false });
     BB.add(mats.paint('#7a5530'), xf(new THREE.CircleGeometry(R * 0.86, 16).rotateX(-Math.PI / 2), [0, -HANG - BASKET_H + 0.02, 0]), { cast: false });
+    // the woven bottom, seen from below as it rides up through the deck (and a
+    // stout ring round its edge)
+    BB.add(mats.paint('#8f6436'), xf(new THREE.CircleGeometry(R * 0.86 + 0.004, 16).rotateX(Math.PI / 2), [0, -HANG - BASKET_H - 0.003, 0]), { cast: false });
+    BB.add(mats.paint('#a87b45'), xf(new THREE.TorusGeometry(R * 0.86, 0.018, 4, 18).rotateX(Math.PI / 2), [0, -HANG - BASKET_H + 0.004, 0]), { cast: false });
     BB.add(mats.paint('#c9a066'), xf(new THREE.TorusGeometry(R + 0.01, 0.025, 5, 22).rotateX(Math.PI / 2), [0, -HANG, 0]));
     BB.add(mats.fabric('#a8402a'), xf(new THREE.CylinderGeometry(R * 0.7, R * 0.72, 0.05, 14), [0, -HANG - BASKET_H + 0.05, 0]), { cast: false });
     // four ropes up to a small hoop under the hook
@@ -176,10 +245,14 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     const t = rootTop(p.x, p.z);
     return Math.max(getHeight(p.x, p.z), isFinite(t) ? t : -Infinity);
   };
+  /** the boarding platform's volume (a hotspot proxy: ring the bell for a ride) */
+  const boarding = {};
   {
     const yP = platY;
     const r0 = bark(a, yP) + 0.15;
     const W = 0.95, Dp = 2.1;
+    boarding.centre = polar(a, r0 + Dp * 0.7, yP + 0.58).addScaledVector(lat, 0.08);
+    boarding.size = [1.4, 1.16, Dp * 0.6];
     // silvered oak planks, lichen on their outer ends
     for (let k = 0; k < 4; k++) {
       const off = (k - 1.5) * 0.24;
@@ -401,7 +474,7 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
       for (let j = 1; j < pts.length - 1; j += 3) {
         const p = pts[j];
         const along = pts[j + 1].clone().sub(pts[j - 1]).normalize();
-        B.add(railMat, xf(new THREE.CylinderGeometry(0.03, 0.035, 0.12, 6).rotateX(Math.PI / 2), [p.x - n.x * 0.04, p.y - 0.06, p.z - n.z * 0.04], [0, a, 0]), { cast: false });
+        B.add(railMat, xf(new THREE.CylinderGeometry(0.03, 0.035, 0.12, lodRadial(6, 5)).rotateX(Math.PI / 2), [p.x - n.x * 0.04, p.y - 0.06, p.z - n.z * 0.04], [0, a, 0]), { cast: false });
         for (const lg of lashing(p, along, 0.036, { turns: 2, thick: 0.012, gap: 0.03 })) B.add(ropeMat, lg, { cast: false });
       }
       // ivy twining up the rail here and there
@@ -461,46 +534,57 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
   const hookW = new THREE.Vector3();
   let sway = 0, swayV = 0, prevY = bottomHookY, prevV = 0;
   const camPos = new THREE.Vector3();
+  const ease = (u) => u * u * (3 - 2 * u);
+  const latNeg = lat.clone().negate();
+  let clk = 0; // a running clock (the basket's idle sway), whether the lift cycles or rides
+  const _O = new THREE.Vector3();
+  /** the pose being shown: hook height, heading (rad about the bark normal), crawl 0..1 */
+  const pose = { hookY: bottomHookY, heading: 0, moving: 0 };
 
-  /** Place everything for cycle time t (seconds). */
-  function place(t, dt = 0) {
-    let tc = ((t % cycle) + cycle) % cycle;
-    let hookY, heading, moving;
-    const ease = (u) => u * u * (3 - 2 * u);
+  /** The regular cycle's pose at cycle time t (seconds). */
+  function cyclePose(t, P) {
+    const tc = ((t % cycle) + cycle) % cycle;
     if (tc < travel) {
       // going up (gentle start & stop)
       const u = tc / travel;
       const e = u < 0.08 ? ease(u / 0.08) * 0.08 : u > 0.92 ? 0.92 + ease((u - 0.92) / 0.08) * 0.08 : u;
-      hookY = bottomHookY + dist * e;
-      heading = 0;
-      moving = 1;
+      P.hookY = bottomHookY + dist * e;
+      P.heading = 0;
+      P.moving = 1;
     } else if (tc < travel + REST) {
       const r = tc - travel;
-      hookY = topHookY;
+      P.hookY = topHookY;
       const k = THREE.MathUtils.clamp((r - 1.2) / TURN, 0, 1);
-      heading = Math.PI * ease(k);
-      moving = k > 0 && k < 1 ? 0.45 : 0;
+      P.heading = Math.PI * ease(k);
+      P.moving = k > 0 && k < 1 ? 0.45 : 0;
     } else if (tc < 2 * travel + REST) {
       const u = (tc - travel - REST) / travel;
       const e = u < 0.08 ? ease(u / 0.08) * 0.08 : u > 0.92 ? 0.92 + ease((u - 0.92) / 0.08) * 0.08 : u;
-      hookY = topHookY - dist * e;
-      heading = Math.PI;
-      moving = 1;
+      P.hookY = topHookY - dist * e;
+      P.heading = Math.PI;
+      P.moving = 1;
     } else {
       const r = tc - 2 * travel - REST;
-      hookY = bottomHookY;
+      P.hookY = bottomHookY;
       const k = THREE.MathUtils.clamp((r - 1.2) / TURN, 0, 1);
-      heading = Math.PI + Math.PI * ease(k);
-      moving = k > 0 && k < 1 ? 0.45 : 0;
+      P.heading = Math.PI + Math.PI * ease(k);
+      P.moving = k > 0 && k < 1 ? 0.45 : 0;
     }
+    return P;
+  }
+
+  /** Place the snail, its carrier and the hanging basket for a pose (clk: a running clock, s). */
+  function apply(P, clk, dt = 0) {
+    const { hookY, heading, moving } = P;
     // carrier: on the bark, its Z axis up the trunk; the hook is at pivot + hookLocal
     const yC = hookY - shellZ; // pivot height = hook height (hook lies on the pivot axis)
     const rC = bark(a, yC) + 0.015;
-    const O = polar(a, rC, yC);
-    M.makeBasis(lat.clone().negate(), n, up).setPosition(O);
+    const O = polar(a, rC, yC, _O);
+    M.makeBasis(latNeg, n, up).setPosition(O);
     carrier.matrix.copy(M);
     carrier.matrixWorldNeedsUpdate = true;
     pivot.rotation.y = heading;
+    rollShell(SHELL_ROLL * viewSide * Math.cos(heading));
     snail.setMoving(moving);
     // the basket hangs from the hook, level, with a little pendulum swing
     hookW.set(hookLocal.x, hookLocal.y, shellZ).applyMatrix4(M);
@@ -523,7 +607,7 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
       sway = swayV = 0;
     }
     prevY = hookY;
-    BW.makeRotationY(a).multiply(_rx.makeRotationX(THREE.MathUtils.clamp(sway, -0.25, 0.25) + (reduced ? 0 : Math.sin(t * 0.9) * 0.015)));
+    BW.makeRotationY(a).multiply(_rx.makeRotationX(THREE.MathUtils.clamp(sway, -0.25, 0.25) + (reduced ? 0 : Math.sin(clk * 0.9) * 0.015)));
     BW.setPosition(hookW);
     basket.matrix.multiplyMatrices(Minv.copy(M).invert(), BW);
     basket.matrixWorldNeedsUpdate = true;
@@ -531,10 +615,97 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     if (moving === 0 && ctx.camera) snail.lookAt(ctx.camera.getWorldPosition(camPos));
     else snail.lookAt(null);
   }
+  /** Place everything for cycle time t (seconds). */
+  const place = (t, dt = 0) => apply(cyclePose(t, pose), clk, dt);
+
+  // ── a ride on request ('up': roots → deck, 'down': deck → roots) ──────────
+  // The lift hotspots start one (loft/ride.js flies the camera along). First
+  // the snail is CALLED to the boarding station: it turns towards it, hurries
+  // there and turns round to face the way of the ride (taking at least
+  // `call` seconds — the camera's approach — and waiting if it is already
+  // there); then it carries the visitor across in RIDE seconds, starting and
+  // stopping gently. Then the regular cycle resumes from that station's rest.
+  const RIDE = 4.6;
+  const CALL_SPEED = 3.0; // units / s on average while hurrying to the station
+  let ride = null;
+  const wrapA = (x) => Math.atan2(Math.sin(x), Math.cos(x));
+  /** trapezoidal ride profile: speed builds over the first fifth, eases off over the last */
+  const glideProfile = (u, f = 0.2) => {
+    const vm = 1 / (1 - f);
+    if (u < f) return (0.5 * vm * u * u) / f;
+    if (u < 1 - f) return 0.5 * vm * f + vm * (u - f);
+    return 1 - (0.5 * vm * (1 - u) * (1 - u)) / f;
+  };
+  function startRide(dir, { call = 0 } = {}) {
+    if (ride) return ride.state;
+    const from = dir === 'down' ? topHookY : bottomHookY;
+    const to = dir === 'down' ? bottomHookY : topHookY;
+    const rideHeading = dir === 'down' ? Math.PI : 0;
+    const segs = [];
+    let hk = pose.hookY, hd = pose.heading;
+    const turnTo = (target) => {
+      const d = wrapA(target - hd);
+      if (Math.abs(d) < 0.02) return;
+      const a0 = hd, y0 = hk;
+      segs.push({ T: 0.3 + (0.5 * Math.abs(d)) / Math.PI, f: (u, P) => ((P.hookY = y0), (P.heading = a0 + d * ease(u)), (P.moving = 0.45)) });
+      hd = a0 + d;
+    };
+    const dCall = Math.abs(from - hk);
+    let callT = 0;
+    if (dCall > 0.04) {
+      turnTo(from < hk ? Math.PI : 0);
+      const y0 = hk, h = hd;
+      const seg = { T: Math.max(0.7, (dCall / CALL_SPEED) * 1.0), f: (u, P) => ((P.hookY = y0 + (from - y0) * ease(u)), (P.heading = h), (P.moving = 1)) };
+      segs.push(seg);
+      hk = from;
+      turnTo(rideHeading);
+      callT = segs.reduce((s, g) => s + g.T, 0);
+      // never earlier than the camera: the hurry stretches to fill the approach
+      if (callT < call) seg.T += call - callT;
+    } else {
+      // already at the station: it waits (watching the visitor), then turns round
+      const turns = [];
+      const keep = segs.length;
+      turnTo(rideHeading);
+      for (let i = keep; i < segs.length; i++) turns.push(segs[i]);
+      const turnT = turns.reduce((s, g) => s + g.T, 0);
+      const y0 = hk, h0 = pose.heading;
+      if (call - turnT > 0.05) segs.splice(keep, 0, { T: call - turnT, f: (u, P) => ((P.hookY = y0), (P.heading = h0), (P.moving = 0)) });
+    }
+    callT = segs.reduce((s, g) => s + g.T, 0);
+    const hR = hd;
+    segs.push({ T: RIDE, ride: true, f: (u, P) => ((P.hookY = from + (to - from) * glideProfile(u)), (P.heading = hR), (P.moving = 1)) });
+    const state = { dir, phase: 'call', t: 0, call: callT, ride: RIDE, duration: callT + RIDE, progress: 0, from, to, done: false };
+    ride = { segs, state, dir };
+    return state;
+  }
+  function advanceRide(dt) {
+    const R = ride, S = R.state;
+    S.t += dt;
+    let t = S.t, i = 0;
+    while (i < R.segs.length - 1 && t > R.segs[i].T) t -= R.segs[i++].T;
+    const g = R.segs[i];
+    const u = THREE.MathUtils.clamp(t / g.T, 0, 1);
+    g.f(u, pose);
+    S.phase = g.ride ? 'ride' : 'call';
+    S.progress = g.ride ? u : 0;
+    apply(pose, clk, dt);
+    if (g.ride && u >= 1) {
+      // arrived: the regular cycle carries on from this station's rest
+      S.phase = 'done';
+      S.done = true;
+      S.progress = 1;
+      time = R.dir === 'down' ? 2 * travel + REST : travel;
+      ride = null;
+    }
+  }
+
   let time = travel * 0.94; // start just below the deck: the first view shows it arriving
   place(time);
   updates.push((dt) => {
     if (reduced) return;
+    clk += dt;
+    if (ride) return advanceRide(dt);
     time += dt;
     place(time, dt);
   });
@@ -542,9 +713,11 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
   // (0.25 = half way), [0.5, 1) the way down (0.75 = half way)
   const setPhase = (u) => {
     u = ((u % 1) + 1) % 1;
+    ride = null;
     time = u < 0.5 ? 2 * u * travel : travel + REST + (2 * u - 1) * travel;
     place(time);
   };
+  const subjectV = new THREE.Vector3();
 
   return {
     snail,
@@ -555,6 +728,30 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     top: polar(a, bark(a, OAK.loft.y) + 0.9, OAK.loft.y),
     /** where the hook is, every frame */
     hook: hookW,
+    /** the boarding platform on the roots: { centre, size: [across, up, out] } */
+    boarding,
+    /** the hook heights at the two stations */
+    stations: { bottom: bottomHookY, top: topHookY },
+    /** the track: azimuth (rad), outward normal and the tangent across it */
+    axis: { a, n, lat },
+    /** the hook height right now */
+    get hookY() {
+      return pose.hookY;
+    },
+    /**
+     * The middle of snail + basket when the hook is at hookY (what a camera
+     * riding along frames): out from the bark between the shell and the basket.
+     */
+    subjectAt(hookY = pose.hookY, out = subjectV) {
+      const y = hookY - 0.3;
+      return polar(a, bark(a, y) + 1.05, y, out);
+    },
+    /** a ride on request — see startRide; returns its live state ({ phase, t, call, ride, progress, done … }) */
+    ride: startRide,
+    /** the running ride's state (null when the lift follows its regular cycle) */
+    get riding() {
+      return ride?.state ?? null;
+    },
     /** seconds for a full up-rest-down-rest loop */
     cycle,
     /** seconds of one ride (up or down); a rest of REST seconds follows each */
@@ -562,10 +759,75 @@ export function buildElevator(ctx, B, mats, env, { updates }) {
     setPhase,
     /** debug: jump to cycle time t (seconds; 0 = leaving the bottom) */
     setTime(t) {
+      ride = null;
       time = t;
       place(time);
     },
   };
+}
+
+/**
+ * Band the lift snail's shell like a garden snail's: two chestnut bands
+ * running round the whorl, the spiral's eye darker on the sides (the props
+ * painter draws the spiral line itself in the stripe colour) — and the saddle
+ * blanket's pale trim in old gold (a cream ring round a red disc read as a
+ * lifebuoy). Works on a copy of the shared snail geometry. props/snail.js lays
+ * the shell out as bone 1: the coil surface first — 14 rows × 28 columns
+ * between two poles that sit on the coil's centre line at ±0.8 of its half
+ * width — then the two spiral ridges (45 × 4 each), then the blanket (13 × 8,
+ * blanket or trim coloured); the copy is only painted where that layout checks
+ * out.
+ */
+function bandShell(snail, trimTo = '#c8913c') {
+  const mesh = snail.group.children.find((o) => o.isSkinnedMesh);
+  const g = mesh?.geometry;
+  const si = g?.attributes.skinIndex, col = g?.attributes.color, pos = g?.attributes.position;
+  if (!si || !col || !pos) return;
+  let i0 = -1;
+  for (let i = 0; i < si.count; i++) {
+    if (si.getX(i) === 1) {
+      i0 = i;
+      break;
+    }
+  }
+  const N = 2 + 13 * 28;
+  if (i0 < 0 || i0 + N > si.count || si.getX(i0 + N - 1) !== 1) return;
+  // the poles: (∓0.8 W, cy, cz)
+  const xa = pos.getX(i0), xb = pos.getX(i0 + N - 1);
+  const cy = pos.getY(i0), cz = pos.getZ(i0);
+  if (!(xa < 0 && Math.abs(xa + xb) < 1e-3 && Math.abs(pos.getY(i0 + N - 1) - cy) < 1e-3 && Math.abs(pos.getZ(i0 + N - 1) - cz) < 1e-3)) return;
+  const W = -xa / 0.8;
+  const copy = g.clone();
+  const c = copy.attributes.color;
+  const k = new THREE.Color();
+  const band = (v, at, w) => Math.max(0, 1 - Math.abs(v - at) / w);
+  for (let i = i0; i < i0 + N; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const v = Math.abs(x) / W;
+    k.setRGB(c.getX(i), c.getY(i), c.getZ(i));
+    if (v < 0.76) {
+      // bands round the whorl (on the crown and the coil's outer face)
+      const dark = Math.max(band(v, 0.3, 0.07), 0.85 * band(v, 0.58, 0.06));
+      k.multiplyScalar(1 - 0.42 * Math.min(1, dark * 1.6));
+    } else {
+      // the spiral's eye: darker towards the centre of the coil
+      const rr = Math.hypot(y - cy, z - cz);
+      k.multiplyScalar(0.62 + 0.38 * THREE.MathUtils.smoothstep(rr, 0.06, 0.36));
+    }
+    c.setXYZ(i, k.r, k.g, k.b);
+  }
+  // the blanket's trim (the blanket follows the two ridges)
+  const b0 = i0 + N + 2 * 45 * 4, bn = 13 * 8;
+  if (b0 + bn <= si.count && si.getX(b0 + bn - 1) === 1) {
+    const trim = new THREE.Color(palette.paper), gold = new THREE.Color(trimTo);
+    const near = (i, t) => Math.abs(c.getX(i) - t.r) + Math.abs(c.getY(i) - t.g) + Math.abs(c.getZ(i) - t.b) < 0.02;
+    let hits = 0;
+    for (let i = b0; i < b0 + bn; i++) if (near(i, trim)) hits++;
+    // (the trim rings the blanket: about a third of its vertices)
+    if (hits > 20 && hits < 70) for (let i = b0; i < b0 + bn; i++) if (near(i, trim)) c.setXYZ(i, gold.r, gold.g, gold.b);
+  }
+  c.needsUpdate = true;
+  mesh.geometry = copy;
 }
 
 function flip(geo) {

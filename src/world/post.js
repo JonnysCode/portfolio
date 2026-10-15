@@ -9,8 +9,22 @@
 //              At night only the light ABOVE the threshold blooms (soft-knee
 //              subtraction) and the halo is kept tight, so lights read as
 //              small warm points with a gentle halo — never white blobs.
+//              Night close-ups: what is within a few units of the camera blooms
+//              less (35 % inside 2.5, full beyond 7), so a lamp and a lit window
+//              right behind Jonny at the Hobelbank never haze the shot.
 //              (Only the blur chain is used — the result is added in the
 //              finish pass, so the HDR scene is never re-resolved.)
+//   warm air   (night, every post tier) a second, WIDE, faint glow of the
+//              warm lights only — lit windows, doorways, lanterns, fairy
+//              strands (cool LEDs, moonlight and mushrooms are masked out) —
+//              so an amber veil hangs in the air around every lit hub and the
+//              strands warm the caps & bark they hang on, while the bulbs
+//              themselves stay crisp. ¼-res warm prefilter → box halvings to
+//              ≈ 16 CSS px texels → separable gaussian; a few tiny passes.
+//              Light sources close to the camera feed it less (40 % inside
+//              ≈ 2–6 units — by depth on 'high', by the focus distance on the
+//              phone tiers), so a close-up of Jonny at the Hobelbank is not
+//              hazed by the porch lamp and the annex window behind him.
 //   AO         ('high') half-res depth-only ambient occlusion (normals rebuilt
 //              from depth, 12 spiral taps, depth-aware blur) — contact shadows
 //              in the nooks of shingles, stones and timber; never dims glows.
@@ -26,26 +40,38 @@
 //              bulbs) never explode into big bokeh discs.
 //   finish     ONE pass: AO + DOF composite + bloom + the renderer's tone mapping &
 //              exposure + colour grade + warm vignette + fine animated grain +
-//              sRGB output. The grade is a golden storybook afternoon: warm
-//              highlights, neutral-warm shadows and lifted blacks (the cool
-//              blue-green lives only in the fog / misty distance), wood &
-//              warm hues glow honey-amber (olive is nudged back to amber).
-//              Saturation is hue-selective: reds, oranges and wood keep their
-//              boost, while yellow-greens (hue ≈ 70–140°: lawns, ferns, sunlit
-//              leaves) are pulled towards sage/olive with slightly cooler
-//              shadows — painterly greens, never neon.
+//              sRGB output. The grade is a golden storybook afternoon painted
+//              with a restrained palette: a highlight shoulder lifts sunlit cap
+//              tops, roofs and path stones to real highlights, overall
+//              saturation is lower by day, warm hues (reds, caps, wood,
+//              lamplight) keep theirs and glow honey-amber (olive is nudged
+//              back to amber), yellow-greens (hue ≈ 70–140°: lawns, ferns,
+//              leaves) are pulled a little towards sage — shaded greens keep
+//              their hue, sunlit greens turn towards a warm gold-olive — and
+//              shadows get a faint cool tint that spares warm hues (lush and
+//              golden like the references, neither neon nor grey-teal).
 //              Night: a moonlit blue shadow tint that is MULTIPLICATIVE
 //              (hue-preserving — dark reds never clip to black) and spares
-//              warm hues, so red & ochre caps stay burgundy & ochre.
+//              warm hues, so red & ochre caps stay burgundy & ochre; mid and
+//              shadow greens lose their colour towards moonlit blue-teal
+//              (Purkinje), lamps & fireflies keep theirs.
 //              Saturation has a soft floor (never pushes a channel below 0).
 //
 // Tiers (quality.post): 'full' (high) = everything; 'lite' (medium) = bloom +
-// grade, 2× MSAA (no depth → no AO/DOF); false (low) = plain renderer (tone
-// mapping only). NaN/Inf pixels from any material are dropped before they can
-// be smeared by the blurs. If anything throws — setup or a frame — we fall
-// back to plain rendering for good.
+// grade, 2× MSAA + FXAA (no depth → no AO/DOF); false (low) = a grade-only
+// finishing pass (quality.grade: the same tone curve & grade at DPR 1, no
+// bloom, AO, DOF or MSAA, but FXAA) — or the plain renderer (tone mapping only)
+// where float targets are not renderable or with ?grade=0.
+// FXAA (phone tiers) runs INSIDE the finish pass, on the HDR scene before the
+// grade (luma from a tone-compressed estimate): no extra pass or target — cap
+// rims, roof edges and alpha-tested leaf cards lose their stair steps.
+// The engine's frame-time governor may switch quality.ao / dof / bloom off at
+// runtime. NaN/Inf pixels from any material are dropped before they can be
+// smeared by the blurs. If anything throws — setup or a frame — we fall back
+// to plain rendering for good.
 //
 // ctx.post = { composer (null — custom chain), bloom, settings, target, enabled, setEnabled(on) }
+//   (settings.warmAir.strength = 0 switches the night warm air off)
 //   settings are live-tunable (see SETTINGS).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
@@ -57,7 +83,26 @@ const SETTINGS = {
   // excess: 0 = classic UnrealBloom high pass (the whole pixel blooms once it
   // passes the threshold), 1 = only the energy above the threshold blooms.
   bloomDay: { strength: 0.32, radius: 0.55, threshold: 1.0, knee: 0.6, excess: 0 },
-  bloomNight: { strength: 0.42, radius: 0.18, threshold: 1.25, knee: 0.7, excess: 1 },
+  // near (night only): [k, d0, d1] — what is closer to the camera than d0 blooms
+  // with k of its light, rising to full at d1 (world units): a close-up of a
+  // lamp and a lit window (Jonny at the Hobelbank) keeps crisp lights instead of
+  // a wide orange haze over the timber frame. Per pixel by depth on 'high'; the
+  // phone tiers (no depth) scale the whole bloom by the focus distance.
+  bloomNight: { strength: 0.42, radius: 0.18, threshold: 1.25, knee: 0.7, excess: 1, near: [0.35, 2.5, 7.0] },
+  /**
+   * Night warm air: a second, WIDE and faint glow of the warm lights only (lit
+   * windows, doorways, lanterns, fairy strands — cool LEDs, moonlight and
+   * glowing mushrooms are masked out), so an amber veil hangs in the air around
+   * every lit hub while the bulbs themselves stay crisp (bloomNight). Its own
+   * cheap chain: ¼-res warm prefilter → box halvings to ≈ 16 CSS px texels →
+   * separable gaussian. strength (HDR, × night), threshold / knee on the max
+   * channel, radius = gaussian sigma in CSS px at 720 px height, tint.
+   */
+  // near: [k, d0, d1] — a light source nearer than d0 feeds the warm air with
+  // k of its light, rising to 1 at d1 (world units from the camera)
+  warmAir: { strength: 0.6, threshold: 0.55, knee: 0.4, radius: 36, tint: [1.0, 0.8, 0.56], near: [0.4, 2.0, 6.0] },
+  /** FXAA on the phone tiers ('lite', 'grade'): [subpixel blend 0..1, relative contrast threshold, absolute threshold] (subpix 0: off). */
+  fxaa: [0.55, 0.125, 0.0312],
   dof: true,
   /** Contact shadows in nooks ('high'): strength 0..1 and world radius. */
   ao: 0.7,
@@ -77,21 +122,68 @@ const SETTINGS = {
   /** Extra exposure of the HDR path: additive light (shafts, halos, mist) is
    *  compressed by the tone curve here but not in the plain path — keep parity. */
   exposure: 1.06,
+  /** Day exposure (the night keeps `exposure`). */
+  exposureDay: 1.06,
+  /**
+   * Global saturation by day / night (night: the moonlit look, unchanged).
+   * Day: between round 3's neon (1.12, greens 0.8) and round 4's grey-teal
+   * (0.87, greens 0.57 / 30° teal turn) — mean HSV S ≈ 115–125 on the glen.
+   */
+  saturationDay: 1.02,
   saturation: 1.12,
-  /** Yellow-greens (hue 70–140°): saturation × this (sage, not neon) — 0..1 strength in `sage`. */
+  /** Warm hues (reds, wood, caps, lamplight) keep at least this saturation by day. */
+  warmSaturationDay: 1.1,
+  /**
+   * Yellow-greens (hue ≈ 65–145°): saturation × this (sage, not neon) — 0..1
+   * strength in `sage`. By day shaded greens lose more colour than sunlit ones
+   * (greenSaturationDay → greenSaturationSunDay across `greenPivot`).
+   */
+  greenSaturationDay: 0.8,
+  greenSaturationSunDay: 0.92,
   greenSaturation: 0.84,
   sage: 1,
+  /**
+   * Painterly greens by day (degrees of hue rotation, greens only): greens in
+   * shade keep their own hue (a hair warmer), sunlit greens turn towards a warm
+   * gold-olive like the references' foliage (hue ≈ 60–90°); `pivot` = display
+   * luminance [shade end, sun start]. (A +30° shade turn made the glen grey-teal
+   * and iced the moss & ivy cyan.)
+   */
+  greenShade: -4,
+  greenSun: -32,
+  greenPivot: [0.014, 0.1],
+  /** Day: shaded greens cool a touch towards the misty depth (rgb ×, weighted to the shadows; the night keeps [0.95, 1, 1.08]). */
+  greenShadowCool: [0.99, 1.0, 1.02],
+  /** Night: Purkinje shift — mid & shadow greens drift towards moonlit blue-teal (0..1). */
+  purkinje: 0.3,
+  /**
+   * Highlight shoulder (day): a lift of the upper tones in perceptual space
+   * (v = √luminance; v += gain·v(1−v)·smoothstep(start, full, v)), so sunlit cap
+   * tops, roofs and path stones reach a real highlight instead of compressing
+   * into the mid tones. [gain, start, full].
+   */
+  highlightLiftDay: [0.55, 0.28, 0.55],
+  /**
+   * 'low' (grade-only pass): no canopy shadow map, so the unshadowed glen is
+   * brighter — a little less exposure and a softer highlight lift keep it from
+   * washing out, and bright highlights keep more of their hue by day (sun-lit
+   * leaf tips stay yellow-green instead of bleaching to cream).
+   * [exposure ×, highlight-lift gain ×, day highlight hue]
+   */
+  gradeLow: [0.9, 0.55, 0.45],
   /** Highlights keep their hue (0..1) instead of bleaching to white — warm lights stay warm. */
   highlightHueDay: 0.2,
   highlightHueNight: 0.55,
-  warmth: 0.07,
+  /** Day: golden warmth of the upper mid tones & highlights. */
+  warmth: 0.15,
   /**
    * Shadow tint — MULTIPLICATIVE (hue-preserving: a dark red stays a dark red,
    * it is never subtracted to black) plus a tiny additive lift, weighted
-   * towards the shadows. Day: neutral-warm (golden afternoon, the teal lives
-   * only in the misty distance); night: a gentle moonlit blue.
+   * towards the shadows. Day: a faint cool depth (warm hues are spared, so
+   * wood & caps stay warm in the shade — stronger turned the shade grey-teal);
+   * night: a gentle moonlit blue.
    */
-  shadowTintDay: { mul: [1.025, 1.0, 0.95], add: [0.004, 0.0025, 0.0] },
+  shadowTintDay: { mul: [0.985, 1.0, 1.025], add: [0.0, 0.002, 0.004] },
   shadowTintNight: { mul: [0.92, 1.0, 1.06], add: [0.0, 0.003, 0.008] },
   /** Warm hues (wood, red & ochre caps, lamplight) are protected from the cool night grade (0..1). */
   warmProtect: 0.7,
@@ -345,10 +437,94 @@ const AOBlurShader = {
   `,
 };
 
+/** Warm air ①: device → ¼ res (4 bilinear taps = an exact 4×4 box), warm lights above the threshold only. */
+const WarmPrefilterShader = {
+  uniforms: {
+    tColor: { value: null },
+    uTexel: { value: new THREE.Vector2() }, // source (full-res) texel
+    uThreshold: { value: 0.55 },
+    uKnee: { value: 0.4 },
+    tDepth: { value: null },
+    uNear: { value: 0.1 },
+    uFar: { value: 100 },
+    /** x: k near the camera, y/z: fade range (world units), w: 1 = per-pixel depth available */
+    uNearFade: { value: new THREE.Vector4(1, 0, 1, 0) },
+  },
+  vertexShader: VERT,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tColor, tDepth;
+    uniform vec2 uTexel;
+    uniform float uThreshold, uKnee, uNear, uFar;
+    uniform vec4 uNearFade;
+    varying vec2 vUv;
+    vec3 warmPart(vec3 c) {
+      if (any(isnan(c)) || any(isinf(c))) return vec3(0.0);
+      c = min(c, vec3(16.0));
+      float mx = max(max(c.r, c.g), c.b);
+      // warm hues only: red ≥ green > blue with some chroma (amber, candle,
+      // warm-white windows); cyan, mint, white LEDs and moonlight are excluded
+      float warm = smoothstep(0.18, 0.42, (c.r - c.b) / max(c.r, 1e-4)) * smoothstep(-0.04, 0.06, c.r - c.g);
+      // soft-knee excess above the threshold
+      float rq = clamp(mx - uThreshold + uKnee, 0.0, 2.0 * uKnee);
+      rq = rq * rq / (4.0 * uKnee);
+      float ex = max(rq, mx - uThreshold) / max(mx, 1e-4);
+      return c * ex * warm;
+    }
+    void main() {
+      vec3 c = warmPart(texture2D(tColor, vUv + vec2(-uTexel.x, -uTexel.y)).rgb)
+             + warmPart(texture2D(tColor, vUv + vec2(uTexel.x, -uTexel.y)).rgb)
+             + warmPart(texture2D(tColor, vUv + vec2(-uTexel.x, uTexel.y)).rgb)
+             + warmPart(texture2D(tColor, vUv + vec2(uTexel.x, uTexel.y)).rgb);
+      // light sources close to the camera feed the veil less (a close-up of a
+      // lamp is not seen through metres of warm air)
+      if (uNearFade.w > 0.5) {
+        float d = texture2D(tDepth, vUv).x;
+        float dist = -(uNear * uFar) / ((uFar - uNear) * d - uFar);
+        c *= mix(uNearFade.x, 1.0, smoothstep(uNearFade.y, uNearFade.z, dist));
+      }
+      gl_FragColor = vec4(c * 0.25, 1.0);
+    }
+  `,
+};
+
+/** Warm air ②: an exact 2×2 box halving (one bilinear tap on the shared corner). */
+const HalveShader = {
+  uniforms: { tSrc: { value: null } },
+  vertexShader: VERT,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tSrc;
+    varying vec2 vUv;
+    void main() { gl_FragColor = vec4(texture2D(tSrc, vUv).rgb, 1.0); }
+  `,
+};
+
+/** Warm air ③: separable 11-tap gaussian (sigma = 2.2 taps; uDir = texel × tap spacing). */
+const WarmBlurShader = {
+  uniforms: { tSrc: { value: null }, uDir: { value: new THREE.Vector2() } },
+  vertexShader: VERT,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tSrc;
+    uniform vec2 uDir; // texel × step along the blur axis
+    varying vec2 vUv;
+    void main() {
+      // sigma = 2.2 taps
+      const float W0 = 0.1835, W1 = 0.1655, W2 = 0.1214, W3 = 0.0724, W4 = 0.0351, W5 = 0.0139;
+      vec3 c = texture2D(tSrc, vUv).rgb * W0;
+      c += (texture2D(tSrc, vUv + uDir).rgb + texture2D(tSrc, vUv - uDir).rgb) * W1;
+      c += (texture2D(tSrc, vUv + 2.0 * uDir).rgb + texture2D(tSrc, vUv - 2.0 * uDir).rgb) * W2;
+      c += (texture2D(tSrc, vUv + 3.0 * uDir).rgb + texture2D(tSrc, vUv - 3.0 * uDir).rgb) * W3;
+      c += (texture2D(tSrc, vUv + 4.0 * uDir).rgb + texture2D(tSrc, vUv - 4.0 * uDir).rgb) * W4;
+      c += (texture2D(tSrc, vUv + 5.0 * uDir).rgb + texture2D(tSrc, vUv - 5.0 * uDir).rgb) * W5;
+      gl_FragColor = vec4(c, 1.0);
+    }
+  `,
+};
+
 class FinishMaterial extends THREE.ShaderMaterial {
-  constructor() {
+  constructor({ fxaa = false } = {}) {
     super({
       name: 'WoodlandFinish',
+      defines: fxaa ? { USE_FXAA: '' } : {},
       uniforms: {
         tColor: { value: null },
         tBloom: { value: null },
@@ -357,12 +533,20 @@ class FinishMaterial extends THREE.ShaderMaterial {
         tAO: { value: null },
         uAO: { value: 0 },
         uUseBloom: { value: 0 },
+        tWarmAir: { value: null },
+        uWarmAir: { value: new THREE.Vector3() },
         uUseDof: { value: 0 },
         uExposure: { value: SETTINGS.exposure },
         uHighlightHue: { value: 0.2 },
         uSaturation: { value: SETTINGS.saturation },
         uGreenSat: { value: SETTINGS.greenSaturation },
+        uGreenSatSun: { value: SETTINGS.greenSaturation },
+        uWarmSat: { value: SETTINGS.warmSaturationDay },
         uSage: { value: SETTINGS.sage },
+        uGreenShift: { value: new THREE.Vector4(SETTINGS.greenShade, SETTINGS.greenSun, ...SETTINGS.greenPivot) },
+        uGreenCool: { value: new THREE.Vector3(...SETTINGS.greenShadowCool) },
+        uHiLift: { value: new THREE.Vector3(...SETTINGS.highlightLiftDay) },
+        uPurkinje: { value: SETTINGS.purkinje },
         uWarmth: { value: SETTINGS.warmth },
         uShadowMul: { value: new THREE.Vector3(...SETTINGS.shadowTintDay.mul) },
         uShadowAdd: { value: new THREE.Vector3(...SETTINGS.shadowTintDay.add) },
@@ -376,14 +560,20 @@ class FinishMaterial extends THREE.ShaderMaterial {
         uAspect: { value: 1 },
         uNight: { value: 0 },
         uTime: { value: 0 },
+        uTexel: { value: new THREE.Vector2(1 / 1024, 1 / 1024) },
+        uFxaa: { value: new THREE.Vector3(...SETTINGS.fxaa) },
       },
       vertexShader: VERT,
       fragmentShader: /* glsl */ `
-        uniform sampler2D tColor, tBloom, tBokeh, tAO;
+        uniform sampler2D tColor, tBloom, tBokeh, tAO, tWarmAir;
+        uniform vec2 uTexel; // scene texel
+        uniform vec3 uFxaa;  // subpixel blend, relative & absolute contrast thresholds
         uniform float uUseBloom, uUseDof, uAO;
+        uniform vec3 uWarmAir; // tint × strength (0: off)
         uniform float uExposure, uSaturation, uWarmth, uLift, uVignette, uGrain, uAspect, uNight, uTime, uHighlightHue;
-        uniform float uWarmProtect, uWoodGlow, uGreenSat, uSage;
-        uniform vec3 uShadowMul, uShadowAdd, uLiftColor, uVignetteColor;
+        uniform float uWarmProtect, uWoodGlow, uGreenSat, uGreenSatSun, uWarmSat, uSage, uPurkinje;
+        uniform vec4 uGreenShift;
+        uniform vec3 uShadowMul, uShadowAdd, uLiftColor, uVignetteColor, uHiLift, uGreenCool;
         varying vec2 vUv;
         ${COC_GLSL}
         float hash12(vec2 p) {
@@ -404,8 +594,76 @@ class FinishMaterial extends THREE.ShaderMaterial {
           float dh = abs(fract(h - centre / 360.0 + 0.5) - 0.5) * 360.0;
           return 1.0 - smoothstep(full, fade, dh);
         }
+        // rotate the hue (radians, + = red → green → blue) around the grey axis
+        vec3 hueRotate(vec3 c, float a) {
+          const vec3 k = vec3(0.57735027);
+          float cs = cos(a), sn = sin(a);
+          return c * cs + cross(k, c) * sn + k * dot(k, c) * (1.0 - cs);
+        }
+        #ifdef USE_FXAA
+        // FXAA (NVIDIA's algorithm after J. Flick's walkthrough) on the HDR
+        // scene: luma from a tone-compressed estimate (≈ display luma), the
+        // blend in linear HDR (like an MSAA resolve), before the grade.
+        float fxLuma(vec3 c) {
+          float l = dot(max(c, 0.0), vec3(0.299, 0.587, 0.114)) * uExposure;
+          return sqrt(l / (1.0 + l));
+        }
+        float fxL(vec2 uv) { return fxLuma(texture2D(tColor, uv).rgb); }
+        vec3 fxaa(vec2 uv) {
+          vec3 cM = texture2D(tColor, uv).rgb;
+          float m = fxLuma(cM);
+          vec2 t = uTexel;
+          float n = fxL(uv + vec2(0.0, t.y)), s = fxL(uv - vec2(0.0, t.y));
+          float e = fxL(uv + vec2(t.x, 0.0)), w = fxL(uv - vec2(t.x, 0.0));
+          float hi = max(max(max(n, s), max(e, w)), m);
+          float lo = min(min(min(n, s), min(e, w)), m);
+          float contrast = hi - lo;
+          if (contrast < max(uFxaa.z, uFxaa.y * hi)) return cM;
+          float ne = fxL(uv + t), sw = fxL(uv - t);
+          float nw = fxL(uv + vec2(-t.x, t.y)), se = fxL(uv + vec2(t.x, -t.y));
+          // sub-pixel aliasing (a lone bright texel, a thin twig)
+          float f = (2.0 * (n + e + s + w) + ne + nw + se + sw) / 12.0;
+          f = smoothstep(0.0, 1.0, clamp(abs(f - m) / contrast, 0.0, 1.0));
+          float pixelBlend = f * f * uFxaa.x;
+          // edge orientation and the side the edge lies on
+          float horz = abs(n + s - 2.0 * m) * 2.0 + abs(ne + se - 2.0 * e) + abs(nw + sw - 2.0 * w);
+          float vert = abs(e + w - 2.0 * m) * 2.0 + abs(ne + nw - 2.0 * n) + abs(se + sw - 2.0 * s);
+          bool isH = horz >= vert;
+          float pL = isH ? n : e, nL = isH ? s : w;
+          float pG = abs(pL - m), nG = abs(nL - m);
+          float stepLen = isH ? t.y : t.x;
+          float oppL = pL, grad = pG;
+          if (pG < nG) { stepLen = -stepLen; oppL = nL; grad = nG; }
+          // walk along the edge both ways to its ends
+          vec2 uvE = uv, es = isH ? vec2(t.x, 0.0) : vec2(0.0, t.y);
+          if (isH) uvE.y += stepLen * 0.5; else uvE.x += stepLen * 0.5;
+          float edgeL = (m + oppL) * 0.5, gT = grad * 0.25;
+          vec2 puv = uvE + es, nuv = uvE - es;
+          float pD = fxL(puv) - edgeL, nD = fxL(nuv) - edgeL;
+          bool pEnd = abs(pD) >= gT, nEnd = abs(nD) >= gT;
+          for (int i = 0; i < 4; i++) {
+            float st = i == 0 ? 1.5 : (i == 3 ? 4.0 : 2.0);
+            if (!pEnd) { puv += es * st; pD = fxL(puv) - edgeL; pEnd = abs(pD) >= gT; }
+            if (!nEnd) { nuv -= es * st; nD = fxL(nuv) - edgeL; nEnd = abs(nD) >= gT; }
+          }
+          if (!pEnd) puv += es * 8.0;
+          if (!nEnd) nuv -= es * 8.0;
+          float pDist = isH ? puv.x - uv.x : puv.y - uv.y;
+          float nDist = isH ? uv.x - nuv.x : uv.y - nuv.y;
+          float shortest = min(pDist, nDist);
+          bool dSign = pDist <= nDist ? pD >= 0.0 : nD >= 0.0;
+          float edgeBlend = dSign == (m - edgeL >= 0.0) ? 0.0 : 0.5 - shortest / (pDist + nDist);
+          float b = max(pixelBlend, edgeBlend);
+          if (isH) uv.y += stepLen * b; else uv.x += stepLen * b;
+          return texture2D(tColor, uv).rgb;
+        }
+        #endif
         void main() {
+          #ifdef USE_FXAA
+          vec3 col = uFxaa.x > 0.0 ? fxaa(vUv) : texture2D(tColor, vUv).rgb;
+          #else
           vec3 col = texture2D(tColor, vUv).rgb;
+          #endif
           if (any(isnan(col)) || any(isinf(col))) col = vec3(0.0);
           if (uAO > 0.0) {
             // contact shadows — but never dim things that glow
@@ -421,6 +679,8 @@ class FinishMaterial extends THREE.ShaderMaterial {
             col = mix(col, b.rgb, k);
           }
           if (uUseBloom > 0.5) col += texture2D(tBloom, vUv).rgb;
+          // night: the amber veil of air around the lit hubs
+          if (uWarmAir.r > 0.0) col += texture2D(tWarmAir, vUv).rgb * uWarmAir;
 
           // the renderer's tone mapping (exposure included)
           vec3 hdr = col * uExposure;
@@ -436,20 +696,44 @@ class FinishMaterial extends THREE.ShaderMaterial {
           col = clamp(col, 0.0, 1.0);
 
           // grade (display-referred linear)
+          float day = 1.0 - uNight;
           float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+          // the highlight shoulder (day): a perceptual lift of the upper tones, so
+          // sunlit cap tops, roofs and path stones become real highlights (hue kept;
+          // 1.0 stays 1.0, the darks are untouched)
+          if (uHiLift.x > 0.0 && day > 0.0 && l > 1e-4) {
+            float v = sqrt(l);
+            float v2 = v + uHiLift.x * day * v * (1.0 - v) * smoothstep(uHiLift.y, uHiLift.z, v);
+            col = min(col * (v2 * v2 / l), vec3(1.0));
+            l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+          }
           float cmx = max(max(col.r, col.g), col.b), cmn = min(min(col.r, col.g), col.b);
           // warm hues (wood, red & ochre caps, lamplight): reds…ambers with some chroma
           float hue = hueOf(col);
           float chroma = smoothstep(0.06, 0.22, (cmx - cmn) / max(cmx, 1e-4));
           float warm = hueBand(hue, 22.0, 24.0, 40.0) * chroma;
-          // yellow-greens (≈ 70–140°: lawns, ferns, sunlit leaves): sage/olive, not neon
-          float green = hueBand(hue, 105.0, 35.0, 50.0) * chroma;
-          float sageK = uSage * green * (1.0 - 0.6 * uNight);
+          // yellow-greens (≈ 70–140°: lawns, ferns, sunlit leaves): sage/olive, not neon;
+          // by moonlight they lose even more colour (Purkinje: the eye's rods see no green)
+          float green = hueBand(hue, 105.0, 38.0, 55.0) * chroma;
+          float sageK = uSage * green * (1.0 + 0.5 * uNight);
+          // shade (0) … sun (1) for the greens' saturation & hue turn
+          float sunK = smoothstep(uGreenShift.z, uGreenShift.w, l);
           // saturation with a soft floor: the boost may never push a channel
-          // below half its value (so dark reds are never clipped to black)
-          float sat = uSaturation * mix(1.0, uGreenSat, sageK);
+          // below half its value (so dark reds are never clipped to black).
+          // Day: a painterly, lower overall saturation — warm hues (reds, wood,
+          // caps, lamplight) keep theirs; shaded greens lose the most.
+          float sat = uSaturation * mix(1.0, mix(uGreenSat, uGreenSatSun, sunK), sageK);
+          sat = mix(sat, max(sat, uWarmSat), warm);
           if (sat > 1.0 && cmn < l) sat = min(sat, (l - 0.5 * cmn) / max(l - cmn, 1e-5));
           col = mix(vec3(l), col, sat);
+          // painterly greens (day): greens in shade turn towards a cool teal-blue
+          // depth, sunlit greens towards a warm yellow-green (luminance mostly kept)
+          if (green > 0.0 && day > 0.0) {
+            float ang = radians(mix(uGreenShift.x, uGreenShift.y, sunK)) * green * day;
+            col = max(hueRotate(col, ang), 0.0);
+            float l2 = dot(col, vec3(0.2126, 0.7152, 0.0722));
+            col *= mix(1.0, l / max(l2, 1e-5), 0.65);
+          }
           // the brightest acid yellow-greens settle a little (value, not hue) …
           col *= 1.0 - 0.07 * sageK * smoothstep(0.35, 0.8, l) * hueBand(hue, 85.0, 18.0, 30.0);
           // day: wood glows honey/amber instead of olive — warm hues get a touch
@@ -462,13 +746,16 @@ class FinishMaterial extends THREE.ShaderMaterial {
           // shadow tint: multiplicative + a tiny lift — hue-preserving; warm
           // hues keep most of their colour at night
           float sh = (1.0 - l) * (1.0 - l);
-          vec3 tintMul = mix(uShadowMul, vec3(1.0), warm * uWarmProtect * uNight);
+          vec3 tintMul = mix(uShadowMul, vec3(1.0), warm * uWarmProtect * mix(0.6, 1.0, uNight));
           col = mix(col, col * tintMul + uShadowAdd, sh);
           // … and green shadows cool a touch towards the misty blue-green depth
-          col *= mix(vec3(1.0), vec3(0.95, 1.0, 1.08), sageK * sh);
+          col *= mix(vec3(1.0), uGreenCool, min(sageK, 1.0) * sh);
           col *= mix(vec3(1.0), vec3(1.0 + uWarmth, 1.0 + uWarmth * 0.35, 1.0 - uWarmth * 0.6), smoothstep(0.25, 0.9, l));
           // moonlight: cool the greens a little without crushing anything (reds & ochres keep their hue)
           col = mix(col, l * vec3(0.78, 0.9, 1.25), uNight * 0.18 * (1.0 - warm * uWarmProtect));
+          // Purkinje (night): mid & shadow greens drift towards a moonlit blue-teal;
+          // bright things (fireflies, lamps) and warm hues keep their colour
+          col = mix(col, l * vec3(0.7, 0.88, 1.2), uPurkinje * uNight * green * (1.0 - smoothstep(0.1, 0.35, l)));
           col = max(col, 0.0);
           // softly lifted blacks: neutral-warm by day, deep blue by night (never grey)
           col = col * (1.0 - uLift) + uLiftColor * uLift * 2.2;
@@ -505,8 +792,17 @@ class WoodlandBloom extends UnrealBloomPass {
     // subtraction (only the energy above the threshold blooms).
     this.highPassUniforms.uExcess = { value: 0 };
     m.uniforms.uExcess = this.highPassUniforms.uExcess;
+    // near-camera fade (night close-ups): x = k near, y/z = range, w = 1: on (needs depth)
+    this.highPassUniforms.tNearDepth = { value: null };
+    this.highPassUniforms.uNearFade = { value: new THREE.Vector4(1, 0, 1, 0) };
+    this.highPassUniforms.uNearFar = { value: new THREE.Vector2(0.1, 100) };
+    m.uniforms.tNearDepth = this.highPassUniforms.tNearDepth;
+    m.uniforms.uNearFade = this.highPassUniforms.uNearFade;
+    m.uniforms.uNearFar = this.highPassUniforms.uNearFar;
+    /** Whole-bloom multiplier (phone tiers' near-camera fade; 1 = off). */
+    this.nearK = 1;
     m.fragmentShader = m.fragmentShader
-      .replace('uniform float smoothWidth;', 'uniform float smoothWidth;\nuniform float uExcess;')
+      .replace('uniform float smoothWidth;', 'uniform float smoothWidth;\nuniform float uExcess;\nuniform sampler2D tNearDepth;\nuniform vec4 uNearFade;\nuniform vec2 uNearFar;')
       .replace(
         'vec4 texel = texture2D( tDiffuse, vUv );',
         `vec4 texel = texture2D( tDiffuse, vUv );
@@ -521,7 +817,12 @@ class WoodlandBloom extends UnrealBloomPass {
       float rq = clamp( br - luminosityThreshold + kn, 0.0, 2.0 * kn );
       rq = rq * rq / ( 4.0 * kn );
       float ex = max( rq, br - luminosityThreshold ) / max( br, 1e-4 );
-      gl_FragColor = mix( classic, vec4( texel.rgb * ex, 1.0 ), uExcess );`
+      gl_FragColor = mix( classic, vec4( texel.rgb * ex, 1.0 ), uExcess );
+      if ( uNearFade.w > 0.5 ) {
+        float nd = texture2D( tNearDepth, vUv ).x;
+        float nDist = - ( uNearFar.x * uNearFar.y ) / ( ( uNearFar.y - uNearFar.x ) * nd - uNearFar.y );
+        gl_FragColor.rgb *= mix( uNearFade.x, 1.0, smoothstep( uNearFade.y, uNearFade.z, nDist ) );
+      }`
       );
     m.needsUpdate = true;
   }
@@ -558,7 +859,7 @@ class WoodlandBloom extends UnrealBloomPass {
     }
 
     this._fsQuad.material = this.compositeMaterial;
-    this.compositeMaterial.uniforms.bloomStrength.value = this.strength;
+    this.compositeMaterial.uniforms.bloomStrength.value = this.strength * this.nearK;
     this.compositeMaterial.uniforms.bloomRadius.value = this.radius;
     this.compositeMaterial.uniforms.bloomTintColors.value = this.bloomTintColors;
     renderer.setRenderTarget(this.renderTargetsHorizontal[0]);
@@ -579,10 +880,19 @@ export default async function build(ctx) {
   ctx.lights?.allocate?.();
   // quality.post: 'full' (high: AO + DOF + bloom + grade), 'lite' (medium:
   // bloom + grade, 2× MSAA), false (low: plain renderer, tone mapping only).
-  const mode = quality.post === true ? (quality.tier === 'high' ? 'full' : 'lite') : quality.post;
-  if (mode !== 'full' && mode !== 'lite') return {};
+  // 'low' (post false, quality.grade): a grade-only finishing pass — the scene in
+  // a half-float target at DPR 1, then ONE fullscreen quad with the same tone
+  // curve, lift, gamma, gain and hue-selective saturation (no bloom, AO or DOF),
+  // so the low tier keeps the art direction. Needs a renderable float target.
+  let mode = quality.post === true ? (quality.tier === 'high' ? 'full' : 'lite') : quality.post;
   const renderer = engine.renderer;
+  if (mode !== 'full' && mode !== 'lite' && quality.grade && engine.params?.get('grade') !== '0') {
+    const ext = renderer.extensions;
+    if (renderer.capabilities.isWebGL2 && (ext.has('EXT_color_buffer_float') || ext.has('EXT_color_buffer_half_float'))) mode = 'grade';
+  }
+  if (mode !== 'full' && mode !== 'lite' && mode !== 'grade') return {};
   const useDof = mode === 'full';
+  const useBloom = mode !== 'grade';
 
   let sceneRT, bloom, preRT, bokehRT, aoRT, aoBlurRT, finishMat, quads;
   try {
@@ -592,15 +902,24 @@ export default async function build(ctx) {
     // the scene's MSAA happens here)
     sceneRT = new THREE.WebGLRenderTarget(size.x, size.y, {
       type: THREE.HalfFloatType,
-      samples: mode === 'lite' || pr >= 1.75 ? 2 : 4,
+      // ('grade' — low — keeps the plain renderer's lack of MSAA)
+      samples: mode === 'grade' ? 0 : mode === 'lite' || pr >= 1.75 ? 2 : 4,
       depthTexture: useDof ? new THREE.DepthTexture(size.x, size.y) : null,
     });
     sceneRT.texture.name = 'woodland.post.scene';
     const css = renderer.getSize(new THREE.Vector2());
-    bloom = new WoodlandBloom(new THREE.Vector2(css.x, css.y), SETTINGS.bloomDay.strength, SETTINGS.bloomDay.radius, SETTINGS.bloomDay.threshold);
-    bloom.highPassUniforms.smoothWidth.value = SETTINGS.bloomDay.knee;
-    finishMat = new FinishMaterial();
+    if (useBloom) {
+      bloom = new WoodlandBloom(new THREE.Vector2(css.x, css.y), SETTINGS.bloomDay.strength, SETTINGS.bloomDay.radius, SETTINGS.bloomDay.threshold);
+      bloom.highPassUniforms.smoothWidth.value = SETTINGS.bloomDay.knee;
+    }
+    // phone tiers: FXAA in the finish pass ('high' keeps 4× / 2× MSAA alone)
+    finishMat = new FinishMaterial({ fxaa: mode !== 'full' && SETTINGS.fxaa?.[0] > 0 });
     quads = { finish: new FullScreenQuad(finishMat) };
+    // the night warm air (all post tiers — a handful of tiny passes)
+    const mk = (def) => new FullScreenQuad(new THREE.ShaderMaterial({ ...def, uniforms: THREE.UniformsUtils.clone(def.uniforms), depthTest: false, depthWrite: false }));
+    quads.warmPre = mk(WarmPrefilterShader);
+    quads.halve = mk(HalveShader);
+    quads.warmBlur = mk(WarmBlurShader);
     if (useDof) {
       const half = { type: THREE.HalfFloatType, depthBuffer: false };
       preRT = new THREE.WebGLRenderTarget(Math.ceil(size.x / 2), Math.ceil(size.y / 2), half);
@@ -620,11 +939,38 @@ export default async function build(ctx) {
   }
 
   const fu = finishMat.uniforms;
+  /**
+   * Night warm air targets: ¼ of the drawing buffer, then halvings until a texel
+   * spans ≥ 14 CSS px (so the glow has the same size at every DPR), plus one
+   * ping-pong target for the separable blur at the last level.
+   */
+  const warmAir = { levels: [], tmp: null, texCss: 16, cssH: 720 };
+  const warmOpts = { type: THREE.HalfFloatType, depthBuffer: false };
+  function resizeWarm(W, H, pr, cssH) {
+    const sizes = [[Math.max(1, Math.ceil(W / 4)), Math.max(1, Math.ceil(H / 4))]];
+    let texCss = 4 / pr;
+    while (texCss < 14 && sizes.length < 6) {
+      const [w0, h0] = sizes[sizes.length - 1];
+      sizes.push([Math.max(1, Math.ceil(w0 / 2)), Math.max(1, Math.ceil(h0 / 2))]);
+      texCss *= 2;
+    }
+    while (warmAir.levels.length > sizes.length) warmAir.levels.pop().dispose();
+    sizes.forEach(([w0, h0], i) => {
+      if (!warmAir.levels[i]) warmAir.levels[i] = new THREE.WebGLRenderTarget(w0, h0, warmOpts);
+      else warmAir.levels[i].setSize(w0, h0);
+    });
+    const [lw, lh] = sizes[sizes.length - 1];
+    if (!warmAir.tmp) warmAir.tmp = new THREE.WebGLRenderTarget(lw, lh, warmOpts);
+    else warmAir.tmp.setSize(lw, lh);
+    warmAir.texCss = texCss;
+    warmAir.cssH = cssH;
+  }
   function resize(w, h) {
     const pr = renderer.getPixelRatio();
     const W = Math.floor(w * pr), H = Math.floor(h * pr);
     sceneRT.setSize(W, H);
-    bloom.setSize(w, h);
+    resizeWarm(W, H, pr, h);
+    bloom?.setSize(w, h);
     if (useDof) {
       preRT.setSize(Math.ceil(W / 2), Math.ceil(H / 2));
       bokehRT.setSize(Math.ceil(W / 2), Math.ceil(H / 2));
@@ -636,6 +982,7 @@ export default async function build(ctx) {
       quads.aoBlur.material.uniforms.uTexel.value.set(2 / W, 2 / H);
     }
     fu.uAspect.value = w / Math.max(h, 1);
+    fu.uTexel.value.set(1 / Math.max(W, 1), 1 / Math.max(H, 1));
   }
   const s0 = renderer.getSize(new THREE.Vector2());
   resize(s0.x, s0.y);
@@ -670,9 +1017,27 @@ export default async function build(ctx) {
     renderer.setRenderTarget(sceneRT);
     renderer.render(scene, camera);
 
-    const bloomTex = bloom.strength > 0.001 ? bloom.renderBloom(renderer, sceneRT.texture) : null;
+    // night close-ups: what is near the camera blooms less (SETTINGS.bloomNight.near)
+    const night = ctx.env?.night ?? 0;
+    if (bloom) {
+      const bn = SETTINGS.bloomNight.near ?? [1, 0, 1];
+      const hp = bloom.highPassUniforms;
+      if (useDof && sceneRT.depthTexture && night > 0.01) {
+        hp.tNearDepth.value = sceneRT.depthTexture;
+        hp.uNearFar.value.set(camera.near, camera.far);
+        hp.uNearFade.value.set(1 + (bn[0] - 1) * night, bn[1], bn[2], 1);
+        bloom.nearK = 1;
+      } else {
+        hp.tNearDepth.value = null;
+        hp.uNearFade.value.set(1, 0, 1, 0);
+        const fd = ctx.cameraRig?.focusDistance ?? 20;
+        bloom.nearK = 1 + (bn[0] + (1 - bn[0]) * THREE.MathUtils.smoothstep(fd, bn[1], bn[2]) - 1) * night;
+      }
+    }
+    // (quality.ao / dof / bloom: live flags the engine's frame-time governor may switch off)
+    const bloomTex = bloom && quality.bloom !== false && bloom.strength > 0.001 ? bloom.renderBloom(renderer, sceneRT.texture) : null;
 
-    const aoOn = useDof && SETTINGS.ao > 0.001;
+    const aoOn = useDof && SETTINGS.ao > 0.001 && quality.ao !== false;
     if (aoOn) {
       const H = sceneRT.height;
       const tanY = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
@@ -696,7 +1061,7 @@ export default async function build(ctx) {
     fu.tAO.value = aoOn ? aoBlurRT.texture : null;
     fu.uAO.value = aoK;
 
-    const dofOn = useDof && SETTINGS.dof;
+    const dofOn = useDof && SETTINGS.dof && quality.dof !== false;
     if (dofOn) {
       const H = sceneRT.height;
       const pu = quads.pre.material.uniforms;
@@ -718,6 +1083,57 @@ export default async function build(ctx) {
       cocUniforms(fu, H);
     }
     fu.uUseDof.value = dofOn ? 1 : 0;
+    // night warm air (off by day, and when the governor has switched bloom off — 'low' keeps it)
+    const WA = SETTINGS.warmAir;
+    const warmK = WA && WA.strength > 0 && (mode === 'grade' || quality.bloom !== false) ? WA.strength * THREE.MathUtils.smoothstep(night, 0.2, 0.8) : 0;
+    let warmFar = 1;
+    if (warmK > 0.001) {
+      const L = warmAir.levels;
+      const pre = quads.warmPre.material.uniforms;
+      pre.tColor.value = sceneRT.texture;
+      pre.uTexel.value.set(1 / sceneRT.width, 1 / sceneRT.height);
+      pre.uThreshold.value = WA.threshold;
+      pre.uKnee.value = Math.max(WA.knee, 1e-3);
+      // near the camera: per pixel by depth ('high'); without a depth texture
+      // (phone tiers) the whole veil by the distance to what the camera looks at
+      const nf = WA.near ?? [1, 0, 1];
+      if (useDof && sceneRT.depthTexture) {
+        pre.tDepth.value = sceneRT.depthTexture;
+        pre.uNear.value = camera.near;
+        pre.uFar.value = camera.far;
+        pre.uNearFade.value.set(nf[0], nf[1], nf[2], 1);
+      } else {
+        pre.tDepth.value = null;
+        pre.uNearFade.value.set(1, 0, 1, 0);
+        const fd = ctx.cameraRig?.focusDistance ?? 20;
+        warmFar = nf[0] + (1 - nf[0]) * THREE.MathUtils.smoothstep(fd, nf[1], nf[2]);
+      }
+      renderer.setRenderTarget(L[0]);
+      quads.warmPre.render(renderer);
+      const hu = quads.halve.material.uniforms;
+      for (let i = 1; i < L.length; i++) {
+        hu.tSrc.value = L[i - 1].texture;
+        renderer.setRenderTarget(L[i]);
+        quads.halve.render(renderer);
+      }
+      const last = L[L.length - 1];
+      // sigma (CSS px, authored at 720 px tall) → texels of the last level; the kernel's sigma is 2.2 taps
+      const step = Math.max(0.5, (WA.radius * (warmAir.cssH / 720)) / warmAir.texCss / 2.2);
+      const bu = quads.warmBlur.material.uniforms;
+      bu.tSrc.value = last.texture;
+      bu.uDir.value.set(step / last.width, 0);
+      renderer.setRenderTarget(warmAir.tmp);
+      quads.warmBlur.render(renderer);
+      bu.tSrc.value = warmAir.tmp.texture;
+      bu.uDir.value.set(0, step / last.height);
+      renderer.setRenderTarget(last);
+      quads.warmBlur.render(renderer);
+      fu.tWarmAir.value = last.texture;
+      fu.uWarmAir.value.set(WA.tint[0], WA.tint[1], WA.tint[2]).multiplyScalar(warmK * warmFar);
+    } else {
+      fu.tWarmAir.value = null;
+      fu.uWarmAir.value.set(0, 0, 0);
+    }
     fu.tColor.value = sceneRT.texture;
     fu.tBloom.value = bloomTex;
     fu.uUseBloom.value = bloomTex ? 1 : 0;
@@ -769,21 +1185,33 @@ export default async function build(ctx) {
       if (n !== lastNight) {
         lastNight = n;
         const D = SETTINGS.bloomDay, N = SETTINGS.bloomNight;
-        bloom.strength = D.strength + (N.strength - D.strength) * n;
-        bloom.radius = D.radius + (N.radius - D.radius) * n;
-        bloom.threshold = D.threshold + (N.threshold - D.threshold) * n;
-        bloom.highPassUniforms.smoothWidth.value = D.knee + (N.knee - D.knee) * n;
-        bloom.highPassUniforms.uExcess.value = D.excess + (N.excess - D.excess) * n;
+        if (bloom) {
+          bloom.strength = D.strength + (N.strength - D.strength) * n;
+          bloom.radius = D.radius + (N.radius - D.radius) * n;
+          bloom.threshold = D.threshold + (N.threshold - D.threshold) * n;
+          bloom.highPassUniforms.smoothWidth.value = D.knee + (N.knee - D.knee) * n;
+          bloom.highPassUniforms.uExcess.value = D.excess + (N.excess - D.excess) * n;
+        }
         fu.uVignetteColor.value.copy(vignetteDay).lerp(vignetteNight, n);
         fu.uLiftColor.value.copy(liftDay).lerp(liftNight, n);
         fu.uNight.value = n;
       }
       fu.uVignette.value = SETTINGS.vignette * (1 + 0.3 * n);
-      fu.uSaturation.value = SETTINGS.saturation;
-      fu.uGreenSat.value = SETTINGS.greenSaturation;
+      // day ↔ night: the night end is the moonlit grade
+      fu.uSaturation.value = SETTINGS.saturationDay + (SETTINGS.saturation - SETTINGS.saturationDay) * n;
+      fu.uWarmSat.value = SETTINGS.warmSaturationDay + (SETTINGS.saturation - SETTINGS.warmSaturationDay) * n;
+      fu.uGreenSat.value = SETTINGS.greenSaturationDay + (SETTINGS.greenSaturation - SETTINGS.greenSaturationDay) * n;
+      fu.uGreenSatSun.value = SETTINGS.greenSaturationSunDay + (SETTINGS.greenSaturation - SETTINGS.greenSaturationSunDay) * n;
       fu.uSage.value = SETTINGS.sage;
-      fu.uExposure.value = SETTINGS.exposure;
-      fu.uHighlightHue.value = SETTINGS.highlightHueDay + (SETTINGS.highlightHueNight - SETTINGS.highlightHueDay) * n;
+      fu.uGreenShift.value.set(SETTINGS.greenShade, SETTINGS.greenSun, SETTINGS.greenPivot[0], SETTINGS.greenPivot[1]);
+      fu.uGreenCool.value.set(...SETTINGS.greenShadowCool).lerp(tmpV.set(0.95, 1.0, 1.08), n); // (the night keeps its moonlit cool)
+      const low = mode === 'grade' ? SETTINGS.gradeLow : null;
+      fu.uHiLift.value.set(...SETTINGS.highlightLiftDay);
+      if (low) fu.uHiLift.value.x *= low[1];
+      fu.uPurkinje.value = SETTINGS.purkinje;
+      fu.uExposure.value = (SETTINGS.exposureDay + (SETTINGS.exposure - SETTINGS.exposureDay) * n) * (low ? low[0] : 1);
+      const hueDay = low ? low[2] ?? SETTINGS.highlightHueDay : SETTINGS.highlightHueDay;
+      fu.uHighlightHue.value = hueDay + (SETTINGS.highlightHueNight - hueDay) * n;
       fu.uWarmth.value = SETTINGS.warmth * (1 - n);
       const sd = SETTINGS.shadowTintDay, sn = SETTINGS.shadowTintNight;
       fu.uShadowMul.value.set(...sd.mul).lerp(tmpV.set(...sn.mul), n);
@@ -792,6 +1220,7 @@ export default async function build(ctx) {
       fu.uWoodGlow.value = SETTINGS.woodGlow;
       fu.uLift.value = SETTINGS.lift;
       fu.uGrain.value = SETTINGS.grain;
+      if (SETTINGS.fxaa) fu.uFxaa.value.set(...SETTINGS.fxaa);
     },
   };
 }

@@ -9,6 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { sharedUniforms } from '../../core/materials.js';
+import { LOD } from './kit.js';
 
 const BILLBOARD_VERT = /* glsl */ `
   #include <common>
@@ -31,9 +32,12 @@ const BILLBOARD_VERT = /* glsl */ `
 `;
 
 // ─── shavings ────────────────────────────────────────────────────────────────
-/** A curly shaving: a thin ribbon wound into a little spiral. */
-export function shavingGeo(r = 0.035, width = 0.022, turns = 1.4) {
-  const segs = 18;
+/**
+ * A curly shaving: a thin ribbon wound into a little spiral. `segs` defaults
+ * to the tier's detail (18 on high, 11 on medium, 8 on low — a 3 cm curl
+ * needs no more, and there are hundreds of them).
+ */
+export function shavingGeo(r = 0.035, width = 0.022, turns = 1.4, segs = Math.max(8, Math.round(18 * LOD.k))) {
   const pos = [];
   const idx = [];
   for (let i = 0; i <= segs; i++) {

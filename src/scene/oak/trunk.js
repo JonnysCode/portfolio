@@ -5,17 +5,22 @@
 // fork, and dark cavities that make the hollows read as deep holes.
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
-import { TAU, TRUNK_TOP, FORK_Y, polar, trunkRadius, trunkMoss, baseRadius, HOLLOWS, DEG } from './shape.js';
+import { TAU, TRUNK_TOP, FORK_Y, polar, trunkRadius, trunkMoss, baseRadius, grainWarp, HOLLOWS, DEG } from './shape.js';
 import { smoothstep, clamp } from '../../core/rng.js';
 import { weldSeamNormals } from './tubes.js';
 
-/** Row heights: dense near the ground (door niche, flare), coarser up the trunk. */
-function trunkRows() {
+/**
+ * Row heights: dense near the ground (door niche, flare), coarser up the trunk.
+ * `rowK` stretches the spacing on the lower quality tiers (the door arch
+ * itself — up to y ≈ 2.6 — keeps rows at most 0.13 apart).
+ */
+function trunkRows(rowK = 1) {
   const ys = [];
   let y = -0.9;
   while (y < TRUNK_TOP - 0.08) {
     ys.push(y);
-    y += y < 5.3 ? 0.1 : y < FORK_Y - 1 ? 0.19 : 0.13; // fine up to the nook above the door
+    const dy = y < 5.3 ? 0.1 : y < FORK_Y - 1 ? 0.19 : 0.13; // fine up to the nook above the door
+    y += y < 2.6 ? Math.min(dy * rowK, 0.13) : dy * rowK;
   }
   ys.push(TRUNK_TOP);
   return ys;
@@ -68,11 +73,14 @@ function revolveGrid(ys, cols, radiusFn, { keepTri = null, uvScale = [11, 0.42] 
  * The bark surface of the trunk. Carries a per-vertex `oak` attribute
  * (x: moss boost for the bark shader — moss creeping into the crevices where
  * the moss shell thins out, y: cavity — how deep the vertex lies in a furrow
- * or flute, for the painterly crevice darkening) and `userData.grid`
- * ({ ys, cols, moss, cav }) for the moss shell.
+ * or flute, for the painterly crevice darkening, z: the grain angle — the bark
+ * texture is turned about the trunk axis by it so its fissures follow the
+ * sculpted sinews: shape.js grainWarp, held constant above the fork so the
+ * fork's dome never swirls) and `userData.grid` ({ ys, cols, moss, cav }) for
+ * the moss shell.
  */
-export function buildTrunkGeometry({ cols = 176 } = {}) {
-  const ys = trunkRows();
+export function buildTrunkGeometry({ cols = 176, rowK = 1 } = {}) {
+  const ys = trunkRows(rowK);
   const rows = ys.length;
   const c1 = cols + 1;
   const rad = new Float32Array(rows * c1);
@@ -107,7 +115,7 @@ export function buildTrunkGeometry({ cols = 176 } = {}) {
   }
   const moss = new Float32Array(rows * c1);
   const cav = new Float32Array(rows * c1);
-  const oak = new Float32Array(rows * c1 * 2);
+  const oak = new Float32Array(rows * c1 * 3);
   for (let i = 0; i < rows; i++) {
     const y = ys[i];
     for (let j = 0; j <= cols; j++) {
@@ -121,11 +129,12 @@ export function buildTrunkGeometry({ cols = 176 } = {}) {
       // crevices first: its moss field already favours the texture's valleys)
       // and paints the low, shady bark a little mossier everywhere
       const shade = (0.5 - 0.5 * Math.cos(a)) * (1 - smoothstep(1.5, 6.5, y)); // back & low
-      oak[k * 2] = clamp(smoothstep(-0.35, 0.25, m) * 0.5 + c * 0.12 + shade * 0.12, 0, 0.62);
-      oak[k * 2 + 1] = c;
+      oak[k * 3] = clamp(smoothstep(-0.35, 0.25, m) * 0.5 + c * 0.12 + shade * 0.12, 0, 0.62);
+      oak[k * 3 + 1] = c;
+      oak[k * 3 + 2] = grainWarp(a, Math.min(y, FORK_Y));
     }
   }
-  g.setAttribute('oak', new THREE.BufferAttribute(oak, 2));
+  g.setAttribute('oak', new THREE.BufferAttribute(oak, 3));
   g.userData.grid = { ys, cols, moss, cav };
   return g;
 }

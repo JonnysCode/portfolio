@@ -13,14 +13,15 @@ import { paintWood, whenFontsReady, FONT_DISPLAY, FONT_HAND } from '../../props/
 import {
   Batch, mats, xf, mat4, board, boardBetween, rod, stoneGeo, blockStone, mossGeo, tube, taperTube, sagCurve, leafGeo,
   Cards, addFlower, addGrass, addFern, addToadstool, addIvy, uvBox, paintFn, deform, TAU, WOOD, IRON, FLOWER_COLORS,
-  noiseA,
+  noiseA, KIT, SINK, FAIRY_BULBS, smooth01,
 } from './kit.js';
 
 const _v = new THREE.Vector3();
 
 /** A frame-local adapter: geometry built around the origin is placed by `m` before entering F. */
 export function local(F, m) {
-  return { add: (mat, geo, opts) => F.add(mat, geo.applyMatrix4(m), opts) };
+  // (.matrix: where the frame sits in batch space — e.g. for the fairy-light bulbs' positions)
+  return { matrix: F.matrix ? F.matrix.clone().multiply(m) : m.clone(), add: (mat, geo, opts) => F.add(mat, geo.applyMatrix4(m), opts) };
 }
 
 // ─── fence ───────────────────────────────────────────────────────────────────
@@ -163,7 +164,8 @@ export function addRose(F, rng, p, s, color) {
   const M = mats();
   const c = new THREE.Color(color);
   for (let k = 0; k < 3; k++) {
-    const ring = new THREE.SphereGeometry(s * (1 - k * 0.25), 6, 3, 0, TAU, 0, Math.PI * (0.55 - k * 0.08));
+    const lo = KIT.detail < 0.6;
+    const ring = new THREE.SphereGeometry(s * (1 - k * 0.25), lo ? 5 : 6, lo ? 2 : 3, 0, TAU, 0, Math.PI * (0.55 - k * 0.08));
     ring.scale(1, 0.7, 1);
     ring.rotateX(-0.6 + rng.jitter(0.3));
     ring.rotateY(rng.next() * TAU);
@@ -193,17 +195,25 @@ export function stringLights(F, lines, halos, { spacing = 0.28, sag = 0.08, tran
     if (path.length < 2) continue;
     const curve = new THREE.CatmullRomCurve3(path, false, 'centripetal');
     const len = curve.getLength();
-    F.add(M.vc, new THREE.TubeGeometry(curve, Math.max(8, Math.round(len * 12)), 0.007, 3, false), { color: '#2e2a25', cast: false });
+    // (the wire: ≈ 8 segments a unit, 5 on the lower tiers — it sags smoothly between the posts)
+    F.add(M.vc, new THREE.TubeGeometry(curve, Math.max(6, Math.round(len * (KIT.detail < 0.6 ? 5 : 8))), 0.007, 3, false), { color: '#2e2a25', cast: false });
     const n = Math.max(1, Math.floor(len / spacing));
+    const lo = KIT.detail < 0.6; // (lower tiers: fewer facets on the tiny bulbs & sockets)
     for (let k = 0; k < n; k++) {
       const p = curve.getPointAt((k + 0.5) / n);
-      F.add(M.metal, new THREE.CylinderGeometry(bulb * 0.45, bulb * 0.45, bulb * 0.7, 4, 1, true).translate(p.x, p.y - bulb * 0.5, p.z), { color: '#3a332c', cast: false });
+      F.add(M.metal, new THREE.CylinderGeometry(bulb * 0.45, bulb * 0.45, bulb * 0.7, lo ? 3 : 4, 1, true).translate(p.x, p.y - bulb * 0.5, p.z), { color: '#3a332c', cast: false });
       // (round enough not to read as little pennants by day)
-      F.add(M.bulb, new THREE.SphereGeometry(bulb, 7, 4).scale(1, 1.25, 1).translate(p.x, p.y - bulb * 1.35, p.z), { cast: false });
+      F.add(M.bulb, new THREE.SphereGeometry(bulb, lo ? 5 : 7, lo ? 3 : 4).scale(1, 1.25, 1).translate(p.x, p.y - bulb * 1.35, p.z), { cast: false });
       if (halos) {
         _v.set(p.x, p.y - bulb * 1.35, p.z);
         if (transform) _v.applyMatrix4(transform);
         halos.push({ x: _v.x, y: _v.y, z: _v.z, size: 0.2 });
+      }
+      // (for the caps' night warmth next to each bulb: kit.js bakeBulbGlow, in batch space)
+      if (F !== SINK) {
+        _v.set(p.x, p.y - bulb * 1.35, p.z);
+        if (F.matrix) _v.applyMatrix4(F.matrix);
+        FAIRY_BULBS.push({ x: _v.x, y: _v.y, z: _v.z });
       }
     }
   }
@@ -421,7 +431,7 @@ export function makeWoodlandSign(rng, { text = "Jonny's\nWoodland", F = null } =
       const r = 0.2 * (1 - t * 0.75);
       pts.push([s * (0.05 + t * 0.32 + Math.sin(a) * r * 0.4), 1.25 + t * 0.12 - Math.cos(a) * r * 0.25 + 0.05, 0.02]);
     }
-    B.add(M.metal, tube(pts, 0.016, 5, 40), { color: gold, cast: false });
+    B.add(M.metal, tube(pts, 0.016, KIT.detail < 0.6 ? 4 : 5, KIT.detail < 0.6 ? 24 : 40), { color: gold, cast: false });
   }
   // the board (carved & painted oak, own textured material)
   const tex = signTexture(text);
@@ -436,7 +446,7 @@ export function makeWoodlandSign(rng, { text = "Jonny's\nWoodland", F = null } =
   g.add(face);
   // ornate frame: a rope-like moulding around the board + corner scrolls + crest
   const outline = roundedRectShape(bw + 0.05, bh + 0.05, 0.14).getSpacedPoints(64).slice(0, -1).map((p) => [p.x, by + p.y, 0.035]);
-  B.add(M.metal, tube(outline, 0.028, 5, 96, true), { color: gold, cast: true });
+  B.add(M.metal, tube(outline, 0.028, KIT.detail < 0.6 ? 4 : 5, KIT.detail < 0.6 ? 64 : 96, true), { color: gold, cast: true });
   const scroll = (cx, cy, sx, sy, size) => {
     const pts = [];
     for (let i = 0; i <= 18; i++) {
@@ -445,7 +455,7 @@ export function makeWoodlandSign(rng, { text = "Jonny's\nWoodland", F = null } =
       const r = size * (1 - t * 0.8);
       pts.push([cx + sx * (Math.cos(a) * r), cy + sy * (Math.sin(a) * r), 0.04]);
     }
-    B.add(M.metal, tube(pts, 0.017, 5, 26), { color: gold, cast: false });
+    B.add(M.metal, tube(pts, 0.017, KIT.detail < 0.6 ? 4 : 5, KIT.detail < 0.6 ? 16 : 26), { color: gold, cast: false });
   };
   for (const sx of [-1, 1]) {
     for (const sy of [-1, 1]) scroll(sx * (bw / 2 + 0.06), by + sy * (bh / 2 + 0.04), sx, sy, 0.11);
@@ -835,7 +845,19 @@ export function pot(F, rng, x, y, z, s = 0.18, plant = true) {
   const g = new THREE.LatheGeometry(prof, 12);
   const uv = g.attributes.uv;
   for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 2, uv.getY(i));
-  F.add(M.clay, g.translate(x, y, z), { color: rng.pick(['#b5633e', '#a85a38', '#c0704a']), cast: false });
+  // fired terracotta, never red plastic: a dusty orange-brown body (the clay material is a
+  // neutral body: the vertex colour sets the hue), a little darker and damper towards the foot,
+  // with a pale salt bloom (efflorescence) blotched over the belly and the rim
+  const base = new THREE.Color(rng.pick(['#c46a43', '#bd6440', '#c97452']));
+  const damp = base.clone().multiplyScalar(0.72), salt = new THREE.Color('#e9dccb');
+  const ph = x * 7.3 + z * 3.1; // (from the position: no extra random draw)
+  paintFn(g, base, (px, py, pz, i, c) => {
+    const t = py / (s * 1.15);
+    c.lerp(damp, (1 - smooth01(t / 0.35)) * 0.6);
+    const n = noiseA(Math.atan2(px, pz) * 1.6 + ph, t * 3.1) * 0.6 + noiseA(Math.atan2(px, pz) * 4.2 - ph, t * 7.5) * 0.4;
+    c.lerp(salt, smooth01((n - 0.04) / 0.32) * (0.4 + 0.35 * smooth01((t - 0.72) / 0.2)));
+  });
+  F.add(M.clay, g.translate(x, y, z), { cast: false, color: null });
   F.add(M.soil, new THREE.CircleGeometry(s * 0.78, 10).rotateX(-Math.PI / 2).translate(x, y + s * 1.03, z), { cast: false });
   if (plant) {
     if (rng.chance(0.5)) addFern(F, rng, x, y + s * 1.05, z, { size: s * 2.2, fronds: 6 });

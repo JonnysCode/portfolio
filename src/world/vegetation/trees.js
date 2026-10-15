@@ -96,6 +96,22 @@ export function clumpTemplate(rng, cards, { flat = 0.7, size = [0.17, 0.27] } = 
   return B.build();
 }
 
+/**
+ * Ring heights of a birch: every 0.25 up to y = 10, 0.5 to 16 (the vertex-painted black
+ * marks need rows that close together — 3–7-unit rows smeared each short dash
+ * into a long vertical tiger stripe), then sparse up into the crown, where
+ * the bark stays plain chalk white.
+ */
+function birchRingHeights(H, lod = 1) {
+  const step = lod < 0.6 ? 0.4 : 0.25;
+  const out = [-2.4, -0.7];
+  for (let y = 0; y < 10; y += step) out.push(+y.toFixed(3));
+  for (let y = 10; y < Math.min(16, H - 2); y += step * 2) out.push(+y.toFixed(3));
+  for (let y = 17.5; y < H - 1; y += 2.5) out.push(y);
+  out.push(H);
+  return out;
+}
+
 /** Ring heights of a trunk (dense at the flare, sparse up high; sparser still for a coarse lod). */
 function ringHeights(H, coarse = false) {
   const ys = coarse
@@ -171,18 +187,33 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
   };
 
   // ── trunk ──
-  const ys = ringHeights(H, lod < 0.6);
+  const ys = birch ? birchRingHeights(H, lod) : ringHeights(H, lod < 0.6);
   const TB = birch ? B.birch : B.bark;
   const base = TB.count;
   const idx0 = TB.idx.length;
+  // birch: cool chalk white (the warm grade turned a cream white yellow), a
+  // black, fissured foot with a ragged upper edge, then HORIZONTAL dark marks
+  // — short dashes stretched around the trunk (wide in θ, one or two rows
+  // tall) and a few black patches — thinning out with height and gone above
+  // y ≈ 14 (the fine lenticels are the bark shader's, per pixel)
+  const BIRCH_WHITE = new THREE.Color('#e6e4dc');
+  const BIRCH_GREY = new THREE.Color('#c9c8c2');
+  const BIRCH_BLACK = new THREE.Color('#282624');
   const birchCol = (th, y) => {
-    // birch: chalk white with dark lenticel dashes and black patches; black fissured foot
-    const foot = 1 - THREE.MathUtils.smoothstep(y, 0.4, 2.8);
-    const dash = cn(th, 3, y, 2.6, ph) > 0.55 ? 1 : 0;
-    const patch = cn(th, 1.1, y, 0.35, 3 - ph) > 0.62 ? 1 : 0;
-    const dark = Math.max(foot * 0.9, dash * 0.75, patch * 0.85);
-    const w = new THREE.Color('#e9e4d6');
-    return w.lerp(new THREE.Color('#2b2724'), dark);
+    const edge = 1.1 + 0.9 * (0.5 + 0.5 * cn(th, 2.2, 0, 0, ph * 1.7));
+    const foot = 1 - THREE.MathUtils.smoothstep(y, edge - 0.5, edge + 0.35);
+    // vertical fissures in the black foot, pale plates between them
+    const fiss = Math.abs(Math.sin(th * 7 + 1.4 * cn(th, 1.5, y, 0.6, ph)));
+    const footDark = foot * (0.78 + 0.2 * (1 - fiss));
+    const fade = 1 - THREE.MathUtils.smoothstep(y, 7, 14);
+    // (noise on the circle × 0.3 against y × 3: features ≈ half the way
+    //  round and a third of a unit tall — dashes lying across the trunk; the
+    //  black patches wide and low too)
+    const dash = THREE.MathUtils.smoothstep(cn(th, 0.3, y, 3.0, ph + 4.1), 0.52, 0.62) * fade;
+    const patch = THREE.MathUtils.smoothstep(cn(th, 0.42, y, 1.5, 3 - ph), 0.64, 0.72) * fade;
+    const dark = Math.max(footDark, dash * 0.82, patch * 0.88);
+    _col.copy(BIRCH_WHITE).lerp(BIRCH_GREY, 0.35 * (0.5 + 0.5 * cn(th, 3.1, y, 0.5, ph + 9)));
+    return _col.lerp(BIRCH_BLACK, dark).clone();
   };
   // giants: moss climbs from the foot (highest on the damp side and in the
   // furrows between the buttresses), lichen-grey weathered bark up high,
@@ -339,7 +370,7 @@ export function buildTree(t, B, clumps, { density = 1 } = {}) {
     // read as a bare dead spike — leave it out
     if (!canopyOk(p, birch ? 2.6 : 4) || pts.some((q) => blocksView(q.x, q.y, q.z, R * 0.6))) continue;
     tube(TB, pts, pts.map((_, k) => R * (birch ? 0.5 : 0.42) * (1 - k * 0.19)), birch ? 7 : Math.round(10 * tubeK), {
-      color: birch ? () => new THREE.Color('#d8d2c4') : (k) => _col.copy(BARK).lerp(HIGH, 0.5).multiplyScalar(0.9 - k * 0.04).clone(),
+      color: birch ? () => new THREE.Color('#d6d5ce') : (k) => _col.copy(BARK).lerp(HIGH, 0.5).multiplyScalar(0.9 - k * 0.04).clone(),
     });
     ends.push(p.clone());
   }
