@@ -145,6 +145,14 @@ export const miniatures = {
       'A brass anglepoise desk lamp',
     ],
   },
+  'via-physio': {
+    glance: ['an exercise mat', 'a phone filming it from a tripod'],
+    lines: [
+      'A lilac exercise mat, one end rolled up',
+      'A resistance band and a little dumbbell on it',
+      'A phone on a mini tripod pointed at the mat, its red recording light blinking',
+    ],
+  },
   'project-backend': {
     glance: ['a hollow-log server with blinking LEDs', 'a pinwheel fan'],
     lines: [
@@ -154,11 +162,12 @@ export const miniatures = {
     ],
   },
   'project-side': {
-    glance: ['a tinkering bench', 'a little robot that waves'],
+    glance: ['Simi the turtle on a tinkering bench', 'a little robot that waves'],
     lines: [
       'A small joiner’s bench with a wooden vice',
       'A breadboard with chips, a soldering iron, a multimeter and spools of wire',
       'A little robot that waves',
+      'Simi, Via Communa’s purple turtle, sitting at the front corner',
     ],
   },
 };

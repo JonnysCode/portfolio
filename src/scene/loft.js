@@ -33,7 +33,8 @@
 //
 // Hotspots (area 'code'): 'this-portfolio' (the workstation behind the big
 // window), 'project-backend' (the hollow-log server), 'project-side' (the
-// tinkering bench & robot), the rubber duck (kind 'secret') and the snail
+// tinkering bench, robot & Simi the turtle), 'via-physio' (the exercise mat
+// filmed by a phone on a tripod), the rubber duck (kind 'secret') and the snail
 // lift — a RIDE (loft/ride.js): the snail itself (up, or down from the Code
 // Loft), the bell at its boarding platform on the roots (up; its ✦ beckons
 // from the Schreinerei) and the lift gate on the deck (down to the Schreinerei,
@@ -152,6 +153,7 @@ export default async function build(ctx) {
   });
   if (props.server) ctx.interactions?.add?.(props.server, { entryId: 'project-backend', area, focus: { distance: 3, height: 0.4 }, approach: false });
   if (props.bench) ctx.interactions?.add?.(props.bench, { entryId: 'project-side', area, focus: { distance: 3, height: 0.4 }, approach: false });
+  if (props.physio) ctx.interactions?.add?.(props.physio, { entryId: 'via-physio', area, focus: { distance: 2.6, height: 0.2 }, approach: false });
   const duck = house.interior.duck;
   if (duck) {
     let quackT = -10;

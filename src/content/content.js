@@ -20,9 +20,8 @@ export const profile = {
   tagline: 'Software engineer · Co-founder of Via Communa · Schreiner EFZ',
   intro:
     'Welcome to my little woodland! I trained as a Schreiner, became a software engineer, and in my free time I build Via Communa, an app for life after a stroke. Furniture, bikes and cosy rooms are what I make for joy. Wander around, hop on a snail, and poke at anything that looks interesting.',
-  location: 'Switzerland',
-  // DRAFT: put your real address here (or remove the line to hide the button)
-  email: 'hello@example.com',
+  location: 'Winterthur, Switzerland',
+  email: 'jonathangruss@gmail.com',
   links: [
     { label: 'GitHub', href: 'https://github.com/JonnysCode', icon: 'github' },
     { label: 'LinkedIn', href: 'https://www.linkedin.com/in/jonathangruss', icon: 'linkedin' },
@@ -55,7 +54,7 @@ export const areas = {
   code: {
     title: 'Code Loft',
     kicker: 'Software engineering',
-    text: 'A treehouse halfway up the Great Oak, where the screens glow late into the night. Here is the software I build: by day as a consultant at ipt, in my free time for Via Communa and Via Physio — and the code behind this very woodland.',
+    text: 'A treehouse halfway up the Great Oak, where the screens glow late into the night. By day I build software as a consultant at ipt; in my free time, up here, Via Communa and Via Physio — and the code behind this very woodland.',
   },
   home: {
     title: 'Jonny’s Cottage',
@@ -259,8 +258,8 @@ export const entries = {
     summary: 'The startup I co-founded in my free time: a stroke-recovery app for patients and relatives, with a web dashboard for clinics.',
     body: [
       'Via Communa is a digital companion for people after a stroke and for the relatives who support them. The app offers guided exercises for the body, the mind and everyday life, explains what happens after a stroke, and comes with Simi, a friendly turtle who stands for patience, consistency and steady progress.',
-      'I co-founded Via Communa with a team from healthcare, technology and psychology, and I am its only software engineer: I design and build the whole platform myself, from the mobile apps for iOS and Android to the backend and the web dashboard where therapists create exercise content and clinics follow their patients’ progress.',
-      'It is meant to complement therapy, not replace it: something to practise with between sessions and once you are back home. It is developed and hosted in Switzerland, in German, French and English.',
+      'I co-founded Via Communa with a team from healthcare, technology and psychology. As its CTO and only software engineer I design and build the whole platform myself: the mobile app for iOS and Android, the backend, and the web dashboard where therapists create exercise content and clinics follow their patients’ progress.',
+      'It is meant to complement therapy, not replace it: something to practise with between sessions and once you are back home. Made and hosted in Switzerland, it speaks German, French and English.',
     ],
     facts: [
       ['Role', 'Co-founder & CTO, sole software engineer'],
@@ -268,7 +267,7 @@ export const entries = {
       ['Stack', 'React Native & Expo, Next.js, TypeScript, Supabase (Postgres)'],
     ],
     tags: ['Startup', 'Digital health', 'React Native', 'Next.js', 'Supabase'],
-    images: [{ src: 'images/via-communa-app.webp', alt: 'The Via Communa app’s home screen' }],
+    images: [{ src: 'images/via-communa-app.webp', alt: 'The Via Communa app, with Simi the turtle' }],
     links: [{ label: 'viacommuna.com', href: 'https://www.viacommuna.com' }],
     featured: true,
   },
@@ -280,16 +279,16 @@ export const entries = {
     year: '2026',
     summary: 'A home-exercise app for physiotherapy practices, with a practice dashboard and its own landing page.',
     body: [
-      'Via Physio comes from Via Communa too, and is made for physiotherapy practices. The therapist films an exercise on their phone while the patient does it; at home the patient practises with exactly that video, with a timer and set counter, and reports pain and difficulty after each exercise. The feedback lands in the therapist’s inbox.',
-      'Around the app there is a practice dashboard (“Praxis”), where practice owners invite their therapists and keep track of their team, patients, seats and video storage, and a landing page that explains it all to practices and their patients. I build all three.',
+      'Via Physio is Via Communa’s app for physiotherapy practices. The therapist films an exercise on their phone while the patient does it. At home, the patient practises with exactly that video — timer and set counter included — and after each exercise reports pain and difficulty, straight to the therapist’s inbox.',
+      'Around the app sit a practice dashboard (“Praxis”), where owners invite their therapists and keep an eye on team, patients, seats and video storage, and a landing page that explains it all to practices and their patients. I build all three.',
     ],
     facts: [
       ['Parts', 'Mobile app · practice dashboard · landing page'],
       ['Stack', 'Expo & React Native, React, Next.js, TypeScript, Supabase'],
     ],
-    tags: ['Digital health', 'Physiotherapy', 'Expo', 'Product design'],
+    tags: ['Digital health', 'Physiotherapy', 'Expo', 'Next.js'],
     images: [
-      { src: 'images/via-physio-app.webp', alt: 'Via Physio: the patient’s exercises for today' },
+      { src: 'images/via-physio-app.webp', alt: 'Via Physio: today’s session and the patient’s path, week by week' },
       { src: 'images/via-physio-dashboard.webp', alt: 'The practice dashboard, with sample data' },
     ],
     links: [{ label: 'viaphysio.app', href: 'https://www.viaphysio.app/en/' }],
@@ -299,20 +298,22 @@ export const entries = {
     area: 'code',
     kind: 'project',
     title: 'Consulting at ipt',
-    subtitle: 'Software engineer at a Swiss software engineering consultancy',
+    subtitle: 'Senior Consultant at a Swiss software engineering consultancy',
     year: 'since 2023',
-    summary: 'My day job: building software for Swiss clients as a consultant at ipt.',
+    summary: 'My day job: Senior Consultant and software engineer at ipt, currently for the Swiss Armed Forces.',
     body: [
-      'By day I am a software engineer and consultant at ipt, a Swiss software engineering consultancy.',
-      'Right now I work for the Swiss Armed Forces through the Federal Office of Information Technology (BIT), on rebuilding their personnel management software. Besides building features end to end, I lead our team’s adoption of AI-assisted, agentic development.',
+      'By day I am a Senior Consultant at ipt, a Swiss software engineering consultancy, where I work as a software engineer.',
+      'Right now I work for the Swiss Armed Forces through the Federal Office of Information Technology (BIT), on rebuilding their personnel management software. Besides building features end to end, I lead the AI side of the project: AI-assisted development in our team, the AI tooling around it, and AI inside the new product itself.',
+      'Right now I am prototyping the new product twice over: once designed in Figma with the help of the Figma MCP server, once built entirely in code.',
       'Earlier at ipt I worked on Kafka-based event-streaming and integration platforms for Swiss banking and financial clients.',
     ],
     facts: [
+      ['Role', 'Senior Consultant (software engineer)'],
       ['Company', 'ipt, Zurich'],
       ['Now', 'Personnel management software for the Swiss Armed Forces, via BIT'],
       ['Stack', 'Java, Spring Boot, Angular, Kafka, Kubernetes / OpenShift'],
     ],
-    tags: ['Consulting', 'Java', 'Spring Boot', 'Angular', 'Kafka', 'AI-assisted development'],
+    tags: ['Consulting', 'Java', 'Spring Boot', 'Angular', 'Kafka', 'AI engineering'],
     featured: true,
   },
   'this-portfolio': {
@@ -344,14 +345,14 @@ export const entries = {
     subtitle: 'A software engineer with sawdust in the pockets',
     summary: 'Who lives in this cottage.',
     body: [
-      'Hi, I am Jonny. I started out as a Schreiner: an apprenticeship and several years as a cabinetmaker and assembly carpenter in Swiss joineries. Then I went back to school, earned a professional baccalaureate, a bachelor’s in computer science at ZHAW (with an exchange at Sungkyunkwan University in Seoul) and a master’s at the University of St. Gallen.',
-      'Today I am a software engineer and consultant at ipt, and in my free time I build Via Communa, an app for people after a stroke, as a co-founder and its only software engineer. I never stopped making things with my hands.',
+      'Hi, I am Jonny. I started out as a Schreiner: an apprenticeship, then several years as a cabinetmaker and assembly carpenter in Swiss joineries. Then I went back to school — a professional baccalaureate, a bachelor’s in computer science at ZHAW (with an exchange semester in Seoul) and a master’s at the University of St. Gallen.',
+      'Today I am a Senior Consultant at ipt, where I work as a software engineer. In my free time I build Via Communa, an app for people after a stroke, as its co-founder and CTO. And I never stopped making things with my hands.',
       'DRAFT — A few sentences about what drives you, and what you are looking for.',
     ],
     facts: [
-      ['Based in', 'Switzerland'],
-      ['Day job', 'Software engineer & consultant at ipt'],
-      ['Free time', 'Co-founder of Via Communa'],
+      ['Based in', 'Winterthur, Switzerland'],
+      ['Day job', 'Senior Consultant (software engineer) at ipt'],
+      ['Free time', 'Co-founder & CTO of Via Communa'],
       ['Studied', 'Computer science — BSc ZHAW, MSc HSG'],
       ['Hands-on', 'Woodworking · Bikes · Interiors'],
     ],
