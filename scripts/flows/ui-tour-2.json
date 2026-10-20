@@ -1,0 +1,7 @@
+[
+  { "name": "ui2-woodworking", "eval": "__woodland.debug.goTo('woodworking', true)", "wait": 1200, "render": 30 },
+  { "name": "ui2-tooltip", "moveEval": "(() => { const h = __woodland.debug.hotspots().find((x) => x.area === 'woodworking' && x.screen.visible && x.entryId); return h ? [h.screen.x, h.screen.y] : null; })()", "wait": 600, "render": 4 },
+  { "name": "ui2-speech", "eval": "__woodland.ctx.ui.speech('Moin! Mind the shavings.', new (__woodland.ctx.camera.position.constructor)(...__woodland.debug.hotspots().find((x) => x.area === 'woodworking' && x.screen.visible).world ? Object.values(__woodland.debug.hotspots().find((x) => x.area === 'woodworking' && x.screen.visible).world) : [0,0,0]), { duration: 8 }); __woodland.ctx.ui.toast('Secret found: the singing saw — 1 of 10', 6000, { icon: 'sparkle', cls: 'is-gold' })", "wait": 900, "render": 4 },
+  { "name": "ui2-about", "eval": "document.querySelector('.plate').click()", "wait": 1600, "render": 90 },
+  { "name": "ui2-about-scroll", "eval": "document.querySelector('.journal__sheet').scrollTop = 400", "wait": 600, "render": 2 }
+]
