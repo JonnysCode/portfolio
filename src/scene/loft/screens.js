@@ -165,11 +165,11 @@ function ease(t) {
     : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
-// src/props/duck.js
-export function makeDuck() {
-  const body = blob(0.06, [1, 0.8, 1.2]);
-  const head = blob(0.04).translate(0, 0.07, 0.04);
-  return paint([body, head], '#ffd23f');
+// via-communa: a word from Simi the turtle
+export function encourage(day) {
+  if (day.done) return 'I’m proud of you!';
+  if (day.started) return 'Every small step counts.';
+  return 'Let’s keep going!';
 }
 
 const reviewers = ['duck', 'owl', 'snail'];
