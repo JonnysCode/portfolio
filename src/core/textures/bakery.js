@@ -32,6 +32,10 @@ let scratchTimer = 0;
 let floatOK = true;
 let sizeScale = 1;
 const stats = { bakes: 0, ms: 0, bytes: 0, programs: 0 };
+/** Bakes whose pattern program has not been checked for a failed link yet ({ e, prog }). */
+const unverified = [];
+/** While held (holdBakes), requests queue up instead of baking at once. */
+let held = false;
 
 const VERT = /* glsl */ `
 in vec3 position;
@@ -173,6 +177,36 @@ function fallbackFill(e) {
   stats.failed = (stats.failed ?? 0) + 1;
 }
 
+function patternFailed(e) {
+  console.warn(`[textures] "${e.key}" pattern failed to compile — using a flat colour`);
+  fallbackFill(e);
+}
+
+/**
+ * Check the pattern programs of the bakes done without shader diagnostics
+ * (production) and refill the maps of any that failed with a flat colour.
+ * Call once the shaders are warmed up (the programs are linked by then).
+ */
+export function verifyBakes() {
+  if (!renderer || !unverified.length) return 0;
+  const gl = renderer.getContext();
+  const status = new Map();
+  let failed = 0;
+  const prevRT = renderer.getRenderTarget();
+  try {
+    for (const { e, prog } of unverified.splice(0)) {
+      if (!status.has(prog)) status.set(prog, gl.getProgramParameter(prog.program, gl.LINK_STATUS) !== false);
+      if (status.get(prog)) continue;
+      ensureQuad();
+      patternFailed(e);
+      failed++;
+    }
+  } finally {
+    renderer.setRenderTarget(prevRT);
+  }
+  return failed;
+}
+
 function getScratch(w, h) {
   const key = w + 'x' + h;
   if (scratch.has(key)) return scratch.get(key);
@@ -249,7 +283,7 @@ export function requestBake(key, def) {
   e = { key, def, size: [w, h], a, b, map: a.texture, detail: b ? b.texture : null, baked: false };
   entries.set(key, e);
   stats.bytes += w * h * 4 * (b ? 2 : 1) * 1.333;
-  if (renderer) bakeNow([e]);
+  if (renderer && !held) bakeNow([e]);
   else pending.push(e);
   return e;
 }
@@ -278,11 +312,16 @@ function bakeNow(list) {
       quad.material = m1;
       r.setRenderTarget(tmp);
       r.render(quad, quadCam);
-      if (r.properties.get(m1).currentProgram?.diagnostics?.runnable === false) {
-        console.warn(`[textures] "${e.key}" pattern failed to compile — using a flat colour`);
-        fallbackFill(e);
-        continue;
-      }
+      // (with three's shader diagnostics on — development — a broken pattern is caught
+      //  right here; production boots without them and checks every bake once, after
+      //  the warm-up, in verifyBakes(): no GPU round trip per bake)
+      const prog = r.properties.get(m1).currentProgram;
+      if (r.debug.checkShaderErrors) {
+        if (prog?.diagnostics?.runnable === false) {
+          patternFailed(e);
+          continue;
+        }
+      } else if (prog) unverified.push({ e, prog });
       // pass 2: albedo map, then detail map
       const fin = getFinalize();
       fin.uniforms.tAlbedo.value = tmp.textures[0];
@@ -341,8 +380,57 @@ export function flushBakes() {
   if (renderer && pending.length) bakeNow(pending.splice(0));
 }
 
+/**
+ * Hold (true) or release (false) baking: while the world is being built, every
+ * bake waits in `pending` — nothing reads the maps' pixels during the build,
+ * and a bake needs its program linked, a GPU round trip that would otherwise
+ * stall behind every shader queued so far. Releasing does not bake; call
+ * flushBakesAsync() (or flushBakes()).
+ */
+export function holdBakes(on) {
+  held = !!on;
+}
+
+/**
+ * Bake everything pending, compiling all their programs first (compileAsync:
+ * in parallel where the browser can, without blocking the page), so the bakes
+ * themselves never wait on a compile.
+ */
+export async function flushBakesAsync() {
+  if (!renderer || !pending.length) return;
+  ensureQuad();
+  const warm = new THREE.Scene();
+  const seen = new Set();
+  for (const e of pending) {
+    const m = passOneMaterial(e.def);
+    if (seen.has(m)) continue;
+    seen.add(m);
+    const mesh = new THREE.Mesh(quad.geometry, m);
+    mesh.frustumCulled = false;
+    warm.add(mesh);
+  }
+  warm.add(new THREE.Mesh(quad.geometry, getFinalize()));
+  // (compiled against a render target, as they are drawn: the program key depends on it)
+  const prev = renderer.getRenderTarget();
+  let ready = null;
+  try {
+    renderer.setRenderTarget(getScratch(64, 64));
+    ready = renderer.compileAsync(warm, quadCam);
+  } catch {
+    /* compileAsync is an optimisation only */
+  } finally {
+    renderer.setRenderTarget(prev);
+  }
+  try {
+    await ready;
+  } catch {
+    /* the bakes below compile whatever is missing */
+  }
+  if (pending.length) bakeNow(pending.splice(0));
+}
+
 export function bakeStats() {
-  return { ...stats, mb: +(stats.bytes / 1048576).toFixed(1), maps: entries.size, pending: pending.length, halfFloat: floatOK };
+  return { ...stats, mb: +(stats.bytes / 1048576).toFixed(1), maps: entries.size, keys: [...entries.keys()], pending: pending.length, halfFloat: floatOK };
 }
 
 /**

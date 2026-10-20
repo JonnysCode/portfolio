@@ -872,6 +872,23 @@ class WoodlandBloom extends UnrealBloomPass {
   }
 }
 
+/**
+ * The post chain this device gets: 'full' | 'lite' | 'grade' | null (plain
+ * renderer, no scene target). world/index.js asks too: shaders compiled while
+ * the world is built must know whether the scene renders into a target.
+ */
+export function postMode(ctx) {
+  const { engine } = ctx;
+  const quality = ctx.quality ?? engine.quality;
+  let mode = quality.post === true ? (quality.tier === 'high' ? 'full' : 'lite') : quality.post;
+  const renderer = engine.renderer;
+  if (mode !== 'full' && mode !== 'lite' && quality.grade && engine.params?.get('grade') !== '0') {
+    const ext = renderer.extensions;
+    if (renderer.capabilities.isWebGL2 && (ext.has('EXT_color_buffer_float') || ext.has('EXT_color_buffer_half_float'))) mode = 'grade';
+  }
+  return mode === 'full' || mode === 'lite' || mode === 'grade' ? mode : null;
+}
+
 export default async function build(ctx) {
   const { engine, scene, camera } = ctx;
   const quality = ctx.quality ?? engine.quality;
@@ -884,13 +901,9 @@ export default async function build(ctx) {
   // a half-float target at DPR 1, then ONE fullscreen quad with the same tone
   // curve, lift, gamma, gain and hue-selective saturation (no bloom, AO or DOF),
   // so the low tier keeps the art direction. Needs a renderable float target.
-  let mode = quality.post === true ? (quality.tier === 'high' ? 'full' : 'lite') : quality.post;
+  const mode = postMode(ctx);
   const renderer = engine.renderer;
-  if (mode !== 'full' && mode !== 'lite' && quality.grade && engine.params?.get('grade') !== '0') {
-    const ext = renderer.extensions;
-    if (renderer.capabilities.isWebGL2 && (ext.has('EXT_color_buffer_float') || ext.has('EXT_color_buffer_half_float'))) mode = 'grade';
-  }
-  if (mode !== 'full' && mode !== 'lite' && mode !== 'grade') return {};
+  if (!mode) return {};
   const useDof = mode === 'full';
   const useBloom = mode !== 'grade';
 

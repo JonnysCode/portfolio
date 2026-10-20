@@ -11,11 +11,11 @@
 // Maps are baked on the GPU (see bakery.js), cached for the whole session and
 // shared by every material that uses the same kind/variant.
 // ─────────────────────────────────────────────────────────────────────────────
-import { requestBake, setBakeRenderer, setBakeScale, hasBakeRenderer, flushBakes, bakeStats, measureMean } from './bakery.js';
+import { requestBake, setBakeRenderer, setBakeScale, hasBakeRenderer, flushBakes, flushBakesAsync, holdBakes, verifyBakes, bakeStats, measureMean } from './bakery.js';
 import { SURFACE_GLSL } from './surfaces.glsl.js';
 import { FOLIAGE_GLSL, FOLIAGE_VARIANTS } from './foliage.glsl.js';
 
-export { setBakeRenderer, setBakeScale, hasBakeRenderer, flushBakes, bakeStats, measureMean, FOLIAGE_VARIANTS };
+export { setBakeRenderer, setBakeScale, hasBakeRenderer, flushBakes, flushBakesAsync, holdBakes, verifyBakes, bakeStats, measureMean, FOLIAGE_VARIANTS };
 
 /**
  * Per-kind recipe.

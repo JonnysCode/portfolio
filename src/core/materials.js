@@ -27,7 +27,7 @@
 import * as THREE from 'three';
 import { palette } from './palette.js';
 import { createRng } from './rng.js';
-import { KINDS, WOOD_SPECIES, FOLIAGE_VARIANTS, surfaceMaps, foliageMap, setBakeRenderer, setBakeScale, hasBakeRenderer, bakeStats, measureMean } from './textures/index.js';
+import { KINDS, WOOD_SPECIES, FOLIAGE_VARIANTS, surfaceMaps, foliageMap, setBakeRenderer, setBakeScale, hasBakeRenderer, flushBakesAsync, holdBakes, verifyBakes, bakeStats, measureMean } from './textures/index.js';
 import { patchSurface, patchFoliage, patchFoliageDepth } from './textures/surfaceShader.js';
 
 /**
@@ -467,6 +467,29 @@ export const materials = {
    */
   foliageNormals(geometry, center = null, blend = 0.85) {
     return foliageNormals(geometry, center, blend);
+  },
+
+  /**
+   * Boot: hold (true) every texture bake while the world is being built, then
+   * release (false) and bake them all at once with flushBakes() — see
+   * textures/bakery.js holdBakes.
+   */
+  holdBakes(on) {
+    holdBakes(on);
+  },
+
+  /** Bake everything held back (programs compiled first, asynchronously). */
+  flushBakes() {
+    return flushBakesAsync();
+  },
+
+  /**
+   * Production boots without shader diagnostics: check the bakes' pattern
+   * programs once after the warm-up (failed ones get a flat colour). Returns
+   * the number of failed bakes.
+   */
+  verifyBakes() {
+    return verifyBakes();
   },
 
   /** Bake statistics: { bakes, ms, mb, maps, programs, pending }. */

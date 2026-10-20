@@ -28,6 +28,47 @@ import { createUI } from './ui/index.js';
 import { createAudio } from './audio/audio.js';
 import { installDebug } from './debug.js';
 
+/**
+ * Compile every program the scene needs and wait until they are linked,
+ * reporting progress (0…1) as they finish. With KHR_parallel_shader_compile the
+ * browser links in the background and readiness is polled; without it each
+ * link is waited for in turn (the first frame would wait for them anyway),
+ * yielding now and then so the loader keeps painting.
+ */
+async function warmUpShaders(engine, target, onProgress) {
+  const { renderer, scene, camera } = engine;
+  let used;
+  renderer.setRenderTarget(target);
+  try {
+    used = renderer.compile(scene, camera);
+  } finally {
+    renderer.setRenderTarget(null);
+  }
+  const programs = [...new Set([...(used ?? [])].map((m) => renderer.properties.get(m).currentProgram).filter(Boolean))];
+  const n = programs.length || 1;
+  const gl = renderer.getContext();
+  const yieldFrame = () => new Promise((r) => setTimeout(r, 0));
+  if (renderer.extensions.has('KHR_parallel_shader_compile')) {
+    let waiting = programs;
+    while (waiting.length) {
+      waiting = waiting.filter((p) => !p.isReady());
+      onProgress(1 - waiting.length / n);
+      if (waiting.length) await new Promise((r) => setTimeout(r, 16));
+    }
+    return;
+  }
+  let last = performance.now();
+  for (let i = 0; i < programs.length; i++) {
+    gl.getProgramParameter(programs[i].program, gl.LINK_STATUS);
+    if (performance.now() - last > 100) {
+      onProgress((i + 1) / n);
+      await yieldFrame();
+      last = performance.now();
+    }
+  }
+  onProgress(1);
+}
+
 function webglAvailable() {
   try {
     const c = document.createElement('canvas');
@@ -37,7 +78,11 @@ function webglAvailable() {
   }
 }
 
+/** Boot phase marker (scripts/profile.mjs reads `woodland:*` marks). */
+const mark = (name) => performance.mark?.(`woodland:${name}`);
+
 async function boot() {
+  mark('boot');
   const canvas = document.getElementById('world');
 
   /**
@@ -90,13 +135,18 @@ async function boot() {
     /* fall back to system fonts */
   }
 
+  mark('fonts');
   ctx.ui.setProgress(0.05, 'Planting mushrooms…');
   const labels = {
     lighting: 'Hanging the sun…', sky: 'Painting the sky…', atmosphere: 'Letting the mist in…', terrain: 'Rolling out the moss…',
     oak: 'Growing the Great Oak…', schreinerei: 'Sharpening chisels…', loft: 'Booting the treehouse…', cottage: 'Putting the kettle on…',
     riverside: 'Filling the stream…', vegetation: 'Unfurling ferns…', ambient: 'Waking the fireflies…', post: 'Polishing the lens…',
   };
-  const report = await buildWorld(ctx, (p, id) => ctx.ui.setProgress(0.05 + p * 0.85, labels[id]));
+  // (texture bakes wait until the world is built — see materials.holdBakes — so
+  //  the shaders each module queues compile while the next one builds)
+  materials.holdBakes?.(true);
+  const report = await buildWorld(ctx, (p, id) => ctx.ui.setProgress(0.05 + p * 0.7, labels[id]));
+  mark('world');
   if (report.failed.length) console.warn('[boot] some modules failed:', report.failed.map((f) => f.id));
 
   engine.addUpdate(props.tickProps, 25);
@@ -110,19 +160,29 @@ async function boot() {
   // the UI follows the camera (spot bar, labels, banners, keyboard hotspots)
   ctx.ui.bindWorld?.();
 
-  ctx.ui.setProgress(0.95, 'Warming up shaders…');
+  ctx.ui.setProgress(0.75, 'Painting the bark and moss…');
+  materials.holdBakes?.(false);
+  try {
+    await materials.flushBakes?.();
+  } catch (err) {
+    console.warn('[boot] texture bakes failed', err);
+  }
+  mark('baked');
+  ctx.ui.setProgress(0.8, 'Warming up shaders…');
   // Compile all shaders up front to avoid hitches on first view.
   // Compile against the post chain's HDR target when post-processing is on, so
   // the variants that are actually drawn get compiled (not the sRGB/tone-mapped ones).
   try {
-    engine.renderer.setRenderTarget(ctx.post?.target ?? null);
-    await engine.renderer.compileAsync(engine.scene, engine.camera);
+    await warmUpShaders(engine, ctx.post?.target ?? null, (k) => ctx.ui.setProgress(0.8 + k * 0.18));
   } catch {
-    /* compileAsync is an optimisation only */
-  } finally {
-    engine.renderer.setRenderTarget(null);
+    /* the warm-up is an optimisation only */
   }
+  mark('compiled');
   engine.step(1 / 60);
+  mark('first-frame');
+  // (production: the link checks three's diagnostics would have done, once, now that everything is linked)
+  materials.verifyBakes?.();
+  engine.verifyPrograms?.();
   ctx.ui.setProgress(1, 'Welcome!');
 
   if (engine.params.has('shots')) {

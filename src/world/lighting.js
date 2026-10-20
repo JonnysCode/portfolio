@@ -824,6 +824,11 @@ export default async function build(ctx) {
     addPoint,
     allocate,
     points,
+    /** Point lights the tier allows (world/index.js compiles shaders for that many before allocate()). */
+    pointBudget: POINT_BUDGET,
+    get allocated() {
+      return allocated;
+    },
     /** Live direction towards the current key light (sun by day, moon by night). */
     keyDir,
     /** Half size of the fixed shadow frustum (world units). */
