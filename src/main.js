@@ -9,6 +9,7 @@ import './ui/styles.css';
 
 import * as THREE from 'three';
 import { createEngine } from './core/engine.js';
+import { releaseStaticArrays } from './core/memory.js';
 import { materials } from './core/materials.js';
 import { palette } from './core/palette.js';
 import { createRng } from './core/rng.js';
@@ -50,7 +51,10 @@ async function warmUpShaders(engine, target, onProgress) {
   const yieldFrame = () => new Promise((r) => setTimeout(r, 0));
   if (renderer.extensions.has('KHR_parallel_shader_compile')) {
     let waiting = programs;
-    while (waiting.length) {
+    // (a driver that never reports completion must not hold the loader forever:
+    //  the first frame then simply waits for what is left)
+    const giveUp = performance.now() + 60000;
+    while (waiting.length && performance.now() < giveUp) {
       waiting = waiting.filter((p) => !p.isReady());
       onProgress(1 - waiting.length / n);
       if (waiting.length) await new Promise((r) => setTimeout(r, 16));
@@ -159,6 +163,12 @@ async function boot() {
   ctx.cameraRig = createCameraRig(ctx);
   // the UI follows the camera (spot bar, labels, banners, keyboard hotspots)
   ctx.ui.bindWorld?.();
+  // (every hotspot exists now: free the geometry arrays nothing reads again, on upload)
+  try {
+    ctx.releasedArrays = releaseStaticArrays(ctx);
+  } catch (err) {
+    console.warn('[boot] array release skipped', err);
+  }
 
   ctx.ui.setProgress(0.75, 'Painting the bark and moss…');
   materials.holdBakes?.(false);

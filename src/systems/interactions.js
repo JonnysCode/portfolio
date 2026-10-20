@@ -88,6 +88,13 @@ const K_SPARKLE = 0, K_LEAF = 1, K_SECRET = 2, K_FEATURED = 3;
 /** An unread ✦ sends a ping ring out this often (s). */
 const PING_EVERY = 4;
 
+/**
+ * Occluder meshes (firstSolidHit) with more triangles than this are ray-tested
+ * through their triangle grid (systems/triGrid.js: position + index only), never
+ * through Mesh.raycast (which also reads uv and normal) — core/memory.js relies on it.
+ */
+export const GRID_MIN_TRIS = 3000;
+
 export function createInteractions(ctx) {
   const { engine, camera } = ctx;
   const canvas = engine.renderer.domElement;
@@ -412,7 +419,6 @@ export function createInteractions(ctx) {
   const localRay = new THREE.Ray();
   const lp0 = new THREE.Vector3();
   const lp1 = new THREE.Vector3();
-  const GRID_MIN_TRIS = 3000;
   const triCount = (m) => {
     const g = m.geometry;
     return g ? (g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3 : 0;

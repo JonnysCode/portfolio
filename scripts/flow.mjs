@@ -5,7 +5,7 @@
 // frames) and screenshots each named step. Complements scripts/shots.mjs.
 //
 //   node scripts/flow.mjs scripts/flows/tour.json [--size 1280x720] [--params night=1]
-//        [--prefix flow-] [--touch] [--reduced]
+//        [--prefix flow-] [--touch] [--reduced] [--url http://127.0.0.1:4173/]
 //
 // A step: { "name": "shot-name", "eval": "<js>", "click": [x, y], "key": "ArrowRight",
 //           "move": [x, y], "moveEval": "<js returning [x, y]>", "after": "<js>",
@@ -28,9 +28,14 @@ const [W, H] = String(opt('size', '1280x720')).split('x').map(Number);
 const prefix = opt('prefix', 'experience-flow-');
 const extra = opt('params', '');
 const touch = args.includes('--touch');
-const server = await createServer({ root, logLevel: 'error', server: { port: 0, host: '127.0.0.1', hmr: false, watch: null } });
-await server.listen();
-const url = `http://127.0.0.1:${server.httpServer.address().port}/`;
+// --url: drive a running server (e.g. `vite preview` of a production build) instead of a dev server
+let server = null;
+let url = opt('url', null);
+if (!url) {
+  server = await createServer({ root, logLevel: 'error', server: { port: 0, host: '127.0.0.1', hmr: false, watch: null } });
+  await server.listen();
+  url = `http://127.0.0.1:${server.httpServer.address().port}/`;
+}
 const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'] });
 const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1, hasTouch: touch, isMobile: touch });
 if (args.includes('--reduced')) await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -85,5 +90,5 @@ try {
 } finally {
   console.log(problems.length ? problems.slice(0, 40).join('\n') : 'no console problems');
   await browser.close();
-  await server.close();
+  await server?.close();
 }

@@ -233,3 +233,30 @@ skipped (the rest of the glen still loads).
   bulbs). Share geometries & materials.
 * No per-frame allocations. Small details `castShadow = false`.
 * Scale scatter/leaf counts by `ctx.quality.density`.
+
+### Boot pipeline (load time)
+
+Profiled with `node scripts/profile.mjs` (see its header: phase marks, per-module
+build times, WebGL call time, per-program compile, CPU profile, CPU-side geometry
+bytes). The build's own JavaScript is a few seconds; shader compilation and the
+texture bakes are the bulk, so the boot is arranged to keep the GPU busy while
+JavaScript runs:
+
+1. All world modules are fetched in parallel; they still **build** one after the other.
+2. Right after a module is built, `world/index.js` creates its shader programs
+   (`renderer.compile`, against the final render setup: the post target and the
+   tier's point-light budget, via stand-ins) — they compile while the next modules build.
+3. Texture bakes are **held** during the build (`materials.holdBakes`) and baked in
+   one batch afterwards (`materials.flushBakes`: programs compiled first). A bake
+   mid-build would wait for every shader queued before it. Nothing may read baked
+   pixels during the build.
+4. `main.js` waits for the remaining programs with real progress for the loader.
+5. Production builds run without three's `checkShaderErrors` (it reads every
+   program's info logs: synchronous GPU round trips); `engine.verifyPrograms()` checks
+   link status once after the warm-up and logs failures. Dev (and `?checkShaders=1`)
+   keeps the full check. `?precompile=0` disables step 2 for A/B checks.
+6. `core/memory.js` frees the CPU copies of static attribute arrays after upload,
+   keeping position + index everywhere (occlusion rays, polaroids) and every array
+   of meshes `Mesh.raycast` may test (hotspots, occluders ≤ `GRID_MIN_TRIS`).
+   Flag a mesh or geometry `userData.keepCpu` if you read its arrays after the build;
+   `?keepArrays` keeps everything.
