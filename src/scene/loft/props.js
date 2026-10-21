@@ -6,7 +6,9 @@
 //     pinwheel "fan" spinning on top, a cable bundle snaking to the house
 //   • the tinkering bench ('project-side'): a small joiner's bench with a
 //     wooden vice, a breadboard, a soldering iron, a multimeter, spools of
-//     wire — and a little robot that waves
+//     wire, a little robot that waves — and Simi, Via Communa's turtle
+//   • Via Physio's corner ('via-physio'): a lilac exercise mat with a
+//     resistance band and a dumbbell, filmed by a phone on a mini tripod
 //   • a brass telescope on a wooden tripod pointing at the sky
 //   • a weather vane (a little fish) on the front finial, a twig antenna with
 //     a blinking red light at the back of the ridge
@@ -175,8 +177,8 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
       m.y += 0.04;
       SB.add(mats.paint(rng.pick(['#e2553f', '#ffd166', '#5fb8c9', '#7aa65a'])), tubeAlong([a, m, b], 0.004, 3, 6), { cast: false });
     }
-    SB.add(mats.paint('#e8c33a'), xf(new THREE.BoxGeometry(0.09, 0.03, 0.14), [0.32, Ht + 0.015, 0.06], [0, -0.3, 0]));
-    SB.add(mats.paint('#1d1d1f'), xf(new THREE.CylinderGeometry(0.025, 0.025, 0.006, 12), [0.32, Ht + 0.032, 0.05]), { cast: false });
+    SB.add(mats.paint('#e8c33a'), xf(new THREE.BoxGeometry(0.09, 0.03, 0.14), [0.27, Ht + 0.015, 0.06], [0, -0.3, 0]));
+    SB.add(mats.paint('#1d1d1f'), xf(new THREE.CylinderGeometry(0.025, 0.025, 0.006, 12), [0.27, Ht + 0.032, 0.05]), { cast: false });
     for (const [sx, c] of [[0.4, '#b87333'], [0.45, '#c0c0c0']]) SB.add(mats.metal(c), xf(new THREE.CylinderGeometry(0.035, 0.035, 0.05, 12), [sx, Ht + 0.025, -0.14]), { cast: false });
     SB.add(mats.metal('#555b60'), xf(new THREE.CylinderGeometry(0.03, 0.035, 0.03, 8), [-0.3, Ht + 0.015, -0.12]), { cast: false });
     SB.add(mats.paint('#2a2a2a'), alongX(new THREE.CylinderGeometry(0.009, 0.012, 0.2, 6).rotateZ(Math.PI / 2), [-0.3, Ht + 0.03, -0.12], [-0.18, Ht + 0.11, -0.12]), { cast: false });
@@ -191,6 +193,20 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
       const x = -0.35 + k * 0.17;
       SB.add(mats.metal('#9aa3ab'), xf(new THREE.BoxGeometry(0.012, 0.16, 0.004), [x, Ht + 0.2, -Dp / 2 - 0.0]), { cast: false });
       SB.add(mats.wood(rng.pick(['#c9a374', '#8c3b2e', '#3f5f6a'])), xf(new THREE.CylinderGeometry(0.014, 0.012, 0.09, 6), [x, Ht + 0.3, -Dp / 2 - 0.0]), { cast: false });
+    }
+    // Simi, Via Communa's turtle, keeping the robot company at the front corner
+    {
+      const [tx, tz, a] = [0.44, 0.13, 0.55]; // where it sits, and the way its head points (+z is the bench's front)
+      const at = (x, y, z) => [tx + x * Math.cos(a) + z * Math.sin(a), Ht + y, tz - x * Math.sin(a) + z * Math.cos(a)];
+      const skin = mats.paint('#8a5cc2');
+      const shell = new THREE.SphereGeometry(1, 12, 6, 0, TAU, 0, Math.PI / 2).scale(0.065, 0.048, 0.075);
+      SB.add(mats.paint('#5fa86a'), xf(shell, at(0, 0.022, 0), [0, a, 0]));
+      SB.add(mats.paint('#9fd39a'), xf(new THREE.CylinderGeometry(0.065, 0.061, 0.016, 12).scale(1, 1, 1.15), at(0, 0.016, 0), [0, a, 0]), { cast: false });
+      for (const [x, z] of [[0, 0.01], [-0.032, -0.022], [0.032, -0.022]]) SB.add(mats.paint('#4a8c56'), xf(new THREE.SphereGeometry(0.02, 8, 4).scale(1, 0.35, 1), at(x, 0.022 + 0.046 - Math.hypot(x, z) * 0.35, z), [0, a, 0]), { cast: false });
+      for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) SB.add(skin, xf(new THREE.CylinderGeometry(0.013, 0.015, 0.024, 6), at(sx * 0.048, 0.012, sz * 0.048)), { cast: false });
+      SB.add(skin, xf(new THREE.CylinderGeometry(0.015, 0.019, 0.05, 8), at(0, 0.05, 0.075), [0.9, a, 0, 'YXZ']), { cast: false });
+      SB.add(skin, xf(new THREE.SphereGeometry(0.029, 10, 8).scale(1, 0.92, 1.05), at(0, 0.08, 0.096)));
+      for (const sx of [-1, 1]) SB.add(mats.paint('#1d1d1f'), xf(new THREE.SphereGeometry(0.0062, 6, 4), at(sx * 0.013, 0.088, 0.121)), { cast: false });
     }
     SB.build(g, 'loft-bench', { mergeShadow: true, remap: smallBitsRemap(mats) });
     // the robot: body (+ the resting arm), head (turns, glowing eyes, antenna LED), waving arm
@@ -245,6 +261,36 @@ export function buildProps(ctx, B, mats, env, { deck, house, screens, updates })
     } else arm.rotation.z = -0.25;
     out.bench = g;
     out.robot = robot;
+  }
+
+  // ── Via Physio's corner: an exercise mat, filmed by a phone on a tripod ────
+  {
+    const g = new THREE.Group();
+    g.name = 'loft-physio-corner';
+    const PB = new Batch();
+    const lilac = mats.paint('#a087fe');
+    PB.add(lilac, xf(new THREE.BoxGeometry(0.56, 0.012, 0.3), [0, 0.006, 0]));
+    PB.add(lilac, xf(new THREE.CylinderGeometry(0.032, 0.032, 0.3, 10).rotateX(Math.PI / 2), [-0.3, 0.032, 0]), { cast: false }); // the rolled-up end
+    PB.add(mats.paint('#3aa7a0'), xf(new THREE.TorusGeometry(0.06, 0.008, 5, 16).rotateX(Math.PI / 2), [0.1, 0.016, 0.06]), { cast: false }); // a resistance band
+    for (const sz of [-1, 1]) PB.add(mats.paint('#2a2a2a'), xf(new THREE.CylinderGeometry(0.022, 0.022, 0.018, 10).rotateX(Math.PI / 2), [-0.08, 0.034, -0.05 + sz * 0.045]), { cast: false });
+    PB.add(mats.metal('#9aa3ab'), xf(new THREE.CylinderGeometry(0.006, 0.006, 0.1, 6).rotateX(Math.PI / 2), [-0.08, 0.034, -0.05]), { cast: false }); // a little dumbbell
+    // the phone on a mini tripod, its camera on the mat
+    const top = new THREE.Vector3(0.48, 0.24, 0);
+    for (let k = 0; k < 3; k++) {
+      const a = (k / 3) * TAU + 0.5;
+      const foot = new THREE.Vector3(0.48 + Math.cos(a) * 0.08, 0, Math.sin(a) * 0.08);
+      PB.add(mats.metal('#2a2a2a'), tubeAlong([foot, top], 0.006, 4, 1), { cast: false });
+    }
+    PB.add(mats.paint('#1d1d1f'), xf(new THREE.BoxGeometry(0.012, 0.13, 0.065), [0.48, 0.31, 0], [0, 0, 0.12]));
+    PB.add(mats.paint('#e9dcff'), xf(new THREE.PlaneGeometry(0.055, 0.115).rotateY(Math.PI / 2), [0.487, 0.312, 0], [0, 0, 0.12]), { cast: false }); // its screen, facing whoever films
+    PB.build(g, 'loft-physio', { mergeShadow: true, remap: smallBitsRemap(mats) });
+    g.position.copy(local(2.05, 0, 2.15));
+    g.rotation.y = 0.35;
+    root.add(g);
+    g.updateMatrixWorld(true);
+    // the recording light on the phone's back
+    screens.addLed(new THREE.Vector3(0.472, 0.36, 0.02).applyMatrix4(g.matrixWorld), '#ff4d3a', { rate: 1.2, phase: 0.3, size: 0.012 });
+    out.physio = g;
   }
 
   // ── the telescope on its tripod ───────────────────────────────────────────
