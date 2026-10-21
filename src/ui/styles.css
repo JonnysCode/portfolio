@@ -637,6 +637,13 @@ a { -webkit-tap-highlight-color: transparent; }
 .journal__count { font-family: var(--font-hand); font-size: 18px; line-height: 1; color: var(--ink-faint); white-space: nowrap; }
 /* tablets: the page is narrow — arrows + the counter carry the nav, titles shrink first */
 @media (min-width: 721px) and (max-width: 860px) { .journal__navbtn:not(.is-pair) { font-size: 12.5px; } }
+/* tablets held upright (721–900): the page is ~300px wide — the year stamp flows under the
+   kicker instead of standing over it, and the polaroid sits under the words, not beside them */
+@media (min-width: 721px) and (max-width: 900px) {
+  .journal__stamp { position: static; display: inline-block; margin: 8px 0 0; transform: rotate(-3deg); }
+  .journal__head:has(.journal__stamp) .journal__kicker { padding-right: 0; }
+  .journal__body > .journal__figure { float: none; width: min(80%, 230px); margin: 12px auto 22px; }
+}
 
 /* ── modal: guidebook, map, help ────────────────────────────────────────── */
 .modal { position: fixed; inset: 0; z-index: 9; display: grid; place-items: center; padding: 18px; background: radial-gradient(ellipse at center, rgba(16, 24, 16, 0.42), rgba(8, 12, 8, 0.74)); backdrop-filter: blur(4px) saturate(0.9); animation: fadeIn 0.3s ease; }
