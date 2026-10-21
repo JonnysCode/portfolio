@@ -1,0 +1,10 @@
+[
+  { "name": "ui-glen", "eval": "__woodland.debug.goTo('glen', true)", "wait": 900, "render": 4 },
+  { "name": "ui-woodworking", "key": "ArrowRight", "wait": 300, "render": 160, "after": "__woodland.debug.wait(900)" },
+  { "name": "ui-page", "eval": "__woodland.debug.openEntry('dining-table')", "wait": 1500, "render": 60 },
+  { "name": "ui-guidebook", "eval": "document.querySelector('.journal__close')?.click(); __woodland.debug.open('guide')", "wait": 900, "render": 2 },
+  { "name": "ui-map", "eval": "document.querySelector('.modal__close')?.click(); __woodland.debug.open('map')", "wait": 900, "render": 2 },
+  { "name": "ui-help", "eval": "document.querySelector('.modal__close')?.click(); __woodland.debug.open('help')", "wait": 900, "render": 2 },
+  { "name": "ui-toast", "eval": "document.querySelector('.modal__close')?.click(); __woodland.debug.goTo('glen', true); document.querySelector('.secrets-tag').click()", "wait": 900, "render": 4 },
+  { "name": "ui-night", "eval": "__woodland.debug.setNight(true)", "wait": 900, "render": 4 }
+]

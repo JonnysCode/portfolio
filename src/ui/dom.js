@@ -4,6 +4,7 @@
 //   h('button', { class: 'x', onclick, 'aria-label': '…' }, child, 'text', [more])
 //   svg('<svg …>…</svg>')            → an element from markup we wrote ourselves
 //   trapFocus(container) → release   keep Tab inside a dialog
+//   tagRoles('A · B · C')            → <span class="tag-role"> runs (a tagline that breaks between roles, never inside one)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function h(tag, attrs = {}, ...children) {
@@ -61,3 +62,12 @@ export function trapFocus(container) {
 }
 
 export const isTypingTarget = (t) => t instanceof HTMLElement && !!t.closest('input, textarea, select, [contenteditable]');
+
+/** A tagline ('Software engineer · Schreiner EFZ · tinkerer') as unbreakable roles; the '·' between them comes from CSS. */
+export function tagRoles(text) {
+  return String(text ?? '')
+    .split('·')
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .map((t) => h('span', { class: 'tag-role' }, t));
+}

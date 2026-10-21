@@ -73,7 +73,8 @@ function cap(x, z, r, fill, rng) {
 }
 
 function label(x, z, text, { size = 1.5, rotate = 0, anchor = 'middle', cls = '' } = {}) {
-  return `<text class="map-label ${cls}" x="${x}" y="${z}" font-size="${size}" text-anchor="${anchor}" transform="rotate(${rotate} ${x} ${z})">${text}</text>`;
+  // (×1.25: the map's hand, Caveat, runs smaller than its size says)
+  return `<text class="map-label ${cls}" x="${x}" y="${z}" font-size="${(size * 1.25).toFixed(2)}" text-anchor="${anchor}" transform="rotate(${rotate} ${x} ${z})">${text}</text>`;
 }
 
 function drawMap(ctx) {

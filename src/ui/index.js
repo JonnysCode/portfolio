@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // UI — the HTML layer on top of the glen, styled like an old storybook /
-// cabinetmaker's field journal: loader (a snail on a growing vine), intro
-// card, HUD (carved wooden name plate + round buttons), spot bar, floating
+// cabinetmaker's field journal: loader (dusk: a gilt ring closing round the Great Oak), intro
+// card, HUD (a smoked-glass name plate + round buttons), spot bar, floating
 // spot labels in the overview, hotspot tooltips, journal pages for entries,
 // the guidebook (complete accessible portfolio + no-WebGL fallback), the
 // illustrated map, arrival banners, speech bubbles, toasts and the secrets
@@ -36,7 +36,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { SPOTS, SPOT_BY_ID, SPOT_FOR_AREA } from '../world/layout.js';
-import { h, svg, trapFocus, isTypingTarget } from './dom.js';
+import { h, svg, trapFocus, isTypingTarget, tagRoles } from './dom.js';
 import { icon, spotIcon } from './icons.js';
 import { createLoader } from './loader.js';
 import { createJournal } from './panel.js';
@@ -46,6 +46,9 @@ import { reportDrafts } from './draft.js';
 import { createPolaroids } from './polaroid.js';
 
 const HINT_KEY = 'woodland:hinted';
+/** The intro card's ornaments: a gilt corner sprig (mirrored into each corner) and a leafy rule under the title. */
+const CORNER = `<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 31 V9 C3 5.5 5.5 3 9 3 H31" stroke-width="1.4"/><path d="M8 26 V12 C8 9.8 9.8 8 12 8 H26" stroke-width=".7" opacity=".7"/><path d="M12.5 12.5 c 2.6 -.4 4.8 .6 6 3 c -2.6 .4 -4.8 -.6 -6 -3 z M12.5 12.5 c -.4 2.6 .6 4.8 3 6 c .4 -2.6 -.6 -4.8 -3 -6 z" stroke-width=".8" fill="currentColor" fill-opacity=".18"/><circle cx="3" cy="31" r="1.2" fill="currentColor" stroke="none"/><circle cx="31" cy="3" r="1.2" fill="currentColor" stroke="none"/></g>`;
+const SPRIG = `<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.2"><path d="M8 8 H78 M122 8 H192" opacity=".7"/><path d="M84 8 c4-5 9-6 16-6 s12 1 16 6 c-4 5-9 6-16 6 s-12-1-16-6 z" stroke-width="1.1"/><path d="M88 8 H112" stroke-width=".8"/><circle cx="100" cy="8" r="1.6" fill="currentColor" stroke="none"/><path d="M78 8 c-3-3.6-7-4.6-11-3.4 M78 8 c-3 3.6-7 4.6-11 3.4 M122 8 c3-3.6 7-4.6 11-3.4 M122 8 c3 3.6 7 4.6 11 3.4" stroke-width="1"/><circle cx="4" cy="8" r="1.4" fill="currentColor" stroke="none"/><circle cx="196" cy="8" r="1.4" fill="currentColor" stroke="none"/></g>`;
 /**
  * Framing tweaks per entry on top of the hotspot's own `focus` options (the
  * rig frames the centre of the object's bounds and fits it beside the page).
@@ -89,8 +92,6 @@ export function createUI(ctx) {
   const plate = h(
     'button',
     { class: 'plate', type: 'button', 'aria-label': aboutId ? `About ${P.name}` : `${P.name}’s Woodland — the guidebook`, title: aboutId ? `About ${P.name}` : 'The guidebook', onclick: () => openAbout() },
-    h('i', { class: 'plate__nail is-l', 'aria-hidden': 'true' }),
-    h('i', { class: 'plate__nail is-r', 'aria-hidden': 'true' }),
     h('span', { class: 'plate__name' }, `${P.name}’s Woodland`),
     h('span', { class: 'plate__tag' }, P.tagline),
   );
@@ -595,13 +596,12 @@ export function createUI(ctx) {
     const card = h(
       'section',
       { class: 'intro__card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'intro-title' },
-      h('i', { class: 'journal__tape is-left', 'aria-hidden': 'true' }),
-      h('i', { class: 'journal__tape is-right', 'aria-hidden': 'true' }),
+      ['tl', 'tr', 'bl', 'br'].map((c) => svg(`<svg class="intro__corner is-${c}" viewBox="0 0 34 34" aria-hidden="true" focusable="false">${CORNER}</svg>`)),
       h('div', { class: 'intro__emblem', 'aria-hidden': 'true', html: spotIcon('home') }),
       h('div', { class: 'intro__kicker' }, 'Welcome to'),
       h('h1', { id: 'intro-title', class: 'intro__title' }, `${P.name}’s Woodland`),
-      svg(`<svg class="intro__flourish" viewBox="0 0 220 14" aria-hidden="true"><path d="M2 8 C 40 2, 70 12, 110 7 S 180 3, 218 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`),
-      h('p', { class: 'intro__tag' }, P.tagline),
+      svg(`<svg class="intro__flourish" viewBox="0 0 200 16" aria-hidden="true">${SPRIG}</svg>`),
+      h('p', { class: 'intro__tag' }, tagRoles(P.tagline)),
       h('p', { class: 'intro__text' }, P.intro),
       h('div', { class: 'intro__actions' }, enter, skip),
       h('p', { class: 'intro__note' }, h('span', { html: icon('soundOn') }), isTouch ? 'With sound · drag to look around · tap the sparkles' : 'With sound · drag to look around · click the sparkles'),
