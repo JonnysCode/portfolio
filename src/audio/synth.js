@@ -38,12 +38,15 @@ export function noiseBuffer(ac, kind = 'white', seconds = 2) {
   return buf;
 }
 
-/** A looping noise source (started). */
+/** A looping noise source (started at a random point of the buffer). */
 export function noiseSource(ac, kind = 'white', seconds = 2) {
   const s = ac.createBufferSource();
   s.buffer = noiseBuffer(ac, kind, seconds);
   s.loop = true;
-  s.loopStart = Math.random() * seconds * 0.5;
+  // the buffer's tail is crossfaded into its first samples, so the loop
+  // carries on just after them (a loopStart only counts with a loopEnd)
+  s.loopStart = Math.min(2000, s.buffer.length >> 3) / ac.sampleRate;
+  s.loopEnd = s.buffer.duration;
   s.start(0, Math.random() * seconds);
   return s;
 }

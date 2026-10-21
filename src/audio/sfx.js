@@ -3,8 +3,9 @@
 // whoosh for glides, the discovery chime, a secret twinkle, critter babble for
 // speech bubbles, and the Swiss PostAuto three-tone horn (C♯–E–A).
 //
-// Short UI sounds sit a little under the forest bed, the discovery chime and the
-// horn a few LU above it (node scripts/audio-tour.mjs measures each).
+// Short UI sounds sit a little under the forest bed (≈ −41 vs −39 LUFS); the
+// discovery chime and the horn about 9–10 LU above it (≈ −30 / −29 LUFS
+// momentary). node scripts/audio-tour.mjs measures each.
 //
 //   createSfx(ac, { out, reverb }) → play(name, opts)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,7 +34,8 @@ export function createSfx(ac, { out, reverb }) {
     const s = ac.createBufferSource();
     s.buffer = noiseBuffer(ac, kind, 2);
     s.connect(dest);
-    s.start(t, Math.random() * 1.5);
+    // a random point of the 2 s buffer that still leaves the whole sound to play
+    s.start(t, Math.random() * Math.max(0, 2 - dur - 0.05));
     s.stop(t + dur + 0.05);
     return s;
   }
@@ -103,7 +105,7 @@ export function createSfx(ac, { out, reverb }) {
     close(t) {
       const g = gain(0);
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(0.11, t + 0.04);
+      g.gain.linearRampToValueAtTime(0.15, t + 0.04);
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
       const bp = ac.createBiquadFilter();
       bp.type = 'bandpass';

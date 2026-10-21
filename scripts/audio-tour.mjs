@@ -7,12 +7,16 @@
 // LUFS and sample peak), per stem, per sound and per spot. Writes the mix as
 // a WAV to listen to.
 //
-//   node scripts/audio-tour.mjs [--prefix before-] [--only mix|amb|sfx|places]
+//   node scripts/audio-tour.mjs [--prefix before-] [--only mix|amb|sfx|places|solo]
 //
-// Timers inside the sound code run on the render clock (they are virtual), so
-// a 90 s visit renders in a few seconds and the same visit can be compared
-// before and after a change. Noise and bird phrases are random, so numbers
-// move by a few tenths of a dB between runs.
+// Timers inside the sound code run on the render clock (virtual; an overdue
+// interval catches up instead of coalescing), so the same visit can be compared
+// before and after a change; the ~108 s visit takes about 10 s per stem. The
+// context always reports 'running' and suspend/resume do nothing, so the
+// hidden-tab fade, setEnabled(false), music.js's bar skipping and the bubbles'
+// state guard are not exercised here: check those in a real browser. Noise and
+// bird phrases are random, so numbers move by a few tenths of a dB between runs.
+// Measurements start once the fade-in has settled (the glen's bed at 5.5 s).
 // ─────────────────────────────────────────────────────────────────────────────
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
@@ -29,6 +33,7 @@ const opt = (n, d) => {
 const prefix = opt('prefix', '');
 const only = opt('only', null);
 const SR = 48000;
+const SOLO = ['click', 'pop', 'page', 'close', 'twinkle', 'chime', 'chirp', 'horn'];
 // close-ups and the intro's low pass: [label, camera position, target] (ambience only, 6 s each)
 const PLACES = [
   ['intro, low over the meadow', [0.1, 1.45, 21.2], [0, 6.9, -4]],
@@ -45,11 +50,19 @@ const SPOT_SEQ = ['woodworking', 'bikes', 'code', 'home', 'interior', 'glen'];
 function visit(stem) {
   if (stem === 'places') {
     const ev = [[0.5, 'enter']];
-    PLACES.forEach(([, p, t], i) => ev.push([2 + i * 6, 'place', i]));
-    return { events: ev, duration: 2 + PLACES.length * 6 };
+    PLACES.forEach(([, p, t], i) => ev.push([6 + i * 6, 'place', i]));
+    return { events: ev, duration: 6 + PLACES.length * 6 };
+  }
+  if (stem === 'solo') {
+    // every sound alone (ambience off), 4 s apart; the record after a glide to the Schreinerei
+    const ev = [[0.5, 'enter']];
+    SOLO.forEach((n, i) => ev.push([3 + i * 4, 'sfx', n]));
+    const t = 3 + SOLO.length * 4;
+    ev.push([t, 'glide', 'woodworking'], [t + 4, 'music', true], [t + 10, 'music', false]);
+    return { events: ev, duration: t + 12 };
   }
   const ev = [[0.5, 'enter']];
-  let t = 6;
+  let t = 10;
   for (const id of SPOT_SEQ) {
     ev.push([t, 'sfx', 'click'], [t + 0.05, 'glide', id]);
     // a little browsing at each place: hovers, a page opened and closed
@@ -133,7 +146,7 @@ async function render(stem) {
         enter() {
           audio.unlock();
           audio.setEnabled(true);
-          if (stem === 'sfx') audio.stopAmbience();
+          if (stem === 'sfx' || stem === 'solo') audio.stopAmbience();
         },
         place(i) {
           setCam(PLACES[i][1], PLACES[i][2]);
@@ -265,7 +278,7 @@ function wav(L, R) {
 // ── run ─────────────────────────────────────────────────────────────────────
 const outDir = path.join(root, 'shots', 'audio');
 await mkdir(outDir, { recursive: true });
-const stems = only ? [only] : ['mix', 'amb', 'sfx', 'places'];
+const stems = only ? [only] : ['mix', 'amb', 'sfx', 'places', 'solo'];
 const results = {};
 for (const stem of stems) {
   const r = await render(stem);
@@ -286,8 +299,8 @@ for (const stem of stems) {
 if (results.amb) {
   const r = results.amb;
   console.log('\nambience by place (dwell, 4–11 s after arriving)   short-term LUFS mean / max');
-  const dwell = [['glen (start)', 2.5, 5.9]];
-  let t = 6;
+  const dwell = [['glen (start)', 5.5, 9.9]];
+  let t = 10;
   for (const id of SPOT_SEQ) { dwell.push([id, t + 4, t + 11]); t += 12; }
   dwell.push(['glen at night', t + 6, t + 25]);
   for (const [name, a, b] of dwell) {
@@ -301,15 +314,15 @@ if (results.places) {
   const r = results.places;
   console.log('\nambience close up (ambience only, 2–6 s after arriving)   short-term LUFS');
   PLACES.forEach(([name], i) => {
-    const a = 2 + i * 6 + 2, b = a + 4;
+    const a = 6 + i * 6 + 2, b = a + 4;
     const ws = windows(r.p, 3, 0.25, Math.round(a * SR), Math.round(b * SR));
     console.log(`  ${name.padEnd(28)} ${f1(lufs(ws.reduce((s, w) => s + w.ms, 0) / Math.max(1, ws.length)))}`);
   });
 }
 
-// per sound: momentary max and peak in a window after each sfx (sfx stem)
-if (results.sfx) {
-  const r = results.sfx;
+// per sound: momentary max and peak, each sound alone (solo stem)
+if (results.solo) {
+  const r = results.solo;
   const seen = new Map();
   for (const [t, name, arg] of r.events) {
     const label = name === 'glide' ? 'whoosh' : name === 'music' ? (arg ? 'record' : null) : name === 'sfx' ? arg : null;
@@ -318,7 +331,7 @@ if (results.sfx) {
     const a = Math.round(t * SR), b = Math.min(r.L.length, Math.round((t + len) * SR));
     seen.set(label, { mom: maxOf(windows(r.p, 0.4, 0.02, a, b)), pk: peak(r.L, r.R, a, b), len });
   }
-  console.log('\nsounds (sfx stem, first of each)   max momentary LUFS  peak dBFS  window s');
+  console.log('\nsounds (each alone)   max momentary LUFS  peak dBFS  window s');
   for (const [k, v] of seen) console.log(`  ${k.padEnd(10)} ${f1(v.mom)}            ${f1(v.pk)}     ${v.len}`);
 }
 
