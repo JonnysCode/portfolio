@@ -13,13 +13,13 @@
 //   ctx.audio.musicPlaying
 //   ctx.audio.startAmbience() / stopAmbience()               (birds by day, crickets by night …)
 // ─────────────────────────────────────────────────────────────────────────────
-import { makeReverb } from './synth.js';
-import { createSfx } from './sfx.js';
-import { createAmbience } from './ambience.js';
+import { makeReverb, prepareNoise } from './synth.js';
+import { createSfx, SFX_NOISE } from './sfx.js';
+import { createAmbience, AMBIENCE_NOISE } from './ambience.js';
 import { createMusic } from './music.js';
 
 const PREF_KEY = 'woodland:sound';
-/** Bus levels — measure with `node scripts/audio-tour.mjs` after changing them. */
+/** Bus levels — measure with `node scripts/audio-tour.mjs` after changing them (they include the limiter's makeup gain, see build()). */
 const BUS = { sfx: 0.45, ambience: 0.56, music: 0.27 };
 
 export function createAudio(ctx = {}) {
@@ -37,6 +37,9 @@ export function createAudio(ctx = {}) {
   } catch {
     /* private mode */
   }
+  // the sound starts inside the visitor's first click: generate its noise now,
+  // while the loading screen is up, so that click only has to copy it
+  if (pref !== false) prepareNoise([...AMBIENCE_NOISE, ...SFX_NOISE]);
 
   function build() {
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -45,6 +48,9 @@ export function createAudio(ctx = {}) {
     // master → safety limiter → speakers. The mix sits well below it (the
     // glen's bed around −39 LUFS, the loudest events around −29): a visitor
     // listens with the volume set for everything else on their computer.
+    // DynamicsCompressorNode adds its own makeup gain, (1/curve(0 dBFS))^0.6 —
+    // about +4.4 dB with these settings, on everything — so changing
+    // threshold/knee/ratio moves the whole mix: re-measure after.
     const limiter = ac.createDynamicsCompressor();
     limiter.threshold.value = -9;
     limiter.knee.value = 3;

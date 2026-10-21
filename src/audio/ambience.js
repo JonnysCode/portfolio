@@ -19,6 +19,17 @@ import { noiseSource, envelope, rand, pick } from './synth.js';
 
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 const TICK = 0.12; // s between mixing updates
+const BUBBLE_AHEAD = 0.35; // s of bubbles scheduled ahead of the audio clock
+
+/** The noise beds: [noise, buffer seconds, filter, frequency, Q, starting gain]. */
+const BEDS = {
+  room: ['brown', 7.3, 'lowpass', 320, 0.4, 0.05], // the forest breathing
+  leaves: ['pink', 9.1, 'bandpass', 1500, 0.6, 0], // soft pink noise in the mids, gusting
+  brook: ['pink', 6.7, 'lowpass', 760, 0.5, 0], // the stream's low rush (the babble itself is the bubbles)
+  fallLo: ['brown', 8.3, 'lowpass', 520, 0.6, 0], // the waterfall's deep hush
+};
+/** The noise the beds need, for synth.js prepareNoise() (generated during the loading screen). */
+export const AMBIENCE_NOISE = Object.values(BEDS).map(([kind, seconds]) => [kind, seconds]);
 
 export function createAmbience(ac, { out, reverb, ctx }) {
   const bus = ac.createGain();
@@ -29,34 +40,40 @@ export function createAmbience(ac, { out, reverb, ctx }) {
   wet.connect(reverb);
   let nodes = [];
   let running = false;
-  let nextBird = 0, nextCuckoo = 0, nextOwl = 0, nextCricket = 0;
+  let nextBird = 0, nextCuckoo = 0, nextOwl = 0, nextCricket = 0, nextBubble = 0;
   let layers = null;
+  let beds = [];
 
-  function bed(kind, filterType, freq, q, gain) {
-    const src = noiseSource(ac, kind, 4);
+  /**
+   * A noise bed: two reads of one buffer, half a buffer apart (left and right,
+   * so it surrounds the listener instead of sitting inside their head; a mono
+   * downmix plays the beds ~3 dB lower against the centred sounds). Each layer
+   * gets its own buffer length, so no two layers loop together, and each bed
+   * drifts its speed by a few percent (inaudible on noise; see tick()), so its
+   * own loop never lines up with itself either. Both reads always drift
+   * together, so the left and right stay half a buffer apart.
+   */
+  function bed(kind, seconds, filterType, freq, q, gain) {
+    const m = ac.createChannelMerger(2);
+    const o = rand(0, seconds);
+    const l = noiseSource(ac, kind, seconds, o), r = noiseSource(ac, kind, seconds, (o + seconds / 2) % seconds);
+    l.connect(m, 0, 0);
+    r.connect(m, 0, 1);
     const f = ac.createBiquadFilter();
     f.type = filterType;
     f.frequency.value = freq;
     f.Q.value = q;
     const g = ac.createGain();
     g.gain.value = gain;
-    src.connect(f).connect(g).connect(bus);
-    nodes.push(src);
-    return { src, f, g };
+    m.connect(f).connect(g).connect(bus);
+    nodes.push(l, r);
+    return { f, g, reads: [l, r] };
   }
 
   let bubbleOut = null;
   function build() {
-    // room tone: the forest breathing
-    const room = bed('brown', 'lowpass', 320, 0.4, 0.05);
-    // leaves: soft pink noise in the mids, gusting, and a faint airy top
-    const leaves = bed('pink', 'bandpass', 1500, 0.6, 0.0);
-    const leaves2 = bed('pink', 'bandpass', 6000, 0.7, 0.0);
-    // the stream: a low rush whose centre wobbles; the babble itself is the bubbles
-    const brook = bed('pink', 'lowpass', 760, 0.5, 0);
-    // the waterfall: a deep hush + a little spray
-    const fallLo = bed('brown', 'lowpass', 520, 0.6, 0);
-    const fallHi = bed('pink', 'bandpass', 3400, 0.5, 0);
+    layers = Object.fromEntries(Object.entries(BEDS).map(([name, spec]) => [name, bed(...spec)]));
+    beds = Object.values(layers);
     // bubbles: three fixed pans (left, centre, right) and a gentle top cut
     const lp = ac.createBiquadFilter();
     lp.type = 'lowpass';
@@ -71,7 +88,6 @@ export function createAmbience(ac, { out, reverb, ctx }) {
       p.connect(lp);
       return p;
     });
-    layers = { room, leaves, leaves2, brook, fallLo, fallHi };
   }
 
   /** One water bubble: a short sine blip rising in pitch (the sound of a bubble's cavity closing). */
@@ -222,20 +238,36 @@ export function createAmbience(ac, { out, reverb, ctx }) {
     // leaves gust slowly
     const gust = 0.5 + 0.5 * Math.sin(t * 0.21) * Math.sin(t * 0.077 + 1.3);
     set(L.leaves.g.gain, (0.016 + 0.034 * gust) * (0.45 + 0.55 * day));
-    set(L.leaves2.g.gain, (0.0015 + 0.004 * gust) * (0.4 + 0.6 * day));
-    set(L.room.g.gain, 0.045 + 0.02 * night);
+    set(L.room.g.gain, 0.045);
     // the stream: a low rush (its centre wanders a little) and bubbles, many
     // and close together beside the water, a few drifting over from afar
     const water = Math.min(1, brook * brook + 0.4 * pond);
     L.brook.f.frequency.setTargetAtTime(rand(560, 900), t, 0.3);
     set(L.brook.g.gain, 0.008 + 0.05 * water, 0.5);
-    const expected = (1 + 40 * water) * TICK; // bubbles per tick: ~1/s far off, ~40/s beside the water
-    // (only while the clock runs: a hidden tab suspends it, and bubbles queued
-    // at a frozen time would all burst out together when the visitor returns)
-    const n = ac.state !== 'running' ? 0 : Math.floor(expected) + (Math.random() < expected % 1 ? 1 : 0);
-    for (let i = 0; i < n; i++) bubble(t + rand(0, TICK), rand(0.006, 0.02) * (0.25 + 0.75 * water));
+    // bubbles: ~1/s far off, ~40/s beside the water, at random (Poisson)
+    // times scheduled ahead on the audio clock up to a horizon, so a busy main
+    // thread (a polaroid being developed) leaves no gap in the babble. Each
+    // tick fills from where the last one stopped to its own horizon at the
+    // current rate (gaps are memoryless, so restarting at the horizon stays
+    // Poisson, and a new rate is heard within one look-ahead). Only while the
+    // clock runs: a hidden tab suspends it, and bubbles queued at a frozen
+    // time would all burst out together when the visitor returns; after a
+    // pause the cursor skips the past instead of catching up.
+    if (ac.state === 'running') {
+      const rate = 1 + 40 * water;
+      const end = t + BUBBLE_AHEAD;
+      for (let tb = Math.max(nextBubble, t); ; ) {
+        tb += -Math.log(1 - Math.random()) / rate;
+        if (tb >= end) break;
+        bubble(tb, rand(0.006, 0.02) * (0.25 + 0.75 * water));
+      }
+      nextBubble = end;
+    }
     set(L.fallLo.g.gain, 0.02 + 0.06 * fall * fall, 0.8);
-    set(L.fallHi.g.gain, 0.0015 + 0.006 * fall * fall, 0.8);
+    // one bed a tick wanders its speed (each about every half second); both of
+    // its reads get the same change, so they stay half a buffer apart
+    const b = pick(beds), speed = rand(0.97, 1.03);
+    for (const r of b.reads) r.playbackRate.setTargetAtTime(speed, t, 1.5);
 
     // scheduled voices
     if (day > 0.3 && t > nextBird) {
