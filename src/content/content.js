@@ -24,7 +24,7 @@ export const profile = {
   email: 'jonathangruss@gmail.com',
   links: [
     { label: 'GitHub', href: 'https://github.com/JonnysCode', icon: 'github' },
-    { label: 'LinkedIn', href: 'https://www.linkedin.com/in/jonathan-gruss/', icon: 'linkedin' },
+    { label: 'LinkedIn', href: 'https://www.linkedin.com/in/jonathangruss', icon: 'linkedin' },
     // { label: 'Instagram (woodworking)', href: 'https://instagram.com/your-handle', icon: 'instagram' },
   ],
 };
@@ -276,7 +276,7 @@ export const entries = {
     kind: 'project',
     title: 'Via Communa',
     subtitle: 'A companion app for stroke recovery — and the web dashboard behind it',
-    year: '2025–',
+    year: '2024–',
     summary: 'The startup I co-founded in my free time: a stroke-recovery app for patients and relatives, with a web dashboard for clinics.',
     body: [
       'Via Communa is a digital companion for stroke survivors and for the relatives who support them. The app offers guided exercises for the body, the mind and everyday life, explains what happens after a stroke, and comes with Simi, a friendly turtle who stands for patience, consistency and steady progress.',
