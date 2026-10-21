@@ -10,6 +10,11 @@
 //        map    = albedo (sRGB, or raw control channels for 'colorize' kinds) + height in A
 //        detail = normal.xy (from a Sobel of the precise height) | roughness | ao·cavity
 //
+// At boot the bakes are held (holdBakes) while the world is built and baked in
+// one batch afterwards (flushBakesAsync), and — when three's shader diagnostics
+// are off (production) — their programs are checked once after the warm-up
+// (verifyBakes; failed ones get a flat colour, later bakes are checked at once).
+//
 // The renderer arrives through setBakeRenderer() (materials.setRenderer) — or,
 // if nobody called that, through the first surface material that gets drawn
 // (material.onBeforeRender), which bakes everything pending right then, saving
@@ -19,6 +24,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { NOISE_GLSL } from './noise.glsl.js';
+import { waitForPrograms } from '../shaders.js';
 
 let renderer = null;
 const entries = new Map();
@@ -32,6 +38,12 @@ let scratchTimer = 0;
 let floatOK = true;
 let sizeScale = 1;
 const stats = { bakes: 0, ms: 0, bytes: 0, programs: 0 };
+/** Bakes whose pattern program has not been checked for a failed link yet ({ e, prog }). */
+const unverified = [];
+/** While held (holdBakes), requests queue up instead of baking at once. */
+let held = false;
+/** After the boot's verifyBakes(), later bakes are verified right away (as with diagnostics on). */
+let lateVerify = false;
 
 const VERT = /* glsl */ `
 in vec3 position;
@@ -173,6 +185,38 @@ function fallbackFill(e) {
   stats.failed = (stats.failed ?? 0) + 1;
 }
 
+function patternFailed(e) {
+  console.warn(`[textures] "${e.key}" pattern failed to compile — using a flat colour`);
+  fallbackFill(e);
+}
+
+/**
+ * Check the pattern programs of the bakes done without shader diagnostics
+ * (production) and refill the maps of any that failed with a flat colour.
+ * Call once the shaders are warmed up (the programs are linked by then).
+ */
+export function verifyBakes() {
+  if (!renderer) return 0;
+  lateVerify = true;
+  if (!unverified.length) return 0;
+  const gl = renderer.getContext();
+  const status = new Map();
+  let failed = 0;
+  const prevRT = renderer.getRenderTarget();
+  try {
+    for (const { e, prog } of unverified.splice(0)) {
+      if (!status.has(prog)) status.set(prog, gl.getProgramParameter(prog.program, gl.LINK_STATUS) !== false);
+      if (status.get(prog)) continue;
+      ensureQuad();
+      patternFailed(e);
+      failed++;
+    }
+  } finally {
+    renderer.setRenderTarget(prevRT);
+  }
+  return failed;
+}
+
 function getScratch(w, h) {
   const key = w + 'x' + h;
   if (scratch.has(key)) return scratch.get(key);
@@ -249,8 +293,10 @@ export function requestBake(key, def) {
   e = { key, def, size: [w, h], a, b, map: a.texture, detail: b ? b.texture : null, baked: false };
   entries.set(key, e);
   stats.bytes += w * h * 4 * (b ? 2 : 1) * 1.333;
-  if (renderer) bakeNow([e]);
-  else pending.push(e);
+  if (renderer && !held) {
+    bakeNow([e]);
+    if (lateVerify) verifyBakes();
+  } else pending.push(e);
   return e;
 }
 
@@ -278,11 +324,16 @@ function bakeNow(list) {
       quad.material = m1;
       r.setRenderTarget(tmp);
       r.render(quad, quadCam);
-      if (r.properties.get(m1).currentProgram?.diagnostics?.runnable === false) {
-        console.warn(`[textures] "${e.key}" pattern failed to compile — using a flat colour`);
-        fallbackFill(e);
-        continue;
-      }
+      // (with three's shader diagnostics on — development — a broken pattern is caught
+      //  right here; production boots without them and checks every bake once, after
+      //  the warm-up, in verifyBakes(): no GPU round trip per bake)
+      const prog = r.properties.get(m1).currentProgram;
+      if (r.debug.checkShaderErrors) {
+        if (prog?.diagnostics?.runnable === false) {
+          patternFailed(e);
+          continue;
+        }
+      } else if (prog) unverified.push({ e, prog });
       // pass 2: albedo map, then detail map
       const fin = getFinalize();
       fin.uniforms.tAlbedo.value = tmp.textures[0];
@@ -339,6 +390,62 @@ export function hasBakeRenderer() {
 /** Bake anything still pending (cheap no-op when nothing is). */
 export function flushBakes() {
   if (renderer && pending.length) bakeNow(pending.splice(0));
+}
+
+/**
+ * Hold (true) or release (false) baking: while the world is being built, every
+ * bake waits in `pending` — nothing reads the maps' pixels during the build,
+ * and a bake needs its program linked, a GPU round trip that would otherwise
+ * stall behind every shader queued so far. Releasing does not bake; call
+ * flushBakesAsync() (or flushBakes()).
+ */
+export function holdBakes(on) {
+  held = !!on;
+}
+
+/**
+ * Bake everything pending without freezing the page: their programs are created
+ * first, then every program queued so far is waited for in yielding chunks
+ * (shaders/waitForPrograms — a bake would otherwise block on that whole backlog),
+ * then one map is baked per task. onCompile(k) / onBake(k): progress 0…1.
+ */
+export async function flushBakesAsync({ onCompile = () => {}, onBake = () => {} } = {}) {
+  if (!renderer || !pending.length) return;
+  ensureQuad();
+  const warm = new THREE.Scene();
+  const seen = new Set();
+  for (const e of pending) {
+    const m = passOneMaterial(e.def);
+    if (seen.has(m)) continue;
+    seen.add(m);
+    const mesh = new THREE.Mesh(quad.geometry, m);
+    mesh.frustumCulled = false;
+    warm.add(mesh);
+  }
+  warm.add(new THREE.Mesh(quad.geometry, getFinalize()));
+  // (compiled against a render target, as they are drawn: the program key depends on it)
+  const prev = renderer.getRenderTarget();
+  try {
+    renderer.setRenderTarget(getScratch(64, 64));
+    renderer.compile(warm, quadCam);
+  } catch {
+    /* an optimisation only: the bakes below compile whatever is missing */
+  } finally {
+    renderer.setRenderTarget(prev);
+  }
+  try {
+    await waitForPrograms(renderer, (renderer.info.programs ?? []).slice(), onCompile);
+  } catch {
+    /* the bakes below wait for whatever is left */
+  }
+  const list = pending.splice(0);
+  for (let i = 0; i < list.length; i++) {
+    bakeNow([list[i]]);
+    onBake((i + 1) / list.length);
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  // (anything requested meanwhile)
+  if (pending.length) bakeNow(pending.splice(0));
 }
 
 export function bakeStats() {

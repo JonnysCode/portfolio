@@ -109,6 +109,15 @@ export function createEngine(canvas) {
     powerPreference: 'high-performance',
     preserveDrawingBuffer: params.has('shots'),
   });
+  // Shader diagnostics: with checkShaderErrors three reads every program's and
+  // both shaders' info logs on first use — synchronous GPU round trips that
+  // serialise compilation and were most of the boot time. Development (and
+  // ?checkShaders=1) keeps the full check; production boots without it and
+  // verifies the link status of every program once after warm-up instead
+  // (engine.verifyPrograms: one cheap query per program, logged like three would),
+  // and for programs compiled later (checked every 256 frames while running).
+  const checkParam = params.get('checkShaders');
+  renderer.debug.checkShaderErrors = checkParam ? checkParam !== '0' : !!import.meta.env?.DEV;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   // Colour pipeline (owned by the light/post builder): linear HDR lighting,
@@ -130,6 +139,24 @@ export function createEngine(canvas) {
   const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.3, 600);
   camera.position.set(0, 14, 26);
   camera.lookAt(0, 0, 0);
+
+  const verified = new WeakSet();
+  /** Report programs that failed to link (production: see checkShaderErrors above). */
+  function verifyPrograms() {
+    const programs = renderer.info.programs ?? [];
+    if (renderer.debug.checkShaderErrors) return [];
+    const gl = renderer.getContext();
+    const failed = [];
+    for (const p of programs) {
+      if (verified.has(p)) continue;
+      verified.add(p);
+      if (gl.getProgramParameter(p.program, gl.LINK_STATUS) !== false) continue;
+      failed.push(p.name);
+      const log = [gl.getProgramInfoLog(p.program), gl.getShaderInfoLog(p.vertexShader), gl.getShaderInfoLog(p.fragmentShader)].map((l) => (l || '').trim()).filter(Boolean).join('\n');
+      console.error(`[engine] shader program "${p.name}" (${p.type ?? ''}) failed to link\n${log}`);
+    }
+    return failed;
+  }
 
   let lastTime = -1;
   /** @type {{fn:(dt:number, t:number)=>void, order:number}[]} */
@@ -283,6 +310,12 @@ export function createEngine(canvas) {
       step: () => governorStep(),
     },
     /**
+     * Check every program compiled so far for a failed link (production boots
+     * without three's per-program diagnostics). Call after the shader warm-up.
+     * Returns the names of the programs that failed.
+     */
+    verifyPrograms,
+    /**
      * Advance (and by default render) a single frame. Also used by the
      * screenshot harness, which drives time manually with ?shots.
      */
@@ -324,6 +357,8 @@ export function createEngine(canvas) {
       renderer.setAnimationLoop(() => {
         if (gov.active) governorSample(performance.now());
         engine.step();
+        // (a program compiled after boot gets its link check too — verified ones are skipped)
+        if ((frame & 255) === 0) verifyPrograms();
       });
     },
     stop() {

@@ -27,7 +27,7 @@
 import * as THREE from 'three';
 import { palette } from './palette.js';
 import { createRng } from './rng.js';
-import { KINDS, WOOD_SPECIES, FOLIAGE_VARIANTS, surfaceMaps, foliageMap, setBakeRenderer, setBakeScale, hasBakeRenderer, bakeStats, measureMean } from './textures/index.js';
+import { KINDS, WOOD_SPECIES, FOLIAGE_VARIANTS, surfaceMaps, foliageMap, setBakeRenderer, setBakeScale, hasBakeRenderer, flushBakesAsync, holdBakes, verifyBakes, bakeStats, measureMean } from './textures/index.js';
 import { patchSurface, patchFoliage, patchFoliageDepth } from './textures/surfaceShader.js';
 
 /**
@@ -392,8 +392,9 @@ export const materials = {
   /**
    * Give the texture bakery the renderer (call once at boot, right after the
    * engine exists: materials.setRenderer(engine.renderer, engine.quality)).
-   * Maps are then baked as soon as they are first requested. Without it, the
-   * first surface drawn bakes everything pending in that frame.
+   * Maps are then baked as soon as they are first requested (at boot, main.js
+   * holds them while the world is built — holdBakes / flushBakes). Without it,
+   * the first surface drawn bakes everything pending in that frame.
    * quality.tier 'low' halves the texture resolution.
    */
   setRenderer(renderer, quality = null) {
@@ -467,6 +468,32 @@ export const materials = {
    */
   foliageNormals(geometry, center = null, blend = 0.85) {
     return foliageNormals(geometry, center, blend);
+  },
+
+  /**
+   * Boot: hold (true) every texture bake while the world is being built, then
+   * release (false) and bake them all at once with flushBakes() — see
+   * textures/bakery.js holdBakes.
+   */
+  holdBakes(on) {
+    holdBakes(on);
+  },
+
+  /**
+   * Bake everything held back, without freezing the page: the shader backlog is
+   * waited out first, then one map per task. { onCompile(k), onBake(k) }: progress 0…1.
+   */
+  flushBakes(progress) {
+    return flushBakesAsync(progress);
+  },
+
+  /**
+   * Production boots without shader diagnostics: check the bakes' pattern
+   * programs once after the warm-up (failed ones get a flat colour). Returns
+   * the number of failed bakes.
+   */
+  verifyBakes() {
+    return verifyBakes();
   },
 
   /** Bake statistics: { bakes, ms, mb, maps, programs, pending }. */

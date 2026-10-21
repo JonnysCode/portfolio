@@ -8,6 +8,7 @@
 //   npm run shots -- --custom "bench:2,3,-30:0,1,-36" --size 1600x900
 //   npm run shots -- --eval "__woodland.debug.teleportToArea('bikes')" --views free
 //   npm run shots -- --param scene=showcase --custom "props:0,3,9:0,1,0"   # props showcase scene
+//   npm run shots -- --url http://127.0.0.1:4173/ --khr   # a running server (vite preview); parallel shader compile
 //
 // Starts a Vite dev server on a free port (or uses --url), loads the page in
 // headless Chromium (SwiftShader WebGL) with ?shots, waits for the world to be
@@ -59,8 +60,10 @@ if (!url) {
   url = `http://127.0.0.1:${addr.port}/`;
 }
 
+// --khr: let ANGLE compile & link in parallel and expose KHR_parallel_shader_compile (the path
+// real Chrome takes on most GPUs; headless SwiftShader does not offer it by default)
 const browser = await chromium.launch({
-  args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'],
+  args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl', ...(opt('khr', false) ? ['--enable-angle-features=enableParallelCompileAndLink'] : [])],
 });
 const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
 const problems = [];
