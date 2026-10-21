@@ -144,10 +144,14 @@ export async function buildWorld(ctx, onProgress = () => {}) {
       if (result?.update) ctx.engine.addUpdate(result.update, 20);
       ctx.modules[task.id] = result ?? {};
       report.ok.push({ id: task.id, ms: Math.round(performance.now() - t0) });
-      performance.measure?.(`woodland:build:${task.id}`, { start: t0 });
     } catch (err) {
       console.error(`[world] "${task.id}" failed to build — skipping it.`, err);
       report.failed.push({ id: task.id, error: String(err?.stack || err) });
+    }
+    try {
+      performance.measure?.(`woodland:build:${task.id}`, { start: t0 });
+    } catch {
+      /* (no User Timing L3: profiling marks only) */
     }
     done++;
     onProgress(done / tasks.length, task.id);

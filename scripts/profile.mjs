@@ -5,22 +5,26 @@
 //   node scripts/profile.mjs                       # high tier, 1280×720
 //   node scripts/profile.mjs --quality medium --size 390x844
 //   node scripts/profile.mjs --runs 2              # 2nd run = repeat visit (same browser profile)
+//   node scripts/profile.mjs --url http://127.0.0.1:4173/   # profile a `vite preview` build
+//   node scripts/profile.mjs --khr                 # ANGLE parallel compile (KHR_parallel_shader_compile)
 //   node scripts/profile.mjs --cpu [--cpu-out p.cpuprofile]   # + sampled CPU profile, top self-time by file
 //   node scripts/profile.mjs --glcalls             # + time spent inside WebGL calls (by entry point)
-//   node scripts/profile.mjs --programs            # + per-program link wait (first info-log / link-status query)
-//   node scripts/profile.mjs --url http://127.0.0.1:4173/   # profile a `vite preview` build
+//   node scripts/profile.mjs --programs            # + each program's compile + link, waited for one by one
+//                                                  #   (serialises compilation: boot time not representative)
+//   other flags: --night · --param k=v (URL param, repeatable) · --out report.json ·
+//                --timeout ms (default 900000) · --verbose (page console)
 //
 // Loads the page in headless Chromium (SwiftShader, like scripts/shots.mjs) with
-// ?shots, waits for __woodland.ready and prints: the boot phases (performance
-// marks `woodland:*` from src/main.js), per-module build times, JS heap after a
-// forced GC, shader program count, and (with --cpu) the self time aggregated
-// per source file and per function. SwiftShader makes GPU work (texture bakes,
-// shader compiles) far slower than on real hardware; read the shape, not the
-// absolute numbers.
+// ?shots, waits for __woodland.ready, then for the GPU to finish what is queued
+// (a fence: "ready" means submitted, "GPU done" means drawn), and prints: the
+// boot phases (performance marks `woodland:*` from src/main.js), per-module build
+// times, JS heap after a forced GC, CPU-side geometry bytes, shader program count,
+// and the opt-in reports above. SwiftShader makes GPU work (texture bakes, shader
+// compiles) far slower than on real hardware; read the shape, not the absolute numbers.
 // ─────────────────────────────────────────────────────────────────────────────
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,7 +62,7 @@ const userDir = await mkdtemp(path.join(os.tmpdir(), 'woodland-profile-'));
 const context = await chromium.launchPersistentContext(userDir, {
   viewport: { width: W, height: H },
   deviceScaleFactor: 1,
-  args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl', '--js-flags=--expose-gc', '--enable-precise-memory-info'],
+  args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl', '--js-flags=--expose-gc', '--enable-precise-memory-info', ...(opt('khr', false) ? ['--enable-angle-features=enableParallelCompileAndLink'] : [])],
 });
 const report = [];
 let exitCode = 0;
@@ -118,6 +122,19 @@ try {
     await page.goto(url + '?' + q.toString(), { waitUntil: 'load', timeout });
     await page.waitForFunction(() => window.__woodland?.ready === true, null, { timeout, polling: 200 });
     const wall = Date.now() - t0;
+    // 'ready' only means the CPU has submitted the first frame: wait for the GPU to finish
+    // everything queued so far (a fence), so "ready" and "rendered" are both reported
+    const gpu = await page.evaluate(async () => {
+      const gl = window.__woodland.ctx.engine.renderer.getContext();
+      const t = performance.now();
+      const sync = gl.fenceSync?.(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+      if (!sync) return null;
+      gl.flush();
+      while (gl.getSyncParameter(sync, gl.SYNC_STATUS) !== gl.SIGNALED) await new Promise((r) => setTimeout(r, 25));
+      gl.deleteSync(sync);
+      return { waitedMs: Math.round(performance.now() - t), at: Math.round(performance.now()) };
+    });
+    const gpuWall = Date.now() - t0;
     let profile = null;
     if (cpu) profile = (await cdp.send('Profiler.stop')).profile;
     await cdp.send('HeapProfiler.enable');
@@ -135,8 +152,8 @@ try {
         programs: r.info.programs?.length,
         textures: r.info.memory.textures,
         geometries: r.info.memory.geometries,
-        cache: w.ctx.bootCache ?? null,
         glCalls: window.__glCalls ? Object.entries(window.__glCalls).sort((a, b) => b[1].ms - a[1].ms).map(([k, v]) => `${k} ×${v.n} ${Math.round(v.ms)}ms`) : null,
+        released: w.ctx.releasedArrays ?? null,
         cpuArrays: (() => {
           // CPU-side copies of vertex/index/instance data still held after upload (not in the V8 heap figure)
           const seen = new Set();
@@ -172,15 +189,14 @@ try {
           : null,
       };
     });
-    const row = { run, wall, heapMB: +(heap.usedSize / 1048576).toFixed(1), ...info, errors: problems.length };
+    const row = { run, wall, gpuWall, gpu, heapMB: +(heap.usedSize / 1048576).toFixed(1), ...info, errors: problems.length };
     report.push(row);
-    console.log(`\n── run ${run}: ready in ${wall} ms · heap ${row.heapMB} MB after GC · ${info.programs} programs · ${info.textures} textures · ${info.geometries} geometries`);
-    console.log(`  cpu-side geometry arrays: ${info.cpuArrays.totalMB} MB ${JSON.stringify(info.cpuArrays.perModule)}`);
+    console.log(`\n── run ${run}: ready in ${wall} ms · GPU done ${gpuWall} ms (fence after ready: +${gpu?.waitedMs ?? '?'} ms) · heap ${row.heapMB} MB after GC · ${info.programs} programs · ${info.textures} textures · ${info.geometries} geometries`);
+    console.log(`  cpu-side geometry arrays: ${info.cpuArrays.totalMB} MB ${JSON.stringify(info.cpuArrays.perModule)}${info.released ? ` · released after upload (core/memory.js): ${info.released.mb} MB in ${info.released.geometries} geometries` : ''}`);
     for (const [n, t] of info.marks) console.log(`  mark  ${n.padEnd(28)} ${String(t).padStart(7)} ms`);
     for (const [n, t] of info.measures) console.log(`  span  ${n.padEnd(28)} ${String(t).padStart(7)} ms`);
     console.log(`  build ${info.build}`);
     if (info.glCalls) console.log(`  gl calls: ${info.glCalls.join(' · ')}`);
-    if (info.cache) console.log(`  cache ${JSON.stringify(info.cache)}`);
     if (info.programList) {
       const list = info.programList.sort((a, b) => b.ms - a.ms);
       console.log(`  programs (link wait, ms) — total ${list.reduce((s, p) => s + Math.max(0, p.ms), 0)} ms:`);
@@ -202,6 +218,7 @@ try {
 } finally {
   if (out) await writeFile(String(out), JSON.stringify(report, null, 2));
   await context.close();
+  await rm(userDir, { recursive: true, force: true });
   if (server) await server.close();
   process.exit(exitCode);
 }

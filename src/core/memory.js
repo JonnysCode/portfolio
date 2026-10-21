@@ -19,7 +19,9 @@
 //     anything flagged userData.keepCpu / keepRaycast (mesh or geometry);
 //   • attributes not marked static (setUsage(DynamicDrawUsage) …): updated later.
 // A geometry shared by several meshes is released only if every user allows it.
-// ?keepArrays keeps everything (A/B checks).
+// Arrays a builder already releases itself are left to it (and not counted).
+// ?keepArrays (A/B checks) skips this pass; terrain.js and the vegetation still
+// free their own (?vegcpu=keep keeps the vegetation's).
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { GRID_MIN_TRIS } from '../systems/interactions.js';
@@ -37,7 +39,8 @@ const triCount = (g) => (g.index ? g.index.count : g.attributes.position?.count 
  * Returns { geometries, mb } — what will be released.
  */
 export function releaseStaticArrays(ctx) {
-  if (ctx.engine?.params?.has('keepArrays')) return { geometries: 0, mb: 0 };
+  const keep = ctx.engine?.params?.get('keepArrays');
+  if (keep != null && keep !== '0') return { geometries: 0, mb: 0 };
   // everything a hotspot can be raycast through (interactions: intersectObject(h.object, true))
   const hotspotRoots = new Set((ctx.interactions?.hotspots ?? []).map((h) => h.object).filter(Boolean));
   const inHotspot = (o) => {
@@ -74,6 +77,8 @@ export function releaseStaticArrays(ctx) {
     let n = 0;
     for (const [name, a] of Object.entries(g.attributes)) {
       if (name === 'position' || !a.isBufferAttribute || !a.array || a.usage !== THREE.StaticDrawUsage) continue;
+      // (already handled by its builder: terrain's weights, the vegetation's meshes)
+      if (a.onUploadCallback !== THREE.BufferAttribute.prototype.onUploadCallback) continue;
       a.onUpload(dropArray);
       bytes += a.array.byteLength;
       n++;

@@ -10,6 +10,11 @@
 //        map    = albedo (sRGB, or raw control channels for 'colorize' kinds) + height in A
 //        detail = normal.xy (from a Sobel of the precise height) | roughness | ao·cavity
 //
+// At boot the bakes are held (holdBakes) while the world is built and baked in
+// one batch afterwards (flushBakesAsync), and — when three's shader diagnostics
+// are off (production) — their programs are checked once after the warm-up
+// (verifyBakes; failed ones get a flat colour, later bakes are checked at once).
+//
 // The renderer arrives through setBakeRenderer() (materials.setRenderer) — or,
 // if nobody called that, through the first surface material that gets drawn
 // (material.onBeforeRender), which bakes everything pending right then, saving
@@ -19,6 +24,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { NOISE_GLSL } from './noise.glsl.js';
+import { waitForPrograms } from '../shaders.js';
 
 let renderer = null;
 const entries = new Map();
@@ -36,6 +42,8 @@ const stats = { bakes: 0, ms: 0, bytes: 0, programs: 0 };
 const unverified = [];
 /** While held (holdBakes), requests queue up instead of baking at once. */
 let held = false;
+/** After the boot's verifyBakes(), later bakes are verified right away (as with diagnostics on). */
+let lateVerify = false;
 
 const VERT = /* glsl */ `
 in vec3 position;
@@ -188,7 +196,9 @@ function patternFailed(e) {
  * Call once the shaders are warmed up (the programs are linked by then).
  */
 export function verifyBakes() {
-  if (!renderer || !unverified.length) return 0;
+  if (!renderer) return 0;
+  lateVerify = true;
+  if (!unverified.length) return 0;
   const gl = renderer.getContext();
   const status = new Map();
   let failed = 0;
@@ -283,8 +293,10 @@ export function requestBake(key, def) {
   e = { key, def, size: [w, h], a, b, map: a.texture, detail: b ? b.texture : null, baked: false };
   entries.set(key, e);
   stats.bytes += w * h * 4 * (b ? 2 : 1) * 1.333;
-  if (renderer && !held) bakeNow([e]);
-  else pending.push(e);
+  if (renderer && !held) {
+    bakeNow([e]);
+    if (lateVerify) verifyBakes();
+  } else pending.push(e);
   return e;
 }
 
@@ -392,11 +404,12 @@ export function holdBakes(on) {
 }
 
 /**
- * Bake everything pending, compiling all their programs first (compileAsync:
- * in parallel where the browser can, without blocking the page), so the bakes
- * themselves never wait on a compile.
+ * Bake everything pending without freezing the page: their programs are created
+ * first, then every program queued so far is waited for in yielding chunks
+ * (shaders/waitForPrograms — a bake would otherwise block on that whole backlog),
+ * then one map is baked per task. onCompile(k) / onBake(k): progress 0…1.
  */
-export async function flushBakesAsync() {
+export async function flushBakesAsync({ onCompile = () => {}, onBake = () => {} } = {}) {
   if (!renderer || !pending.length) return;
   ensureQuad();
   const warm = new THREE.Scene();
@@ -412,25 +425,31 @@ export async function flushBakesAsync() {
   warm.add(new THREE.Mesh(quad.geometry, getFinalize()));
   // (compiled against a render target, as they are drawn: the program key depends on it)
   const prev = renderer.getRenderTarget();
-  let ready = null;
   try {
     renderer.setRenderTarget(getScratch(64, 64));
-    ready = renderer.compileAsync(warm, quadCam);
+    renderer.compile(warm, quadCam);
   } catch {
-    /* compileAsync is an optimisation only */
+    /* an optimisation only: the bakes below compile whatever is missing */
   } finally {
     renderer.setRenderTarget(prev);
   }
   try {
-    await ready;
+    await waitForPrograms(renderer, (renderer.info.programs ?? []).slice(), onCompile);
   } catch {
-    /* the bakes below compile whatever is missing */
+    /* the bakes below wait for whatever is left */
   }
+  const list = pending.splice(0);
+  for (let i = 0; i < list.length; i++) {
+    bakeNow([list[i]]);
+    onBake((i + 1) / list.length);
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  // (anything requested meanwhile)
   if (pending.length) bakeNow(pending.splice(0));
 }
 
 export function bakeStats() {
-  return { ...stats, mb: +(stats.bytes / 1048576).toFixed(1), maps: entries.size, keys: [...entries.keys()], pending: pending.length, halfFloat: floatOK };
+  return { ...stats, mb: +(stats.bytes / 1048576).toFixed(1), maps: entries.size, pending: pending.length, halfFloat: floatOK };
 }
 
 /**

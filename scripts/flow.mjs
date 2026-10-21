@@ -5,7 +5,7 @@
 // frames) and screenshots each named step. Complements scripts/shots.mjs.
 //
 //   node scripts/flow.mjs scripts/flows/tour.json [--size 1280x720] [--params night=1]
-//        [--prefix flow-] [--touch] [--reduced] [--url http://127.0.0.1:4173/]
+//        [--prefix flow-] [--touch] [--reduced] [--url http://127.0.0.1:4173/] [--khr]
 //
 // A step: { "name": "shot-name", "eval": "<js>", "click": [x, y], "key": "ArrowRight",
 //           "move": [x, y], "moveEval": "<js returning [x, y]>", "after": "<js>",
@@ -36,7 +36,10 @@ if (!url) {
   await server.listen();
   url = `http://127.0.0.1:${server.httpServer.address().port}/`;
 }
-const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'] });
+// --khr: let ANGLE compile & link in parallel and expose KHR_parallel_shader_compile (the path
+// real Chrome takes on most GPUs; headless SwiftShader does not offer it by default)
+const khr = args.includes('--khr') ? ['--enable-angle-features=enableParallelCompileAndLink'] : [];
+const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl', ...khr] });
 const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1, hasTouch: touch, isMobile: touch });
 if (args.includes('--reduced')) await page.emulateMedia({ reducedMotion: 'reduce' });
 const problems = [];

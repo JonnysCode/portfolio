@@ -115,7 +115,7 @@ export function createEngine(canvas) {
   // ?checkShaders=1) keeps the full check; production boots without it and
   // verifies the link status of every program once after warm-up instead
   // (engine.verifyPrograms: one cheap query per program, logged like three would),
-  // and again whenever programs were added (checked every few seconds while running).
+  // and for programs compiled later (checked every 256 frames while running).
   const checkParam = params.get('checkShaders');
   renderer.debug.checkShaderErrors = checkParam ? checkParam !== '0' : !!import.meta.env?.DEV;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
@@ -141,11 +141,9 @@ export function createEngine(canvas) {
   camera.lookAt(0, 0, 0);
 
   const verified = new WeakSet();
-  let programCount = 0;
   /** Report programs that failed to link (production: see checkShaderErrors above). */
   function verifyPrograms() {
     const programs = renderer.info.programs ?? [];
-    programCount = programs.length;
     if (renderer.debug.checkShaderErrors) return [];
     const gl = renderer.getContext();
     const failed = [];
@@ -359,8 +357,8 @@ export function createEngine(canvas) {
       renderer.setAnimationLoop(() => {
         if (gov.active) governorSample(performance.now());
         engine.step();
-        // (a program compiled after boot gets its link check too)
-        if ((frame & 255) === 0 && (renderer.info.programs?.length ?? 0) !== programCount) verifyPrograms();
+        // (a program compiled after boot gets its link check too — verified ones are skipped)
+        if ((frame & 255) === 0) verifyPrograms();
       });
     },
     stop() {

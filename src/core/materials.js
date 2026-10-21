@@ -392,8 +392,9 @@ export const materials = {
   /**
    * Give the texture bakery the renderer (call once at boot, right after the
    * engine exists: materials.setRenderer(engine.renderer, engine.quality)).
-   * Maps are then baked as soon as they are first requested. Without it, the
-   * first surface drawn bakes everything pending in that frame.
+   * Maps are then baked as soon as they are first requested (at boot, main.js
+   * holds them while the world is built — holdBakes / flushBakes). Without it,
+   * the first surface drawn bakes everything pending in that frame.
    * quality.tier 'low' halves the texture resolution.
    */
   setRenderer(renderer, quality = null) {
@@ -478,9 +479,12 @@ export const materials = {
     holdBakes(on);
   },
 
-  /** Bake everything held back (programs compiled first, asynchronously). */
-  flushBakes() {
-    return flushBakesAsync();
+  /**
+   * Bake everything held back, without freezing the page: the shader backlog is
+   * waited out first, then one map per task. { onCompile(k), onBake(k) }: progress 0…1.
+   */
+  flushBakes(progress) {
+    return flushBakesAsync(progress);
   },
 
   /**

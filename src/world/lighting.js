@@ -53,7 +53,8 @@
 //   ctx.lights.addPoint(position, { color, day, night, distance, decay, priority, spot })
 // which is budgeted per tier. Requests made while the world is being built are
 // collected and allocated once it is complete (ctx.lights.allocate(), called by
-// post.js before shaders are compiled): first one light for every spot
+// post.js; shaders compiled before that — world/index.js compiles each module as
+// it is built — use pointBudget stand-in lights): first one light for every spot
 // (Schreinerei, Jonny's cottage, Wohnatelier, Velowerkstatt, Code Loft — the
 // spot is the nearest spot focus unless opts.spot names it), then the rest by
 // priority (opts.priority, default ≈ night intensity × reach × spot weight).
@@ -61,7 +62,7 @@
 // (The returned light object is always valid during the build; afterwards
 // addPoint returns null once the budget is used up.)
 //
-// ctx.lights = { sun, hemi, rim, beam, keyDir, shadowExtent, shadowCenter, canopy, addPoint(position, opts), allocate(), points,
+// ctx.lights = { sun, hemi, rim, beam, keyDir, shadowExtent, shadowCenter, canopy, addPoint(position, opts), allocate(), points, pointBudget, allocated,
 //                pools ({ count, meshes, ms, list, skipped } — the night light pools), strandBulbs, strandPools, rigs, retune(),
 //                addIndoorVolume(box3, { rotY | matrix }) }
 //   keyDir is live (world space, towards the current key light).

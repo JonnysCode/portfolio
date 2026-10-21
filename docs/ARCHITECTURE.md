@@ -259,4 +259,4 @@ JavaScript runs:
    keeping position + index everywhere (occlusion rays, polaroids) and every array
    of meshes `Mesh.raycast` may test (hotspots, occluders ≤ `GRID_MIN_TRIS`).
    Flag a mesh or geometry `userData.keepCpu` if you read its arrays after the build;
-   `?keepArrays` keeps everything.
+   `?keepArrays` skips this pass (terrain and vegetation still free their own; `?vegcpu=keep`).

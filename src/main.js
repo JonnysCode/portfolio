@@ -10,6 +10,7 @@ import './ui/styles.css';
 import * as THREE from 'three';
 import { createEngine } from './core/engine.js';
 import { releaseStaticArrays } from './core/memory.js';
+import { waitForPrograms } from './core/shaders.js';
 import { materials } from './core/materials.js';
 import { palette } from './core/palette.js';
 import { createRng } from './core/rng.js';
@@ -30,11 +31,9 @@ import { createAudio } from './audio/audio.js';
 import { installDebug } from './debug.js';
 
 /**
- * Compile every program the scene needs and wait until they are linked,
- * reporting progress (0…1) as they finish. With KHR_parallel_shader_compile the
- * browser links in the background and readiness is polled; without it each
- * link is waited for in turn (the first frame would wait for them anyway),
- * yielding now and then so the loader keeps painting.
+ * Compile every program the scene needs (against the post chain's HDR target
+ * when post-processing is on, so the variants actually drawn get compiled) and
+ * wait until they are linked, reporting progress 0…1 (core/shaders.js).
  */
 async function warmUpShaders(engine, target, onProgress) {
   const { renderer, scene, camera } = engine;
@@ -46,31 +45,30 @@ async function warmUpShaders(engine, target, onProgress) {
     renderer.setRenderTarget(null);
   }
   const programs = [...new Set([...(used ?? [])].map((m) => renderer.properties.get(m).currentProgram).filter(Boolean))];
-  const n = programs.length || 1;
+  await waitForPrograms(renderer, programs, onProgress);
+}
+
+/**
+ * Wait until the GPU has finished everything submitted so far (a fence): a
+ * frame submitted is not a frame drawn — without three's shader diagnostics
+ * the driver may still be compiling the first frame's shaders when step()
+ * returns. Resolves early after `timeoutMs` or without fenceSync. onTick(ms)
+ * is called while waiting (the loader eases on: the GPU gives no fraction).
+ */
+async function gpuIdle(renderer, timeoutMs, onTick = () => {}) {
   const gl = renderer.getContext();
-  const yieldFrame = () => new Promise((r) => setTimeout(r, 0));
-  if (renderer.extensions.has('KHR_parallel_shader_compile')) {
-    let waiting = programs;
-    // (a driver that never reports completion must not hold the loader forever:
-    //  the first frame then simply waits for what is left)
-    const giveUp = performance.now() + 60000;
-    while (waiting.length && performance.now() < giveUp) {
-      waiting = waiting.filter((p) => !p.isReady());
-      onProgress(1 - waiting.length / n);
-      if (waiting.length) await new Promise((r) => setTimeout(r, 16));
+  const sync = gl.fenceSync?.(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+  if (!sync) return;
+  gl.flush();
+  const t0 = performance.now();
+  try {
+    while (gl.getSyncParameter(sync, gl.SYNC_STATUS) !== gl.SIGNALED && performance.now() - t0 < timeoutMs) {
+      onTick(performance.now() - t0);
+      await new Promise((r) => setTimeout(r, 25));
     }
-    return;
+  } finally {
+    gl.deleteSync(sync);
   }
-  let last = performance.now();
-  for (let i = 0; i < programs.length; i++) {
-    gl.getProgramParameter(programs[i].program, gl.LINK_STATUS);
-    if (performance.now() - last > 100) {
-      onProgress((i + 1) / n);
-      await yieldFrame();
-      last = performance.now();
-    }
-  }
-  onProgress(1);
 }
 
 function webglAvailable() {
@@ -115,6 +113,16 @@ async function boot() {
   }
 
   const engine = createEngine(canvas);
+  // A lost WebGL context cannot be restored (geometry arrays and baked maps are not
+  // kept on the CPU): stop drawing and ask for a reload instead of freezing silently.
+  canvas.addEventListener(
+    'webglcontextlost',
+    () => {
+      engine.stop();
+      ctx.ui?.toast?.('The woodland lost its graphics — please reload the page.', 600000);
+    },
+    { once: true },
+  );
   Object.assign(ctx, { engine, scene: engine.scene, camera: engine.camera, quality: engine.quality });
   // Procedural textures are baked on the GPU; give the material factory the renderer up front.
   materials.setRenderer?.(engine.renderer, engine.quality);
@@ -149,7 +157,7 @@ async function boot() {
   // (texture bakes wait until the world is built — see materials.holdBakes — so
   //  the shaders each module queues compile while the next one builds)
   materials.holdBakes?.(true);
-  const report = await buildWorld(ctx, (p, id) => ctx.ui.setProgress(0.05 + p * 0.7, labels[id]));
+  const report = await buildWorld(ctx, (p, id) => ctx.ui.setProgress(0.05 + p * 0.55, labels[id]));
   mark('world');
   if (report.failed.length) console.warn('[boot] some modules failed:', report.failed.map((f) => f.id));
 
@@ -170,20 +178,23 @@ async function boot() {
     console.warn('[boot] array release skipped', err);
   }
 
-  ctx.ui.setProgress(0.75, 'Painting the bark and moss…');
+  // Loader bands after the build (0.05–0.60): the shaders queued while building
+  // (0.60–0.80), the texture bakes (0.80–0.86), the rest of the warm-up
+  // (0.86–0.90), the GPU drawing the first frame (0.90–0.99).
   materials.holdBakes?.(false);
   try {
-    await materials.flushBakes?.();
+    await materials.flushBakes?.({
+      onCompile: (k) => ctx.ui.setProgress(0.6 + k * 0.2, 'Warming up shaders…'),
+      onBake: (k) => ctx.ui.setProgress(0.8 + k * 0.06, 'Painting the bark and moss…'),
+    });
   } catch (err) {
     console.warn('[boot] texture bakes failed', err);
   }
   mark('baked');
-  ctx.ui.setProgress(0.8, 'Warming up shaders…');
+  ctx.ui.setProgress(0.86, 'Warming up shaders…');
   // Compile all shaders up front to avoid hitches on first view.
-  // Compile against the post chain's HDR target when post-processing is on, so
-  // the variants that are actually drawn get compiled (not the sRGB/tone-mapped ones).
   try {
-    await warmUpShaders(engine, ctx.post?.target ?? null, (k) => ctx.ui.setProgress(0.8 + k * 0.18));
+    await warmUpShaders(engine, ctx.post?.target ?? null, (k) => ctx.ui.setProgress(0.86 + k * 0.04));
   } catch {
     /* the warm-up is an optimisation only */
   }
@@ -193,6 +204,14 @@ async function boot() {
   // (production: the link checks three's diagnostics would have done, once, now that everything is linked)
   materials.verifyBakes?.();
   engine.verifyPrograms?.();
+  // the loader never says "Welcome!" before the GPU has drawn that first frame
+  // (shaders still compiling would freeze the intro flight instead)
+  try {
+    await gpuIdle(engine.renderer, 20000, (ms) => ctx.ui.setProgress(0.9 + 0.09 * (1 - Math.exp(-ms / 8000)), 'Warming up shaders…'));
+  } catch {
+    /* a fence is an optimisation only */
+  }
+  mark('first-frame-gpu');
   ctx.ui.setProgress(1, 'Welcome!');
 
   if (engine.params.has('shots')) {
