@@ -13,9 +13,9 @@
 //   ctx.audio.musicPlaying
 //   ctx.audio.startAmbience() / stopAmbience()               (birds by day, crickets by night …)
 // ─────────────────────────────────────────────────────────────────────────────
-import { makeReverb } from './synth.js';
-import { createSfx } from './sfx.js';
-import { createAmbience } from './ambience.js';
+import { makeReverb, prepareNoise } from './synth.js';
+import { createSfx, SFX_NOISE } from './sfx.js';
+import { createAmbience, AMBIENCE_NOISE } from './ambience.js';
 import { createMusic } from './music.js';
 
 const PREF_KEY = 'woodland:sound';
@@ -37,6 +37,9 @@ export function createAudio(ctx = {}) {
   } catch {
     /* private mode */
   }
+  // the sound starts inside the visitor's first click: generate its noise now,
+  // while the loading screen is up, so that click only has to copy it
+  if (pref !== false) prepareNoise([...AMBIENCE_NOISE, ...SFX_NOISE]);
 
   function build() {
     const AC = window.AudioContext || window.webkitAudioContext;

@@ -11,6 +11,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { noiseBuffer, envelope, midi, rand } from './synth.js';
 
+/** Noise the effects read: 2 s for the short ones, 6 s so every whoosh is a different stretch of air. */
+export const SFX_NOISE = [['white', 2], ['pink', 2], ['brown', 2], ['pink', 6]];
+
 export function createSfx(ac, { out, reverb }) {
   const wet = ac.createGain();
   wet.gain.value = 0.55;
@@ -32,10 +35,11 @@ export function createSfx(ac, { out, reverb }) {
   }
   function noise(t, dur, dest, kind = 'white') {
     const s = ac.createBufferSource();
-    s.buffer = noiseBuffer(ac, kind, 2);
+    const seconds = dur > 1 ? 6 : 2;
+    s.buffer = noiseBuffer(ac, kind, seconds);
     s.connect(dest);
-    // a random point of the 2 s buffer that still leaves the whole sound to play
-    s.start(t, Math.random() * Math.max(0, 2 - dur - 0.05));
+    // a random point of the buffer that still leaves the whole sound to play
+    s.start(t, Math.random() * Math.max(0, seconds - dur - 0.05));
     s.stop(t + dur + 0.05);
     return s;
   }

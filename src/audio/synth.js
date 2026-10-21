@@ -3,13 +3,16 @@
 // the music box: noise buffers, a generated forest reverb, envelopes.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Seconds of white / pink / brown noise in a (cached) mono buffer. */
-export function noiseBuffer(ac, kind = 'white', seconds = 2) {
-  const key = `__noise_${kind}_${seconds}`;
-  if (ac[key]) return ac[key];
-  const n = Math.floor(ac.sampleRate * seconds);
-  const buf = ac.createBuffer(1, n, ac.sampleRate);
-  const d = buf.getChannelData(0);
+// Noise is generated once, at a fixed rate (a context running at 44.1 kHz
+// resamples it, which noise never minds), ideally ahead of need: the sound
+// starts inside the visitor's first click, and seconds of noise generated
+// there would hold up the click (prepareNoise() runs during the loading screen).
+const NOISE_RATE = 48000;
+const prepared = new Map(); // 'kind_seconds' → Float32Array, until a context takes it
+
+function makeNoise(kind, seconds) {
+  const n = Math.floor(NOISE_RATE * seconds);
+  const d = new Float32Array(n);
   let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, last = 0;
   for (let i = 0; i < n; i++) {
     const w = Math.random() * 2 - 1;
@@ -28,26 +31,53 @@ export function noiseBuffer(ac, kind = 'white', seconds = 2) {
       d[i] = last * 3.5;
     } else d[i] = w;
   }
-  // fade the loop seam
-  const f = Math.min(2000, n >> 3);
+  // fade the loop seam: the tail blends into the first samples (see noiseSource)
+  const f = seamOf(n);
   for (let i = 0; i < f; i++) {
     const k = i / f;
     d[n - f + i] = d[n - f + i] * (1 - k) + d[i] * k;
   }
+  return d;
+}
+const seamOf = (n) => Math.min(2000, n >> 3);
+
+/** Generate noise ahead of need, one buffer per task: [[kind, seconds], …]. */
+export function prepareNoise(specs) {
+  const todo = specs.filter(([k, s]) => !prepared.has(`${k}_${s}`));
+  const next = () => {
+    const spec = todo.shift();
+    if (!spec) return;
+    const id = `${spec[0]}_${spec[1]}`;
+    if (!prepared.has(id)) prepared.set(id, makeNoise(spec[0], spec[1]));
+    setTimeout(next, 0);
+  };
+  setTimeout(next, 0);
+}
+
+/** Seconds of white / pink / brown noise in a (cached) mono buffer. */
+export function noiseBuffer(ac, kind = 'white', seconds = 2) {
+  const key = `__noise_${kind}_${seconds}`;
+  if (ac[key]) return ac[key];
+  const id = `${kind}_${seconds}`;
+  const d = prepared.get(id) ?? makeNoise(kind, seconds);
+  prepared.delete(id);
+  const buf = ac.createBuffer(1, d.length, NOISE_RATE);
+  if (buf.copyToChannel) buf.copyToChannel(d, 0);
+  else buf.getChannelData(0).set(d);
   ac[key] = buf;
   return buf;
 }
 
-/** A looping noise source (started at a random point of the buffer). */
-export function noiseSource(ac, kind = 'white', seconds = 2) {
+/** A looping noise source, started `offset` seconds into its buffer (random by default). */
+export function noiseSource(ac, kind = 'white', seconds = 2, offset = Math.random() * seconds) {
   const s = ac.createBufferSource();
   s.buffer = noiseBuffer(ac, kind, seconds);
   s.loop = true;
   // the buffer's tail is crossfaded into its first samples, so the loop
   // carries on just after them (a loopStart only counts with a loopEnd)
-  s.loopStart = Math.min(2000, s.buffer.length >> 3) / ac.sampleRate;
+  s.loopStart = seamOf(s.buffer.length) / s.buffer.sampleRate;
   s.loopEnd = s.buffer.duration;
-  s.start(0, Math.random() * seconds);
+  s.start(0, offset);
   return s;
 }
 
