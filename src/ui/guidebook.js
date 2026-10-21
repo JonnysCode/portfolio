@@ -14,7 +14,7 @@
 // ("Look closer at the miniature") — the model only (src/content/miniatures.js).
 // ─────────────────────────────────────────────────────────────────────────────
 import { SPOTS } from '../world/layout.js';
-import { h } from './dom.js';
+import { h, tagRoles } from './dom.js';
 import { icon, spotIcon } from './icons.js';
 import { sketchFor } from './sketches.js';
 import { presentEntry, reachOut, showDrafts, withoutMailPromise } from './draft.js';
@@ -159,7 +159,7 @@ export function renderGuidebook(ctx, { show3d = true, onShow, onVisit, linkFor, 
       { class: 'guide__cover' },
       h('div', { class: 'guide__kicker' }, 'The Guidebook'),
       h('h2', { id: 'modal-title', class: 'guide__title' }, `${P.name}’s Woodland`),
-      h('p', { class: 'guide__tagline' }, P.tagline),
+      h('p', { class: 'guide__tagline' }, tagRoles(P.tagline)),
       h('p', { class: 'guide__intro' }, P.intro),
       contact,
       show3d && progress && h('p', { class: 'guide__progress' }, h('span', { html: icon('leaf') }), `${progress.visited} of ${progress.total} stories read`, secrets?.total ? [h('span', { class: 'guide__sep' }, '·'), h('span', { html: icon('sparkle') }), `${secrets.found} of ${secrets.total} secrets found`, dayDone ? h('span', { class: 'guide__hint' }, ' — some things only show themselves after dark (N)') : null] : null),

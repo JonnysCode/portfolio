@@ -36,7 +36,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import * as THREE from 'three';
 import { SPOTS, SPOT_BY_ID, SPOT_FOR_AREA } from '../world/layout.js';
-import { h, svg, trapFocus, isTypingTarget } from './dom.js';
+import { h, svg, trapFocus, isTypingTarget, tagRoles } from './dom.js';
 import { icon, spotIcon } from './icons.js';
 import { createLoader } from './loader.js';
 import { createJournal } from './panel.js';
@@ -92,8 +92,6 @@ export function createUI(ctx) {
   const plate = h(
     'button',
     { class: 'plate', type: 'button', 'aria-label': aboutId ? `About ${P.name}` : `${P.name}’s Woodland — the guidebook`, title: aboutId ? `About ${P.name}` : 'The guidebook', onclick: () => openAbout() },
-    h('i', { class: 'plate__nail is-l', 'aria-hidden': 'true' }),
-    h('i', { class: 'plate__nail is-r', 'aria-hidden': 'true' }),
     h('span', { class: 'plate__name' }, `${P.name}’s Woodland`),
     h('span', { class: 'plate__tag' }, P.tagline),
   );
@@ -603,7 +601,7 @@ export function createUI(ctx) {
       h('div', { class: 'intro__kicker' }, 'Welcome to'),
       h('h1', { id: 'intro-title', class: 'intro__title' }, `${P.name}’s Woodland`),
       svg(`<svg class="intro__flourish" viewBox="0 0 200 16" aria-hidden="true">${SPRIG}</svg>`),
-      h('p', { class: 'intro__tag' }, P.tagline),
+      h('p', { class: 'intro__tag' }, tagRoles(P.tagline)),
       h('p', { class: 'intro__text' }, P.intro),
       h('div', { class: 'intro__actions' }, enter, skip),
       h('p', { class: 'intro__note' }, h('span', { html: icon('soundOn') }), isTouch ? 'With sound · drag to look around · tap the sparkles' : 'With sound · drag to look around · click the sparkles'),

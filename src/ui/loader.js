@@ -8,7 +8,7 @@
 //
 //   createLoader(root, { title, tagline }) → { el, setProgress(p, label), done(), fail(text) }
 // ─────────────────────────────────────────────────────────────────────────────
-import { h, svg } from './dom.js';
+import { h, svg, tagRoles } from './dom.js';
 
 /** Where the leaves sprout round the ring (share of the way round, from the top). */
 const LEAVES = [0.07, 0.19, 0.31, 0.43, 0.56, 0.68, 0.8, 0.92];
@@ -44,7 +44,7 @@ const MEDALLION = `<svg class="loader__medal" viewBox="0 0 140 140" aria-hidden=
     <path class="loader__ground" d="M34 96 C 46 92, 58 93, 70 93 S 94 92, 106 96"/>
     <path class="loader__trunk" d="M63 93 C 64.5 85, 65 79, 63.6 72 M77 93 C 75.5 85, 75 79, 76.4 72 M63.6 72 C 60 69.5, 56 69, 52.5 70 M76.4 72 C 80 69.5, 84 69, 87.5 70 M66.5 74 C 68 70, 70.6 67.5, 73 66.6 M59 93 C 61 92, 62.6 91, 63 89 M81 93 C 79 92, 77.4 91, 77 89"/>
     <path class="loader__crown" d="M46.5 69.5 C 39 68.5, 36.5 60, 42 55.2 C 38.6 47.6, 45.4 40.4, 52.6 42.6 C 55 34.6, 66 31.6, 71.6 37.4 C 77.6 31.4, 89.4 34.6, 90.4 43.2 C 98 42.4, 103 50.6, 98.4 56.4 C 103.6 61.6, 99.4 70.4, 92.6 69.6 C 89 73.6, 82.6 73.6, 79.4 70 C 76 72.6, 70.6 72.4, 68 69.4 C 64.4 72.6, 58.2 72.6, 55 69.6 C 52.6 71.6, 48.6 71.4, 46.5 69.5 Z"/>
-    <path class="loader__curls" d="M50 56 c 2 -3 6 -3.4 8 -1 M76 45 c 2.4 -2.6 6.4 -2.4 8 .4 M62 50 c 1.6 -2.2 4.6 -2.4 6.2 -.4 M86 60 c 1.8 -2 4.6 -2 6 0"/>
+    <path class="loader__curls" d="M86 60 c 1.8 -2 4.6 -2 6 0 M44.6 62 c 1.6 -1.8 4.2 -2 5.8 -.4"/>
     <path class="loader__door" d="M67.6 93 v-5.4 a2.4 2.4 0 0 1 4.8 0 V93"/>
     <g class="loader__windows">
       <circle class="loader__win" cx="58.6" cy="60.8" r="1.7"/>
@@ -129,7 +129,7 @@ export function createLoader(root, { title, tagline }) {
       bar,
       h('div', { class: 'loader__kicker' }, 'Welcome to'),
       h('h1', { class: 'loader__title' }, title),
-      tagline && h('div', { class: 'loader__tag' }, tagline),
+      tagline && h('div', { class: 'loader__tag' }, tagRoles(tagline)),
       label,
     ),
   );
@@ -140,7 +140,7 @@ export function createLoader(root, { title, tagline }) {
   const typeset = () => el.classList.add('is-typeset');
   try {
     Promise.race([
-      Promise.all(['400 48px "Fraunces Woodland"', '500 20px "Caveat Woodland"', '600 12px "Nunito Woodland"'].map((f) => document.fonts.load(f))),
+      Promise.all(['400 48px "Fraunces Woodland"', '600 12px "Nunito Woodland"'].map((f) => document.fonts.load(f))),
       new Promise((r) => setTimeout(r, 1400)),
     ]).then(typeset, typeset);
   } catch {

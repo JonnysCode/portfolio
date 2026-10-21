@@ -5,6 +5,7 @@
 // once it is up, then the HUD after "Enter".
 //
 //   node scripts/ui-moments.mjs [--size 1280x720] [--prefix ui-] [--params night=1] [--touch]
+//        [--url http://127.0.0.1:4173/]   (a running server, e.g. `vite preview` of a build)
 // ─────────────────────────────────────────────────────────────────────────────
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
@@ -21,9 +22,10 @@ const opt = (n, d) => {
 const [W, H] = String(opt('size', '1280x720')).split('x').map(Number);
 const prefix = opt('prefix', 'ui-');
 const touch = args.includes('--touch');
-const server = await createServer({ root, logLevel: 'error', server: { port: 0, host: '127.0.0.1', hmr: false, watch: null } });
-await server.listen();
-const url = `http://127.0.0.1:${server.httpServer.address().port}/?q=low&${opt('params', '')}`;
+const base = opt('url', null);
+const server = base ? null : await createServer({ root, logLevel: 'error', server: { port: 0, host: '127.0.0.1', hmr: false, watch: null } });
+await server?.listen();
+const url = `${base ?? `http://127.0.0.1:${server.httpServer.address().port}/`}?q=low&${opt('params', '')}`;
 const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'] });
 const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1, hasTouch: touch, isMobile: touch });
 const problems = [];
@@ -49,5 +51,5 @@ try {
 } finally {
   if (problems.length) console.log(problems.join('\n'));
   await browser.close();
-  await server.close();
+  await server?.close();
 }
