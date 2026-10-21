@@ -19,6 +19,8 @@ import { createAmbience } from './ambience.js';
 import { createMusic } from './music.js';
 
 const PREF_KEY = 'woodland:sound';
+/** Bus levels — measure with `node scripts/audio-tour.mjs` after changing them. */
+const BUS = { sfx: 0.45, ambience: 0.56, music: 0.27 };
 
 export function createAudio(ctx = {}) {
   let ac = null;
@@ -40,28 +42,30 @@ export function createAudio(ctx = {}) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     ac = new AC({ latencyHint: 'interactive' });
-    // master → gentle limiter → speakers
-    const comp = ac.createDynamicsCompressor();
-    comp.threshold.value = -12;
-    comp.knee.value = 12;
-    comp.ratio.value = 4;
-    comp.attack.value = 0.004;
-    comp.release.value = 0.25;
+    // master → safety limiter → speakers. The mix sits well below it (the
+    // glen's bed around −39 LUFS, the loudest events around −29): a visitor
+    // listens with the volume set for everything else on their computer.
+    const limiter = ac.createDynamicsCompressor();
+    limiter.threshold.value = -9;
+    limiter.knee.value = 3;
+    limiter.ratio.value = 12;
+    limiter.attack.value = 0.002;
+    limiter.release.value = 0.2;
     master = ac.createGain();
     master.gain.value = 0;
-    master.connect(comp).connect(ac.destination);
+    master.connect(limiter).connect(ac.destination);
     const reverb = makeReverb(ac);
     const rv = ac.createGain();
-    rv.gain.value = 0.35;
+    rv.gain.value = 0.3;
     reverb.connect(rv).connect(master);
     const sfxBus = ac.createGain();
-    sfxBus.gain.value = 0.9;
+    sfxBus.gain.value = BUS.sfx;
     sfxBus.connect(master);
     const ambBus = ac.createGain();
-    ambBus.gain.value = 0.8;
+    ambBus.gain.value = BUS.ambience;
     ambBus.connect(master);
     const musicBus = ac.createGain();
-    musicBus.gain.value = 0.8;
+    musicBus.gain.value = BUS.music;
     musicBus.connect(master);
     sfx = createSfx(ac, { out: sfxBus, reverb });
     ambience = createAmbience(ac, { out: ambBus, reverb, ctx });
@@ -131,7 +135,7 @@ export function createAudio(ctx = {}) {
       if (on) {
         if (!document.hidden) ac.resume?.();
         master.gain.cancelScheduledValues(t);
-        master.gain.setTargetAtTime(1, t, 0.4);
+        master.gain.setTargetAtTime(1, t, 0.8); // the forest fades in, it doesn't switch on
         ambience.start();
         if (wantMusic) music.play();
       } else {

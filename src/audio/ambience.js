@@ -3,9 +3,13 @@
 //   day    birdsong (robin warbles, tit "tee-cha"s, a finch trill, now and then
 //          a distant cuckoo) and leaves rustling in slow gusts
 //   night  crickets in the grass, a tawny owl, quieter leaves
-//   always a soft forest room tone, the stream's babble (louder near the
-//          bridge, the Velowerkstatt and the pond) and the waterfall's hush
-//          (louder towards the back-right)
+//   always a soft forest room tone, the stream's babble — a low rush and
+//          little bubbles, louder near the bridge, the Velowerkstatt and the
+//          pond — and the waterfall's hush (louder towards the back-right)
+//
+// Levels are set so that no place is more than ~4 LU louder than the glen's
+// bed (node scripts/audio-tour.mjs measures them): the water is a babble you
+// notice when you are close, never a wall of noise.
 //
 //   createAmbience(ac, { out, reverb, ctx }) → { start(), stop(), tick() }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -14,6 +18,7 @@ import { getStreamDistance } from '../world/ground.js';
 import { noiseSource, envelope, rand, pick } from './synth.js';
 
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+const TICK = 0.12; // s between mixing updates
 
 export function createAmbience(ac, { out, reverb, ctx }) {
   const bus = ac.createGain();
@@ -40,19 +45,51 @@ export function createAmbience(ac, { out, reverb, ctx }) {
     return { src, f, g };
   }
 
+  let bubbleOut = null;
   function build() {
     // room tone: the forest breathing
     const room = bed('brown', 'lowpass', 320, 0.4, 0.05);
-    // leaves: pink noise high up, gusting
-    const leaves = bed('pink', 'bandpass', 2600, 0.5, 0.0);
-    const leaves2 = bed('pink', 'highpass', 5200, 0.3, 0.0);
-    // the stream: two bands whose centres wobble quickly = babble
-    const brookLo = bed('white', 'bandpass', 700, 1.4, 0);
-    const brookHi = bed('white', 'bandpass', 2300, 2.2, 0);
-    // the waterfall: deep hush + a fine spray hiss
+    // leaves: soft pink noise in the mids, gusting, and a faint airy top
+    const leaves = bed('pink', 'bandpass', 1500, 0.6, 0.0);
+    const leaves2 = bed('pink', 'bandpass', 6000, 0.7, 0.0);
+    // the stream: a low rush whose centre wobbles; the babble itself is the bubbles
+    const brook = bed('pink', 'lowpass', 760, 0.5, 0);
+    // the waterfall: a deep hush + a little spray
     const fallLo = bed('brown', 'lowpass', 520, 0.6, 0);
-    const fallHi = bed('pink', 'highpass', 2800, 0.4, 0);
-    layers = { room, leaves, leaves2, brookLo, brookHi, fallLo, fallHi };
+    const fallHi = bed('pink', 'bandpass', 3400, 0.5, 0);
+    // bubbles: three fixed pans (left, centre, right) and a gentle top cut
+    const lp = ac.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 2600;
+    lp.connect(bus);
+    const send = ac.createGain();
+    send.gain.value = 0.25;
+    lp.connect(send).connect(wet);
+    bubbleOut = [-0.55, 0, 0.55].map((pan) => {
+      const p = ac.createStereoPanner ? ac.createStereoPanner() : ac.createGain();
+      if (p.pan) p.pan.value = pan;
+      p.connect(lp);
+      return p;
+    });
+    layers = { room, leaves, leaves2, brook, fallLo, fallHi };
+  }
+
+  /** One water bubble: a short sine blip rising in pitch (the sound of a bubble's cavity closing). */
+  function bubble(t, peak) {
+    const f0 = rand(380, 1150);
+    const dur = rand(0.018, 0.055);
+    const e = ac.createGain();
+    e.gain.value = 0;
+    e.connect(pick(bubbleOut));
+    envelope(e.gain, t, { peak, attack: 0.002, decay: dur });
+    const o = ac.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f0 * rand(1.35, 2.1), t + dur);
+    o.connect(e);
+    o.start(t);
+    o.stop(t + dur + 0.03);
+    o.onended = () => e.disconnect();
   }
 
   // ── voices ────────────────────────────────────────────────────────────────
@@ -157,7 +194,7 @@ export function createAmbience(ac, { out, reverb, ctx }) {
     // a short chirp train from one of three crickets
     const who = Math.floor(Math.random() * 3);
     const f = [4350, 4720, 3980][who];
-    const v = voice(t, [-0.6, 0.15, 0.7][who] + rand(-0.1, 0.1), 0.028 * amount, 0.15);
+    const v = voice(t, [-0.6, 0.15, 0.7][who] + rand(-0.1, 0.1), 0.02 * amount, 0.15);
     v.g.gain.value = v.peak;
     const pulses = 3 + Math.floor(Math.random() * 3);
     for (let i = 0; i < pulses; i++) note(t + i * 0.042, v, f, f * 0.995, 0.026, 1);
@@ -184,16 +221,21 @@ export function createAmbience(ac, { out, reverb, ctx }) {
     }
     // leaves gust slowly
     const gust = 0.5 + 0.5 * Math.sin(t * 0.21) * Math.sin(t * 0.077 + 1.3);
-    set(L.leaves.g.gain, (0.02 + 0.05 * gust) * (0.45 + 0.55 * day));
-    set(L.leaves2.g.gain, (0.004 + 0.014 * gust) * (0.4 + 0.6 * day));
+    set(L.leaves.g.gain, (0.016 + 0.034 * gust) * (0.45 + 0.55 * day));
+    set(L.leaves2.g.gain, (0.0015 + 0.004 * gust) * (0.4 + 0.6 * day));
     set(L.room.g.gain, 0.045 + 0.02 * night);
-    // babble: wobble the band centres
-    L.brookLo.f.frequency.setTargetAtTime(rand(520, 1050), t, 0.04);
-    L.brookHi.f.frequency.setTargetAtTime(rand(1700, 3200), t, 0.03);
-    set(L.brookLo.g.gain, 0.012 + 0.11 * brook * brook + 0.03 * pond, 0.4);
-    set(L.brookHi.g.gain, 0.004 + 0.05 * brook * brook, 0.4);
-    set(L.fallLo.g.gain, 0.02 + 0.2 * fall * fall, 0.8);
-    set(L.fallHi.g.gain, 0.002 + 0.028 * fall * fall, 0.8);
+    // the stream: a low rush (its centre wanders a little) and bubbles, many
+    // and close together beside the water, a few drifting over from afar
+    const water = Math.min(1, brook * brook + 0.4 * pond);
+    L.brook.f.frequency.setTargetAtTime(rand(560, 900), t, 0.3);
+    set(L.brook.g.gain, 0.008 + 0.05 * water, 0.5);
+    const expected = (1 + 40 * water) * TICK; // bubbles per tick: ~1/s far off, ~40/s beside the water
+    // (only while the clock runs: a hidden tab suspends it, and bubbles queued
+    // at a frozen time would all burst out together when the visitor returns)
+    const n = ac.state !== 'running' ? 0 : Math.floor(expected) + (Math.random() < expected % 1 ? 1 : 0);
+    for (let i = 0; i < n; i++) bubble(t + rand(0, TICK), rand(0.006, 0.02) * (0.25 + 0.75 * water));
+    set(L.fallLo.g.gain, 0.02 + 0.06 * fall * fall, 0.8);
+    set(L.fallHi.g.gain, 0.0015 + 0.006 * fall * fall, 0.8);
 
     // scheduled voices
     if (day > 0.3 && t > nextBird) {
@@ -229,7 +271,7 @@ export function createAmbience(ac, { out, reverb, ctx }) {
       nextOwl = t + rand(4, 10);
       bus.gain.cancelScheduledValues(t);
       bus.gain.setTargetAtTime(1, t, 1.2);
-      timer = setInterval(tick, 120);
+      timer = setInterval(tick, TICK * 1000);
       tick();
     },
     stop() {

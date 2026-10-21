@@ -3,6 +3,9 @@
 // whoosh for glides, the discovery chime, a secret twinkle, critter babble for
 // speech bubbles, and the Swiss PostAuto three-tone horn (C♯–E–A).
 //
+// Short UI sounds sit a little under the forest bed, the discovery chime and the
+// horn a few LU above it (node scripts/audio-tour.mjs measures each).
+//
 //   createSfx(ac, { out, reverb }) → play(name, opts)
 // ─────────────────────────────────────────────────────────────────────────────
 import { noiseBuffer, envelope, midi, rand } from './synth.js';
@@ -78,13 +81,13 @@ export function createSfx(ac, { out, reverb }) {
     },
     // a secret under the cursor: three high glints
     twinkle(t) {
-      [2093, 2794, 3520].forEach((f, i) => bell(t + i * 0.055, f * rand(0.99, 1.01), { peak: 0.045, decay: 0.5, send: 0.8 }));
+      [2093, 2794, 3520].forEach((f, i) => bell(t + i * 0.055, f * rand(0.99, 1.01), { peak: 0.032, decay: 0.5, send: 0.8 }));
     },
     // paper: a page turned in the journal
     page(t) {
       const g = gain(0);
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(0.34, t + 0.06);
+      g.gain.linearRampToValueAtTime(0.4, t + 0.06);
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
       const bp = ac.createBiquadFilter();
       bp.type = 'bandpass';
@@ -100,7 +103,7 @@ export function createSfx(ac, { out, reverb }) {
     close(t) {
       const g = gain(0);
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(0.2, t + 0.04);
+      g.gain.linearRampToValueAtTime(0.11, t + 0.04);
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
       const bp = ac.createBiquadFilter();
       bp.type = 'bandpass';
@@ -115,24 +118,28 @@ export function createSfx(ac, { out, reverb }) {
       o.frequency.exponentialRampToValueAtTime(70, t + 0.3);
       o.stop(t + 0.35);
     },
-    // gliding between spots: air through leaves
+    // gliding between spots: a soft breath of air through the leaves — low and
+    // dark, so it carries the move without becoming a rush of noise
     whoosh(t) {
       const g = gain(0);
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(0.24, t + 0.45);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.6);
+      g.gain.linearRampToValueAtTime(0.17, t + 0.5);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.7);
       const bp = ac.createBiquadFilter();
       bp.type = 'bandpass';
-      bp.Q.value = 0.7;
-      bp.frequency.setValueAtTime(320, t);
-      bp.frequency.exponentialRampToValueAtTime(1300, t + 0.6);
-      bp.frequency.exponentialRampToValueAtTime(380, t + 1.6);
-      bp.connect(g);
-      noise(t, 1.7, bp, 'pink');
+      bp.Q.value = 0.9;
+      bp.frequency.setValueAtTime(220, t);
+      bp.frequency.exponentialRampToValueAtTime(560, t + 0.6);
+      bp.frequency.exponentialRampToValueAtTime(240, t + 1.7);
+      const lp = ac.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 1400;
+      bp.connect(lp).connect(g);
+      noise(t, 1.8, bp, 'pink');
     },
     // a discovery: a little rising arpeggio of bells
     chime(t) {
-      [72, 76, 79, 84, 88].forEach((n, i) => bell(t + i * 0.085, midi(n), { peak: 0.09 - i * 0.008, decay: 1.6, send: 0.7 }));
+      [72, 76, 79, 84, 88].forEach((n, i) => bell(t + i * 0.085, midi(n), { peak: 0.042 - i * 0.0038, decay: 1.6, send: 0.7 }));
     },
     // the Swiss PostAuto three-tone horn: C♯ – E – A (the "Dü-da-do")
     horn(t) {
@@ -145,7 +152,7 @@ export function createSfx(ac, { out, reverb }) {
       lp.type = 'lowpass';
       lp.Q.value = 2.2;
       const g = gain(0);
-      g.gain.value = 0.085;
+      g.gain.value = 0.034;
       lp.connect(g);
       const s = gain(0.5, wet);
       g.connect(s);
