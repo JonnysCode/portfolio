@@ -8,17 +8,59 @@ const params = new URLSearchParams(location.search);
 /** True when ?q= / ?quality= forces a tier (the governor then stays out of it). */
 const forcedTier = ['low', 'medium', 'high'].includes(params.get('q') || params.get('quality'));
 
+/**
+ * A device whose GPU dropped the WebGL context (out of GPU memory, or a GPU
+ * reset) gets a tier cap, remembered for 30 days: the next boot starts one tier
+ * lower ('none': no 3D at all, the guidebook instead — see main.js). A forced
+ * ?q= tier ignores the cap; ?tiercap=reset forgets it.
+ */
+const TIER_CAP = { key: 'woodland.tiercap.v1', maxAgeMs: 30 * 24 * 3600 * 1000 };
+const TIER_ORDER = ['none', 'low', 'medium', 'high'];
+
+export function readTierCap() {
+  try {
+    if (params.get('tiercap') === 'reset') localStorage.removeItem(TIER_CAP.key);
+    const s = JSON.parse(localStorage.getItem(TIER_CAP.key) || 'null');
+    return s && TIER_ORDER.includes(s.tier) && Date.now() - s.t < TIER_CAP.maxAgeMs ? s.tier : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Cap the tier one step below `tier` (after a lost context). Returns the new
+ * cap, or null when it could not be remembered (private mode) — then a reload
+ * would only fail the same way again.
+ */
+export function lowerTierCap(tier) {
+  const next = TIER_ORDER[Math.max(0, TIER_ORDER.indexOf(tier) - 1)];
+  try {
+    localStorage.setItem(TIER_CAP.key, JSON.stringify({ tier: next, t: Date.now() }));
+  } catch {
+    return null;
+  }
+  return readTierCap() === next ? next : null;
+}
+
+/** True when this device should not try the 3D woodland at all (and no ?q= forces it). */
+export function tierCappedToNone() {
+  return !forcedTier && readTierCap() === 'none';
+}
+
 function detectQuality() {
   const forced = params.get('q') || params.get('quality');
   if (forced === 'low' || forced === 'medium' || forced === 'high') return forced;
   const cores = navigator.hardwareConcurrency || 4;
   const memory = navigator.deviceMemory || 8;
-  if (cores <= 2 || memory <= 2) return 'low';
+  let tier = 'high';
+  if (cores <= 2 || memory <= 2) tier = 'low';
   // Every touch-first device (phones AND tablets: iPads, Android tablets) is
   // 'medium' — mobile GPUs at DPR 2 with a 4096 shadow map and AO + DOF are
   // too much. Weaker desktops are caught at runtime by the frame-time governor.
-  if (matchMedia('(pointer: coarse)').matches) return 'medium';
-  return 'high';
+  else if (matchMedia('(pointer: coarse)').matches) tier = 'medium';
+  const cap = readTierCap();
+  if (cap && cap !== 'none' && TIER_ORDER.indexOf(cap) < TIER_ORDER.indexOf(tier)) tier = cap;
+  return tier;
 }
 
 /**

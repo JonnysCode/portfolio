@@ -8,7 +8,7 @@ import '@fontsource/patrick-hand/latin-400.css';
 import './ui/styles.css';
 
 import * as THREE from 'three';
-import { createEngine } from './core/engine.js';
+import { createEngine, lowerTierCap, tierCappedToNone } from './core/engine.js';
 import { releaseStaticArrays } from './core/memory.js';
 import { waitForPrograms } from './core/shaders.js';
 import { materials } from './core/materials.js';
@@ -111,15 +111,32 @@ async function boot() {
     ctx.ui.showFallback('Your browser does not support WebGL 2, so the 3D woodland cannot be shown — but here is everything in it:');
     return;
   }
+  // (this device's GPU lost the woodland even on the lightest tier: the guidebook instead)
+  if (tierCappedToNone()) {
+    ctx.env = { isNight: false, onChange() {}, toggle() {} };
+    ctx.ui = createUI(ctx);
+    ctx.ui.showFallback('This device’s graphics could not hold the 3D woodland, so here is everything in it as a guidebook. (Add ?q=low to the address to try the 3D version again.)');
+    return;
+  }
 
   const engine = createEngine(canvas);
   // A lost WebGL context cannot be restored (geometry arrays and baked maps are not
-  // kept on the CPU): stop drawing and ask for a reload instead of freezing silently.
+  // kept on the CPU). Lost while the page is on screen, it is the GPU giving up
+  // (out of memory or reset — mid-range Android phones on 'medium'): remember a
+  // lower tier for this device and reload once into it ('none' → the guidebook).
+  // Lost in the background (the OS reclaiming a hidden tab) says nothing about
+  // the tier: just ask for a reload.
   canvas.addEventListener(
     'webglcontextlost',
     () => {
       engine.stop();
-      ctx.ui?.toast?.('The woodland lost its graphics — please reload the page.', 600000);
+      const onScreen = document.visibilityState === 'visible' && !engine.params.has('shots');
+      const cap = onScreen ? lowerTierCap(engine.quality.tier) : null;
+      if (cap) {
+        console.warn(`[boot] WebGL context lost on '${engine.quality.tier}' — reloading capped at '${cap}'`);
+        ctx.ui?.toast?.(cap === 'none' ? 'The woodland was too heavy for this device — opening the guidebook instead…' : 'The woodland was too heavy for this device — loading a lighter version…', 600000);
+        setTimeout(() => location.reload(), 1200);
+      } else ctx.ui?.toast?.('The woodland lost its graphics — please reload the page.', 600000);
     },
     { once: true },
   );
