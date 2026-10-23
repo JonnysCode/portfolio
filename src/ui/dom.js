@@ -63,7 +63,7 @@ export function trapFocus(container) {
 
 export const isTypingTarget = (t) => t instanceof HTMLElement && !!t.closest('input, textarea, select, [contenteditable]');
 
-/** A tagline ('Software engineer · Schreiner EFZ · tinkerer') as unbreakable roles; the '·' between them comes from CSS. */
+/** A tagline ('Software Engineer @ ipt · Co-founder of Via Communa · Cabinetmaker') as unbreakable roles; the '·' between them comes from CSS. */
 export function tagRoles(text) {
   return String(text ?? '')
     .split('·')

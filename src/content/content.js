@@ -17,14 +17,14 @@
 export const profile = {
   name: 'Jonny',
   fullName: 'Jonathan Gruss',
-  tagline: 'Software engineer · Co-founder of Via Communa · Schreiner EFZ',
+  tagline: 'Software Engineer @ ipt · Co-founder of Via Communa · Cabinetmaker',
   intro:
-    'Welcome to my little woodland! I build software for a living, Via Communa in my free time, and furniture, bikes and cozy rooms for joy. Wander around, hop on a snail, and poke at anything that looks interesting.',
+    'Welcome to my little woodland! I’m a software engineer at ipt, I build Via Communa in my free time, and furniture, bikes and cozy rooms for joy. Wander around, hop on a snail, and poke at anything that looks interesting.',
   location: 'Winterthur, Switzerland',
   email: 'jonathangruss@gmail.com',
   links: [
     { label: 'GitHub', href: 'https://github.com/JonnysCode', icon: 'github' },
-    { label: 'LinkedIn', href: 'https://www.linkedin.com/in/jonathan-gruss/', icon: 'linkedin' },
+    { label: 'LinkedIn', href: 'https://www.linkedin.com/in/jonathangruss', icon: 'linkedin' },
     // { label: 'Instagram (woodworking)', href: 'https://instagram.com/your-handle', icon: 'instagram' },
   ],
 };
@@ -38,8 +38,8 @@ export const areas = {
   },
   woodworking: {
     title: 'Schreinerei',
-    kicker: 'Woodworking · Schreiner EFZ',
-    text: 'I trained as a Schreiner (cabinetmaker/joiner, Swiss federal VET diploma EFZ). Wood is still my favourite material: honest, warm and unforgiving of shortcuts. This workshop holds the pieces I have designed and built.',
+    kicker: 'Woodworking · Cabinetmaker',
+    text: 'I trained as a cabinetmaker and hold the Swiss federal VET diploma, the Schreiner EFZ. Wood is still my favourite material: honest, warm and unforgiving of shortcuts. This workshop holds the pieces I have designed and built.',
   },
   bikes: {
     title: 'Velowerkstatt',
@@ -276,7 +276,7 @@ export const entries = {
     kind: 'project',
     title: 'Via Communa',
     subtitle: 'A companion app for stroke recovery — and the web dashboard behind it',
-    year: '2025–',
+    year: '2024–',
     summary: 'The startup I co-founded in my free time: a stroke-recovery app for patients and relatives, with a web dashboard for clinics.',
     body: [
       'Via Communa is a digital companion for stroke survivors and for the relatives who support them. The app offers guided exercises for the body, the mind and everyday life, explains what happens after a stroke, and comes with Simi, a friendly turtle who stands for patience, consistency and steady progress.',
@@ -347,7 +347,7 @@ export const entries = {
     subtitle: 'A software engineer with sawdust in the pockets',
     summary: 'Who lives in this cottage.',
     body: [
-      'Hi, I am Jonny. I started out as a Schreiner: an apprenticeship, then several years as a cabinetmaker and assembly carpenter in Swiss joineries. Then I went back to school — a professional baccalaureate, a bachelor’s in computer science at ZHAW (with an exchange semester in Seoul) and a master’s in computer science at the University of St. Gallen.',
+      'Hi, I am Jonny. I started out as a cabinetmaker: an apprenticeship, then several years at the bench and as an assembly carpenter in Swiss joineries. Then I went back to school — a professional baccalaureate, a bachelor’s in computer science at ZHAW (with an exchange semester in Seoul) and a master’s in computer science at the University of St. Gallen.',
       'Today I am a Senior Consultant at ipt, where I work as a software engineer. In my free time I build Via Communa, an app for people after a stroke, as its co-founder and CTO. Through all of it, I never stopped making things with my hands.',
       'DRAFT — A few sentences about what drives you, and what you are looking for.',
     ],
