@@ -173,7 +173,7 @@ export const SPOTS = [
   {
     id: 'woodworking',
     title: 'Schreinerei',
-    subtitle: 'Woodworking · Schreiner EFZ',
+    subtitle: 'Woodworking · Cabinetmaker',
     icon: '🪚',
     areas: ['woodworking'],
     // lower and closer than before: the porch Hobelbank with Jonny planing sits on
