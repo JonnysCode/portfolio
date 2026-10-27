@@ -916,7 +916,7 @@ export default async function build(ctx) {
     sceneRT = new THREE.WebGLRenderTarget(size.x, size.y, {
       type: THREE.HalfFloatType,
       // ('grade' — low — keeps the plain renderer's lack of MSAA)
-      samples: mode === 'grade' ? 0 : mode === 'lite' || pr >= 1.75 ? 2 : 4,
+      samples: mode === 'grade' || quality.msaa === false ? 0 : mode === 'lite' || pr >= 1.75 ? 2 : 4,
       depthTexture: useDof ? new THREE.DepthTexture(size.x, size.y) : null,
     });
     sceneRT.texture.name = 'woodland.post.scene';

@@ -130,7 +130,9 @@ async function boot() {
     'webglcontextlost',
     () => {
       engine.stop();
-      const onScreen = document.visibilityState === 'visible' && !engine.params.has('shots');
+      ctx.contextLost = true;
+      // (a forced ?q= tier would boot the same tier again after the reload: no cap, no reload)
+      const onScreen = document.visibilityState === 'visible' && !engine.params.has('shots') && !engine.forcedTier;
       const cap = onScreen ? lowerTierCap(engine.quality.tier) : null;
       if (cap) {
         console.warn(`[boot] WebGL context lost on '${engine.quality.tier}' — reloading capped at '${cap}'`);
@@ -234,7 +236,9 @@ async function boot() {
   if (engine.params.has('shots')) {
     // Screenshot mode: deterministic, no intro; the harness drives frames.
     ctx.ui.ready();
-  } else {
+  } else if (!ctx.contextLost) {
+    // (lost while booting: the handler above has stopped the engine — don't restart
+    //  it on a context that can't be drawn into)
     engine.start();
     ctx.ui.ready();
     ctx.ui.showIntro();
