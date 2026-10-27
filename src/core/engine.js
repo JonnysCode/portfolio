@@ -17,9 +17,18 @@ const forcedTier = ['low', 'medium', 'high'].includes(params.get('q') || params.
 const TIER_CAP = { key: 'woodland.tiercap.v1', maxAgeMs: 30 * 24 * 3600 * 1000 };
 const TIER_ORDER = ['none', 'low', 'medium', 'high'];
 
+// (?tiercap=reset forgets the cap once, as the page loads — not on every read,
+//  or a cap written after a lost context would vanish before the reload)
+if (params.get('tiercap') === 'reset') {
+  try {
+    localStorage.removeItem(TIER_CAP.key);
+  } catch {
+    /* private mode: nothing stored anyway */
+  }
+}
+
 export function readTierCap() {
   try {
-    if (params.get('tiercap') === 'reset') localStorage.removeItem(TIER_CAP.key);
     const s = JSON.parse(localStorage.getItem(TIER_CAP.key) || 'null');
     return s && TIER_ORDER.includes(s.tier) && Date.now() - s.t < TIER_CAP.maxAgeMs ? s.tier : null;
   } catch {
@@ -141,13 +150,18 @@ export function createEngine(canvas) {
   // start where the governor left off last time (before anything is built)
   const govSteps = governed ? readGovernor(tier) : [];
   for (const id of govSteps) GOVERNOR_STEPS.find((g) => g.id === id).apply(quality);
+  // diagnostics (bisecting a device that fails): ?shadows=0, ?msaa=0 (no MSAA on
+  // the post chain's scene target), ?post=0 (plain renderer, no post chain at all)
+  if (params.get('shadows') === '0') quality.shadows = false;
+  if (params.get('msaa') === '0') quality.msaa = false;
+  if (params.get('post') === '0') Object.assign(quality, { post: false, grade: false, ao: false, dof: false, bloom: false });
 
   const renderer = new THREE.WebGLRenderer({
     canvas,
     // With post-processing the scene is rendered into a multisampled HDR target
     // and the canvas only receives a fullscreen quad — a multisampled backbuffer
     // would be wasted. (Texture bake resolution is keyed on quality.tier, not on this.)
-    antialias: !quality.post && tier !== 'low',
+    antialias: !quality.post && tier !== 'low' && quality.msaa !== false,
     powerPreference: 'high-performance',
     preserveDrawingBuffer: params.has('shots'),
   });
@@ -307,6 +321,8 @@ export function createEngine(canvas) {
     camera,
     quality,
     params,
+    /** True when ?q= forces the tier (the tier cap and the governor stay out of it). */
+    forcedTier,
     debug: params.has('debug'),
     isTouch: matchMedia('(pointer: coarse)').matches,
     reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
