@@ -401,7 +401,7 @@ export const materials = {
     if (quality?.tier === 'low') {
       setBakeScale(0.5);
       lite = true;
-    }
+    } else if (quality?.bakeScale) setBakeScale(quality.bakeScale);
     if (typeof quality?.reducedMotion === 'boolean' && quality.reducedMotion) setReducedMotion(true);
     setBakeRenderer(renderer);
   },

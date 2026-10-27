@@ -155,6 +155,13 @@ export function createEngine(canvas) {
   if (params.get('shadows') === '0') quality.shadows = false;
   if (params.get('msaa') === '0') quality.msaa = false;
   if (params.get('post') === '0') Object.assign(quality, { post: false, grade: false, ao: false, dof: false, bloom: false });
+  // ?bake=half (half-resolution texture bakes), ?density=0.35, ?dpr=1 — the other
+  // differences between 'medium' and 'low'
+  if (params.get('bake') === 'half') quality.bakeScale = 0.5;
+  const dens = Number(params.get('density'));
+  if (dens > 0) quality.density = dens;
+  const dpr = Number(params.get('dpr'));
+  if (dpr > 0) quality.pixelRatio = dpr;
 
   const renderer = new THREE.WebGLRenderer({
     canvas,
